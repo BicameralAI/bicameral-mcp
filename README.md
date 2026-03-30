@@ -46,17 +46,18 @@ That's it. The server builds its code index on first tool call.
 
 ### Manual config
 
-Add to your Claude Code MCP config via CLI:
+Run from your repo root:
 
 ```bash
-claude mcp add-json bicameral --scope user '{
-  "command": "pipx",
-  "args": ["run", "bicameral-mcp"],
-  "env": { "REPO_PATH": "/path/to/your/repo" }
+claude mcp add-json bicameral --scope local '{
+  "command": "uvx",
+  "args": ["bicameral-mcp"],
+  "env": {
+    "REPO_PATH": "/path/to/your/repo",
+    "SURREAL_URL": "surrealkv:///path/to/your/repo/.bicameral/ledger.db"
+  }
 }'
 ```
-
-Replace `"command": "pipx", "args": ["run", "bicameral-mcp"]` with `"command": "uvx", "args": ["bicameral-mcp"]` if you prefer uvx.
 
 ### Local development
 
