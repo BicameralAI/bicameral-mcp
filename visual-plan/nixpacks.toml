@@ -1,5 +1,0 @@
-[phases.build]
-cmds = []
-
-[start]
-cmd = "python server.py"

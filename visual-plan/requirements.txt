@@ -1,1 +1,0 @@
-# no dependencies — stdlib http.server only
