@@ -18,7 +18,7 @@ Every software team makes hundreds of verbal decisions per week — in meetings,
 | **REPEATED_EXPLANATION** | Same context tax paid twice — once to design, once to engineering | `bicameral.search` — retrieves full decision provenance |
 | **TRIBAL_KNOWLEDGE** | Only one person knows why the system works the way it does | `bicameral.drift` — surfaces institutional memory tied to code |
 
-General-purpose AI can shred a PRD into user stories, but it goes deaf the moment code hits production. **Bicameral's wedge is post-commit drift detection** — knowing that a decision made three weeks ago is now inconsistent with what actually shipped.
+**Bicameral's value is drift detection** — knowing that a decision made three weeks ago is now inconsistent with what actually shipped, or that a decision made today is inconsistent with the codebase reality. 
 
 ---
 
