@@ -27,20 +27,19 @@ Every software team makes hundreds of verbal decisions per week — in meetings,
 ### One-command setup
 
 ```bash
-# With pipx (recommended — most systems have it)
-pipx run bicameral-mcp setup
-
-# Or with uvx
-uvx bicameral-mcp setup
+# Recommended: install persistently with pipx
+pipx install bicameral-mcp
+bicameral-mcp setup
 
 # Or with pip
 pip install bicameral-mcp && bicameral-mcp setup
 ```
 
+> **Why pipx, not uvx?** `uvx` is designed for ephemeral one-off runs — it re-resolves from cache on every spawn and silently serves stale versions. For a persistent MCP server configured once and forgotten, that's the wrong primitive. `pipx install` gives you an explicit, upgradeable install: `pipx upgrade bicameral-mcp` when you want a new version, nothing changes otherwise.
+
 This launches an interactive wizard that:
 1. Detects your repo (from cwd or prompts you)
-2. Auto-detects the best available runner (uvx, pipx, or python)
-3. Installs the MCP config into Claude Code
+2. Installs the MCP config into Claude Code using your `pipx` binary path
 
 That's it. The server builds its code index on first tool call.
 
@@ -49,9 +48,13 @@ That's it. The server builds its code index on first tool call.
 Run from your repo root:
 
 ```bash
+# Install first
+pipx install bicameral-mcp
+
+# Then add to Claude Code
 claude mcp add-json bicameral --scope local '{
-  "command": "uvx",
-  "args": ["bicameral-mcp@latest"],
+  "command": "bicameral-mcp",
+  "args": [],
   "env": {
     "REPO_PATH": "/path/to/your/repo",
     "SURREAL_URL": "surrealkv:///path/to/your/repo/.bicameral/ledger.db"

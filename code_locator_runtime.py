@@ -120,6 +120,16 @@ def _symbol_count(db_path: str) -> int:
         return 0
 
 
+def _indexed_file_count(db_path: str) -> int:
+    try:
+        conn = sqlite3.connect(db_path)
+        row = conn.execute("SELECT COUNT(*) FROM indexed_files").fetchone()
+        conn.close()
+        return int(row[0]) if row else 0
+    except sqlite3.OperationalError:
+        return 0
+
+
 def _clear_legacy_index_tables(db_path: str) -> None:
     conn = _connect_meta(db_path)
     for table in ("edges", "symbols", "indexed_files"):
@@ -165,10 +175,28 @@ def rebuild_index(repo_path: str, config, force: bool = False) -> None:
     bm25.index(repo, index_dir)
     record_index_state(config.sqlite_db, repo)
 
+    count = _symbol_count(config.sqlite_db)
+    if count == 0:
+        logger.error(
+            "[mcp] build_index completed with 0 symbols for %s — "
+            "tree-sitter language packages may not be installed correctly. "
+            "Run: pip install 'bicameral-mcp[tree-sitter]' or reinstall via pipx.",
+            repo,
+        )
+
 
 def ensure_index_matches_repo(repo_path: str, config) -> bool:
     """Refresh a populated local index when its recorded HEAD no longer matches."""
     if _symbol_count(config.sqlite_db) == 0:
+        # Detect poisoned index: files were recorded but extraction produced 0 symbols.
+        # This happens when build_index ran before tree-sitter was ready. Force a clean rebuild.
+        if _indexed_file_count(config.sqlite_db) > 0:
+            logger.warning(
+                "[mcp] poisoned index detected (%d files, 0 symbols) — clearing and rebuilding",
+                _indexed_file_count(config.sqlite_db),
+            )
+            rebuild_index(repo_path, config, force=True)
+            return True
         return False
 
     current = get_repo_index_state(repo_path)
