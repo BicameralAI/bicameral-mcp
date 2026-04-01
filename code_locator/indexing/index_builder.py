@@ -68,8 +68,9 @@ def build_index(repo_path: str, db_path: str) -> IndexStats:
 
         current_mtime = os.path.getmtime(abs_path)
         stored_mtime = db.get_file_mtime(rel_path)
+        stored_symbol_count = db.get_file_symbol_count(rel_path)
 
-        if stored_mtime is not None and current_mtime == stored_mtime:
+        if stored_mtime is not None and current_mtime == stored_mtime and stored_symbol_count > 0:
             stats.files_skipped += 1
             continue
 

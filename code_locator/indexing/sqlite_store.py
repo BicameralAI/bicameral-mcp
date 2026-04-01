@@ -151,6 +151,13 @@ class SymbolDB:
         ).fetchone()
         return row[0] if row else None
 
+    def get_file_symbol_count(self, file_path: str) -> int:
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT symbol_count FROM indexed_files WHERE file_path = ?", (file_path,)
+        ).fetchone()
+        return row[0] if row else 0
+
     def upsert_file_record(self, file_path: str, mtime: float, symbol_count: int) -> None:
         conn = self._connect()
         conn.execute(

@@ -9,9 +9,65 @@ Productized ingestion entrypoint:
 from __future__ import annotations
 
 import os
+import logging
 
 from adapters.ledger import get_ledger
 from contracts import IngestResponse, IngestStats, SourceCursorSummary
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_symbols_to_regions(payload: dict, repo: str) -> dict:
+    """For each mapping with symbols[] but no code_regions, look up symbol names
+    in the code graph and populate code_regions from the results."""
+    mappings = payload.get("mappings")
+    if not mappings:
+        return payload
+
+    needs_resolution = any(
+        m.get("symbols") and not m.get("code_regions")
+        for m in mappings
+    )
+    if not needs_resolution:
+        return payload
+
+    db_path = os.getenv("CODE_LOCATOR_SQLITE_DB", "")
+    if not db_path:
+        import os as _os
+        db_path = str(_os.path.join(repo, ".bicameral", "code-graph.db"))
+
+    try:
+        from code_locator.indexing.sqlite_store import SymbolDB
+        db = SymbolDB(db_path)
+    except Exception as exc:
+        logger.warning("[ingest] cannot open symbol DB at %s: %s", db_path, exc)
+        return payload
+
+    resolved_mappings = []
+    for mapping in mappings:
+        symbol_names = mapping.get("symbols") or []
+        code_regions = mapping.get("code_regions") or []
+
+        if symbol_names and not code_regions:
+            for name in symbol_names:
+                rows = db.lookup_by_name(name)
+                for row in rows:
+                    code_regions.append({
+                        "symbol": row["qualified_name"] or row["name"],
+                        "file_path": row["file_path"],
+                        "start_line": row["start_line"],
+                        "end_line": row["end_line"],
+                        "type": row["type"],
+                        "purpose": mapping.get("intent", ""),
+                    })
+            if code_regions:
+                mapping = {**mapping, "code_regions": code_regions}
+            else:
+                logger.debug("[ingest] no symbols found in index for: %s", symbol_names)
+
+        resolved_mappings.append(mapping)
+
+    return {**payload, "mappings": resolved_mappings}
 
 
 def _derive_last_source_ref(payload: dict) -> str:
@@ -31,6 +87,7 @@ async def handle_ingest(
         await ledger.connect()
 
     repo = str(payload.get("repo") or os.getenv("REPO_PATH", "."))
+    payload = _resolve_symbols_to_regions(payload, repo)
     result = await ledger.ingest_payload(payload)
 
     cursor_summary = None
