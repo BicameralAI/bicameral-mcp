@@ -13,8 +13,8 @@ startCommand:
         description: "SurrealDB URL (default: surrealkv://~/.bicameral/ledger.db)"
   commandFunction: |-
     (config) => ({
-      command: 'uvx',
-      args: ['bicameral-mcp'],
+      command: 'pipx',
+      args: ['run', 'bicameral-mcp'],
       env: {
         REPO_PATH: config.repoPath,
         ...(config.surrealUrl ? { SURREAL_URL: config.surrealUrl } : {})

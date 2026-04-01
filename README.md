@@ -27,15 +27,11 @@ Every software team makes hundreds of verbal decisions per week — in meetings,
 ### One-command setup
 
 ```bash
-# Recommended: install persistently with pipx
 pipx install bicameral-mcp
 bicameral-mcp setup
-
-# Or with pip
-pip install bicameral-mcp && bicameral-mcp setup
 ```
 
-> **Why pipx, not uvx?** `uvx` is designed for ephemeral one-off runs — it re-resolves from cache on every spawn and silently serves stale versions. For a persistent MCP server configured once and forgotten, that's the wrong primitive. `pipx install` gives you an explicit, upgradeable install: `pipx upgrade bicameral-mcp` when you want a new version, nothing changes otherwise.
+> **Note:** `bicameral-mcp` bundles ML dependencies (`sentence-transformers`, `cocoindex`) for semantic code search. These add ~1GB on first install but are required for auto-grounding. `pipx` gives a persistent install — `pipx upgrade bicameral-mcp` when you want a new version.
 
 This launches an interactive wizard that:
 1. Detects your repo (from cwd or prompts you)

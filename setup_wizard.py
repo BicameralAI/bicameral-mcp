@@ -139,9 +139,12 @@ def _select_agents() -> list[str]:
 
 
 def _detect_runner() -> tuple[str, list[str]]:
-    """Detect the best available Python package runner."""
-    if shutil.which("uvx"):
-        return ("uvx", ["bicameral-mcp@latest"])
+    """Detect the best available Python package runner.
+
+    uvx is intentionally not used — bicameral-mcp bundles ML dependencies
+    (sentence-transformers, cocoindex) that are too large for ephemeral runs.
+    pipx install gives a persistent, upgradeable install.
+    """
     if shutil.which("pipx"):
         return ("pipx", ["run", "bicameral-mcp"])
     python = "python3" if shutil.which("python3") else "python"
@@ -328,7 +331,7 @@ def run_setup(repo_hint: str | None = None) -> int:
 
     # Step 3: Runner check
     command, _ = _detect_runner()
-    if command not in ("uvx", "pipx"):
+    if command not in ("pipx",):
         print(f"\n  Note: using '{command} -m bicameral_mcp' as runner.")
         print("  Install a package runner for zero-install: pip install pipx")
 
