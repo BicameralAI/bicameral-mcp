@@ -186,18 +186,27 @@ def rebuild_index(repo_path: str, config, force: bool = False) -> None:
 
 
 def ensure_index_matches_repo(repo_path: str, config) -> bool:
-    """Refresh a populated local index when its recorded HEAD no longer matches."""
+    """Refresh or bootstrap the local index when needed.
+
+    Three cases handled:
+    - Cold start (0 symbols, 0 files): first run, build from scratch.
+    - Poisoned index (0 symbols, files > 0): prior run recorded files but
+      extracted nothing — clear and rebuild.
+    - Stale index (symbols exist, HEAD mismatch): refresh for new commit.
+    """
     if _symbol_count(config.sqlite_db) == 0:
-        # Detect poisoned index: files were recorded but extraction produced 0 symbols.
-        # This happens when build_index ran before tree-sitter was ready. Force a clean rebuild.
         if _indexed_file_count(config.sqlite_db) > 0:
+            # Poisoned index — recorded files but 0 symbols extracted.
             logger.warning(
                 "[mcp] poisoned index detected (%d files, 0 symbols) — clearing and rebuilding",
                 _indexed_file_count(config.sqlite_db),
             )
             rebuild_index(repo_path, config, force=True)
-            return True
-        return False
+        else:
+            # Cold start — never indexed.
+            logger.info("[mcp] cold start: building index for %s", repo_path)
+            rebuild_index(repo_path, config)
+        return True
 
     current = get_repo_index_state(repo_path)
     indexed_repo = _get_meta(config.sqlite_db, "repo_path")

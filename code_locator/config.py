@@ -31,7 +31,7 @@ class CodeLocatorConfig:
     vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # CocoIndex backend (Option A+) — writes to sqlite_db (single DB)
-    indexing_backend: str = "cocoindex"  # "legacy" | "cocoindex"
+    indexing_backend: str = "legacy"  # "legacy" | "cocoindex"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     chunk_size: int = 512
     chunk_overlap: int = 50
