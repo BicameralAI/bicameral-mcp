@@ -8,9 +8,13 @@ Each entry defines:
   - expected_file_patterns: substring patterns for expected file paths
   - prd_failure_mode: which PRD failure mode this tests (CONSTRAINT_LOST etc.)
   - adversarial_type: adversarial dimension (negation, temporal, blast_radius, etc.) or None
+  - difficulty: easy (direct token overlap), medium (partial overlap), hard (no overlap)
 
 These fixtures define what a correct system must do. Tests that ingest these
 transcripts and query back should match these expectations.
+
+Symbol names are verified against cloned repos at HEAD (2026-04-04).
+Medusa symbols updated from v1 → v2 equivalents where needed.
 """
 
 from __future__ import annotations
@@ -22,37 +26,40 @@ MEDUSA_PAYMENT_TIMEOUT = [
         "source_ref": "medusa-payment-timeout",
         "keywords": ["payment timeout", "authorize call", "12 second", "requires_more", "checkout timeout"],
         "expected_symbols": [
-            "AbstractPaymentProcessor.authorize",
-            "CartCompletionStrategy",
+            "AbstractPaymentProvider",
+            "completeCartWorkflow",
             "PaymentProviderService",
         ],
         "expected_file_patterns": ["payment", "checkout", "cart"],
-        "prd_failure_mode": "CONSTRAINT_LOST",  # Rate limit / timeout ceiling is a hard constraint
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
     {
-        "description": "Background sweeper job via JobSchedulerService: void payment sessions stuck in pending state for more than 5 minutes",
+        "description": "Background sweeper job via JobLoader: void payment sessions stuck in pending state for more than 5 minutes",
         "source_ref": "medusa-payment-timeout",
         "keywords": ["sweeper job", "pending payment session", "void", "5 minutes", "job scheduler"],
         "expected_symbols": [
-            "JobSchedulerService",
-            "AbstractPaymentProcessor.cancel",
-            "PaymentSessionService",
+            "JobLoader",
+            "AbstractPaymentProvider",
+            "IPaymentModuleService",
         ],
-        "expected_file_patterns": ["payment", "job", "scheduler"],
-        "prd_failure_mode": "DECISION_UNDOCUMENTED",  # Easy to skip the sweeper, not in obvious place
-        "status_at_ingest": "ungrounded",  # No existing code matches this
+        "expected_file_patterns": ["payment", "job"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "hard",
+        "status_at_ingest": "ungrounded",
     },
     {
         "description": "Emit payment.authorization_timeout event through EventBus when authorize call times out",
         "source_ref": "medusa-payment-timeout",
         "keywords": ["authorization_timeout", "event bus", "emit event", "payment event"],
         "expected_symbols": [
-            "EventBusService",
+            "IEventBusModuleService",
             "PaymentProviderService",
         ],
         "expected_file_patterns": ["payment", "event"],
         "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -61,10 +68,25 @@ MEDUSA_PAYMENT_TIMEOUT = [
         "keywords": ["validate provider response", "community provider", "undefined response", "typed error", "authorize response"],
         "expected_symbols": [
             "PaymentProviderService",
-            "AbstractPaymentProcessor",
+            "AbstractPaymentProvider",
         ],
         "expected_file_patterns": ["payment"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "hard",
+        "status_at_ingest": "pending",
+    },
+    # ── NEW: mined from medusa-payment-timeout transcript ──
+    {
+        "description": "On authorize timeout, return requires_more status instead of error so storefront retry and additional-auth redirect flow is reused",
+        "source_ref": "medusa-payment-timeout",
+        "keywords": ["requires_more", "storefront redirect", "additional auth", "checkout retry", "timeout status"],
+        "expected_symbols": [
+            "completeCartWorkflow",
+            "PaymentProviderService",
+        ],
+        "expected_file_patterns": ["payment", "cart", "complete"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "hard",
         "status_at_ingest": "pending",
     },
 ]
@@ -77,10 +99,11 @@ MEDUSA_PLUGIN_MIGRATION = [
         "keywords": ["plugin migration", "AbstractModuleService", "@Module decorator", "TransactionBaseService", "v2 module"],
         "expected_symbols": [
             "AbstractModuleService",
-            "PluginManager",
+            "getResolvedPlugins",
         ],
         "expected_file_patterns": ["plugin", "module", "service"],
         "prd_failure_mode": "CONTEXT_SCATTERED",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
     {
@@ -93,6 +116,7 @@ MEDUSA_PLUGIN_MIGRATION = [
         ],
         "expected_file_patterns": ["workflow", "subscriber"],
         "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -104,8 +128,9 @@ MEDUSA_PLUGIN_MIGRATION = [
             "OrderService",
         ],
         "expected_file_patterns": ["module", "plugin"],
-        "prd_failure_mode": "CONSTRAINT_LOST",  # This is a hard architectural constraint
-        "adversarial_type": "negation",  # "CAN'T reach into another module's internal services"
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "adversarial_type": "negation",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
     {
@@ -117,6 +142,35 @@ MEDUSA_PLUGIN_MIGRATION = [
         ],
         "expected_file_patterns": ["middleware", "router", "api"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    # ── NEW: mined from medusa-plugin-migration transcript ──
+    {
+        "description": "Use model.define utility to define data models in v2 — automatically provides CRUD methods on the module service",
+        "source_ref": "medusa-plugin-migration",
+        "keywords": ["model.define", "CRUD", "data model", "DML", "EntityBuilder"],
+        "expected_symbols": [
+            "model",
+            "AbstractModuleService",
+        ],
+        "expected_file_patterns": ["dml", "entity-builder", "model"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "Fulfillment plugin directly imports OrderService from core in v1 — in v2 must resolve through Modules registry by name",
+        "source_ref": "medusa-plugin-migration",
+        "keywords": ["fulfillment plugin", "OrderService", "Modules registry", "resolve by name", "cross-module"],
+        "expected_symbols": [
+            "OrderService",
+            "Modules",
+        ],
+        "expected_file_patterns": ["order", "module", "fulfillment"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "adversarial_type": "negation",
+        "difficulty": "hard",
         "status_at_ingest": "pending",
     },
 ]
@@ -124,15 +178,15 @@ MEDUSA_PLUGIN_MIGRATION = [
 # ── Medusa: Webhook Notifications (medusa-webhook-notifications.md) ───
 MEDUSA_WEBHOOKS = [
     {
-        "description": "Create WebhookEndpoint model with fields: URL, HMAC secret, subscribed event types, per-merchant",
+        "description": "Create webhook notification provider by extending AbstractNotificationProviderService — same base class used by email and SMS providers",
         "source_ref": "medusa-webhook-notifications",
-        "keywords": ["WebhookEndpoint", "merchant webhook", "webhook model", "HMAC secret", "event subscription"],
+        "keywords": ["webhook provider", "AbstractNotificationProviderService", "notification module", "extend base class"],
         "expected_symbols": [
-            "WebhookEndpoint",
             "AbstractNotificationProviderService",
         ],
-        "expected_file_patterns": ["webhook", "model", "notification"],
+        "expected_file_patterns": ["webhook", "notification"],
         "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -141,7 +195,8 @@ MEDUSA_WEBHOOKS = [
         "keywords": ["exponential backoff", "retry webhook", "dead letter queue", "6 retries", "Redis DLQ"],
         "expected_symbols": [],
         "expected_file_patterns": ["webhook", "retry"],
-        "prd_failure_mode": "CONSTRAINT_LOST",  # Retry policy is an explicit constraint
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "hard",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -151,6 +206,7 @@ MEDUSA_WEBHOOKS = [
         "expected_symbols": [],
         "expected_file_patterns": ["webhook", "rate"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "hard",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -160,7 +216,22 @@ MEDUSA_WEBHOOKS = [
         "expected_symbols": [],
         "expected_file_patterns": ["webhook"],
         "prd_failure_mode": "CONSTRAINT_LOST",
-        "adversarial_type": "blast_radius",  # Missing this causes double-processing at merchant side
+        "adversarial_type": "blast_radius",
+        "difficulty": "hard",
+        "status_at_ingest": "ungrounded",
+    },
+    # ── NEW: mined from medusa-webhook-notifications transcript ──
+    {
+        "description": "Webhook system built as standalone module linked via defineLink — not folded into notification module",
+        "source_ref": "medusa-webhook-notifications",
+        "keywords": ["standalone module", "defineLink", "module separation", "webhook module"],
+        "expected_symbols": [
+            "defineLink",
+            "AbstractNotificationProviderService",
+        ],
+        "expected_file_patterns": ["webhook", "link"],
+        "prd_failure_mode": "CONTEXT_SCATTERED",
+        "difficulty": "hard",
         "status_at_ingest": "ungrounded",
     },
 ]
@@ -172,11 +243,12 @@ SALEOR_CHECKOUT = [
         "source_ref": "saleor-checkout-extensibility",
         "keywords": ["checkout validation", "synchronous hooks", "ValidationError", "reject operation", "pre-validation"],
         "expected_symbols": [
-            "PluginManager",
+            "PluginsManager",
             "CheckoutError",
         ],
         "expected_file_patterns": ["checkout", "plugin", "validation"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
     {
@@ -186,7 +258,8 @@ SALEOR_CHECKOUT = [
         "expected_symbols": [],
         "expected_file_patterns": ["checkout", "plugin", "circuit"],
         "prd_failure_mode": "CONSTRAINT_LOST",
-        "adversarial_type": "multi_hop",  # Requires: checkout validation → timeout detection → circuit breaker → Redis state
+        "adversarial_type": "multi_hop",
+        "difficulty": "hard",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -198,6 +271,7 @@ SALEOR_CHECKOUT = [
         ],
         "expected_file_patterns": ["checkout", "cache"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -205,12 +279,40 @@ SALEOR_CHECKOUT = [
         "source_ref": "saleor-checkout-extensibility",
         "keywords": ["plugin data access", "serialized data", "security boundary", "not raw queryset"],
         "expected_symbols": [
-            "PluginManager",
+            "PluginsManager",
         ],
         "expected_file_patterns": ["plugin", "checkout"],
         "prd_failure_mode": "CONSTRAINT_LOST",
-        "adversarial_type": "negation",  # "Don't expose raw querysets to third-party plugins"
+        "adversarial_type": "negation",
+        "difficulty": "hard",
         "status_at_ingest": "pending",
+    },
+    # ── NEW: mined from saleor-checkout-extensibility transcript ──
+    {
+        "description": "Add EXTERNAL_VALIDATION_ERROR code to CheckoutError GraphQL type with metadata field for plugin-specific error details",
+        "source_ref": "saleor-checkout-extensibility",
+        "keywords": ["EXTERNAL_VALIDATION_ERROR", "CheckoutError", "error code", "metadata", "plugin error"],
+        "expected_symbols": [
+            "CheckoutError",
+            "CheckoutErrorCode",
+        ],
+        "expected_file_patterns": ["checkout", "error", "enums"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "easy",
+        "status_at_ingest": "ungrounded",
+    },
+    {
+        "description": "Use WebhookPlugin bridge pattern to route CHECKOUT_VALIDATE_COMPLETE events to third-party app webhook URLs — same pattern already used for tax calculations",
+        "source_ref": "saleor-checkout-extensibility",
+        "keywords": ["WebhookPlugin", "CHECKOUT_VALIDATE_COMPLETE", "bridge pattern", "tax webhook", "app webhook"],
+        "expected_symbols": [
+            "WebhookPlugin",
+            "PluginsManager",
+        ],
+        "expected_file_patterns": ["plugin", "webhook"],
+        "prd_failure_mode": "CONTEXT_SCATTERED",
+        "difficulty": "hard",
+        "status_at_ingest": "ungrounded",
     },
 ]
 
@@ -226,6 +328,7 @@ SALEOR_PERMISSIONS = [
         ],
         "expected_file_patterns": ["permission", "jwt", "auth"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
     {
@@ -238,7 +341,8 @@ SALEOR_PERMISSIONS = [
         ],
         "expected_file_patterns": ["checkout", "mutation", "permission"],
         "prd_failure_mode": "CONSTRAINT_LOST",
-        "adversarial_type": "temporal",  # Must gate BEFORE side effects, not after
+        "adversarial_type": "temporal",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
     {
@@ -250,6 +354,21 @@ SALEOR_PERMISSIONS = [
         ],
         "expected_file_patterns": ["app", "channel"],
         "prd_failure_mode": "CONTEXT_SCATTERED",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    # ── NEW: mined from saleor-graphql-permissions transcript ──
+    {
+        "description": "For orderUpdate mutation, resolve channel from the order's existing channel foreign key then check scoped permissions against it",
+        "source_ref": "saleor-graphql-permissions",
+        "keywords": ["orderUpdate", "channel foreign key", "resolve channel", "scoped permissions"],
+        "expected_symbols": [
+            "orderUpdate",
+            "check_permissions",
+        ],
+        "expected_file_patterns": ["order", "mutation", "permission"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
     },
 ]
@@ -266,6 +385,7 @@ SALEOR_ORDERS = [
         ],
         "expected_file_patterns": ["warehouse", "stock", "fulfillment"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -278,7 +398,8 @@ SALEOR_ORDERS = [
         ],
         "expected_file_patterns": ["fulfillment", "webhook", "order"],
         "prd_failure_mode": "CONSTRAINT_LOST",
-        "adversarial_type": "temporal",  # Timing bug: wrong order of operations
+        "adversarial_type": "temporal",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -290,6 +411,7 @@ SALEOR_ORDERS = [
         ],
         "expected_file_patterns": ["order", "fulfillment", "status"],
         "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -302,7 +424,48 @@ SALEOR_ORDERS = [
         ],
         "expected_file_patterns": ["warehouse", "stock", "migration"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
+    },
+    # ── NEW: mined from saleor-order-workflows transcript ──
+    {
+        "description": "Write management command to find and clean up orphaned Allocation records as safety net alongside the transaction fix",
+        "source_ref": "saleor-order-workflows",
+        "keywords": ["management command", "orphaned allocations", "cleanup", "Allocation", "safety net"],
+        "expected_symbols": [
+            "Allocation",
+            "Stock",
+        ],
+        "expected_file_patterns": ["warehouse", "allocation"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
+        "status_at_ingest": "ungrounded",
+    },
+    {
+        "description": "available_quantity on Stock is computed as quantity minus allocations — orphaned allocations silently under-report available inventory",
+        "source_ref": "saleor-order-workflows",
+        "keywords": ["available_quantity", "quantity minus allocations", "computed field", "stock", "inventory"],
+        "expected_symbols": [
+            "Stock",
+            "Allocation",
+        ],
+        "expected_file_patterns": ["warehouse", "stock", "models"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "hard",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "Order lifecycle tests must cover unfulfilled to partially returned to returned — existing tests only cover the happy path",
+        "source_ref": "saleor-order-workflows",
+        "keywords": ["order lifecycle", "partially returned", "returned", "fulfillment status", "test coverage"],
+        "expected_symbols": [
+            "update_order_status",
+            "Fulfillment",
+        ],
+        "expected_file_patterns": ["order", "fulfillment", "test"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
+        "status_at_ingest": "ungrounded",
     },
 ]
 
@@ -318,8 +481,9 @@ VENDURE_PRICING = [
             "ProductVariantService",
         ],
         "expected_file_patterns": ["pricing", "variant", "channel"],
-        "prd_failure_mode": "TRIBAL_KNOWLEDGE",  # Complex tax/currency logic only discussed once
-        "adversarial_type": "blast_radius",  # 30,000 records, must batch
+        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
+        "adversarial_type": "blast_radius",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -331,7 +495,60 @@ VENDURE_PRICING = [
         ],
         "expected_file_patterns": ["pricing", "variant"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
         "status_at_ingest": "pending",
+    },
+    # ── NEW: mined from vendure-channel-pricing transcript ──
+    {
+        "description": "syncPricesAcrossChannels is ineffective when channels use different currency codes — only syncs same-currency prices",
+        "source_ref": "vendure-channel-pricing",
+        "keywords": ["syncPricesAcrossChannels", "currency code", "default sync", "cross-channel pricing"],
+        "expected_symbols": [
+            "syncPricesAcrossChannels",
+        ],
+        "expected_file_patterns": ["pricing", "variant", "strategy"],
+        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
+        "difficulty": "easy",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "Price strategy must iterate per currency within each channel — channels can support multiple currencies like EU channel with EUR and GBP",
+        "source_ref": "vendure-channel-pricing",
+        "keywords": ["multiple currencies", "currency per channel", "iterate currencies", "onPriceUpdated"],
+        "expected_symbols": [
+            "ProductVariantPriceUpdateStrategy",
+            "onPriceUpdated",
+        ],
+        "expected_file_patterns": ["pricing", "variant", "strategy"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "Inject TaxRateService into custom price strategy via InjectableStrategy pattern to resolve applicable tax rate per variant tax category per channel zone",
+        "source_ref": "vendure-channel-pricing",
+        "keywords": ["InjectableStrategy", "TaxRateService", "inject service", "tax zone", "tax category"],
+        "expected_symbols": [
+            "TaxRateService",
+            "InjectableStrategy",
+        ],
+        "expected_file_patterns": ["tax", "strategy", "injectable"],
+        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "Admin UI surfaces active exchange rates via a custom field on the Channel entity",
+        "source_ref": "vendure-channel-pricing",
+        "keywords": ["custom field", "Channel", "exchange rate", "Admin UI"],
+        "expected_symbols": [
+            "Channel",
+            "CustomFieldConfig",
+        ],
+        "expected_file_patterns": ["channel", "config"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "hard",
+        "status_at_ingest": "ungrounded",
     },
 ]
 
@@ -347,6 +564,7 @@ VENDURE_CUSTOM_FIELDS = [
         ],
         "expected_file_patterns": ["config", "vendure-config"],
         "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -356,8 +574,62 @@ VENDURE_CUSTOM_FIELDS = [
         "expected_symbols": [],
         "expected_file_patterns": [],
         "prd_failure_mode": "TRIBAL_KNOWLEDGE",
-        "adversarial_type": "negation",  # "If you need to filter... don't use struct"
+        "adversarial_type": "negation",
+        "difficulty": "hard",
         "status_at_ingest": "ungrounded",
+    },
+    # ── NEW: mined from vendure-custom-fields transcript ──
+    {
+        "description": "brandStory localeText custom field on Product stored in translation table — automatically queryable via GraphQL with filter/sort inputs",
+        "source_ref": "vendure-custom-fields",
+        "keywords": ["brandStory", "localeText", "translation table", "Product custom field", "GraphQL filter"],
+        "expected_symbols": [
+            "CustomProductFields",
+            "CustomFieldConfig",
+        ],
+        "expected_file_patterns": ["custom-field", "product"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "hazmat boolean custom field on ProductVariant — non-nullable, default false, used to flag variants requiring special shipping",
+        "source_ref": "vendure-custom-fields",
+        "keywords": ["hazmat", "boolean", "ProductVariant", "custom field", "non-nullable"],
+        "expected_symbols": [
+            "CustomProductVariantFields",
+            "CustomFieldConfig",
+        ],
+        "expected_file_patterns": ["custom-field", "variant"],
+        "prd_failure_mode": "DECISION_UNDOCUMENTED",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "relation type custom field linking hazmat ProductVariant to ComplianceDocument — singular relation adds foreign key, list relation creates junction table",
+        "source_ref": "vendure-custom-fields",
+        "keywords": ["relation custom field", "ComplianceDocument", "foreign key", "junction table"],
+        "expected_symbols": [
+            "CustomProductVariantFields",
+            "CustomFieldConfig",
+        ],
+        "expected_file_patterns": ["custom-field", "variant"],
+        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
+        "difficulty": "hard",
+        "status_at_ingest": "ungrounded",
+    },
+    {
+        "description": "TypeScript declaration merging required for custom field type safety — extend CustomProductFields and CustomCustomerFields interfaces from @vendure/core",
+        "source_ref": "vendure-custom-fields",
+        "keywords": ["declaration merging", "TypeScript", "CustomProductFields", "CustomCustomerFields"],
+        "expected_symbols": [
+            "CustomProductFields",
+            "CustomCustomerFields",
+        ],
+        "expected_file_patterns": ["types", "custom"],
+        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
     },
 ]
 
@@ -374,6 +646,7 @@ VENDURE_SEARCH = [
         ],
         "expected_file_patterns": ["search", "plugin", "queue"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "easy",
         "status_at_ingest": "pending",
     },
     {
@@ -383,6 +656,7 @@ VENDURE_SEARCH = [
         "expected_symbols": [],
         "expected_file_patterns": ["worker", "config"],
         "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "hard",
         "status_at_ingest": "ungrounded",
     },
     {
@@ -392,7 +666,48 @@ VENDURE_SEARCH = [
         "expected_symbols": [],
         "expected_file_patterns": [],
         "prd_failure_mode": "CONSTRAINT_LOST",
-        "status_at_ingest": "ungrounded",  # Performance targets have no direct code mapping
+        "difficulty": "hard",
+        "status_at_ingest": "ungrounded",
+    },
+    # ── NEW: mined from vendure-search-reindexing transcript ──
+    {
+        "description": "Collection filter changes cascade into search index updates — 85 dynamic facet-based collections means updating a facet value triggers re-evaluation of every variant against every collection",
+        "source_ref": "vendure-search-reindexing",
+        "keywords": ["collection filters", "facet value", "cascade", "re-evaluation", "search index"],
+        "expected_symbols": [
+            "CollectionService",
+            "DefaultSearchPlugin",
+        ],
+        "expected_file_patterns": ["collection", "search", "plugin"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "adversarial_type": "blast_radius",
+        "difficulty": "hard",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "BullMQJobQueuePlugin replaces SqlJobQueueStrategy to eliminate polling overhead — SqlJobQueueStrategy polls every 200ms per queue generating hundreds of DB queries per second",
+        "source_ref": "vendure-search-reindexing",
+        "keywords": ["BullMQJobQueuePlugin", "SqlJobQueueStrategy", "polling", "200ms", "push-based"],
+        "expected_symbols": [
+            "BullMQJobQueuePlugin",
+            "SqlJobQueueStrategy",
+        ],
+        "expected_file_patterns": ["queue", "plugin", "job"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "easy",
+        "status_at_ingest": "pending",
+    },
+    {
+        "description": "Full reindex has N+1 query problem — iterates every variant, loads all relations, upserts into search table one by one",
+        "source_ref": "vendure-search-reindexing",
+        "keywords": ["N+1", "reindex", "variant relations", "upsert", "search table"],
+        "expected_symbols": [
+            "DefaultSearchPlugin",
+        ],
+        "expected_file_patterns": ["search", "plugin", "reindex"],
+        "prd_failure_mode": "CONSTRAINT_LOST",
+        "difficulty": "medium",
+        "status_at_ingest": "pending",
     },
 ]
 
@@ -421,3 +736,9 @@ ADVERSARIAL = [d for d in ALL_DECISIONS if d.get("adversarial_type")]
 
 # Decisions that should be ungrounded (no code exists yet)
 UNGROUNDED = [d for d in ALL_DECISIONS if d["status_at_ingest"] == "ungrounded"]
+
+# By difficulty
+BY_DIFFICULTY: dict[str, list[dict]] = {}
+for d in ALL_DECISIONS:
+    diff = d.get("difficulty", "medium")
+    BY_DIFFICULTY.setdefault(diff, []).append(d)
