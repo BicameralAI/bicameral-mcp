@@ -301,12 +301,17 @@ def _threshold_sweep(decisions: list[dict], adapter, top_k: int, verbose: bool =
 
     strategies: dict = {}
 
+    # Recompute Strategy A metrics at the user's top_k, not the wider top-20 pool.
     n = len(per_query)
-    a_mrr = sum(pq["mrr"] for pq in per_query) / n if n else 0
-    a_hits = sum(1 for pq in per_query if pq["hit"])
+    a_mrr_sum, a_hits = 0.0, 0
+    for pq in per_query:
+        fhr = pq.get("first_hit_rank")
+        if fhr is not None and fhr <= top_k:
+            a_mrr_sum += 1.0 / fhr
+            a_hits += 1
     strategies["A_no_threshold"] = {
         "description": "No threshold — top-K by RRF rank",
-        f"mrr@{top_k}": round(a_mrr, 4),
+        f"mrr@{top_k}": round(a_mrr_sum / n, 4) if n else 0,
         "hit_rate": round(a_hits / n, 4) if n else 0,
     }
 
