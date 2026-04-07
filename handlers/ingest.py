@@ -111,6 +111,23 @@ def _auto_ground_via_search(mappings: list[dict], repo: str) -> tuple[list[dict]
             top = next((h for h in hits if h.get("score", 0) >= AUTO_GROUND_THRESHOLD), None)
             if top:
                 file_symbols = db.lookup_by_file(top["file_path"])
+                # Rank file symbols by relevance to the description via fuzzy
+                # matching, rather than taking the first 5 by DB insertion order.
+                tokens = [
+                    w for w in re.findall(r"[a-zA-Z]{4,}", description)
+                    if w.lower() not in _STOP_WORDS
+                ]
+                if tokens:
+                    validated = locator.validate_symbols(tokens)
+                    matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
+                else:
+                    matched_ids = set()
+                file_symbol_ids = {row["id"] for row in file_symbols}
+                relevant_ids = matched_ids & file_symbol_ids
+                ranked = sorted(
+                    file_symbols,
+                    key=lambda r: (r["id"] not in relevant_ids, r["start_line"]),
+                )
                 code_regions = [
                     {
                         "symbol": row["qualified_name"] or row["name"],
@@ -120,7 +137,7 @@ def _auto_ground_via_search(mappings: list[dict], repo: str) -> tuple[list[dict]
                         "type": row["type"],
                         "purpose": description,
                     }
-                    for row in file_symbols[:5]
+                    for row in ranked[:3]
                 ]
                 if code_regions:
                     logger.info(
