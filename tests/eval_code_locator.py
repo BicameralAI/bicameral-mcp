@@ -181,6 +181,7 @@ def run_eval(
             "query": query[:60],
             "source_ref": d["source_ref"],
             "expected": list(expected_symbols),
+            "expected_files": expected_files,
             "retrieved": retrieved_details[:top_k],
             "hit": first_hit_rank is not None,
             "mrr": round(mrr, 4),
@@ -315,6 +316,9 @@ def _threshold_sweep(decisions: list[dict], adapter, top_k: int, verbose: bool =
         "hit_rate": round(a_hits / n, 4) if n else 0,
     }
 
+    def _sweep_is_relevant(r: dict, expected_syms: set, expected_files: list) -> bool:
+        return r["symbol"] in expected_syms or any(pat in r["file"] for pat in expected_files)
+
     b_sweep = []
     for rt in [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60]:
         hits, mrr_sum = 0, 0.0
@@ -327,8 +331,9 @@ def _threshold_sweep(decisions: list[dict], adapter, top_k: int, verbose: bool =
                 continue
             filtered = [r for r in retrieved if r["score"] >= max_score * rt][:top_k]
             expected = set(pq.get("expected", []))
+            expected_files = pq.get("expected_files", [])
             for rank, r in enumerate(filtered):
-                if r["symbol"] in expected:
+                if _sweep_is_relevant(r, expected, expected_files):
                     hits += 1
                     mrr_sum += 1.0 / (rank + 1)
                     break
@@ -342,8 +347,9 @@ def _threshold_sweep(decisions: list[dict], adapter, top_k: int, verbose: bool =
             retrieved = pq.get("retrieved", [])
             filtered = [r for r in retrieved if r["score"] >= at][:top_k]
             expected = set(pq.get("expected", []))
+            expected_files = pq.get("expected_files", [])
             for rank, r in enumerate(filtered):
-                if r["symbol"] in expected:
+                if _sweep_is_relevant(r, expected, expected_files):
                     hits += 1
                     mrr_sum += 1.0 / (rank + 1)
                     break
@@ -353,7 +359,7 @@ def _threshold_sweep(decisions: list[dict], adapter, top_k: int, verbose: bool =
     strategies["per_repo"] = _per_repo_metrics(per_query, top_k)
 
     if verbose:
-        print(f"\n  Strategy A (no threshold): MRR@{top_k}={a_mrr:.3f} Hit={a_hits}/{n}")
+        print(f"\n  Strategy A (no threshold): MRR@{top_k}={a_mrr_sum / n if n else 0:.3f} Hit={a_hits}/{n}")
         best_b = max(b_sweep, key=lambda x: x[f"mrr@{top_k}"])
         print(f"  Strategy B best: t={best_b['t']} → MRR@{top_k}={best_b[f'mrr@{top_k}']:.3f}")
         best_c = max(c_sweep, key=lambda x: x[f"mrr@{top_k}"])
