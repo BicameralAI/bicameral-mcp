@@ -171,8 +171,11 @@ def rebuild_index(repo_path: str, config, force: bool = False) -> None:
             _clear_legacy_index_tables(config.sqlite_db)
         build_index(repo, config.sqlite_db)
 
+    from code_locator.indexing.sqlite_store import SymbolDB as _SymDB
+    _sdb = _SymDB(config.sqlite_db)
     bm25 = Bm25sClient()
-    bm25.index(repo, index_dir)
+    bm25.index(repo, index_dir, symbol_db=_sdb)
+    _sdb.close()
     record_index_state(config.sqlite_db, repo)
 
     count = _symbol_count(config.sqlite_db)
