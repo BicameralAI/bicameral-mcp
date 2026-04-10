@@ -31,7 +31,7 @@ def repo_path() -> str:
 
 @pytest.fixture
 def surreal_url() -> str:
-    return os.getenv("SURREAL_URL", "ws://localhost:8001")
+    return os.getenv("SURREAL_URL", "memory://")
 
 
 @pytest.fixture
