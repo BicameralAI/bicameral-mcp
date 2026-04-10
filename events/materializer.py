@@ -62,11 +62,12 @@ class EventMaterializer:
             key=lambda f: f.name,  # lexicographic = chronological
         )
 
-        # Filter to new events
+        # Filter to new events (>= to handle multiple events in the same second;
+        # upsert idempotency makes re-applying safe)
         new_events = [
             f for f in event_files
-            if self._extract_timestamp(f.name) > watermark
-        ]
+            if self._extract_timestamp(f.name) >= watermark
+        ] if watermark else event_files
 
         if not new_events:
             return 0

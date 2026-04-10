@@ -142,7 +142,7 @@ class TestEventMaterializer:
         assert len(calls) == 1
         assert calls[0][0] == "ingest"
 
-    def test_watermark_prevents_replay(self, tmp_path):
+    def test_watermark_prevents_replay_of_older_events(self, tmp_path):
         import asyncio
         from events.materializer import EventMaterializer
 
@@ -164,10 +164,16 @@ class TestEventMaterializer:
         asyncio.run(mat.replay_new_events(MockAdapter()))
         assert len(calls) == 1
 
-        # Second replay — watermark should prevent re-processing
+        # Second replay — same-second event re-applied (idempotent), but
+        # an older event added retroactively would be skipped
         calls.clear()
+        self._write_event_file(
+            events_dir, "b@test.com", "20260410T170000Z",
+            "ingest.completed", {"repo": "old", "mappings": []},
+        )
         asyncio.run(mat.replay_new_events(MockAdapter()))
-        assert len(calls) == 0
+        # Only the watermark-second event re-applied, not the older one
+        assert all(c["repo"] == "test" for c in calls)
 
     def test_replays_in_chronological_order(self, tmp_path):
         import asyncio

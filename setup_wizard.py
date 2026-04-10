@@ -151,26 +151,36 @@ def _detect_runner() -> tuple[str, list[str]]:
     return (python, ["-m", "bicameral_mcp"])
 
 
-def _build_config(repo_path: Path) -> dict:
-    """Build the MCP server config object."""
+def _build_config(repo_path: Path, mode: str = "solo") -> dict:
+    """Build the MCP server config object.
+
+    In team mode, local DBs go under .bicameral/local/ (gitignored)
+    so they don't leak into the tracked events directory.
+    """
     command, args = _detect_runner()
     data_dir = repo_path / ".bicameral"
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    if mode == "team":
+        local_dir = data_dir / "local"
+        local_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        local_dir = data_dir
 
     return {
         "command": command,
         "args": args,
         "env": {
             "REPO_PATH": str(repo_path),
-            "SURREAL_URL": f"surrealkv://{data_dir / 'ledger.db'}",
-            "CODE_LOCATOR_SQLITE_DB": str(data_dir / "code-graph.db"),
+            "SURREAL_URL": f"surrealkv://{local_dir / 'ledger.db'}",
+            "CODE_LOCATOR_SQLITE_DB": str(local_dir / "code-graph.db"),
         },
     }
 
 
-def _write_json_config(repo_path: Path, config_path: Path) -> None:
+def _write_json_config(repo_path: Path, config_path: Path, mode: str = "solo") -> None:
     """Write MCP server config to a JSON file (Claude Code / Cursor)."""
-    config = _build_config(repo_path)
+    config = _build_config(repo_path, mode=mode)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = {}
@@ -184,9 +194,9 @@ def _write_json_config(repo_path: Path, config_path: Path) -> None:
     config_path.write_text(json.dumps(existing, indent=2) + "\n")
 
 
-def _write_toml_config(repo_path: Path, config_path: Path) -> None:
+def _write_toml_config(repo_path: Path, config_path: Path, mode: str = "solo") -> None:
     """Write MCP server config to a TOML file (Codex)."""
-    config = _build_config(repo_path)
+    config = _build_config(repo_path, mode=mode)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the [mcp_servers.bicameral] TOML section
@@ -224,14 +234,14 @@ def _write_toml_config(repo_path: Path, config_path: Path) -> None:
     config_path.write_text("\n".join(lines) + "\n")
 
 
-def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
+def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo") -> bool:
     """Install MCP config for a specific coding agent."""
     agent = AGENTS[agent_key]
     config_path = agent["config_path"](repo_path)
 
     # For Claude Code, try CLI first
     if agent_key == "claude" and shutil.which("claude"):
-        config = _build_config(repo_path)
+        config = _build_config(repo_path, mode=mode)
         config_json = json.dumps(config)
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
@@ -247,7 +257,7 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
 
     # For Codex, try CLI first
     if agent_key == "codex" and shutil.which("codex"):
-        config = _build_config(repo_path)
+        config = _build_config(repo_path, mode=mode)
         env_args = []
         for k, v in config["env"].items():
             env_args.extend(["--env", f"{k}={v}"])
@@ -261,9 +271,9 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
 
     # Fallback: write config file directly
     if agent.get("config_format") == "toml":
-        _write_toml_config(repo_path, config_path)
+        _write_toml_config(repo_path, config_path, mode=mode)
     else:
-        _write_json_config(repo_path, config_path)
+        _write_json_config(repo_path, config_path, mode=mode)
 
     print(f"  {agent['name']}: wrote {config_path}")
     return True
@@ -409,7 +419,7 @@ def run_setup(repo_hint: str | None = None) -> int:
     # Step 5: Install MCP config for each agent
     print()
     for agent_key in agents:
-        _install_for_agent(agent_key, repo_path)
+        _install_for_agent(agent_key, repo_path, mode=collab_mode)
 
     # Step 6: Install skills (Claude Code only)
     if "claude" in agents:
