@@ -164,7 +164,16 @@ claude mcp add-json bicameral --scope local '{
 ### Local development
 
 ```bash
+# Option A: pipx editable install (puts bicameral-mcp on PATH, uses local source)
+pipx install -e . --force
+
+# Option B: pip editable install (venv-local, includes test deps)
 pip install -e ".[test]"
+```
+
+After either option:
+
+```bash
 bicameral-mcp setup           # interactive config
 bicameral-mcp --smoke-test    # verify all 9 tools register correctly
 bicameral-mcp                 # start MCP server (stdio)
