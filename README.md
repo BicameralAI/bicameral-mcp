@@ -476,25 +476,25 @@ Bicameral runs in one of two modes, set during `bicameral-mcp setup` or in `.bic
 
 | | Solo (default) | Team |
 |---|---|---|
-| **Who** | Single developer | 2+ developers on the same repo |
-| **Decisions stored** | Local DB only (`ledger.db`) | Local DB **+ git-committed event files** |
-| **Shared via** | Nothing -- local only | Normal `git push` / `git pull` |
+| **Who** | Individual testing or evaluation | Any mix of roles -- devs, PMs, designers |
+| **Data** | Local DB only | Local DB + git-committed event files |
+| **Shared via** | Nothing -- fully isolated, zero impact on teammates | Normal `git push` / `git pull` |
 | **Merge conflicts** | N/A | Zero -- per-user directories, append-only files |
-| **On startup** | Connects to local DB | Connects to local DB, then materializes new peer events |
 
-**Team mode layout:**
+**Solo mode** is ideal for trying Bicameral without affecting your team's workflow. All data stays in a gitignored local DB -- no event files, no commits, no side effects. Switch to team mode when you're ready to share.
+
+**Team mode** enables cross-role collaboration through git. A PM ingests a PRD and sprint transcript; when a developer pulls, `bicameral.search` surfaces those decisions as coding context and `bicameral.status` shows what still needs implementation. The PM never touches the code; the developer never sits through the meeting. The decision graph is the handoff.
 
 ```
 .bicameral/
-├── events/              ← committed to git (shared truth)
-│   ├── jin@co.com/      ← your events
-│   └── peer@co.com/     ← teammate's events (arrive via git pull)
+├── events/              ← committed to git (shared decisions)
+│   ├── pm@co.com/       ← PM's ingested PRDs and transcripts
+│   └── dev@co.com/      ← developer's commit syncs
 ├── config.yaml          ← committed (mode: solo | team)
-└── local/               ← gitignored (local materialized state)
-    └── ledger.db
+└── local/               ← gitignored (materialized state)
 ```
 
-**Switching modes:** Edit `.bicameral/config.yaml` and set `mode: team` or `mode: solo`. On next server startup, the adapter factory picks the right path. No data migration needed -- team mode replays all existing events into the local DB automatically.
+**Switching modes:** Set `mode: team` or `mode: solo` in `.bicameral/config.yaml`. No data migration needed.
 
 ---
 
