@@ -119,7 +119,76 @@ class DetectDriftResponse(BaseModel):
 # (LinkCommitResponse defined above alongside SearchDecisionsResponse)
 
 
-# ── Tool 5: /ingest ───────────────────────────────────────────────────
+# ── Tool 5: /ingest — INPUT contracts ────────────────────────────────
+
+
+class IngestSpan(BaseModel):
+    """Source excerpt from a meeting, document, or manual input."""
+    text: str = ""
+    source_type: str = "manual"       # transcript | notion | document | manual
+    source_ref: str = ""              # meeting ID, Notion page ID, etc.
+    speakers: list[str] = []
+    meeting_date: str = ""
+
+
+class IngestCodeRegion(BaseModel):
+    """Pre-resolved code region for a mapping."""
+    symbol: str
+    file_path: str
+    start_line: int = 0
+    end_line: int = 0
+    type: str = "function"
+    purpose: str = ""
+
+
+class IngestMapping(BaseModel):
+    """One decision-to-code mapping in the internal pipeline format."""
+    intent: str
+    span: IngestSpan = IngestSpan()
+    symbols: list[str] = []
+    code_regions: list[IngestCodeRegion] = []
+
+
+class IngestDecision(BaseModel):
+    """One decision in the natural LLM-generated format."""
+    id: str = ""
+    title: str = ""
+    description: str = ""
+    status: str = ""
+    participants: list[str] = []
+
+
+class IngestActionItem(BaseModel):
+    owner: str = "unassigned"
+    action: str = ""
+    due: str = ""
+
+
+class IngestPayload(BaseModel):
+    """Ingest input — accepts EITHER mappings (internal) or decisions (natural LLM).
+
+    If ``mappings`` is present, it's used directly (internal pipeline format).
+    If ``decisions`` is present, they are normalized into mappings automatically.
+    """
+    # Common fields
+    repo: str = ""
+    commit_hash: str = ""
+    query: str = ""
+
+    # Internal pipeline format
+    mappings: list[IngestMapping] = []
+
+    # Natural LLM-generated format (normalized into mappings if present)
+    source: str = "manual"
+    title: str = ""
+    date: str = ""
+    participants: list[str] = []
+    decisions: list[IngestDecision] = []
+    action_items: list[IngestActionItem] = []
+    open_questions: list[str] = []
+
+
+# ── Tool 5: /ingest — RESPONSE contracts ─────────────────────────────
 
 
 class IngestStats(BaseModel):
