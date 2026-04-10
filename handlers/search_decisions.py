@@ -2,28 +2,23 @@
 
 Pre-flight for implementation planning: given a query, surface past decisions
 in the same area with their status. Auto-triggers link_commit(HEAD) first.
-
-Code location is now the host LLM's responsibility via the MCP-native
-validate_symbols, search_code, and get_neighbors tools.
 """
 
 from __future__ import annotations
 
-from adapters.ledger import get_ledger
 from contracts import CodeRegionSummary, DecisionMatch, LinkCommitResponse, SearchDecisionsResponse
 from handlers.link_commit import handle_link_commit
 
 
 async def handle_search_decisions(
+    ctx,
     query: str,
     max_results: int = 10,
     min_confidence: float = 0.5,
 ) -> SearchDecisionsResponse:
-    # Auto-trigger link_commit(HEAD) first — ensures ledger reflects latest committed state
-    sync_status: LinkCommitResponse = await handle_link_commit("HEAD")
+    sync_status: LinkCommitResponse = await handle_link_commit(ctx, "HEAD")
 
-    ledger = get_ledger()
-    raw_matches = await ledger.search_by_query(query, max_results=max_results, min_confidence=min_confidence)
+    raw_matches = await ctx.ledger.search_by_query(query, max_results=max_results, min_confidence=min_confidence)
 
     matches: list[DecisionMatch] = []
     suggested_review: list[str] = []
@@ -39,7 +34,6 @@ async def handle_search_decisions(
             for r in m.get("code_regions", [])
         ]
 
-        # Derive status: no regions → ungrounded; otherwise read from stored region status
         if not regions:
             status = "ungrounded"
         else:

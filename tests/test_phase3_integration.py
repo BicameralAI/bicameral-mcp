@@ -23,6 +23,7 @@ import pytest
 
 from adapters.code_locator import get_code_locator
 from adapters.ledger import get_ledger, reset_ledger_singleton
+from context import BicameralContext
 from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
 from handlers.ingest import handle_ingest
@@ -43,6 +44,12 @@ def setup_env(monkeypatch, tmp_path):
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     yield
     reset_ledger_singleton()
+
+
+@pytest.fixture
+def ctx():
+    """Build BicameralContext from test env vars."""
+    return BicameralContext.from_env()
 
 
 def _dump(name: str, data: dict | list) -> None:
@@ -180,7 +187,7 @@ def _build_payload_from_real_code(
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_constraint_lost__search_surfaces_prior_decisions():
+async def test_constraint_lost__search_surfaces_prior_decisions(ctx):
     """After ingesting decisions grounded to real code, searching for
     related work surfaces the constraint BEFORE a developer starts coding."""
     repo = os.environ["REPO_PATH"]
@@ -214,12 +221,13 @@ async def test_constraint_lost__search_surfaces_prior_decisions():
         source_ref="sprint-14-planning-2026-03-20",
     )
 
-    ingest_result = await handle_ingest(payload)
+    ingest_result = await handle_ingest(ctx, payload)
     assert ingest_result.ingested
     _dump("01_constraint_lost_ingest", _response_dict(ingest_result))
 
     # Developer starts working on "idempotent ingestion" — search surfaces the prior decision
     search_result = await handle_search_decisions(
+        ctx,
         query="idempotent ingest ledger",
         min_confidence=0.1,
     )
@@ -242,7 +250,7 @@ async def test_constraint_lost__search_surfaces_prior_decisions():
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_context_scattered__ingest_unifies_sources():
+async def test_context_scattered__ingest_unifies_sources(ctx):
     """Ingesting from transcript and PRD produces a unified graph
     where decisions from both sources are queryable together."""
     repo = os.environ["REPO_PATH"]
@@ -290,8 +298,8 @@ async def test_context_scattered__ingest_unifies_sources():
         source_ref="prd-code-locator-v1",
     )
 
-    r1 = await handle_ingest(transcript_payload, source_scope="meetings", cursor="2026-03-24")
-    r2 = await handle_ingest(prd_payload, source_scope="prds", cursor="prd-cl-v1")
+    r1 = await handle_ingest(ctx, transcript_payload, source_scope="meetings", cursor="2026-03-24")
+    r2 = await handle_ingest(ctx, prd_payload, source_scope="prds", cursor="prd-cl-v1")
     _dump("02_context_scattered_ingest_transcript", _response_dict(r1))
     _dump("02_context_scattered_ingest_prd", _response_dict(r2))
 
@@ -300,7 +308,7 @@ async def test_context_scattered__ingest_unifies_sources():
     assert r2.source_cursor.source_scope == "prds"
 
     # Unified query across both sources
-    status = await handle_decision_status(filter="all")
+    status = await handle_decision_status(ctx, filter="all")
     _dump("02_context_scattered_unified_status", _response_dict(status))
 
     source_types = {d.source_type for d in status.decisions}
@@ -319,7 +327,7 @@ async def test_context_scattered__ingest_unifies_sources():
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_decision_undocumented__status_surfaces_ungrounded():
+async def test_decision_undocumented__status_surfaces_ungrounded(ctx):
     """Ungrounded intents (no code region mapped) are explicitly surfaced
     so verbal decisions don't silently disappear."""
     repo = os.environ["REPO_PATH"]
@@ -347,7 +355,7 @@ async def test_decision_undocumented__status_surfaces_ungrounded():
         source_ref="sprint-planning-2026-03-22",
     )
 
-    ingest_result = await handle_ingest(payload)
+    ingest_result = await handle_ingest(ctx, payload)
     _dump("03_undocumented_ingest", _response_dict(ingest_result))
 
     assert ingest_result.stats.ungrounded >= 1
@@ -355,7 +363,7 @@ async def test_decision_undocumented__status_surfaces_ungrounded():
         f"Expected 'Zylorphian' in ungrounded list, got: {ingest_result.ungrounded_intents}"
     )
 
-    status = await handle_decision_status(filter="all")
+    status = await handle_decision_status(ctx, filter="all")
     _dump("03_undocumented_status_all", _response_dict(status))
 
     ungrounded = [d for d in status.decisions if d.status == "ungrounded"]
@@ -375,7 +383,7 @@ async def test_decision_undocumented__status_surfaces_ungrounded():
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_repeated_explanation__search_returns_full_provenance():
+async def test_repeated_explanation__search_returns_full_provenance(ctx):
     """When a developer searches, they get the full provenance chain:
     who decided it, when, what real code it maps to."""
     repo = os.environ["REPO_PATH"]
@@ -403,10 +411,11 @@ async def test_repeated_explanation__search_returns_full_provenance():
         repo=repo,
         source_ref="design-review-2026-03-25",
     )
-    await handle_ingest(payload)
+    await handle_ingest(ctx, payload)
 
     # Developer asks about symbol extraction — gets full provenance
     search_result = await handle_search_decisions(
+        ctx,
         query="tree-sitter symbol extraction parsing",
         min_confidence=0.1,
     )
@@ -431,7 +440,7 @@ async def test_repeated_explanation__search_returns_full_provenance():
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_tribal_knowledge__drift_surfaces_decisions_for_file():
+async def test_tribal_knowledge__drift_surfaces_decisions_for_file(ctx):
     """When reviewing a file, drift detection surfaces every decision
     that touches it — using real file paths from the code locator."""
     repo = os.environ["REPO_PATH"]
@@ -465,10 +474,10 @@ async def test_tribal_knowledge__drift_surfaces_decisions_for_file():
         repo=repo,
         source_ref="design-review-2026-03-26",
     )
-    await handle_ingest(payload)
+    await handle_ingest(ctx, payload)
 
     # Drift check on the real file
-    drift_result = await handle_detect_drift(target_file)
+    drift_result = await handle_detect_drift(ctx, target_file)
     _dump("05_tribal_knowledge_drift", _response_dict(drift_result))
 
     assert drift_result.file_path == target_file
@@ -482,8 +491,8 @@ async def test_tribal_knowledge__drift_surfaces_decisions_for_file():
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_full_lifecycle_graph_integrity():
-    """Ingest → link_commit → status → search → drift — verify the graph
+async def test_full_lifecycle_graph_integrity(ctx):
+    """Ingest -> link_commit -> status -> search -> drift — verify the graph
     is internally consistent at each step. All code references are real."""
     repo = os.environ["REPO_PATH"]
     adapter = get_code_locator()
@@ -517,24 +526,24 @@ async def test_full_lifecycle_graph_integrity():
         source_ref="lifecycle-test",
     )
 
-    r_ingest = await handle_ingest(payload)
+    r_ingest = await handle_ingest(ctx, payload)
     assert r_ingest.ingested
     assert r_ingest.stats.intents_created >= 2
     _dump("06_lifecycle_01_ingest", _response_dict(r_ingest))
 
     # Step 2: Link commit
-    r_link = await handle_link_commit("HEAD")
+    r_link = await handle_link_commit(ctx, "HEAD")
     assert r_link.commit_hash != ""
     _dump("06_lifecycle_02_link_commit", _response_dict(r_link))
 
     # Step 3: Status
-    r_status = await handle_decision_status(filter="all")
+    r_status = await handle_decision_status(ctx, filter="all")
     total = sum(r_status.summary.values())
     assert total == len(r_status.decisions)
     _dump("06_lifecycle_03_status", _response_dict(r_status))
 
     # Step 4: Search
-    r_search = await handle_search_decisions(query="BM25 search provenance", min_confidence=0.1)
+    r_search = await handle_search_decisions(ctx, query="BM25 search provenance", min_confidence=0.1)
     assert len(r_search.matches) >= 1
     _dump("06_lifecycle_04_search", _response_dict(r_search))
 
@@ -549,7 +558,7 @@ async def test_full_lifecycle_graph_integrity():
             break
 
     if drift_file:
-        r_drift = await handle_detect_drift(drift_file)
+        r_drift = await handle_detect_drift(ctx, drift_file)
         _dump("06_lifecycle_05_drift", _response_dict(r_drift))
 
     # Step 6: Full graph dump

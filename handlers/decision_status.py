@@ -2,9 +2,6 @@
 
 Surfaces implementation status of all tracked decisions.
 Auto-syncs the ledger to HEAD before returning status.
-
-Phase 0: backed by MockLedgerAdapter fixture data
-Phase 2: backed by SurrealDBLedgerAdapter with real graph traversal
 """
 
 from __future__ import annotations
@@ -12,13 +9,13 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from adapters.ledger import get_ledger
 from contracts import CodeRegionSummary, DecisionStatusEntry, DecisionStatusResponse
 
 logger = logging.getLogger(__name__)
 
 
 async def handle_decision_status(
+    ctx,
     filter: str = "all",
     since: str | None = None,
     ref: str = "HEAD",
@@ -26,18 +23,16 @@ async def handle_decision_status(
     # Auto-sync to HEAD so status reflects current code state
     try:
         from handlers.link_commit import handle_link_commit
-        await handle_link_commit(ref)
+        await handle_link_commit(ctx, ref)
     except Exception as exc:
         logger.warning("[status] auto-sync failed: %s", exc)
 
-    ledger = get_ledger()
-    decisions_raw = await ledger.get_all_decisions(filter=filter)
+    decisions_raw = await ctx.ledger.get_all_decisions(filter=filter)
 
     entries: list[DecisionStatusEntry] = []
     summary: dict[str, int] = {"reflected": 0, "drifted": 0, "pending": 0, "ungrounded": 0}
 
     for d in decisions_raw:
-        # Filter by since if provided
         if since and d.get("ingested_at", "") < since:
             continue
 

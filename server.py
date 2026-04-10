@@ -31,7 +31,7 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
-from adapters.code_locator import get_code_locator
+from context import BicameralContext
 from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
 from handlers.ingest import handle_ingest
@@ -302,29 +302,36 @@ async def list_tools() -> list[Tool]:
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     import json
 
+    ctx = BicameralContext.from_env()
+
     if name in ("bicameral.status", "decision_status"):
         result = await handle_decision_status(
+            ctx,
             filter=arguments.get("filter", "all"),
             since=arguments.get("since"),
             ref=arguments.get("ref", "HEAD"),
         )
     elif name in ("bicameral.search", "search_decisions"):
         result = await handle_search_decisions(
+            ctx,
             query=arguments["query"],
             max_results=arguments.get("max_results", 10),
             min_confidence=arguments.get("min_confidence", 0.5),
         )
     elif name in ("bicameral.drift", "detect_drift"):
         result = await handle_detect_drift(
+            ctx,
             file_path=arguments["file_path"],
             use_working_tree=arguments.get("use_working_tree", True),
         )
     elif name in ("bicameral.link_commit", "link_commit"):
         result = await handle_link_commit(
+            ctx,
             commit_hash=arguments.get("commit_hash", "HEAD"),
         )
     elif name in ("bicameral.ingest", "ingest"):
         result = await handle_ingest(
+            ctx,
             payload=arguments["payload"],
             source_scope=arguments.get("source_scope", "default"),
             cursor=arguments.get("cursor", ""),
@@ -337,24 +344,20 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
     # ── Code locator tools ────────────────────────────────────────
     elif name == "validate_symbols":
-        adapter = get_code_locator()
-        data = await asyncio.to_thread(adapter.validate_symbols, arguments["candidates"])
+        data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
     elif name == "search_code":
-        adapter = get_code_locator()
         data = await asyncio.to_thread(
-            adapter.search_code,
+            ctx.code_graph.search_code,
             arguments["query"],
             arguments.get("symbol_ids"),
         )
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
     elif name == "get_neighbors":
-        adapter = get_code_locator()
-        data = await asyncio.to_thread(adapter.get_neighbors, arguments["symbol_id"])
+        data = await asyncio.to_thread(ctx.code_graph.get_neighbors, arguments["symbol_id"])
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
     elif name == "extract_symbols":
-        adapter = get_code_locator()
-        data = await adapter.extract_symbols(arguments["file_path"])
+        data = await ctx.code_graph.extract_symbols(arguments["file_path"])
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
     else:
         raise ValueError(f"Unknown tool: {name}")

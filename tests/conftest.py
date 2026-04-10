@@ -35,6 +35,13 @@ def surreal_url() -> str:
 
 
 @pytest.fixture
+def ctx():
+    """Build a BicameralContext from current env (SURREAL_URL, REPO_PATH)."""
+    from context import BicameralContext
+    return BicameralContext.from_env()
+
+
+@pytest.fixture
 def sample_transcript() -> str:
     return """\
 ## Architecture Sync — 2026-03-24

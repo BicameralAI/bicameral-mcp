@@ -1,18 +1,23 @@
 """Code locator adapter — MCP-native code locator backed by real index.
 
 Exposes validate_symbols, search_code, get_neighbors, and
-extract_symbols as direct methods. The host LLM orchestrates tool calls.
+extract_symbols as direct methods. Also provides ground_mappings()
+and resolve_symbols() for auto-grounding decisions to code.
 """
 
 from __future__ import annotations
 
+import logging
 import os
+import re
 from pathlib import Path
 
 from code_locator_runtime import (
     ensure_index_matches_repo,
     ensure_runtime_env,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def get_code_locator():
@@ -137,3 +142,185 @@ class RealCodeLocatorAdapter:
                 "end_line": rec.end_line,
             })
         return symbols
+
+    # ── Grounding methods (moved from handlers/ingest.py) ────────────
+
+    _AUTO_GROUND_THRESHOLD = 0.5
+
+    _STOP_WORDS = frozenset({
+        "the", "and", "for", "that", "this", "with", "are", "from", "have",
+        "will", "when", "then", "been", "also", "into", "about", "should",
+        "must", "need", "each", "they", "their", "there", "which", "where",
+        "what", "than", "some", "more", "such", "only", "very", "just",
+        "like", "make", "made", "use", "used", "using", "after", "before",
+    })
+
+    def _regions_from_symbol_ids(self, symbol_ids: list[int], db, description: str) -> list[dict]:
+        """Resolve a list of symbol IDs to code_region dicts."""
+        regions = []
+        seen: set[int] = set()
+        for sid in symbol_ids:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            row = db.lookup_by_id(sid)
+            if row:
+                regions.append({
+                    "symbol": row["qualified_name"] or row["name"],
+                    "file_path": row["file_path"],
+                    "start_line": row["start_line"],
+                    "end_line": row["end_line"],
+                    "type": row["type"],
+                    "purpose": description,
+                })
+        return regions
+
+    def ground_mappings(self, mappings: list[dict]) -> tuple[list[dict], int]:
+        """Auto-ground mappings with no code_regions via BM25 + fuzzy matching.
+
+        Two-stage approach:
+        1. BM25 search on full description -> top file -> expand to symbols
+        2. Fuzzy token matching: tokenise description -> rapidfuzz against
+           symbol names -> direct symbol lookup
+
+        Returns (resolved_mappings, grounding_deferred_count).
+        """
+        try:
+            self._ensure_initialized()
+            db = self._validate_tool._db
+        except Exception as exc:
+            logger.warning("[ground] auto-ground unavailable: %s", exc)
+            deferred = sum(1 for m in mappings if not m.get("code_regions"))
+            return mappings, deferred
+
+        resolved = []
+        for mapping in mappings:
+            if mapping.get("code_regions"):
+                resolved.append(mapping)
+                continue
+
+            description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
+            if not description:
+                resolved.append(mapping)
+                continue
+
+            code_regions = []
+
+            # Stage 1: BM25 file search
+            try:
+                hits = self.search_code(description)
+                top = next((h for h in hits if h.get("score", 0) >= self._AUTO_GROUND_THRESHOLD), None)
+                if top:
+                    file_symbols = db.lookup_by_file(top["file_path"])
+                    tokens = [
+                        w for w in re.findall(r"[a-zA-Z]{4,}", description)
+                        if w.lower() not in self._STOP_WORDS
+                    ]
+                    if tokens:
+                        validated = self.validate_symbols(tokens)
+                        matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
+                    else:
+                        matched_ids = set()
+                    file_symbol_ids = {row["id"] for row in file_symbols}
+                    relevant_ids = matched_ids & file_symbol_ids
+                    ranked = sorted(
+                        file_symbols,
+                        key=lambda r: (r["id"] not in relevant_ids, r["start_line"]),
+                    )
+                    code_regions = [
+                        {
+                            "symbol": row["qualified_name"] or row["name"],
+                            "file_path": row["file_path"],
+                            "start_line": row["start_line"],
+                            "end_line": row["end_line"],
+                            "type": row["type"],
+                            "purpose": description,
+                        }
+                        for row in ranked[:3]
+                    ]
+                    if code_regions:
+                        logger.info(
+                            "[ground] stage1 BM25 grounded '%s' -> %s (%d symbols, score=%.2f)",
+                            description[:60], top["file_path"], len(code_regions), top["score"],
+                        )
+            except Exception as exc:
+                logger.warning("[ground] BM25 search failed for '%s': %s", description[:60], exc)
+
+            # Stage 2: fuzzy token matching
+            if not code_regions:
+                tokens = [
+                    w for w in re.findall(r"[a-zA-Z]{4,}", description)
+                    if w.lower() not in self._STOP_WORDS
+                ]
+                if tokens:
+                    try:
+                        validated = self.validate_symbols(tokens)
+                        symbol_ids = [v["symbol_id"] for v in validated if v.get("symbol_id")]
+                        code_regions = self._regions_from_symbol_ids(symbol_ids[:5], db, description)
+                        if code_regions:
+                            matched = [v["matched_symbol"] for v in validated[:3]]
+                            logger.info(
+                                "[ground] stage2 fuzzy grounded '%s' -> %s",
+                                description[:60], matched,
+                            )
+                    except Exception as exc:
+                        logger.warning("[ground] fuzzy token match failed: %s", exc)
+
+            if code_regions:
+                resolved.append({**mapping, "code_regions": code_regions})
+            else:
+                logger.debug("[ground] no grounding found for: %s", description[:60])
+                resolved.append(mapping)
+
+        return resolved, 0
+
+    def resolve_symbols(self, payload: dict) -> dict:
+        """For each mapping with symbols[] but no code_regions, look up symbol
+        names in the code graph and populate code_regions."""
+        mappings = payload.get("mappings")
+        if not mappings:
+            return payload
+
+        needs_resolution = any(
+            m.get("symbols") and not m.get("code_regions")
+            for m in mappings
+        )
+        if not needs_resolution:
+            return payload
+
+        try:
+            self._ensure_initialized()
+            db = self._validate_tool._db
+        except Exception as exc:
+            logger.warning("[resolve_symbols] cannot open symbol DB: %s", exc)
+            return payload
+
+        resolved_mappings = []
+        for mapping in mappings:
+            symbol_names = mapping.get("symbols") or []
+            code_regions = mapping.get("code_regions") or []
+
+            if symbol_names and not code_regions:
+                for name in symbol_names:
+                    try:
+                        rows = db.lookup_by_name(name)
+                    except Exception as exc:
+                        logger.warning("[resolve_symbols] lookup_by_name failed for '%s': %s", name, exc)
+                        rows = []
+                    for row in rows:
+                        code_regions.append({
+                            "symbol": row["qualified_name"] or row["name"],
+                            "file_path": row["file_path"],
+                            "start_line": row["start_line"],
+                            "end_line": row["end_line"],
+                            "type": row["type"],
+                            "purpose": mapping.get("intent", ""),
+                        })
+                if code_regions:
+                    mapping = {**mapping, "code_regions": code_regions}
+                else:
+                    logger.debug("[resolve_symbols] no symbols found in index for: %s", symbol_names)
+
+            resolved_mappings.append(mapping)
+
+        return {**payload, "mappings": resolved_mappings}

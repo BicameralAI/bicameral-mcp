@@ -19,10 +19,16 @@ from __future__ import annotations
 import pytest
 
 from adapters.ledger import get_ledger
+from context import BicameralContext
 from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
 from handlers.link_commit import handle_link_commit
 from handlers.search_decisions import handle_search_decisions
+
+
+def _ctx():
+    """Build BicameralContext from current env."""
+    return BicameralContext.from_env()
 
 
 # ── Adapter availability ──────────────────────────────────────────────
@@ -183,8 +189,9 @@ async def test_link_commit_idempotent(monkeypatch, surreal_url):
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", surreal_url)
 
-    r1 = await handle_link_commit("HEAD")
-    r2 = await handle_link_commit("HEAD")
+    ctx = _ctx()
+    r1 = await handle_link_commit(ctx, "HEAD")
+    r2 = await handle_link_commit(ctx, "HEAD")
 
     assert r1.commit_hash == r2.commit_hash
     assert r2.reason == "already_synced", (
@@ -203,9 +210,10 @@ async def test_link_commit_updates_sync_cursor(monkeypatch, surreal_url):
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", surreal_url)
 
+    ctx = _ctx()
     test_hash = "cafebabe" + "0" * 32
-    r1 = await handle_link_commit(test_hash)
-    r2 = await handle_link_commit(test_hash)
+    r1 = await handle_link_commit(ctx, test_hash)
+    r2 = await handle_link_commit(ctx, test_hash)
     assert r2.reason == "already_synced", f"Expected 'already_synced', got {r2.reason!r}"
 
 
@@ -223,7 +231,8 @@ async def test_decision_status_reflects_ingested_data(monkeypatch, surreal_url, 
         await ledger.connect()
     await ledger.ingest_payload(minimal_payload)
 
-    result = await handle_decision_status(filter="all")
+    ctx = _ctx()
+    result = await handle_decision_status(ctx, filter="all")
     descs = [d.description for d in result.decisions]
     assert any("test decision for ledger ingestion" in d for d in descs), (
         f"Ingested decision not found in decision_status. Got: {descs}"
@@ -251,7 +260,8 @@ async def test_ungrounded_intent_has_correct_status(monkeypatch, surreal_url):
         }],
     })
 
-    result = await handle_decision_status(filter="ungrounded")
+    ctx = _ctx()
+    result = await handle_decision_status(ctx, filter="ungrounded")
     descs = [d.description for d in result.decisions]
     assert any(desc in d for d in descs), (
         f"Expected {desc!r} in ungrounded filter. Got: {descs}"
@@ -285,7 +295,8 @@ async def test_detect_drift_returns_decisions_for_ingested_file(monkeypatch, sur
         }],
     })
 
-    result = await handle_detect_drift(file_path)
+    ctx = _ctx()
+    result = await handle_detect_drift(ctx, file_path)
     assert len(result.decisions) > 0, (
         f"detect_drift returned no decisions for {file_path!r} after ingesting a decision that maps to it"
     )
@@ -301,7 +312,8 @@ async def test_source_cursor_upserts_after_ingest(monkeypatch, surreal_url, mini
 
     from handlers.ingest import handle_ingest
 
-    result = await handle_ingest(minimal_payload, source_scope="slack:C123", cursor="1743210021.123")
+    ctx = _ctx()
+    result = await handle_ingest(ctx, minimal_payload, source_scope="slack:C123", cursor="1743210021.123")
 
     assert result.source_cursor is not None
     assert result.source_cursor.repo == "test-repo"
