@@ -1,7 +1,7 @@
 """Handler for /decision_status MCP tool.
 
 Surfaces implementation status of all tracked decisions.
-Read-only — does NOT auto-trigger link_commit.
+Auto-syncs the ledger to HEAD before returning status.
 
 Phase 0: backed by MockLedgerAdapter fixture data
 Phase 2: backed by SurrealDBLedgerAdapter with real graph traversal
@@ -9,10 +9,13 @@ Phase 2: backed by SurrealDBLedgerAdapter with real graph traversal
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from adapters.ledger import get_ledger
 from contracts import CodeRegionSummary, DecisionStatusEntry, DecisionStatusResponse
+
+logger = logging.getLogger(__name__)
 
 
 async def handle_decision_status(
@@ -20,6 +23,13 @@ async def handle_decision_status(
     since: str | None = None,
     ref: str = "HEAD",
 ) -> DecisionStatusResponse:
+    # Auto-sync to HEAD so status reflects current code state
+    try:
+        from handlers.link_commit import handle_link_commit
+        await handle_link_commit(ref)
+    except Exception as exc:
+        logger.warning("[status] auto-sync failed: %s", exc)
+
     ledger = get_ledger()
     decisions_raw = await ledger.get_all_decisions(filter=filter)
 

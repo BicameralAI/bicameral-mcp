@@ -13,7 +13,7 @@ import logging
 import re
 
 from adapters.ledger import get_ledger
-from contracts import IngestResponse, IngestStats, SourceCursorSummary
+from contracts import IngestPayload, IngestResponse, IngestStats, SourceCursorSummary
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,73 @@ _STOP_WORDS = frozenset({
     "what", "than", "some", "more", "such", "only", "very", "just",
     "like", "make", "made", "use", "used", "using", "after", "before",
 })
+
+
+def _normalize_payload(payload: dict) -> dict:
+    """Validate and normalize ingest payload using Pydantic contracts.
+
+    1. Validates the raw dict against IngestPayload (fails fast on bad types)
+    2. If ``mappings`` is already present, returns as-is (internal format)
+    3. If ``decisions``/``action_items``/``open_questions`` present, converts to mappings
+    """
+    validated = IngestPayload.model_validate(payload)
+
+    # Already has mappings — convert back to dict and return
+    if validated.mappings:
+        return validated.model_dump()
+
+    mappings: list[dict] = []
+    source_meta = {
+        "source_type": validated.source,
+        "source_ref": validated.title,
+        "speakers": validated.participants,
+        "meeting_date": validated.date,
+    }
+
+    for d in validated.decisions:
+        text = d.description or d.title
+        if not text:
+            continue
+        mappings.append({
+            "intent": text,
+            "span": {
+                **source_meta,
+                "text": text,
+                "source_ref": d.id or source_meta["source_ref"],
+                "speakers": d.participants or source_meta["speakers"],
+            },
+            "symbols": [],
+            "code_regions": [],
+        })
+
+    for a in validated.action_items:
+        text = f"[Action: {a.owner}] {a.action}"
+        mappings.append({
+            "intent": text,
+            "span": {**source_meta, "text": text},
+            "symbols": [],
+            "code_regions": [],
+        })
+
+    for q in validated.open_questions:
+        text = f"[Open Question] {q}"
+        mappings.append({
+            "intent": text,
+            "span": {**source_meta, "text": text},
+            "symbols": [],
+            "code_regions": [],
+        })
+
+    if not mappings:
+        logger.warning(
+            "[ingest] payload validated but produced 0 mappings: %s",
+            list(payload.keys()),
+        )
+        return validated.model_dump()
+
+    result = validated.model_dump()
+    result["mappings"] = mappings
+    return result
 
 
 def _regions_from_symbol_ids(symbol_ids: list[int], db, description: str) -> list[dict]:
@@ -79,8 +146,9 @@ def _auto_ground_via_search(mappings: list[dict], repo: str) -> tuple[list[dict]
         db_path = str(os.path.join(repo, ".bicameral", "code-graph.db"))
 
     try:
-        from adapters.code_locator import get_code_locator
+        from adapters.code_locator import get_code_locator, ensure_code_graph_fresh
         from code_locator.indexing.sqlite_store import SymbolDB
+        ensure_code_graph_fresh(repo)
         locator = get_code_locator()
         db = SymbolDB(db_path)
     except Exception as exc:
@@ -196,7 +264,9 @@ def _resolve_symbols_to_regions(payload: dict, repo: str) -> dict:
         db_path = str(_os.path.join(repo, ".bicameral", "code-graph.db"))
 
     try:
+        from adapters.code_locator import ensure_code_graph_fresh
         from code_locator.indexing.sqlite_store import SymbolDB
+        ensure_code_graph_fresh(repo)
         db = SymbolDB(db_path)
     except Exception as exc:
         logger.warning("[ingest] cannot open symbol DB at %s: %s", db_path, exc)
@@ -249,11 +319,19 @@ async def handle_ingest(
     if hasattr(ledger, "connect"):
         await ledger.connect()
 
+    payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or os.getenv("REPO_PATH", "."))
     payload = _resolve_symbols_to_regions(payload, repo)
     mappings, grounding_deferred = _auto_ground_via_search(payload.get("mappings") or [], repo)
     payload = {**payload, "mappings": mappings}
     result = await ledger.ingest_payload(payload)
+
+    # Sync ledger to HEAD and re-ground any previously ungrounded intents
+    try:
+        from handlers.link_commit import handle_link_commit
+        await handle_link_commit("HEAD")
+    except Exception as exc:
+        logger.warning("[ingest] post-ingest link_commit failed: %s", exc)
 
     cursor_summary = None
     source_type = str(((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual"))

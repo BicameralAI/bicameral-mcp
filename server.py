@@ -73,7 +73,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Surface implementation status of all tracked decisions for the repo. "
                 "Shows which decisions are reflected in code, drifted, pending, or ungrounded. "
-                "Read-only — does not trigger a ledger sync. Slash alias: /bicameral:status"
+                "Auto-syncs the ledger to HEAD before returning status. Slash alias: /bicameral:status"
             ),
             inputSchema={
                 "type": "object",
@@ -171,8 +171,10 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="bicameral.ingest",
             description=(
-                "Ingest a normalized source payload into the decision ledger and advance a source cursor. "
-                "Use this after Slack/Notion/source sync to make new decisions visible to status/search. "
+                "Ingest decisions into the ledger. Accepts two payload formats: "
+                "(1) Internal: {mappings: [{intent, span, symbols, code_regions}]} "
+                "(2) Natural: {decisions: [{title, description}], action_items: [...], open_questions: [...]} "
+                "Auto-grounds decisions to code via BM25. Ensures code graph freshness before grounding. "
                 "Slash alias: /bicameral:ingest"
             ),
             inputSchema={
