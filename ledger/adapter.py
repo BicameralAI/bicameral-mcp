@@ -25,17 +25,19 @@ from .queries import (
     get_undocumented_symbols,
     relate_implements,
     relate_maps_to,
+    relate_yields,
     search_by_bm25,
     update_intent_status,
     update_region_hash,
     upsert_source_cursor,
     upsert_code_region,
     upsert_intent,
+    upsert_source_span,
     upsert_symbol,
     upsert_sync_state,
 )
-from .schema import init_schema
-from .status import compute_content_hash, derive_status, get_changed_files, resolve_head
+from .schema import init_schema, migrate
+from .status import compute_content_hash, get_changed_files, resolve_head
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +70,11 @@ class SurrealDBLedgerAdapter:
         self._connected = False
 
     async def connect(self) -> None:
-        """Connect and initialize schema (idempotent)."""
+        """Connect, initialize schema, and run migrations (idempotent)."""
         if not self._connected:
             await self._client.connect()
             await init_schema(self._client)
+            await migrate(self._client)
             self._connected = True
             logger.info("[ledger] SurrealDBLedgerAdapter ready at %s", self._url)
 
@@ -106,13 +109,23 @@ class SurrealDBLedgerAdapter:
         await self._ensure_connected()
         return await get_undocumented_symbols(self._client, file_path)
 
-    async def ingest_commit(self, commit_hash: str, repo_path: str) -> dict:
+    async def ingest_commit(self, commit_hash: str, repo_path: str, drift_analyzer=None) -> dict:
         """Heartbeat: sync a commit into the ledger, recompute affected statuses.
 
         Idempotent via ledger_sync cursor.
         Resolves 'HEAD' to the actual SHA before processing.
+
+        Args:
+            drift_analyzer: DriftAnalyzerPort implementation. If None, uses
+                HashDriftAnalyzer (Layer 1 hash-only). Pass a different
+                implementation for L2 (AST) or L3 (semantic) drift detection.
         """
         await self._ensure_connected()
+
+        # Default to HashDriftAnalyzer (Layer 1) if no analyzer provided
+        if drift_analyzer is None:
+            from .drift import HashDriftAnalyzer
+            drift_analyzer = HashDriftAnalyzer()
 
         # Resolve HEAD to actual SHA
         if commit_hash == "HEAD":
@@ -163,23 +176,36 @@ class SurrealDBLedgerAdapter:
             end_line = region.get("end_line", 0)
             stored_hash = region.get("content_hash", "")
 
-            # Try symbol-name resolution first (survives line shifts + renames)
-            from .status import resolve_symbol_lines
-            resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
-            if resolved:
-                start_line, end_line = resolved
+            # Collect source context from linked intents for L3 drift analysis.
+            # L1 (hash) ignores this; L3 (semantic) will use it to evaluate compliance.
+            intent_descriptions = [
+                i.get("description", "")
+                for i in (region.get("intents") or [])
+                if i and i.get("description")
+            ]
+            source_context = " | ".join(intent_descriptions)
 
-            # Compute actual hash at this commit
-            actual_hash = compute_content_hash(
-                file_path, start_line, end_line, repo_path, ref=commit_hash
+            # Delegate drift analysis to the port implementation
+            drift_result = await drift_analyzer.analyze_region(
+                file_path=file_path,
+                symbol_name=symbol_name,
+                start_line=start_line,
+                end_line=end_line,
+                stored_hash=stored_hash,
+                repo_path=repo_path,
+                ref=commit_hash,
+                source_context=source_context,
             )
 
-            new_status = derive_status(stored_hash, actual_hash)
-            new_hash = actual_hash or stored_hash
+            new_status = drift_result.status
+            new_hash = drift_result.content_hash
 
             # Update the region's content_hash + pinned_commit
             await update_region_hash(self._client, region_id, new_hash, commit_hash)
-            # If symbol resolution found new line numbers, update them
+            # If the analyzer resolved new line numbers (via symbol resolution),
+            # detect and update them by re-resolving here for the ledger update.
+            from .status import resolve_symbol_lines
+            resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
             if resolved and (resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line")):
                 await self._client.query(
                     "UPDATE $rid SET start_line = $sl, end_line = $el",
@@ -240,9 +266,20 @@ class SurrealDBLedgerAdapter:
             description = mapping.get("intent", span.get("text", ""))
             source_ref = span.get("source_ref", payload.get("query", ""))
             source_type = span.get("source_type", "manual")
+            span_text = span.get("text", description)
 
             code_regions = mapping.get("code_regions", [])
             initial_status = "ungrounded" if not code_regions else "pending"
+
+            # Create source_span node (raw text from meeting/PRD/Slack)
+            span_id = await upsert_source_span(
+                self._client,
+                text=span_text,
+                source_type=source_type,
+                source_ref=source_ref,
+                speakers=span.get("speakers", []),
+                meeting_date=span.get("meeting_date", ""),
+            )
 
             # Create intent node
             intent_id = await upsert_intent(
@@ -257,6 +294,10 @@ class SurrealDBLedgerAdapter:
             if not intent_id:
                 logger.warning("[ingest] failed to create intent for: %s", description[:60])
                 continue
+
+            # Link source_span → yields → intent
+            if span_id and intent_id:
+                await relate_yields(self._client, span_id, intent_id)
 
             if not code_regions:
                 ungrounded.append(description)

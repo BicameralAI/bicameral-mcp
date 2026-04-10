@@ -433,6 +433,58 @@ async def relate_implements(
     )
 
 
+async def upsert_source_span(
+    client: LedgerClient,
+    text: str,
+    source_type: str,
+    source_ref: str = "",
+    speakers: list = (),
+    meeting_date: str = "",
+) -> str:
+    """Create or update a source_span node. Returns the source_span ID string.
+
+    Deduplicates on (source_type, source_ref, text) — same excerpt from the
+    same source is the same span.
+    """
+    rows = await client.query(
+        """
+        UPSERT source_span SET
+            text         = $text,
+            source_type  = $source_type,
+            source_ref   = $source_ref,
+            speakers     = $speakers,
+            meeting_date = $meeting_date,
+            created_at   = IF created_at THEN created_at ELSE time::now() END
+        WHERE source_type = $source_type AND source_ref = $source_ref AND text = $text
+        """,
+        {
+            "text": text,
+            "source_type": source_type,
+            "source_ref": source_ref,
+            "speakers": list(speakers),
+            "meeting_date": meeting_date,
+        },
+    )
+    if rows:
+        return str(rows[0].get("id", ""))
+    rows = await client.query(
+        "CREATE source_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
+        {"t": text, "st": source_type, "sr": source_ref, "sp": list(speakers), "md": meeting_date},
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
+async def relate_yields(
+    client: LedgerClient,
+    span_id: str,
+    intent_id: str,
+) -> None:
+    """Create source_span → yields → intent edge (extraction provenance)."""
+    await client.execute(
+        f"RELATE {span_id}->yields->{intent_id} SET created_at=time::now()",
+    )
+
+
 async def update_intent_status(
     client: LedgerClient,
     intent_id: str,
@@ -470,7 +522,7 @@ async def get_regions_for_files(
         SELECT
             type::string(id) AS region_id,
             file_path, symbol_name, start_line, end_line, content_hash,
-            <-implements<-symbol<-maps_to<-intent.{id, status} AS intents
+            <-implements<-symbol<-maps_to<-intent.{id, status, description} AS intents
         FROM code_region
         WHERE file_path IN $fps
         """,

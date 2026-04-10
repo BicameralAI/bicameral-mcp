@@ -31,3 +31,13 @@ def reset_ledger_singleton() -> None:
     """Reset the singleton — used in tests to get a fresh adapter instance."""
     global _real_ledger_instance
     _real_ledger_instance = None
+
+
+def get_drift_analyzer():
+    """Return the drift analyzer (Layer 1 hash-only by default).
+
+    Swap this factory return to use SemanticDriftAnalyzer (L2+L3)
+    or CodeGenomeDriftAnalyzer when ready.
+    """
+    from ledger.drift import HashDriftAnalyzer
+    return HashDriftAnalyzer()

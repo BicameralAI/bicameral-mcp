@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import os
 
-from adapters.ledger import get_ledger
+from adapters.ledger import get_drift_analyzer, get_ledger
 from contracts import LinkCommitResponse
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,8 @@ async def handle_link_commit(commit_hash: str = "HEAD") -> LinkCommitResponse:
     ledger = get_ledger()
     repo_path = os.getenv("REPO_PATH", ".")
 
-    result = await ledger.ingest_commit(commit_hash, repo_path)
+    drift_analyzer = get_drift_analyzer()
+    result = await ledger.ingest_commit(commit_hash, repo_path, drift_analyzer=drift_analyzer)
 
     # Lazy re-grounding pass: attempt to ground any intents that were ingested
     # before the index was built (GAP-04 / GAP-09).

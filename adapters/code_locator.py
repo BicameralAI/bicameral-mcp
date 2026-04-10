@@ -21,6 +21,10 @@ def get_code_locator():
     return RealCodeLocatorAdapter(repo_path=repo_path)
 
 
+# Alias for the CodeIntelligencePort factory (same implementation, named for the port)
+get_code_intelligence = get_code_locator
+
+
 class RealCodeLocatorAdapter:
     """MCP-native code locator — exposes raw tools without an LLM agent loop.
 
