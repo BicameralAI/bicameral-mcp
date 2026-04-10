@@ -20,6 +20,7 @@ Bicameral MCP is a local-first [Model Context Protocol](https://spec.modelcontex
 - [MCP Tools Reference](#mcp-tools-reference)
 - [Tool Composition](#tool-composition)
 - [Testing](#testing)
+- [Collaboration Modes](#collaboration-modes)
 - [Configuration](#configuration)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -466,6 +467,34 @@ pytest tests/ -v
 Additional test suites cover adversarial inputs (`test_stress_adversarial.py`), failure modes (`test_stress_failure_modes.py`), grounding state machine gaps (`test_grounding_state_machine_gaps.py`), and server smoke tests (`test_server_smoke.py`).
 
 Phase 3 tests produce JSON artifacts (`test-results/e2e/`) with full tool responses and SurrealDB graph dumps for qualitative review. CI runs via GitHub Actions on PRs to `main`, with JUnit XML and HTML reports uploaded as artifacts.
+
+---
+
+## Collaboration Modes
+
+Bicameral runs in one of two modes, set during `bicameral-mcp setup` or in `.bicameral/config.yaml`:
+
+| | Solo (default) | Team |
+|---|---|---|
+| **Who** | Single developer | 2+ developers on the same repo |
+| **Decisions stored** | Local DB only (`ledger.db`) | Local DB **+ git-committed event files** |
+| **Shared via** | Nothing -- local only | Normal `git push` / `git pull` |
+| **Merge conflicts** | N/A | Zero -- per-user directories, append-only files |
+| **On startup** | Connects to local DB | Connects to local DB, then materializes new peer events |
+
+**Team mode layout:**
+
+```
+.bicameral/
+├── events/              ← committed to git (shared truth)
+│   ├── jin@co.com/      ← your events
+│   └── peer@co.com/     ← teammate's events (arrive via git pull)
+├── config.yaml          ← committed (mode: solo | team)
+└── local/               ← gitignored (local materialized state)
+    └── ledger.db
+```
+
+**Switching modes:** Edit `.bicameral/config.yaml` and set `mode: team` or `mode: solo`. On next server startup, the adapter factory picks the right path. No data migration needed -- team mode replays all existing events into the local DB automatically.
 
 ---
 
