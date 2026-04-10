@@ -151,26 +151,36 @@ def _detect_runner() -> tuple[str, list[str]]:
     return (python, ["-m", "bicameral_mcp"])
 
 
-def _build_config(repo_path: Path) -> dict:
-    """Build the MCP server config object."""
+def _build_config(repo_path: Path, mode: str = "solo") -> dict:
+    """Build the MCP server config object.
+
+    In team mode, local DBs go under .bicameral/local/ (gitignored)
+    so they don't leak into the tracked events directory.
+    """
     command, args = _detect_runner()
     data_dir = repo_path / ".bicameral"
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    if mode == "team":
+        local_dir = data_dir / "local"
+        local_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        local_dir = data_dir
 
     return {
         "command": command,
         "args": args,
         "env": {
             "REPO_PATH": str(repo_path),
-            "SURREAL_URL": f"surrealkv://{data_dir / 'ledger.db'}",
-            "CODE_LOCATOR_SQLITE_DB": str(data_dir / "code-graph.db"),
+            "SURREAL_URL": f"surrealkv://{local_dir / 'ledger.db'}",
+            "CODE_LOCATOR_SQLITE_DB": str(local_dir / "code-graph.db"),
         },
     }
 
 
-def _write_json_config(repo_path: Path, config_path: Path) -> None:
+def _write_json_config(repo_path: Path, config_path: Path, mode: str = "solo") -> None:
     """Write MCP server config to a JSON file (Claude Code / Cursor)."""
-    config = _build_config(repo_path)
+    config = _build_config(repo_path, mode=mode)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = {}
@@ -184,9 +194,9 @@ def _write_json_config(repo_path: Path, config_path: Path) -> None:
     config_path.write_text(json.dumps(existing, indent=2) + "\n")
 
 
-def _write_toml_config(repo_path: Path, config_path: Path) -> None:
+def _write_toml_config(repo_path: Path, config_path: Path, mode: str = "solo") -> None:
     """Write MCP server config to a TOML file (Codex)."""
-    config = _build_config(repo_path)
+    config = _build_config(repo_path, mode=mode)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the [mcp_servers.bicameral] TOML section
@@ -224,14 +234,14 @@ def _write_toml_config(repo_path: Path, config_path: Path) -> None:
     config_path.write_text("\n".join(lines) + "\n")
 
 
-def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
+def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo") -> bool:
     """Install MCP config for a specific coding agent."""
     agent = AGENTS[agent_key]
     config_path = agent["config_path"](repo_path)
 
     # For Claude Code, try CLI first
     if agent_key == "claude" and shutil.which("claude"):
-        config = _build_config(repo_path)
+        config = _build_config(repo_path, mode=mode)
         config_json = json.dumps(config)
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
@@ -247,7 +257,7 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
 
     # For Codex, try CLI first
     if agent_key == "codex" and shutil.which("codex"):
-        config = _build_config(repo_path)
+        config = _build_config(repo_path, mode=mode)
         env_args = []
         for k, v in config["env"].items():
             env_args.extend(["--env", f"{k}={v}"])
@@ -261,9 +271,9 @@ def _install_for_agent(agent_key: str, repo_path: Path) -> bool:
 
     # Fallback: write config file directly
     if agent.get("config_format") == "toml":
-        _write_toml_config(repo_path, config_path)
+        _write_toml_config(repo_path, config_path, mode=mode)
     else:
-        _write_json_config(repo_path, config_path)
+        _write_json_config(repo_path, config_path, mode=mode)
 
     print(f"  {agent['name']}: wrote {config_path}")
     return True
@@ -293,23 +303,85 @@ def _install_skills(repo_path: Path) -> int:
     return installed
 
 
-def _ensure_gitignore(repo_path: Path) -> None:
-    """Add .bicameral/ to .gitignore if not already there."""
+def _select_collaboration_mode() -> str:
+    """Prompt user for solo or team collaboration mode."""
+    if not _is_interactive():
+        return "solo"
+
+    print("\n  Collaboration mode:")
+    print("    1. Solo  — decisions stored locally (default)")
+    print("    2. Team  — decisions shared via git (append-only event files)")
+    choice = input("  Choice [1/2]: ").strip()
+
+    if choice == "2":
+        return "team"
+    return "solo"
+
+
+def _write_collaboration_config(repo_path: Path, mode: str) -> None:
+    """Write .bicameral/config.yaml with the collaboration mode."""
+    config_path = repo_path / ".bicameral" / "config.yaml"
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        f"# Bicameral collaboration config\nmode: {mode}\n",
+        encoding="utf-8",
+    )
+    print(f"  Collaboration: {mode} mode")
+
+
+def _ensure_gitignore(repo_path: Path, mode: str = "solo") -> None:
+    """Configure .gitignore for the selected collaboration mode.
+
+    Solo mode: ignore all of .bicameral/
+    Team mode: ignore only .bicameral/local/ (events/ and config.yaml are committed)
+    """
     gitignore = repo_path / ".gitignore"
-    entry = ".bicameral/"
+
+    if mode == "team":
+        entries = [".bicameral/local/"]
+        comment = "# Bicameral MCP local data (team mode — events/ is committed)"
+    else:
+        entries = [".bicameral/"]
+        comment = "# Bicameral MCP local data"
 
     if gitignore.exists():
         content = gitignore.read_text()
-        if entry in content:
-            return
-        if not content.endswith("\n"):
+        lines = content.splitlines()
+
+        # Remove any existing bicameral entries to avoid conflicts
+        cleaned = []
+        skip_next_blank = False
+        for line in lines:
+            stripped = line.strip()
+            if stripped in (".bicameral/", ".bicameral/local/"):
+                skip_next_blank = True
+                continue
+            if stripped.startswith("# Bicameral MCP"):
+                skip_next_blank = True
+                continue
+            if skip_next_blank and stripped == "":
+                skip_next_blank = False
+                continue
+            skip_next_blank = False
+            cleaned.append(line)
+
+        # Remove trailing blank lines
+        while cleaned and not cleaned[-1].strip():
+            cleaned.pop()
+
+        content = "\n".join(cleaned)
+        if content and not content.endswith("\n"):
             content += "\n"
-        content += f"\n# Bicameral MCP local data\n{entry}\n"
+        content += f"\n{comment}\n"
+        for entry in entries:
+            content += f"{entry}\n"
         gitignore.write_text(content)
     else:
-        gitignore.write_text(f"# Bicameral MCP local data\n{entry}\n")
+        lines = [comment]
+        lines.extend(entries)
+        gitignore.write_text("\n".join(lines) + "\n")
 
-    print(f"  Added {entry} to .gitignore")
+    print(f"  Updated .gitignore for {mode} mode")
 
 
 def run_setup(repo_hint: str | None = None) -> int:
@@ -335,13 +407,19 @@ def run_setup(repo_hint: str | None = None) -> int:
         print(f"\n  Note: using '{command} -m bicameral_mcp' as runner.")
         print("  Install a package runner for zero-install: pip install pipx")
 
-    # Step 4: Prepare local data + gitignore
-    _ensure_gitignore(repo_path)
+    # Step 4: Collaboration mode + gitignore
+    collab_mode = _select_collaboration_mode()
+    _write_collaboration_config(repo_path, collab_mode)
+    _ensure_gitignore(repo_path, mode=collab_mode)
+
+    if collab_mode == "team":
+        events_dir = repo_path / ".bicameral" / "events"
+        events_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 5: Install MCP config for each agent
     print()
     for agent_key in agents:
-        _install_for_agent(agent_key, repo_path)
+        _install_for_agent(agent_key, repo_path, mode=collab_mode)
 
     # Step 6: Install skills (Claude Code only)
     if "claude" in agents:

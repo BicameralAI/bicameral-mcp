@@ -20,6 +20,7 @@ Bicameral MCP is a local-first [Model Context Protocol](https://spec.modelcontex
 - [MCP Tools Reference](#mcp-tools-reference)
 - [Tool Composition](#tool-composition)
 - [Testing](#testing)
+- [Collaboration Modes](#collaboration-modes)
 - [Configuration](#configuration)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
@@ -164,7 +165,16 @@ claude mcp add-json bicameral --scope local '{
 ### Local development
 
 ```bash
+# Option A: pipx editable install (puts bicameral-mcp on PATH, uses local source)
+pipx install -e . --force
+
+# Option B: pip editable install (venv-local, includes test deps)
 pip install -e ".[test]"
+```
+
+After either option:
+
+```bash
 bicameral-mcp setup           # interactive config
 bicameral-mcp --smoke-test    # verify all 9 tools register correctly
 bicameral-mcp                 # start MCP server (stdio)
@@ -457,6 +467,34 @@ pytest tests/ -v
 Additional test suites cover adversarial inputs (`test_stress_adversarial.py`), failure modes (`test_stress_failure_modes.py`), grounding state machine gaps (`test_grounding_state_machine_gaps.py`), and server smoke tests (`test_server_smoke.py`).
 
 Phase 3 tests produce JSON artifacts (`test-results/e2e/`) with full tool responses and SurrealDB graph dumps for qualitative review. CI runs via GitHub Actions on PRs to `main`, with JUnit XML and HTML reports uploaded as artifacts.
+
+---
+
+## Collaboration Modes
+
+Bicameral runs in one of two modes, set during `bicameral-mcp setup` or in `.bicameral/config.yaml`:
+
+| | Solo (default) | Team |
+|---|---|---|
+| **Who** | Individual testing or evaluation | Any mix of roles -- devs, PMs, designers |
+| **Data** | Local DB only | Local DB + git-committed event files |
+| **Shared via** | Nothing -- fully isolated, zero impact on teammates | Normal `git push` / `git pull` |
+| **Merge conflicts** | N/A | Zero -- per-user directories, append-only files |
+
+**Solo mode** is ideal for trying Bicameral without affecting your team's workflow. All data stays in a gitignored local DB -- no event files, no commits, no side effects. Switch to team mode when you're ready to share.
+
+**Team mode** enables cross-role collaboration through git. A PM ingests a PRD and sprint transcript; when a developer pulls, `bicameral.search` surfaces those decisions as coding context and `bicameral.status` shows what still needs implementation. The PM never touches the code; the developer never sits through the meeting. The decision graph is the handoff.
+
+```
+.bicameral/
+├── events/              ← committed to git (shared decisions)
+│   ├── pm@co.com/       ← PM's ingested PRDs and transcripts
+│   └── dev@co.com/      ← developer's commit syncs
+├── config.yaml          ← committed (mode: solo | team)
+└── local/               ← gitignored (materialized state)
+```
+
+**Switching modes:** Set `mode: team` or `mode: solo` in `.bicameral/config.yaml`. No data migration needed.
 
 ---
 
