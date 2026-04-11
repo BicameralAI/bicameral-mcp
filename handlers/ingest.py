@@ -150,8 +150,8 @@ async def handle_ingest(
     repo = str(payload.get("repo") or ctx.repo_path)
     payload = ctx.code_graph.resolve_symbols(payload)
 
-    # Vocab cache: reuse prior groundings for similar intents.
-    # Runs before ground_mappings — a cache hit skips the full BM25 pipeline.
+    # Decision grounding reuse: check if similar intents were already grounded.
+    # Runs before ground_mappings — a hit skips the full BM25 pipeline.
     mappings_to_ground = payload.get("mappings") or []
     cache_hits = 0
     for mapping in mappings_to_ground:
@@ -171,17 +171,17 @@ async def handle_ingest(
                     mapping["code_regions"] = valid_regions
                     cache_hits += 1
                     logger.info(
-                        "[ingest] vocab cache hit for '%s' (confidence=%.2f, %d/%d regions valid)",
+                        "[ingest] grounding reuse hit for '%s' (confidence=%.2f, %d/%d regions valid)",
                         description[:60], top.get("confidence", 0),
                         len(valid_regions), len(top.get("code_regions", [])),
                     )
                 else:
                     logger.debug(
-                        "[ingest] vocab cache hit discarded (all regions stale): '%s'",
+                        "[ingest] grounding reuse discarded (all regions stale): '%s'",
                         description[:60],
                     )
         except Exception as exc:
-            logger.debug("[ingest] vocab cache lookup failed: %s", exc)
+            logger.debug("[ingest] grounding reuse lookup failed: %s", exc)
 
     mappings, grounding_deferred = ctx.code_graph.ground_mappings(mappings_to_ground)
     payload = {**payload, "mappings": mappings}

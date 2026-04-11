@@ -1,4 +1,4 @@
-"""Tests for the vocab cache (Phase 1 drift fix).
+"""Tests for decision grounding reuse (Phase 1 drift fix).
 
 Tests _validate_cached_regions logic and search_grounded_intents query.
 """

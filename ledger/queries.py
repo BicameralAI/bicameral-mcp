@@ -221,14 +221,15 @@ async def search_grounded_intents(
     min_confidence: float = 0.5,
     max_results: int = 3,
 ) -> list[dict]:
-    """Vocab cache: find similar previously-grounded intents.
+    """Decision grounding reuse: find similar previously-grounded intents.
 
     Uses the intent table's BM25 index to find semantically similar
     decisions that already have maps_to edges, then walks the graph
     to return their code_regions.
 
-    This is the tech spec §4.5 pattern — uses the ledger as the cache
-    rather than a separate vocab_cache table.
+    This is distinct from the vocab_cache table (which caches raw
+    search_code query→symbol mappings). This function reuses
+    intent-level groundings for similar decision descriptions.
 
     NOTE: search::score(0) returns 0.0 in SurrealDB v2 embedded mode
     (documented in pilot/mcp/CLAUDE.md). We use BM25 match presence
