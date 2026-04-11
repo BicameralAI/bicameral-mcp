@@ -477,11 +477,13 @@ async def relate_maps_to(
     intent_id: str,
     symbol_id: str,
     confidence: float = 0.8,
+    provenance: dict | None = None,
 ) -> None:
     """Create intent → maps_to → symbol edge (idempotent via DELETE + CREATE)."""
+    prov = provenance or {}
     await client.execute(
-        f"RELATE {intent_id}->maps_to->{symbol_id} SET confidence=$c, created_at=time::now()",
-        {"c": confidence},
+        f"RELATE {intent_id}->maps_to->{symbol_id} SET confidence=$c, provenance=$p, created_at=time::now()",
+        {"c": confidence, "p": prov},
     )
 
 

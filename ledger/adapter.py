@@ -359,7 +359,14 @@ class SurrealDBLedgerAdapter:
                 regions_linked += 1
 
                 # intent → symbol → code_region edges
-                await relate_maps_to(self._client, intent_id, symbol_id)
+                provenance = {}
+                grounding_tier = region_data.get("grounding_tier")
+                if grounding_tier is not None:
+                    provenance["grounding_tier"] = grounding_tier
+                    provenance["method"] = "auto_ground"
+                await relate_maps_to(
+                    self._client, intent_id, symbol_id, provenance=provenance,
+                )
                 await relate_implements(self._client, symbol_id, region_id)
 
             # Update intent status to pending (has regions now)

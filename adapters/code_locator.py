@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 from code_locator_runtime import (
@@ -283,7 +284,10 @@ class RealCodeLocatorAdapter:
             deferred = sum(1 for m in mappings if not m.get("code_regions"))
             return mappings, deferred
 
+        _TIER_LABELS = ["strict", "relaxed", "broad"]
+
         resolved = []
+        tier_counts: Counter[int] = Counter()
         for mapping in mappings:
             if mapping.get("code_regions"):
                 resolved.append(mapping)
@@ -314,7 +318,12 @@ class RealCodeLocatorAdapter:
                     break
 
             if code_regions:
-                tier_label = ["strict", "relaxed", "broad"][tier_used]
+                tier_label = _TIER_LABELS[tier_used]
+                tier_counts[tier_used] += 1
+                # Stamp grounding_tier on each region so it flows through
+                # to relate_maps_to provenance via ingest_payload.
+                for region in code_regions:
+                    region["grounding_tier"] = tier_used
                 logger.info(
                     "[ground] grounded '%s' at tier %d (%s) -> %d regions",
                     description[:60], tier_used, tier_label, len(code_regions),
@@ -326,6 +335,16 @@ class RealCodeLocatorAdapter:
                     len(self._COVERAGE_TIERS), description[:60],
                 )
                 resolved.append(mapping)
+
+        # Batch summary
+        total = len(mappings)
+        grounded = sum(tier_counts.values())
+        if total > 0:
+            logger.info(
+                "[ground] summary: %d/%d grounded (tier0=%d, tier1=%d, tier2=%d)",
+                grounded, total,
+                tier_counts[0], tier_counts[1], tier_counts[2],
+            )
 
         return resolved, 0
 

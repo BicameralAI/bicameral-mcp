@@ -267,6 +267,67 @@ class TestGroundMappingsCoverageLoop:
         assert deferred == 2  # only 2 without code_regions
         assert len(resolved) == 3
 
+    def test_grounding_tier_stamped_on_regions(self):
+        """Each code_region gets a grounding_tier field matching the tier used."""
+        adapter, db = _make_initialized_adapter()
+
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+            if bm25_t == 0.3:  # tier 1
+                return [
+                    {"symbol": "sym1", "file_path": "a.py",
+                     "start_line": 1, "end_line": 5, "type": "function",
+                     "purpose": desc},
+                    {"symbol": "sym2", "file_path": "a.py",
+                     "start_line": 10, "end_line": 15, "type": "function",
+                     "purpose": desc},
+                ]
+            return []
+
+        with patch.object(adapter, "_ground_single", side_effect=fake_ground_single), \
+             patch.object(adapter, "search_code", return_value=[]):
+            resolved, _ = adapter.ground_mappings([
+                {"intent": "test", "code_regions": []},
+            ])
+
+        regions = resolved[0]["code_regions"]
+        assert len(regions) == 2
+        assert regions[0]["grounding_tier"] == 1
+        assert regions[1]["grounding_tier"] == 1
+
+    def test_summary_logging(self, caplog):
+        """Batch summary log is emitted with tier distribution."""
+        adapter, db = _make_initialized_adapter()
+
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+            # "intent zero" matches at tier 0, "intent one" at tier 1, "intent two" never
+            if "zero" in desc and bm25_t == 0.5:
+                return [{"symbol": "a", "file_path": "a.py",
+                         "start_line": 1, "end_line": 5, "type": "function",
+                         "purpose": desc}]
+            if "one" in desc and bm25_t == 0.3:
+                return [{"symbol": "b", "file_path": "b.py",
+                         "start_line": 1, "end_line": 5, "type": "function",
+                         "purpose": desc}]
+            return []
+
+        import logging
+        with caplog.at_level(logging.INFO), \
+             patch.object(adapter, "_ground_single", side_effect=fake_ground_single), \
+             patch.object(adapter, "search_code", return_value=[]):
+            adapter.ground_mappings([
+                {"intent": "intent zero", "code_regions": []},
+                {"intent": "intent one", "code_regions": []},
+                {"intent": "intent two", "code_regions": []},
+            ])
+
+        summary_logs = [r for r in caplog.records if "summary:" in r.message]
+        assert len(summary_logs) == 1
+        msg = summary_logs[0].message
+        assert "2/3 grounded" in msg
+        assert "tier0=1" in msg
+        assert "tier1=1" in msg
+        assert "tier2=0" in msg
+
 
 # ── _validate_with_threshold tests ───────────────────────────────────
 
