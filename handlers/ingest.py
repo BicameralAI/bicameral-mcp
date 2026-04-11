@@ -125,6 +125,7 @@ def _validate_cached_regions(
             "file_path": row["file_path"],
             "start_line": row["start_line"],
             "end_line": row["end_line"],
+            "type": row["type"],
         })
     return valid
 

@@ -255,7 +255,7 @@ async def search_grounded_intents(
             ->maps_to[WHERE confidence >= $min_conf]->symbol.name AS symbols,
             ->maps_to[WHERE confidence >= $min_conf]->symbol
                 ->implements->code_region[WHERE repo = $repo].{
-                    file_path, symbol_name, start_line, end_line
+                    file_path, symbol_name, start_line, end_line, purpose
                 } AS code_regions,
             math::max(->maps_to.confidence) AS confidence
         FROM $matched[*].id

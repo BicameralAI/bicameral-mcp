@@ -50,7 +50,7 @@ class TestValidateCachedRegions:
         """Region with a symbol that exists in the index is returned."""
         graph = _make_code_graph({
             "authorize": [
-                {"file_path": "payments/auth.py", "start_line": 10, "end_line": 30},
+                {"file_path": "payments/auth.py", "start_line": 10, "end_line": 30, "type": "function"},
             ],
         })
         regions = [
@@ -63,6 +63,25 @@ class TestValidateCachedRegions:
         # Line numbers should be refreshed from live index
         assert result[0]["start_line"] == 10
         assert result[0]["end_line"] == 30
+        assert result[0]["type"] == "function"
+
+    def test_type_preserved_for_class_symbol(self):
+        """Non-function symbol types (class, module) are preserved from the index."""
+        graph = _make_code_graph({
+            "PaymentService": [
+                {"file_path": "payments/service.py", "start_line": 5, "end_line": 80,
+                 "type": "class"},
+            ],
+        })
+        regions = [
+            {"symbol": "PaymentService", "file_path": "payments/service.py",
+             "start_line": 1, "end_line": 50, "purpose": "payment processing"},
+        ]
+        result = _validate_cached_regions(regions, graph)
+        assert len(result) == 1
+        assert result[0]["type"] == "class"
+        # purpose should be preserved from the cached region
+        assert result[0]["purpose"] == "payment processing"
 
     def test_stale_region_discarded(self):
         """Region with a symbol not in the index is dropped."""
@@ -78,7 +97,7 @@ class TestValidateCachedRegions:
         """Only valid regions are kept; stale ones dropped."""
         graph = _make_code_graph({
             "good_func": [
-                {"file_path": "a.py", "start_line": 1, "end_line": 5},
+                {"file_path": "a.py", "start_line": 1, "end_line": 5, "type": "function"},
             ],
             # "bad_func" is NOT in the index
         })
@@ -97,7 +116,7 @@ class TestValidateCachedRegions:
         graph = _make_code_graph({
             # Full qualified name NOT in index, but short name IS
             "processPayment": [
-                {"file_path": "pay.py", "start_line": 20, "end_line": 40},
+                {"file_path": "pay.py", "start_line": 20, "end_line": 40, "type": "function"},
             ],
         })
         regions = [
@@ -112,9 +131,9 @@ class TestValidateCachedRegions:
         """When multiple symbols share a name, prefer the one in the cached file."""
         graph = _make_code_graph({
             "authorize": [
-                {"file_path": "auth/oauth.py", "start_line": 5, "end_line": 15},
-                {"file_path": "payments/auth.py", "start_line": 50, "end_line": 60},
-                {"file_path": "admin/auth.py", "start_line": 100, "end_line": 110},
+                {"file_path": "auth/oauth.py", "start_line": 5, "end_line": 15, "type": "function"},
+                {"file_path": "payments/auth.py", "start_line": 50, "end_line": 60, "type": "function"},
+                {"file_path": "admin/auth.py", "start_line": 100, "end_line": 110, "type": "function"},
             ],
         })
         regions = [
@@ -130,7 +149,7 @@ class TestValidateCachedRegions:
         """When the cached file no longer matches any row, use rows[0]."""
         graph = _make_code_graph({
             "authorize": [
-                {"file_path": "new_location/auth.py", "start_line": 1, "end_line": 10},
+                {"file_path": "new_location/auth.py", "start_line": 1, "end_line": 10, "type": "function"},
             ],
         })
         regions = [
