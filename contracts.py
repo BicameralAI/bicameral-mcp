@@ -197,6 +197,7 @@ class IngestStats(BaseModel):
     regions_linked: int
     ungrounded: int
     grounding_deferred: int = 0  # index not ready at ingest time — re-ingest after build_index
+    cache_hits: int = 0  # vocab cache: reused prior groundings instead of fresh BM25
 
 
 class IngestResponse(BaseModel):

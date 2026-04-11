@@ -214,6 +214,71 @@ async def search_by_bm25(
     return _normalize_decisions(rows)
 
 
+async def search_grounded_intents(
+    client: LedgerClient,
+    query: str,
+    repo: str,
+    min_confidence: float = 0.5,
+    max_results: int = 3,
+) -> list[dict]:
+    """Vocab cache: find similar previously-grounded intents.
+
+    Uses the intent table's BM25 index to find semantically similar
+    decisions that already have maps_to edges, then walks the graph
+    to return their code_regions.
+
+    This is the tech spec §4.5 pattern — uses the ledger as the cache
+    rather than a separate vocab_cache table.
+
+    NOTE: search::score(0) returns 0.0 in SurrealDB v2 embedded mode
+    (documented in pilot/mcp/CLAUDE.md). We use BM25 match presence
+    via the @0@ operator as the filter, and rank results by maps_to
+    confidence instead of BM25 score.
+
+    Repo isolation: the graph traversal filters on code_region.repo
+    (not symbol — symbol has no repo field) to prevent cross-repo
+    contamination of cached groundings.
+    """
+    rows = await client.query(
+        """
+        LET $matched = (
+            SELECT id, description
+            FROM intent
+            WHERE description @0@ $query
+                AND status != 'ungrounded'
+            LIMIT $max_results
+        );
+
+        SELECT
+            description,
+            ->maps_to[WHERE confidence >= $min_conf]->symbol.name AS symbols,
+            ->maps_to[WHERE confidence >= $min_conf]->symbol
+                ->implements->code_region[WHERE repo = $repo].{
+                    file_path, symbol_name, start_line, end_line
+                } AS code_regions,
+            math::max(->maps_to.confidence) AS confidence
+        FROM $matched[*].id
+        ORDER BY confidence DESC;
+        """,
+        {
+            "query": query,
+            "repo": repo,
+            "min_conf": min_confidence,
+            "max_results": max_results,
+        },
+    )
+    # Rename symbol_name → symbol in each region for consistency with
+    # get_all_decisions() and search_by_bm25() (AS alias not supported
+    # in SurrealDB v2 graph traversal field selectors — see line 165).
+    for row in (rows or []):
+        for region in (row.get("code_regions") or []):
+            if region and "symbol_name" in region:
+                region["symbol"] = region.pop("symbol_name")
+    # Filter out results with no code_regions (graph walk may return
+    # empty arrays if all code_regions belong to a different repo)
+    return [r for r in (rows or []) if r.get("code_regions")]
+
+
 async def get_decisions_for_file(
     client: LedgerClient,
     file_path: str,
