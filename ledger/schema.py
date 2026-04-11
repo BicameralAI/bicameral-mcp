@@ -86,7 +86,9 @@ _TABLES = [
     "DEFINE INDEX idx_span_ref    ON source_span FIELDS source_type, source_ref",
     "DEFINE INDEX idx_span_dedup  ON source_span FIELDS source_type, source_ref, text UNIQUE",
 
-    # vocab_cache — fast repeated query→symbols lookups
+    # DEPRECATED: vocab_cache table — superseded by intent-table BM25 lookup
+    # in search_grounded_intents() (queries.py). Kept for schema backward
+    # compatibility. TODO: remove in next major version.
     "DEFINE TABLE vocab_cache SCHEMAFULL",
     "DEFINE FIELD query_text     ON vocab_cache TYPE string",
     "DEFINE FIELD repo           ON vocab_cache TYPE string",
