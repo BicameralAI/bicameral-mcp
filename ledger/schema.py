@@ -87,6 +87,10 @@ _TABLES = [
     "DEFINE INDEX idx_span_dedup  ON source_span FIELDS source_type, source_ref, text UNIQUE",
 
     # vocab_cache — fast repeated query→symbols lookups
+    # NOTE: not yet wired. Designed for caching raw search_code results
+    # (query_text → symbols) to avoid redundant BM25 calls. Distinct from
+    # the decision grounding reuse feature in search_grounded_intents()
+    # which reuses intent-level groundings, not raw search results.
     "DEFINE TABLE vocab_cache SCHEMAFULL",
     "DEFINE FIELD query_text     ON vocab_cache TYPE string",
     "DEFINE FIELD repo           ON vocab_cache TYPE string",

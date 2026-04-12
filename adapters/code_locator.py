@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections import Counter
 from pathlib import Path
 
 from code_locator_runtime import (
@@ -117,6 +118,17 @@ class RealCodeLocatorAdapter:
         results = self._search_tool.execute(args)
         return [r.model_dump() for r in results]
 
+    def _validate_with_threshold(self, candidates: list[str], threshold: int) -> list[dict]:
+        """Fuzzy-match with a custom threshold (for coverage loop broadening)."""
+        self._ensure_initialized()
+        original = self._validate_tool._config.fuzzy_threshold
+        try:
+            self._validate_tool._config.fuzzy_threshold = threshold
+            results = self._validate_tool.execute({"candidates": candidates})
+            return [r.model_dump() for r in results]
+        finally:
+            self._validate_tool._config.fuzzy_threshold = original
+
     def get_neighbors(self, symbol_id: int) -> list[dict]:
         """1-hop structural graph traversal around a symbol."""
         self._ensure_initialized()
@@ -145,7 +157,13 @@ class RealCodeLocatorAdapter:
 
     # ── Grounding methods (moved from handlers/ingest.py) ────────────
 
-    _AUTO_GROUND_THRESHOLD = 0.5
+    # Progressive broadening tiers for coverage loop.
+    # Each tier: (bm25_threshold, fuzzy_threshold, max_symbols)
+    _COVERAGE_TIERS = [
+        (0.5, 80, 3),   # Tier 0: strict (current behavior)
+        (0.3, 70, 5),   # Tier 1: relaxed
+        (0.1, 60, 5),   # Tier 2: broad
+    ]
 
     _STOP_WORDS = frozenset({
         "the", "and", "for", "that", "this", "with", "are", "from", "have",
@@ -175,13 +193,86 @@ class RealCodeLocatorAdapter:
                 })
         return regions
 
-    def ground_mappings(self, mappings: list[dict]) -> tuple[list[dict], int]:
-        """Auto-ground mappings with no code_regions via BM25 + fuzzy matching.
+    def _ground_single(
+        self,
+        description: str,
+        db,
+        bm25_threshold: float,
+        fuzzy_threshold: int,
+        max_symbols: int,
+        hits: list[dict] | None = None,
+    ) -> list[dict]:
+        """Attempt to ground a single description at the given threshold tier.
 
-        Two-stage approach:
-        1. BM25 search on full description -> top file -> expand to symbols
-        2. Fuzzy token matching: tokenise description -> rapidfuzz against
-           symbol names -> direct symbol lookup
+        Args:
+            hits: Pre-computed BM25 search results (from ground_mappings).
+                  Passed in to avoid re-running the same search per tier.
+
+        Returns code_regions list (empty if no match found at this tier).
+        """
+        code_regions: list[dict] = []
+        if hits is None:
+            hits = []
+
+        tokens = [
+            w for w in re.findall(r"[a-zA-Z]{4,}", description)
+            if w.lower() not in self._STOP_WORDS
+        ]
+
+        # Stage 1: BM25 file search + fuzzy symbol re-ranking
+        try:
+            top = next(
+                (h for h in hits if h.get("score", 0) >= bm25_threshold),
+                None,
+            )
+            if top:
+                file_symbols = db.lookup_by_file(top["file_path"])
+                if tokens:
+                    validated = self._validate_with_threshold(tokens, fuzzy_threshold)
+                    matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
+                else:
+                    matched_ids = set()
+                file_symbol_ids = {row["id"] for row in file_symbols}
+                relevant_ids = matched_ids & file_symbol_ids
+                ranked = sorted(
+                    file_symbols,
+                    key=lambda r: (r["id"] not in relevant_ids, r["start_line"]),
+                )
+                code_regions = [
+                    {
+                        "symbol": row["qualified_name"] or row["name"],
+                        "file_path": row["file_path"],
+                        "start_line": row["start_line"],
+                        "end_line": row["end_line"],
+                        "type": row["type"],
+                        "purpose": description,
+                    }
+                    for row in ranked[:max_symbols]
+                ]
+        except Exception as exc:
+            logger.warning("[ground] BM25 search failed for '%s': %s", description[:60], exc)
+
+        # Stage 2: fuzzy token matching (with same tier threshold)
+        if not code_regions and tokens:
+            try:
+                validated = self._validate_with_threshold(tokens, fuzzy_threshold)
+                symbol_ids = [v["symbol_id"] for v in validated if v.get("symbol_id")]
+                code_regions = self._regions_from_symbol_ids(
+                    symbol_ids[:max_symbols], db, description,
+                )
+            except Exception as exc:
+                logger.warning("[ground] fuzzy match failed: %s", exc)
+
+        return code_regions
+
+    def ground_mappings(self, mappings: list[dict]) -> tuple[list[dict], int]:
+        """Auto-ground mappings with coverage loop.
+
+        For each ungrounded mapping, tries progressively relaxed thresholds
+        (strict -> relaxed -> broad) before giving up. Max 3 attempts.
+
+        BM25 search is called once per mapping and cached — only the
+        score threshold and fuzzy threshold change across tiers.
 
         Returns (resolved_mappings, grounding_deferred_count).
         """
@@ -193,7 +284,10 @@ class RealCodeLocatorAdapter:
             deferred = sum(1 for m in mappings if not m.get("code_regions"))
             return mappings, deferred
 
+        _TIER_LABELS = ["strict", "relaxed", "broad"]
+
         resolved = []
+        tier_counts: Counter[int] = Counter()
         for mapping in mappings:
             if mapping.get("code_regions"):
                 resolved.append(mapping)
@@ -204,73 +298,53 @@ class RealCodeLocatorAdapter:
                 resolved.append(mapping)
                 continue
 
-            code_regions = []
-
-            # Stage 1: BM25 file search
+            # Run BM25 search once and reuse across tiers.
             try:
                 hits = self.search_code(description)
-                top = next((h for h in hits if h.get("score", 0) >= self._AUTO_GROUND_THRESHOLD), None)
-                if top:
-                    file_symbols = db.lookup_by_file(top["file_path"])
-                    tokens = [
-                        w for w in re.findall(r"[a-zA-Z]{4,}", description)
-                        if w.lower() not in self._STOP_WORDS
-                    ]
-                    if tokens:
-                        validated = self.validate_symbols(tokens)
-                        matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
-                    else:
-                        matched_ids = set()
-                    file_symbol_ids = {row["id"] for row in file_symbols}
-                    relevant_ids = matched_ids & file_symbol_ids
-                    ranked = sorted(
-                        file_symbols,
-                        key=lambda r: (r["id"] not in relevant_ids, r["start_line"]),
-                    )
-                    code_regions = [
-                        {
-                            "symbol": row["qualified_name"] or row["name"],
-                            "file_path": row["file_path"],
-                            "start_line": row["start_line"],
-                            "end_line": row["end_line"],
-                            "type": row["type"],
-                            "purpose": description,
-                        }
-                        for row in ranked[:3]
-                    ]
-                    if code_regions:
-                        logger.info(
-                            "[ground] stage1 BM25 grounded '%s' -> %s (%d symbols, score=%.2f)",
-                            description[:60], top["file_path"], len(code_regions), top["score"],
-                        )
             except Exception as exc:
                 logger.warning("[ground] BM25 search failed for '%s': %s", description[:60], exc)
+                hits = []
 
-            # Stage 2: fuzzy token matching
-            if not code_regions:
-                tokens = [
-                    w for w in re.findall(r"[a-zA-Z]{4,}", description)
-                    if w.lower() not in self._STOP_WORDS
-                ]
-                if tokens:
-                    try:
-                        validated = self.validate_symbols(tokens)
-                        symbol_ids = [v["symbol_id"] for v in validated if v.get("symbol_id")]
-                        code_regions = self._regions_from_symbol_ids(symbol_ids[:5], db, description)
-                        if code_regions:
-                            matched = [v["matched_symbol"] for v in validated[:3]]
-                            logger.info(
-                                "[ground] stage2 fuzzy grounded '%s' -> %s",
-                                description[:60], matched,
-                            )
-                    except Exception as exc:
-                        logger.warning("[ground] fuzzy token match failed: %s", exc)
+            code_regions: list[dict] = []
+            tier_used = -1
+
+            for tier_idx, (bm25_thresh, fuzzy_thresh, max_sym) in enumerate(self._COVERAGE_TIERS):
+                code_regions = self._ground_single(
+                    description, db, bm25_thresh, fuzzy_thresh, max_sym,
+                    hits=hits,
+                )
+                if code_regions:
+                    tier_used = tier_idx
+                    break
 
             if code_regions:
+                tier_label = _TIER_LABELS[tier_used]
+                tier_counts[tier_used] += 1
+                # Stamp grounding_tier on each region so it flows through
+                # to relate_maps_to provenance via ingest_payload.
+                for region in code_regions:
+                    region["grounding_tier"] = tier_used
+                logger.info(
+                    "[ground] grounded '%s' at tier %d (%s) -> %d regions",
+                    description[:60], tier_used, tier_label, len(code_regions),
+                )
                 resolved.append({**mapping, "code_regions": code_regions})
             else:
-                logger.debug("[ground] no grounding found for: %s", description[:60])
+                logger.debug(
+                    "[ground] no grounding found after %d tiers: %s",
+                    len(self._COVERAGE_TIERS), description[:60],
+                )
                 resolved.append(mapping)
+
+        # Batch summary
+        total = len(mappings)
+        grounded = sum(tier_counts.values())
+        if total > 0:
+            logger.info(
+                "[ground] summary: %d/%d grounded (tier0=%d, tier1=%d, tier2=%d)",
+                grounded, total,
+                tier_counts[0], tier_counts[1], tier_counts[2],
+            )
 
         return resolved, 0
 

@@ -197,6 +197,7 @@ class IngestStats(BaseModel):
     regions_linked: int
     ungrounded: int
     grounding_deferred: int = 0  # index not ready at ingest time — re-ingest after build_index
+    cache_hits: int = 0  # decision grounding reuse: skipped BM25 via similar prior intent
 
 
 class IngestResponse(BaseModel):

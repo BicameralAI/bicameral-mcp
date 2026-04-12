@@ -27,6 +27,7 @@ from .queries import (
     relate_maps_to,
     relate_yields,
     search_by_bm25,
+    search_grounded_intents,
     update_intent_status,
     update_region_hash,
     upsert_source_cursor,
@@ -98,6 +99,18 @@ class SurrealDBLedgerAdapter:
         """BM25 search on intent descriptions."""
         await self._ensure_connected()
         return await search_by_bm25(self._client, query, max_results, min_confidence)
+
+    async def lookup_cached_groundings(
+        self,
+        query: str,
+        repo: str,
+        min_confidence: float = 0.5,
+    ) -> list[dict]:
+        """Check if the ledger has similar prior intents with code_regions."""
+        await self._ensure_connected()
+        return await search_grounded_intents(
+            self._client, query, repo, min_confidence,
+        )
 
     async def get_decisions_for_file(self, file_path: str) -> list[dict]:
         """Reverse traversal: all decisions touching symbols in file_path."""
@@ -346,7 +359,14 @@ class SurrealDBLedgerAdapter:
                 regions_linked += 1
 
                 # intent → symbol → code_region edges
-                await relate_maps_to(self._client, intent_id, symbol_id)
+                provenance = {}
+                grounding_tier = region_data.get("grounding_tier")
+                if grounding_tier is not None:
+                    provenance["grounding_tier"] = grounding_tier
+                    provenance["method"] = "auto_ground"
+                await relate_maps_to(
+                    self._client, intent_id, symbol_id, provenance=provenance,
+                )
                 await relate_implements(self._client, symbol_id, region_id)
 
             # Update intent status to pending (has regions now)

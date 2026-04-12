@@ -80,6 +80,56 @@ def _normalize_payload(payload: dict) -> dict:
     return result
 
 
+def _validate_cached_regions(
+    regions: list[dict], code_graph,
+) -> list[dict]:
+    """Check cached code_regions against the live symbol index.
+
+    Returns only regions whose symbol still exists in the index.
+    Initializes the code graph lazily (only triggered when there's
+    a cache hit to validate).
+
+    Handles qualified names (e.g., "PaymentService.processPayment")
+    by falling back to the last segment after "." since
+    SymbolDB.lookup_by_name() matches on the short ``name`` column.
+
+    When lookup_by_name returns multiple rows, prefers the row matching
+    the cached region's file_path to avoid picking an unrelated symbol.
+    """
+    try:
+        code_graph._ensure_initialized()
+        db = code_graph._validate_tool._db
+    except Exception:
+        return []
+
+    valid = []
+    for region in regions:
+        symbol = region.get("symbol", "")
+        if not symbol:
+            continue
+        cached_file = region.get("file_path", "")
+
+        rows = db.lookup_by_name(symbol)
+        if not rows and "." in symbol:
+            rows = db.lookup_by_name(symbol.rsplit(".", 1)[-1])
+        if not rows:
+            continue
+
+        # Prefer the row matching the cached file_path; fall back to rows[0]
+        row = next(
+            (r for r in rows if r["file_path"] == cached_file),
+            rows[0],
+        )
+        valid.append({
+            **region,
+            "file_path": row["file_path"],
+            "start_line": row["start_line"],
+            "end_line": row["end_line"],
+            "type": row["type"],
+        })
+    return valid
+
+
 def _derive_last_source_ref(payload: dict) -> str:
     mappings = payload.get("mappings") or []
     refs = [str((m.get("span") or {}).get("source_ref", "")).strip() for m in mappings]
@@ -100,7 +150,41 @@ async def handle_ingest(
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
     payload = ctx.code_graph.resolve_symbols(payload)
-    mappings, grounding_deferred = ctx.code_graph.ground_mappings(payload.get("mappings") or [])
+
+    # Decision grounding reuse: check if similar intents were already grounded.
+    # Runs before ground_mappings — a hit skips the full BM25 pipeline.
+    mappings_to_ground = payload.get("mappings") or []
+    cache_hits = 0
+    for mapping in mappings_to_ground:
+        if mapping.get("code_regions"):
+            continue
+        description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
+        if not description:
+            continue
+        try:
+            cached = await ledger.lookup_cached_groundings(description, repo)
+            if cached:
+                top = cached[0]
+                valid_regions = _validate_cached_regions(
+                    top.get("code_regions", []), ctx.code_graph,
+                )
+                if valid_regions:
+                    mapping["code_regions"] = valid_regions
+                    cache_hits += 1
+                    logger.info(
+                        "[ingest] grounding reuse hit for '%s' (confidence=%.2f, %d/%d regions valid)",
+                        description[:60], top.get("confidence", 0),
+                        len(valid_regions), len(top.get("code_regions", [])),
+                    )
+                else:
+                    logger.debug(
+                        "[ingest] grounding reuse discarded (all regions stale): '%s'",
+                        description[:60],
+                    )
+        except Exception as exc:
+            logger.debug("[ingest] grounding reuse lookup failed: %s", exc)
+
+    mappings, grounding_deferred = ctx.code_graph.ground_mappings(mappings_to_ground)
     payload = {**payload, "mappings": mappings}
     result = await ledger.ingest_payload(payload)
 
@@ -143,6 +227,7 @@ async def handle_ingest(
             regions_linked=int(stats.get("regions_linked", 0)),
             ungrounded=int(stats.get("ungrounded", 0)),
             grounding_deferred=grounding_deferred,
+            cache_hits=cache_hits,
         ),
         ungrounded_intents=list(result.get("ungrounded_intents", [])),
         source_cursor=cursor_summary,
