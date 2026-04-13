@@ -198,7 +198,15 @@ def extract_from_current_skill(
     if use_cache and cache_file.exists():
         return json.loads(cache_file.read_text(encoding="utf-8"))
 
-    chosen_oauth = oauth_token or os.environ["CLAUDE_CODE_OAUTH_TOKEN"]
+    chosen_oauth = oauth_token or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if not chosen_oauth.strip():
+        raise RuntimeError(
+            "CLAUDE_CODE_OAUTH_TOKEN is missing or empty — the env var "
+            "resolved to '' which means the GitHub secret reference did "
+            "not expand. Check that the secret exists at the repository "
+            "(or org with this repo in allowed-repositories) and that the "
+            "workflow step's `env:` block maps it correctly."
+        )
 
     skill_excerpt = _extract_step1_excerpt(skill_md)
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(skill_excerpt=skill_excerpt)
