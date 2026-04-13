@@ -134,7 +134,15 @@ def _call_messages_api(
     user_prompt: str,
     oauth_token: str,
 ) -> str:
-    """POST to Anthropic Messages API. Returns the concatenated text content."""
+    """POST to Anthropic Messages API. Returns the concatenated text content.
+
+    On HTTP error, raises RuntimeError with the response body included so the
+    CI log shows the exact Anthropic error (e.g. ``invalid_api_key`` vs
+    ``unauthorized_scope``). We never log the token itself — only its length
+    prefix, which is enough to distinguish sk-ant-api03 (API key) from
+    sk-ant-oat01 (OAuth token) without leaking material.
+    """
+    token_kind = oauth_token[:12] if oauth_token else "(empty)"
     headers = {
         "anthropic-version": ANTHROPIC_API_VERSION,
         "content-type": "application/json",
@@ -156,7 +164,12 @@ def _call_messages_api(
     }
     with httpx.Client(timeout=REQUEST_TIMEOUT_S) as client:
         resp = client.post(ANTHROPIC_API_URL, headers=headers, json=payload)
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise RuntimeError(
+                f"Anthropic API error {resp.status_code}: {resp.text[:500]} "
+                f"(model={model}, token_prefix={token_kind}..., "
+                f"token_len={len(oauth_token)})"
+            )
         data = resp.json()
 
     parts = data.get("content") or []
