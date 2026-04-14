@@ -203,49 +203,92 @@ class RealCodeLocatorAdapter:
             if w.lower() not in self._STOP_WORDS
         ]
 
-        # Stage 1: BM25 file search + fuzzy symbol re-ranking
-        try:
-            top = next(
-                (h for h in hits if h.get("score", 0) >= bm25_threshold),
-                None,
-            )
-            if top:
-                file_symbols = db.lookup_by_file(top["file_path"])
-                if tokens:
-                    validated = self._validate_with_threshold(tokens, fuzzy_threshold)
-                    matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
-                else:
-                    matched_ids = set()
-                file_symbol_ids = {row["id"] for row in file_symbols}
-                relevant_ids = matched_ids & file_symbol_ids
-                ranked = sorted(
-                    file_symbols,
-                    key=lambda r: (r["id"] not in relevant_ids, r["start_line"]),
-                )
-                code_regions = [
-                    {
-                        "symbol": row["qualified_name"] or row["name"],
-                        "file_path": row["file_path"],
-                        "start_line": row["start_line"],
-                        "end_line": row["end_line"],
-                        "type": row["type"],
-                        "purpose": description,
-                    }
-                    for row in ranked[:max_symbols]
-                ]
-        except Exception as exc:
-            logger.warning("[ground] BM25 search failed for '%s': %s", description[:60], exc)
-
-        # Stage 2: fuzzy token matching (with same tier threshold)
-        if not code_regions and tokens:
+        # Pre-compute fuzzy-validated symbol IDs once. These serve two
+        # purposes below:
+        #   1. Seed the graph channel in search_code() so RRF fusion
+        #      (code_locator/fusion/rrf.py) actually activates. Without
+        #      a seed the graph channel is skipped and the pipeline
+        #      collapses to BM25-only.
+        #   2. Rank symbols within each qualifying file (relevant ones
+        #      come first).
+        matched_ids: set[int] = set()
+        if tokens:
             try:
                 validated = self._validate_with_threshold(tokens, fuzzy_threshold)
-                symbol_ids = [v["symbol_id"] for v in validated if v.get("symbol_id")]
+                matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
+            except Exception as exc:
+                logger.debug("[ground] fuzzy validate failed for '%s': %s", description[:60], exc)
+
+        # Stage 1: multi-file fused retrieval (FC-2 fix, v0.4.6).
+        # Previously this stage took only the top-1 BM25 hit via next(),
+        # which collapsed multi-file features to a single anchor — the
+        # "Google Calendar one-click add events → admin-test-data-generator.ts"
+        # pathology. Now we:
+        #   a) Re-run search_code with fuzzy-matched symbol_ids as seeds
+        #      to activate the graph channel
+        #   b) Take up to max_symbols DISTINCT qualifying files from the
+        #      fused ranking
+        #   c) Pull symbols from each file, budgeted fairly
+        try:
+            if matched_ids:
+                fused = self.search_code(description, symbol_ids=sorted(matched_ids))
+            else:
+                fused = hits  # BM25-only fallback when nothing to seed
+        except Exception as exc:
+            logger.debug("[ground] fused search failed for '%s': %s — falling back to BM25-only", description[:60], exc)
+            fused = hits
+
+        qualifying_files: list[str] = []
+        seen_files: set[str] = set()
+        for h in fused:
+            if h.get("score", 0) < bm25_threshold:
+                continue
+            fp = h.get("file_path", "")
+            if fp and fp not in seen_files:
+                seen_files.add(fp)
+                qualifying_files.append(fp)
+            if len(qualifying_files) >= max_symbols:
+                break
+
+        if qualifying_files:
+            # Fair per-file budget so no single file monopolizes the region
+            # list. With max_symbols=5 and 3 files, each file gets ~1-2 slots.
+            per_file_budget = max(1, max_symbols // len(qualifying_files))
+            try:
+                for fp in qualifying_files:
+                    file_symbols = db.lookup_by_file(fp)
+                    if not file_symbols:
+                        continue
+                    file_symbol_ids = {row["id"] for row in file_symbols}
+                    relevant_ids = matched_ids & file_symbol_ids
+                    ranked = sorted(
+                        file_symbols,
+                        key=lambda r: (r["id"] not in relevant_ids, r["start_line"]),
+                    )
+                    for row in ranked[:per_file_budget]:
+                        code_regions.append({
+                            "symbol": row["qualified_name"] or row["name"],
+                            "file_path": row["file_path"],
+                            "start_line": row["start_line"],
+                            "end_line": row["end_line"],
+                            "type": row["type"],
+                            "purpose": description,
+                        })
+                    if len(code_regions) >= max_symbols:
+                        break
+            except Exception as exc:
+                logger.warning("[ground] multi-file ranking failed for '%s': %s", description[:60], exc)
+            code_regions = code_regions[:max_symbols]
+
+        # Stage 2: fuzzy-symbol fallback when Stage 1 found nothing.
+        # Unchanged from v0.4.5 semantics.
+        if not code_regions and matched_ids:
+            try:
                 code_regions = self._regions_from_symbol_ids(
-                    symbol_ids[:max_symbols], db, description,
+                    sorted(matched_ids)[:max_symbols], db, description,
                 )
             except Exception as exc:
-                logger.warning("[ground] fuzzy match failed: %s", exc)
+                logger.warning("[ground] fuzzy fallback failed: %s", exc)
 
         return code_regions
 
@@ -279,6 +322,25 @@ class RealCodeLocatorAdapter:
 
             description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
             if not description:
+                resolved.append(mapping)
+                continue
+
+            # FC-1 guard: refuse to ground queries that degenerate to <2 corpus
+            # tokens. Witnessed in Accountable (2026-04-13): "GitHub Discussions
+            # vs Slack" left only ``slack`` after stopword filtering, BM25
+            # ranked every slack-mentioning file, and the #2 hit was anchored
+            # to ``log-error-to-slack/index.ts:getFeatureName`` by tiebreak.
+            # Under-specified queries belong as ungrounded open questions.
+            try:
+                corpus_token_count = self._bm25.count_corpus_tokens(description)
+            except Exception as exc:
+                logger.debug("[ground] FC-1 token count failed for '%s': %s", description[:60], exc)
+                corpus_token_count = 2  # fail-open: do not block grounding on detector failure
+            if corpus_token_count < 2:
+                logger.info(
+                    "[ground] FC-1 skip: %d corpus tokens in %r — leaving ungrounded",
+                    corpus_token_count, description[:60],
+                )
                 resolved.append(mapping)
                 continue
 

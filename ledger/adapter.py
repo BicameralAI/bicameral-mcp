@@ -149,7 +149,13 @@ class SurrealDBLedgerAdapter:
         await self._ensure_connected()
         return await get_undocumented_symbols(self._client, file_path)
 
-    async def ingest_commit(self, commit_hash: str, repo_path: str, drift_analyzer=None) -> dict:
+    async def ingest_commit(
+        self,
+        commit_hash: str,
+        repo_path: str,
+        drift_analyzer=None,
+        authoritative_ref: str = "",
+    ) -> dict:
         """Heartbeat: sync a commit into the ledger, recompute affected statuses.
 
         Idempotent via ledger_sync cursor.
@@ -159,6 +165,17 @@ class SurrealDBLedgerAdapter:
             drift_analyzer: DriftAnalyzerPort implementation. If None, uses
                 HashDriftAnalyzer (Layer 1 hash-only). Pass a different
                 implementation for L2 (AST) or L3 (semantic) drift detection.
+            authoritative_ref: Name of the authoritative branch (usually
+                "main"). When provided AND the repo's current branch does
+                not match, the sync runs in READ-ONLY mode — drift is
+                computed for reporting but baseline hashes are NOT
+                persisted. This closes the Bug 1 silent pollution path
+                where link_commit HEAD on a feature branch would adopt
+                branch state as the baseline.
+
+                Branch-name comparison (not SHA comparison) is used so
+                normal commits that advance the authoritative branch
+                still write as expected.
         """
         await self._ensure_connected()
 
@@ -172,6 +189,32 @@ class SurrealDBLedgerAdapter:
             resolved = resolve_head(repo_path)
             if resolved:
                 commit_hash = resolved
+
+        # Pollution guard: refuse baseline writes unless the repo's current
+        # branch matches the authoritative ref. Branch-name comparison is
+        # stable across normal commits (main advances, still "main") but
+        # catches feature-branch work.
+        is_authoritative = True
+        if authoritative_ref:
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                current_branch = result.stdout.strip() if result.returncode == 0 else ""
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                current_branch = ""
+            if current_branch and current_branch != "HEAD" and current_branch != authoritative_ref:
+                is_authoritative = False
+                logger.info(
+                    "[link_commit] current branch %s != authoritative %s — "
+                    "running in read-only mode (no baseline writes)",
+                    current_branch, authoritative_ref,
+                )
 
         # Fast-path: already synced
         state = await get_sync_state(self._client, repo_path)
@@ -189,7 +232,9 @@ class SurrealDBLedgerAdapter:
         # Get changed files from this commit
         changed_files = get_changed_files(commit_hash, repo_path)
         if not changed_files:
-            await upsert_sync_state(self._client, repo_path, commit_hash)
+            # Only advance the sync cursor on authoritative refs — pollution guard
+            if is_authoritative:
+                await upsert_sync_state(self._client, repo_path, commit_hash)
             return {
                 "synced": True,
                 "commit_hash": commit_hash,
@@ -240,20 +285,25 @@ class SurrealDBLedgerAdapter:
             new_status = drift_result.status
             new_hash = drift_result.content_hash
 
-            # Update the region's content_hash + pinned_commit
-            await update_region_hash(self._client, region_id, new_hash, commit_hash)
-            # If the analyzer resolved new line numbers (via symbol resolution),
-            # detect and update them by re-resolving here for the ledger update.
-            from .status import resolve_symbol_lines
-            resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
-            if resolved and (resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line")):
-                await self._client.query(
-                    "UPDATE $rid SET start_line = $sl, end_line = $el",
-                    {"rid": region_id, "sl": resolved[0], "el": resolved[1]},
-                )
+            # Pollution guard: only persist baseline writes when the
+            # caller's ref matches the authoritative ref. Non-authoritative
+            # refs produce drift reports (accumulated in the counters below)
+            # but do NOT touch stored hashes or intent statuses.
+            if is_authoritative:
+                # Update the region's content_hash + pinned_commit
+                await update_region_hash(self._client, region_id, new_hash, commit_hash)
+                # If the analyzer resolved new line numbers (via symbol resolution),
+                # detect and update them by re-resolving here for the ledger update.
+                from .status import resolve_symbol_lines
+                resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
+                if resolved and (resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line")):
+                    await self._client.query(
+                        "UPDATE $rid SET start_line = $sl, end_line = $el",
+                        {"rid": region_id, "sl": resolved[0], "el": resolved[1]},
+                    )
             regions_updated += 1
 
-            # Update all intents mapped to this region
+            # Update all intents mapped to this region (also pollution-guarded)
             for intent in (region.get("intents") or []):
                 if intent is None:
                     continue
@@ -261,7 +311,8 @@ class SurrealDBLedgerAdapter:
                 if not intent_id:
                     continue
                 old_status = intent.get("status", "ungrounded")
-                await update_intent_status(self._client, intent_id, new_status)
+                if is_authoritative:
+                    await update_intent_status(self._client, intent_id, new_status)
                 if new_status == "reflected" and old_status != "reflected":
                     decisions_reflected += 1
                 elif new_status == "drifted" and old_status != "drifted":
@@ -272,7 +323,11 @@ class SurrealDBLedgerAdapter:
             if not intents and symbol_name:
                 undocumented_symbols.append(symbol_name)
 
-        await upsert_sync_state(self._client, repo_path, commit_hash)
+        # Only persist sync state on authoritative refs — otherwise the
+        # cursor would advance to a branch SHA and the next authoritative
+        # sync would be incorrectly skipped by the fast-path.
+        if is_authoritative:
+            await upsert_sync_state(self._client, repo_path, commit_hash)
 
         return {
             "synced": True,
@@ -363,20 +418,31 @@ class SurrealDBLedgerAdapter:
 
     # ── Extended: ingestion of CodeLocatorPayload ─────────────────────────
 
-    async def ingest_payload(self, payload: dict) -> dict:
+    async def ingest_payload(self, payload: dict, ctx=None) -> dict:
         """Ingest a CodeLocatorPayload dict into the graph.
 
         Creates intent, symbol, code_region nodes and maps_to / implements edges.
         Used by integration tests and the future /ingest MCP tool.
+
+        Args:
+            payload: The CodeLocatorPayload dict.
+            ctx: Optional BicameralContext. When provided, the ingest
+                stamps baseline hashes against ``ctx.authoritative_sha``
+                rather than the current HEAD. Closes Bug 3 — ingesting
+                from a feature branch no longer pollutes the ledger with
+                branch-local baselines. See v0.4.6 release plan.
         """
         await self._ensure_connected()
 
         repo = payload.get("repo", "")
         commit_hash = payload.get("commit_hash", "")
-        # Resolve HEAD once per ingest so every region hashes against the
-        # same baseline ref. Without this, bulk ingests that don't carry a
-        # commit_hash stamped empty hashes and decisions were born pending.
-        effective_ref = commit_hash or resolve_head(repo) or "HEAD"
+        # Pollution guard (v0.4.6, Bug 3 fix):
+        # Prefer the authoritative ref from ctx over HEAD. This keeps the
+        # ledger branch-independent — fresh ingests from a feature branch
+        # stamp baseline hashes against main, so switching back to main
+        # doesn't make every new decision look drifted.
+        authoritative_sha = getattr(ctx, "authoritative_sha", "") if ctx is not None else ""
+        effective_ref = commit_hash or authoritative_sha or resolve_head(repo) or "HEAD"
         intents_created = 0
         symbols_mapped = 0
         regions_linked = 0
@@ -542,3 +608,150 @@ class SurrealDBLedgerAdapter:
             status=status,
             error=error,
         )
+
+    async def get_all_source_cursors(self, repo: str) -> list[dict]:
+        """Return every source_cursor row scoped to ``repo``.
+
+        Used by ``bicameral_reset`` to build a replay plan before wiping
+        the ledger. Multi-repo SurrealDB instances stay isolated because
+        the filter is on the ``repo`` column.
+        """
+        await self._ensure_connected()
+        rows = await self._client.query(
+            "SELECT * FROM source_cursor WHERE repo = $repo",
+            {"repo": repo},
+        )
+        if not rows:
+            return []
+        # Normalize the synced_at datetime the same way get_source_cursor does
+        out: list[dict] = []
+        for row in rows:
+            row["synced_at"] = str(row.get("synced_at", ""))
+            out.append(row)
+        return out
+
+    async def wipe_all_rows(self, repo: str) -> None:
+        """Delete every row belonging to ``repo`` across every bicameral
+        table, while leaving other repos in the same SurrealDB instance
+        untouched.
+
+        Scoping strategy:
+          - Tables with a ``repo`` field (code_region, source_cursor,
+            vocab_cache, ledger_sync) — filter by the column directly.
+          - Tables without a ``repo`` field (intent, source_span) — find
+            their IDs via graph traversal from code_region, then delete
+            by id. An intent "belongs to" a repo if any of its maps_to
+            symbols implement a code_region in that repo. A source_span
+            belongs to a repo if it yields an intent in that repo.
+          - Edge tables (maps_to, implements, yields) — left alone. Once
+            their endpoints are gone, the edges are orphaned and harmless.
+          - ``symbol`` — left alone. Symbols are shared across repos.
+
+        Used by the ``bicameral_reset`` fail-safe valve.
+        """
+        await self._ensure_connected()
+
+        # 1. Gather intent IDs belonging to this repo. Two independent
+        # strategies, merged — each catches intents the other misses:
+        #   a) Graph traversal via code_region.repo → symbol → intent
+        #      (catches grounded intents with at least one code region)
+        #   b) source_ref matching via source_cursor audit log
+        #      (catches ungrounded intents that never got a code_region)
+        intent_ids: set[str] = set()
+
+        # (a) Graph traversal from code_regions belonging to this repo.
+        try:
+            rows = await self._client.query(
+                """
+                SELECT <-implements<-symbol<-maps_to<-intent AS intents
+                FROM code_region
+                WHERE repo = $repo
+                """,
+                {"repo": repo},
+            )
+            for row in rows or []:
+                intents_field = row.get("intents") or []
+                if isinstance(intents_field, list):
+                    for nested in intents_field:
+                        if isinstance(nested, list):
+                            for item in nested:
+                                if item:
+                                    intent_ids.add(str(item))
+                        elif nested:
+                            intent_ids.add(str(nested))
+        except Exception as exc:
+            logger.warning("[wipe_all_rows] code_region → intent traversal failed: %s", exc)
+
+        # (b) source_cursor audit-log matching for ungrounded intents.
+        try:
+            cursor_rows = await self._client.query(
+                "SELECT source_type, source_scope, last_source_ref FROM source_cursor WHERE repo = $repo",
+                {"repo": repo},
+            )
+            for c in cursor_rows or []:
+                src_ref = c.get("last_source_ref", "")
+                src_type = c.get("source_type", "")
+                if not src_ref or not src_type:
+                    continue
+                matching = await self._client.query(
+                    "SELECT type::string(id) AS id FROM intent WHERE source_ref = $r AND source_type = $t",
+                    {"r": src_ref, "t": src_type},
+                )
+                for m in matching or []:
+                    if m.get("id"):
+                        intent_ids.add(str(m["id"]))
+        except Exception as exc:
+            logger.warning("[wipe_all_rows] source_cursor → intent matching failed: %s", exc)
+
+        # 2. Gather source_span IDs yielding those intents.
+        source_span_ids: set[str] = set()
+        if intent_ids:
+            try:
+                # For each intent, find source_spans pointing at it via yields
+                rows = await self._client.query(
+                    "SELECT type::string(in) AS in FROM yields",
+                )
+                # Collect all yields edges, filter to those whose target is
+                # in our intent set. Couldn't get a CONTAINS filter working
+                # cleanly against a string-of-record-id field, so filter in
+                # Python — the yields table is small per repo.
+                for row in rows or []:
+                    _in = row.get("in")
+                    if _in:
+                        source_span_ids.add(str(_in))
+            except Exception as exc:
+                logger.debug("[wipe_all_rows] source_span traversal failed: %s", exc)
+
+        # 3. Delete scoped-by-column tables.
+        for table in ("code_region", "source_cursor", "vocab_cache"):
+            try:
+                await self._client.execute(
+                    f"DELETE FROM {table} WHERE repo = $repo",
+                    {"repo": repo},
+                )
+            except Exception as exc:
+                logger.warning("[wipe_all_rows] %s scoped delete failed: %s", table, exc)
+
+        # 4. Delete the enumerated intents by id.
+        for intent_id in intent_ids:
+            try:
+                await self._client.execute(f"DELETE {intent_id}")
+            except Exception as exc:
+                logger.debug("[wipe_all_rows] intent %s delete failed: %s", intent_id, exc)
+
+        # 5. Delete the enumerated source_spans by id. (Best-effort — the
+        # yields traversal is approximate.)
+        for span_id in source_span_ids:
+            try:
+                await self._client.execute(f"DELETE {span_id}")
+            except Exception as exc:
+                logger.debug("[wipe_all_rows] source_span %s delete failed: %s", span_id, exc)
+
+        # 6. ledger_sync is per-repo — wipe this repo's rows.
+        try:
+            await self._client.execute(
+                "DELETE FROM ledger_sync WHERE repo = $repo",
+                {"repo": repo},
+            )
+        except Exception as exc:
+            logger.warning("[wipe_all_rows] ledger_sync delete failed: %s", exc)

@@ -1,0 +1,5 @@
+{
+  "intent": "iOS vs Android",
+  "expected_status": "ungrounded",
+  "note": "Platform-comparison phrasing. Only 'ios' and 'android' are content tokens, and bicameral's test corpus contains neither — both should be absent from corpus vocab."
+}

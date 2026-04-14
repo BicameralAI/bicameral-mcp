@@ -1,0 +1,5 @@
+{
+  "intent": "Ian prefers TLDR and voicenotes",
+  "expected_status": "ungrounded",
+  "note": "Personal-preference phrasing. 'prefers' may be a stopword, 'tldr' and 'voicenotes' are neologisms unlikely to appear in typical code corpora. 'ian' is a proper noun that may appear in strings but usually filtered."
+}

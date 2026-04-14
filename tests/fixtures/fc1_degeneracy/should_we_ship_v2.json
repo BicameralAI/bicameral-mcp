@@ -1,0 +1,5 @@
+{
+  "intent": "should we ship v2",
+  "expected_status": "ungrounded",
+  "note": "Open-question phrasing. 'should', 'we' are stopwords. 'ship' and 'v2' may or may not be in corpus, commonly 0-1 tokens survive."
+}

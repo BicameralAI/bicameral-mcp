@@ -1,0 +1,5 @@
+{
+  "intent": "GitHub Discussions vs Slack",
+  "expected_status": "ungrounded",
+  "note": "Witnessed live in Accountable 2026-04-13. Only 'slack' survives stopword filter, 'github' and 'discussions' rarely exist in code corpora as bare tokens. Degenerates to 1 corpus token → false anchor to log-error-to-slack/index.ts:getFeatureName."
+}

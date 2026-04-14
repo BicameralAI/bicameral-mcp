@@ -1,0 +1,5 @@
+{
+  "intent": "all PRs must target staging before prod",
+  "expected_status": "ungrounded",
+  "note": "Process/policy decision. 'all', 'must', 'before' are stopwords. 'prs', 'target', 'staging', 'prod' are candidate tokens — most likely 0 survive in the test corpus. Even if some do, this is a non-code decision that should not be force-grounded."
+}

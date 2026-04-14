@@ -78,6 +78,53 @@ def get_repo_index_state(repo_path: str) -> RepoIndexState:
     )
 
 
+def detect_authoritative_ref(repo_path: str) -> str:
+    """Detect the repo's main branch name.
+
+    Resolution order:
+      1. ``BICAMERAL_AUTHORITATIVE_REF`` env var (explicit override — wins)
+      2. ``git symbolic-ref refs/remotes/origin/HEAD`` (reads the remote
+         default branch — the standard answer)
+      3. Fallback to ``main``
+
+    Used by ``BicameralContext`` to pin ledger baselines to the authoritative
+    ref, so a user checked out on a feature branch can't accidentally poison
+    the ledger.
+    """
+    explicit = os.environ.get("BICAMERAL_AUTHORITATIVE_REF", "").strip()
+    if explicit:
+        return explicit
+
+    symref = _git_stdout(repo_path, "symbolic-ref", "refs/remotes/origin/HEAD")
+    if symref:
+        # Output format: refs/remotes/origin/main
+        branch = symref.rsplit("/", 1)[-1]
+        if branch:
+            return branch
+
+    return "main"
+
+
+def resolve_ref_sha(repo_path: str, ref: str) -> str:
+    """Resolve a git ref (branch name, tag, or SHA) to its commit SHA.
+
+    Returns an empty string if the ref doesn't resolve (shallow clone,
+    missing remote, typo). Callers should gracefully degrade rather than
+    hard-fail — the pollution guard only engages when we can confirm
+    HEAD ≠ authoritative, so an empty authoritative_sha means "can't tell,
+    assume authoritative."
+    """
+    if not ref:
+        return ""
+    # Try the ref as-is first (main, a tag, a SHA).
+    sha = _git_stdout(repo_path, "rev-parse", ref)
+    if sha:
+        return sha
+    # Try origin/<ref> as a fallback — branches that exist on the remote
+    # but not locally are the common case in CI and fresh clones.
+    return _git_stdout(repo_path, "rev-parse", f"origin/{ref}")
+
+
 def _connect_meta(db_path: str) -> sqlite3.Connection:
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)

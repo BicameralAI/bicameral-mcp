@@ -56,7 +56,9 @@ async def _reground_ungrounded(ctx) -> int:
         "mappings": newly_grounded,
     }
     try:
-        await ctx.ledger.ingest_payload(payload)
+        # Thread ctx through so the pollution guard in ingest_payload uses
+        # the authoritative_sha instead of HEAD for baseline stamping.
+        await ctx.ledger.ingest_payload(payload, ctx=ctx)
         logger.info(
             "[link_commit] lazy re-grounding: %d/%d ungrounded intents now grounded",
             len(newly_grounded), len(ungrounded),
@@ -80,8 +82,17 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
     except Exception as exc:
         logger.warning("[link_commit] backfill failed: %s", exc)
 
+    # Pollution guard (v0.4.6, Bug 1): pass the authoritative branch name
+    # through so ingest_commit can refuse baseline writes when the current
+    # branch doesn't match. Branch-name comparison survives normal commits
+    # that advance main (still "main") but catches feature-branch work.
+    authoritative_ref = getattr(ctx, "authoritative_ref", "") or ""
+
     result = await ctx.ledger.ingest_commit(
-        commit_hash, ctx.repo_path, drift_analyzer=ctx.drift_analyzer,
+        commit_hash,
+        ctx.repo_path,
+        drift_analyzer=ctx.drift_analyzer,
+        authoritative_ref=authoritative_ref,
     )
 
     await _reground_ungrounded(ctx)

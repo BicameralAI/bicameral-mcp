@@ -210,3 +210,79 @@ class IngestResponse(BaseModel):
     stats: IngestStats
     ungrounded_intents: list[str]
     source_cursor: SourceCursorSummary | None = None
+
+
+# ── Tool 6: /bicameral_brief — pre-meeting one-pager ────────────────
+
+
+class BriefDecision(BaseModel):
+    """One decision surfaced in a brief. Strict subset of DecisionStatusEntry
+    to keep the brief response small and scan-friendly."""
+    intent_id: str
+    description: str
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    source_type: str = ""
+    source_ref: str = ""
+    code_regions: list[CodeRegionSummary] = []
+    severity_tier: int = 1  # 1=L1, 2=L2, 3=L3 — populated by v0.4.7 severity config
+    drift_evidence: str = ""
+
+
+class BriefGap(BaseModel):
+    """A gap surfaced from the brief — a decision area where acceptance
+    criteria or follow-up answers are missing."""
+    description: str
+    hint: str  # why this is a gap (e.g. "no acceptance criteria", "open question phrasing")
+    relevant_source_refs: list[str] = []
+
+
+class BriefQuestion(BaseModel):
+    """A suggested question for the pre-meeting artifact."""
+    question: str
+    why: str  # rationale for asking this — what gap/drift/divergence motivated it
+
+
+class BriefDivergence(BaseModel):
+    """Two or more non-superseded intents mapping to the same symbol with
+    contradictory descriptions. Branch Problem Instance 4 — detected, not
+    resolved. The human picks which wins via a later forget/revise call.
+    """
+    symbol: str
+    file_path: str
+    conflicting_decisions: list[BriefDecision]  # >= 2 entries
+    summary: str  # one-line framing suitable for a PR comment
+
+
+class BriefResponse(BaseModel):
+    """Response envelope for bicameral_brief(topic)."""
+    topic: str
+    participants: list[str] = []
+    as_of: str  # ISO datetime of generation
+    ref: str    # git ref at time of generation
+    decisions: list[BriefDecision] = []
+    drift_candidates: list[BriefDecision] = []  # subset of decisions with status=drifted
+    divergences: list[BriefDivergence] = []     # Branch Problem Instance 4 detector output
+    gaps: list[BriefGap] = []
+    suggested_questions: list[BriefQuestion] = []
+
+
+# ── Tool 7: /bicameral_reset — fail-safe recovery ───────────────────
+
+
+class ResetReplayEntry(BaseModel):
+    """One entry in the reset replay plan — summarizes a source that would
+    need to be re-ingested to restore the wiped ledger."""
+    source_type: str
+    source_scope: str
+    last_source_ref: str = ""
+
+
+class ResetResponse(BaseModel):
+    """Response envelope for bicameral_reset(confirm=False|True)."""
+    wiped: bool
+    ledger_url: str                      # the SURREAL_URL that was / would be wiped
+    repo: str                            # repo scope for this wipe
+    cursors_before: int                  # how many source_cursor rows existed
+    replay_plan: list[ResetReplayEntry] = []
+    replay_errors: list[str] = []
+    next_action: str                     # human-readable next step for the caller

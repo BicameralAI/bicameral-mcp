@@ -87,6 +87,11 @@ def _isolated_ledger(monkeypatch, tmp_path):
         """,
     )
     monkeypatch.setenv("REPO_PATH", str(repo_root))
+    # v0.4.6: the outer conftest autouse fixture set authoritative_ref to
+    # the bicameral submodule's current branch (e.g. "chore/bump-v0.4.6").
+    # Our tmp repo is on "main" — override the env var so the pollution
+    # guard treats "main" as authoritative within this test scope.
+    monkeypatch.setenv("BICAMERAL_AUTHORITATIVE_REF", "main")
     monkeypatch.chdir(repo_root)
     reset_ledger_singleton()
     yield repo_root

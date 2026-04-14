@@ -205,7 +205,24 @@ async def handle_ingest(
             logger.debug("[ingest] vocab cache write failed: %s", exc)
 
     payload = {**payload, "mappings": mappings}
-    result = await ledger.ingest_payload(payload)
+
+    # Pollution guard (v0.4.6, Bug 3): warn the user if they're ingesting
+    # from a non-authoritative ref. The ingest still proceeds — baselines
+    # will be stamped against the authoritative ref via ingest_payload(ctx=ctx)
+    # below, so no data is corrupted. The warning is informational only.
+    authoritative_ref = getattr(ctx, "authoritative_ref", "")
+    authoritative_sha = getattr(ctx, "authoritative_sha", "")
+    head_sha = getattr(ctx, "head_sha", "")
+    if authoritative_sha and head_sha and authoritative_sha != head_sha:
+        logger.warning(
+            "[ingest] checked out on a ref that differs from authoritative %s "
+            "(HEAD=%s); baseline hashes will be stamped against %s so the "
+            "ledger stays branch-independent. Switch to %s if you want "
+            "baselines pinned to the current working tree.",
+            authoritative_ref, head_sha[:8], authoritative_ref, authoritative_ref,
+        )
+
+    result = await ledger.ingest_payload(payload, ctx=ctx)
 
     # Sync ledger to HEAD and re-ground any previously ungrounded intents
     try:

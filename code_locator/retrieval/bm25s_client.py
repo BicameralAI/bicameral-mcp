@@ -131,6 +131,40 @@ class Bm25sClient(BM25Search):
         self._doc_ids = data["doc_ids"]
         self._loaded = True
 
+    def count_corpus_tokens(self, query: str) -> int:
+        """FC-1 guard helper: how many distinct tokens from ``query`` survive
+        stopword filtering AND exist in the indexed corpus vocabulary.
+
+        Used by ``ground_mappings`` to refuse auto-grounding for queries that
+        degenerate to <2 corpus tokens — those cases produce spurious anchors
+        because BM25 ranks by tiebreak, not by meaningful similarity.
+
+        Witnessed: "GitHub Discussions vs Slack" → only ``slack`` survives
+        → BM25 anchors to ``log-error-to-slack/index.ts:getFeatureName`` by
+        lexical tiebreak, not by real match.
+        """
+        if not self._loaded or self._bm25 is None:
+            return 0
+
+        import bm25s
+
+        corpus_vocab = getattr(self._bm25, "vocab_dict", None) or {}
+        if not corpus_vocab:
+            return 0
+
+        tokenized = bm25s.tokenize(
+            [expand_identifiers(query)], stopwords="en", show_progress=False,
+        )
+        # bm25s 0.3.x: Tokenized.vocab is a {token_str: local_id} dict
+        query_vocab = getattr(tokenized, "vocab", None)
+        if not query_vocab:
+            return 0
+        return sum(
+            1
+            for tok in query_vocab
+            if tok and tok in corpus_vocab
+        )
+
     def search(self, query: str, num_results: int = 20) -> list[RetrievalResult]:
         """Search the BM25 index for relevant files."""
         if not self._loaded or self._bm25 is None or not self._doc_ids:

@@ -32,10 +32,12 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
+from handlers.brief import handle_brief
 from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
+from handlers.reset import handle_reset
 from handlers.search_decisions import handle_search_decisions
 from handlers.update import get_update_notice, handle_update
 
@@ -216,6 +218,64 @@ async def list_tools() -> list[Tool]:
                 "required": ["action"],
             },
         ),
+        Tool(
+            name="bicameral.brief",
+            description=(
+                "Pre-meeting one-pager generator. Given a topic (and optional participant list), "
+                "returns relevant decisions with status, drift candidates, divergences (contradictory "
+                "decisions on the same symbol), open gaps, and 3-5 suggested meeting questions. "
+                "Use this before any 1:1, standup, or product review to depersonalize hard "
+                "conversations by letting bicameral cite prior decisions for you. "
+                "Slash alias: /bicameral:brief"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "Topic or feature area to brief on (e.g. 'google calendar integration')",
+                    },
+                    "participants": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of meeting participants — surfaces decisions they were involved in",
+                    },
+                    "max_decisions": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum decisions to include in the brief",
+                    },
+                },
+                "required": ["topic"],
+            },
+        ),
+        Tool(
+            name="bicameral.reset",
+            description=(
+                "Fail-safe valve for a polluted ledger. Wipes every row scoped to the current repo "
+                "and returns a replay plan listing the source_cursors that existed before the wipe, "
+                "so the caller can re-run the original bicameral_ingest calls. "
+                "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
+                "Pass confirm=true to actually wipe. Scoped by repo, so multi-repo SurrealDB "
+                "instances stay isolated. "
+                "Slash alias: /bicameral:reset"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "confirm": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "MUST be true to actually wipe. Default false returns a dry-run plan only.",
+                    },
+                    "replay": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "When true, include the replay plan alongside the wipe summary",
+                    },
+                },
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -342,6 +402,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             current_version=SERVER_VERSION,
         )
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
+    elif name in ("bicameral.brief", "brief"):
+        result = await handle_brief(
+            ctx,
+            topic=arguments["topic"],
+            participants=arguments.get("participants") or None,
+            max_decisions=arguments.get("max_decisions", 10),
+        )
+    elif name in ("bicameral.reset", "reset"):
+        result = await handle_reset(
+            ctx,
+            confirm=arguments.get("confirm", False),
+            replay=arguments.get("replay", True),
+        )
     # ── Code locator tools ────────────────────────────────────────
     elif name == "validate_symbols":
         data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
