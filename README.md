@@ -1,3 +1,22 @@
+```
+    ██████╗ ██╗ ██████╗ █████╗ ███╗   ███╗███████╗██████╗  █████╗ ██╗
+    ██╔══██╗██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔══██╗██╔══██╗██║
+    ██████╔╝██║██║     ███████║██╔████╔██║█████╗  ██████╔╝███████║██║
+    ██╔══██╗██║██║     ██╔══██║██║╚██╔╝██║██╔══╝  ██╔══██╗██╔══██║██║
+    ██████╔╝██║╚██████╗██║  ██║██║ ╚═╝ ██║███████╗██║  ██║██║  ██║███████╗
+    ╚═════╝ ╚═╝ ╚═════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝
+
+        ┌────────────────┐                    ┌────────────────┐
+        │   DECISIONS    │  ◀── drift ──▶    │      CODE      │
+        │   what was     │    detection       │  what actually │
+        │     said       │                    │     shipped    │
+        └────────┬───────┘                    └────────┬───────┘
+                 │           ┌──────────┐              │
+                 └──────────▶│  ledger  │◀─────────────┘
+                             └──────────┘
+                         local · deterministic
+```
+
 # Bicameral MCP
 
 [![PyPI version](https://img.shields.io/pypi/v/bicameral-mcp)](https://pypi.org/project/bicameral-mcp/)
@@ -14,15 +33,14 @@ Bicameral MCP is a local-first [Model Context Protocol](https://spec.modelcontex
 ## Table of Contents
 
 - [The Problem](#the-problem)
+- [Collaboration Modes](#collaboration-modes)
+- [Tool Composition](#tool-composition)
 - [How It Works](#how-it-works)
 - [Architecture](#architecture)
 - [Quickstart](#quickstart)
 - [MCP Tools Reference](#mcp-tools-reference)
-- [Tool Composition](#tool-composition)
 - [Testing](#testing)
-- [Collaboration Modes](#collaboration-modes)
 - [Configuration](#configuration)
-- [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -41,6 +59,88 @@ Every software team makes hundreds of verbal decisions per week -- in meetings, 
 | 5 | **TRIBAL_KNOWLEDGE** | Only one person knows why the system works the way it does | `bicameral.drift` -- surfaces institutional memory tied to code |
 
 Bicameral's core value is **drift detection** -- knowing that a decision made three weeks ago is now inconsistent with what actually shipped, or that a decision made today is inconsistent with the codebase reality.
+
+---
+
+## Collaboration Modes
+
+Bicameral runs in one of two modes, set during `bicameral-mcp setup` or in `.bicameral/config.yaml`:
+
+| | Solo (default) | Team |
+|---|---|---|
+| **Who** | Individual testing or evaluation | Any mix of roles -- devs, PMs, designers |
+| **Data** | Local DB only | Local DB + git-committed event files |
+| **Shared via** | Nothing -- fully isolated, zero impact on teammates | Normal `git push` / `git pull` |
+| **Merge conflicts** | N/A | Zero -- per-user directories, append-only files |
+
+**Solo mode** is ideal for trying Bicameral without affecting your team's workflow. All data stays in a gitignored local DB -- no event files, no commits, no side effects. Switch to team mode when you're ready to share.
+
+**Team mode** enables cross-role collaboration through git. A PM ingests a PRD and sprint transcript; when a developer pulls, `bicameral.search` surfaces those decisions as coding context and `bicameral.status` shows what still needs implementation. The PM never touches the code; the developer never sits through the meeting. The decision graph is the handoff.
+
+```
+.bicameral/
+├── events/              ← committed to git (shared decisions)
+│   ├── pm@co.com/       ← PM's ingested PRDs and transcripts
+│   └── dev@co.com/      ← developer's commit syncs
+├── config.yaml          ← committed (mode: solo | team)
+└── local/               ← gitignored (materialized state)
+```
+
+**Switching modes:** Set `mode: team` or `mode: solo` in `.bicameral/config.yaml`. No data migration needed.
+
+---
+
+## Tool Composition
+
+The nine tools compose into three workflows that follow the natural lifecycle of a decision — **captured in a meeting, pulled as context during coding, checked at review time.** Each workflow below uses the same running example (a checkout-flow sprint) so you can see a single decision move through the pipeline.
+
+### 1. Ingestion — after a meeting
+
+> **Scenario:** Your PM wraps a 30-minute sprint planning in `#product-planning`. The transcript contains three decisions. You paste it into Claude and say "ingest this."
+
+```jsonc
+// bicameral.ingest
+{
+  "source": "slack",
+  "title": "Sprint 14 Planning — 2026-03-12",
+  "decisions": [
+    { "title": "Apply 10% discount on orders over $100",
+      "description": "Marketing confirmed at offsite. No upper bound." },
+    { "title": "Cache user sessions in Redis, not local memory",
+      "description": "Arch review: local memory breaks horizontal scaling." },
+    { "title": "Rate-limit checkout to 100 req/min per user",
+      "description": "Legal/compliance ask. Not yet built." }
+  ]
+}
+```
+
+**Outcome.** The discount rule and the Redis session decision anchor to real symbols (`pricing/discount.py:DiscountService.calculate`, `auth/session_store.py:SessionStore.put`) and are born `reflected`. Auto-grounding can't find code for the rate-limit rule — because it hasn't been written yet — so it lands as `ungrounded`. The ledger now knows a decision exists with no corresponding code, and the next `bicameral.status` call will show exactly that.
+
+---
+
+### 2. Pre-flight — before writing new code
+
+> **Scenario:** A dev picks up the ticket "add rate limiting to checkout." Before writing a single line, they ask Claude for context.
+
+```jsonc
+// bicameral.search
+{ "query": "rate limit checkout", "max_results": 5 }
+```
+
+**Outcome.** Before writing any code, the dev sees the prior rate-limit decision *with its compliance rationale*, learns that it's still `ungrounded` (so they're the first implementer), and discovers an adjacent `pricing/discount.py:DiscountService.calculate` region their new code will need to coexist with. No re-litigating a decided rule, no Slack archaeology, no ambushing the PM in standup tomorrow.
+
+---
+
+### 3. Code review — before merging
+
+> **Scenario:** Three weeks later, a different dev opens PR #241 with a 50-line diff touching `pricing/discount.py`. Reviewer asks Claude "any drift in this file?"
+
+```jsonc
+// bicameral.drift
+{ "file_path": "pricing/discount.py", "use_working_tree": false }
+```
+
+**Outcome.** The reviewer learns that `DiscountService.calculate:42-67` has drifted from the Sprint 14 Planning decision — threshold raised $100 → $500, rate lowered 10% → 5%. Either the change is intentional, in which case a new decision must be ingested before merge, or it's accidental and gets reverted. The conversation happens at PR time, not three sprints later in an incident post-mortem.
 
 ---
 
@@ -406,49 +506,6 @@ No LLM provider credentials needed -- all retrieval is deterministic.
 
 ---
 
-## Tool Composition
-
-The nine tools are designed to compose into three primary workflows:
-
-### Pre-flight (before coding)
-
-```
-bicameral.search("add rate limiting to checkout")
-  --> surfaces prior constraints, related decisions, and their code regions
-  --> auto-syncs ledger to HEAD before returning results
-```
-
-Use this to check for prior art and constraints before writing new code. Prevents CONSTRAINT_LOST and REPEATED_EXPLANATION.
-
-### Code review (before merging)
-
-```
-bicameral.drift("payments/processor.py")
-  --> surfaces all decisions touching symbols in this file
-  --> flags any where the code has diverged from recorded intent
-
-bicameral.status(filter="drifted")
-  --> full drift report across the entire codebase
-```
-
-Use this in pull request review to catch unintentional drift. The `use_working_tree` parameter controls whether comparison is against disk (pre-commit) or HEAD (PR review).
-
-### Ingestion (after a meeting)
-
-```
-bicameral.ingest(payload)
-  --> extracts intents, auto-grounds to code symbols
-  --> advances source cursor for incremental sync
-
-bicameral.link_commit("HEAD")
-  --> syncs latest commit state into the ledger
-
-bicameral.status(since="2025-03-20")
-  --> shows what's reflected vs. pending since the meeting
-```
-
----
-
 ## Testing
 
 Bicameral has 42 test files organized into three phases, all using real adapters with `SURREAL_URL=memory://` (embedded, in-process SurrealDB -- no external services required).
@@ -470,34 +527,6 @@ Phase 3 tests produce JSON artifacts (`test-results/e2e/`) with full tool respon
 
 ---
 
-## Collaboration Modes
-
-Bicameral runs in one of two modes, set during `bicameral-mcp setup` or in `.bicameral/config.yaml`:
-
-| | Solo (default) | Team |
-|---|---|---|
-| **Who** | Individual testing or evaluation | Any mix of roles -- devs, PMs, designers |
-| **Data** | Local DB only | Local DB + git-committed event files |
-| **Shared via** | Nothing -- fully isolated, zero impact on teammates | Normal `git push` / `git pull` |
-| **Merge conflicts** | N/A | Zero -- per-user directories, append-only files |
-
-**Solo mode** is ideal for trying Bicameral without affecting your team's workflow. All data stays in a gitignored local DB -- no event files, no commits, no side effects. Switch to team mode when you're ready to share.
-
-**Team mode** enables cross-role collaboration through git. A PM ingests a PRD and sprint transcript; when a developer pulls, `bicameral.search` surfaces those decisions as coding context and `bicameral.status` shows what still needs implementation. The PM never touches the code; the developer never sits through the meeting. The decision graph is the handoff.
-
-```
-.bicameral/
-├── events/              ← committed to git (shared decisions)
-│   ├── pm@co.com/       ← PM's ingested PRDs and transcripts
-│   └── dev@co.com/      ← developer's commit syncs
-├── config.yaml          ← committed (mode: solo | team)
-└── local/               ← gitignored (materialized state)
-```
-
-**Switching modes:** Set `mode: team` or `mode: solo` in `.bicameral/config.yaml`. No data migration needed.
-
----
-
 ## Configuration
 
 | Variable | Default | Description |
@@ -507,18 +536,6 @@ Bicameral runs in one of two modes, set during `bicameral-mcp setup` or in `.bic
 | `CODE_LOCATOR_SQLITE_DB` | *(auto)* | Optional override for the local code index database path |
 
 All data is stored locally. The embedded SurrealDB instance runs in-process -- no separate database server to manage.
-
----
-
-## Roadmap
-
-### CodeGenome Identity Layer
-
-The current system grounds decisions via symbol names and file paths. This works well for stable codebases, but location-based anchoring breaks when code is renamed, moved, or heavily refactored.
-
-The next major evolution -- **CodeGenome** -- replaces location-based anchoring with identity-based grounding: structural signatures and behavioral profiles that persist across renames, moves, and AI-driven rewrites. This resolves what we call the **Auto-Grounding Problem**: intent anchored to identity rather than location.
-
-Where Bicameral today maps `intent --> symbol_name --> file:line`, CodeGenome will map `intent --> structural_identity --> any_location`, making the decision graph resilient to large-scale codebase reorganization.
 
 ---
 
