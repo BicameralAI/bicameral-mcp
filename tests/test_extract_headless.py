@@ -39,13 +39,19 @@ def test_step1_excerpt_isolates_step1_from_real_skill_md():
     excerpt = _extract_step1_excerpt(md)
 
     assert "Extract candidate decisions" in excerpt
-    assert "Include" in excerpt
-    assert "Exclude" in excerpt
+    # Case-insensitive check: original SKILL.md used "Include"/"Exclude" as
+    # subsection headers; the v0.4.3 few-shot rewrite uses "INCLUDE"/"EXCLUDE".
+    # Both forms should be acceptable.
+    lower = excerpt.lower()
+    assert "include" in lower
+    assert "exclude" in lower
     # Step 2 header or its body should not be present
     assert "Validate relevance" not in excerpt
     # Hard size ceiling so a future SKILL.md rewrite can't silently include
-    # the entire file if header parsing breaks.
-    assert len(excerpt) < 4000, f"excerpt suspiciously long: {len(excerpt)} chars"
+    # the entire file if header parsing breaks. Bumped from 4000 → 8000 to
+    # accommodate the v0.4.3 few-shot variant which adds 6 worked examples
+    # to Step 1.
+    assert len(excerpt) < 8000, f"excerpt suspiciously long: {len(excerpt)} chars"
 
 
 @pytest.mark.parametrize(
