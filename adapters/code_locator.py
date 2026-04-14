@@ -105,13 +105,13 @@ class RealCodeLocatorAdapter:
     def _validate_with_threshold(self, candidates: list[str], threshold: int) -> list[dict]:
         """Fuzzy-match with a custom threshold (for coverage loop broadening)."""
         self._ensure_initialized()
-        original = self._validate_tool._config.fuzzy_threshold
+        original = self._validate_tool.config.fuzzy_threshold
         try:
-            self._validate_tool._config.fuzzy_threshold = threshold
+            self._validate_tool.config.fuzzy_threshold = threshold
             results = self._validate_tool.execute({"candidates": candidates})
             return [r.model_dump() for r in results]
         finally:
-            self._validate_tool._config.fuzzy_threshold = original
+            self._validate_tool.config.fuzzy_threshold = original
 
     def get_neighbors(self, symbol_id: int) -> list[dict]:
         """1-hop structural graph traversal around a symbol."""

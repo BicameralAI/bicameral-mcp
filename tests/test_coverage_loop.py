@@ -38,7 +38,7 @@ def _make_initialized_adapter():
     db = MagicMock()
     config = SimpleNamespace(fuzzy_threshold=80)
     adapter._db = db
-    adapter._validate_tool = SimpleNamespace(_config=config)
+    adapter._validate_tool = SimpleNamespace(config=config)
     adapter._search_tool = MagicMock()
     adapter._neighbors_tool = MagicMock()
 
@@ -339,14 +339,14 @@ class TestValidateWithThreshold:
     def test_threshold_restored_after_call(self):
         """Config threshold is restored even if execute raises."""
         adapter, db = _make_initialized_adapter()
-        original_threshold = adapter._validate_tool._config.fuzzy_threshold
+        original_threshold = adapter._validate_tool.config.fuzzy_threshold
 
         adapter._validate_tool.execute = MagicMock(side_effect=RuntimeError("boom"))
 
         with pytest.raises(RuntimeError):
             adapter._validate_with_threshold(["test"], 60)
 
-        assert adapter._validate_tool._config.fuzzy_threshold == original_threshold
+        assert adapter._validate_tool.config.fuzzy_threshold == original_threshold
 
     def test_threshold_temporarily_overridden(self):
         """During execute, the threshold is set to the requested value."""
@@ -354,7 +354,7 @@ class TestValidateWithThreshold:
         captured_threshold = {}
 
         def fake_execute(args):
-            captured_threshold["value"] = adapter._validate_tool._config.fuzzy_threshold
+            captured_threshold["value"] = adapter._validate_tool.config.fuzzy_threshold
             return []
 
         adapter._validate_tool.execute = fake_execute
@@ -362,4 +362,4 @@ class TestValidateWithThreshold:
 
         assert captured_threshold["value"] == 60
         # Restored after
-        assert adapter._validate_tool._config.fuzzy_threshold == 80
+        assert adapter._validate_tool.config.fuzzy_threshold == 80
