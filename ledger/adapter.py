@@ -20,6 +20,7 @@ from .queries import (
     get_all_decisions,
     get_decisions_for_file,
     get_regions_for_files,
+    get_regions_without_hash,
     get_source_cursor,
     get_sync_state,
     get_undocumented_symbols,
@@ -39,7 +40,7 @@ from .queries import (
     upsert_sync_state,
 )
 from .schema import init_schema, migrate
-from .status import compute_content_hash, get_changed_files, resolve_head
+from .status import compute_content_hash, derive_status, get_changed_files, resolve_head
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,24 @@ def _default_db_url() -> str:
     db_path = Path.home() / ".bicameral" / "ledger.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return f"surrealkv://{db_path}"
+
+
+# Priority is "loudest wins" — any region drifting flags the whole intent as
+# drifted so users see the alarm, even if other regions still reflect.
+_STATUS_PRIORITY = {"drifted": 3, "reflected": 2, "pending": 1, "ungrounded": 0}
+
+
+def _aggregate_intent_status(region_statuses: list[str]) -> str:
+    """Collapse per-region statuses to a single intent status.
+
+    drifted > reflected > pending > ungrounded. A multi-region intent is
+    drifted if any of its regions drifted; reflected if all surviving
+    regions reflect; pending if any region is waiting on code that doesn't
+    exist yet; else ungrounded.
+    """
+    if not region_statuses:
+        return "ungrounded"
+    return max(region_statuses, key=lambda s: _STATUS_PRIORITY.get(s, -1))
 
 
 class SurrealDBLedgerAdapter:
@@ -265,6 +284,83 @@ class SurrealDBLedgerAdapter:
             "undocumented_symbols": list(set(undocumented_symbols)),
         }
 
+    async def backfill_empty_hashes(
+        self,
+        repo_path: str,
+        drift_analyzer=None,
+    ) -> dict:
+        """Self-heal pre-v0.4.5 regions that were persisted with an empty
+        content_hash. Walks every code_region for ``repo_path`` that has no
+        stored hash, runs the configured drift analyzer (which, for
+        HashDriftAnalyzer, adopts the current source as the baseline and
+        returns reflected), and updates the region + its linked intents.
+
+        Idempotent and scoped: regions already carrying a hash are ignored,
+        and regions belonging to other repos are left alone. Safe to call
+        on every link_commit — once every region is stamped, the query
+        returns an empty set and the sweep is a no-op.
+        """
+        await self._ensure_connected()
+
+        if drift_analyzer is None:
+            from .drift import HashDriftAnalyzer
+            drift_analyzer = HashDriftAnalyzer()
+
+        legacy = await get_regions_without_hash(self._client, repo=repo_path)
+        if not legacy:
+            return {"healed": 0, "failed": 0}
+
+        healed = 0
+        failed = 0
+        # Use HEAD as the backfill ref — that's "what the code looks like now,"
+        # which is the only meaningful baseline when no prior hash exists.
+        ref = resolve_head(repo_path) or "HEAD"
+
+        for region in legacy:
+            region_id = region.get("region_id", "")
+            file_path = region.get("file_path", "")
+            symbol_name = region.get("symbol_name", "")
+            start_line = region.get("start_line", 0)
+            end_line = region.get("end_line", 0)
+            if not region_id or not file_path or not symbol_name:
+                failed += 1
+                continue
+
+            drift_result = await drift_analyzer.analyze_region(
+                file_path=file_path,
+                symbol_name=symbol_name,
+                start_line=start_line,
+                end_line=end_line,
+                stored_hash="",
+                repo_path=repo_path,
+                ref=ref,
+                source_context="",
+            )
+
+            # Only persist heals that produced a real baseline. If compute
+            # failed (file/range missing at ref), we leave the region alone
+            # so a future code move can still find it.
+            if not drift_result.content_hash:
+                failed += 1
+                continue
+
+            await update_region_hash(self._client, region_id, drift_result.content_hash, ref)
+            new_status = drift_result.status
+            for intent in (region.get("intents") or []):
+                if intent is None:
+                    continue
+                intent_id = str(intent.get("id", ""))
+                if intent_id:
+                    await update_intent_status(self._client, intent_id, new_status)
+            healed += 1
+
+        if healed or failed:
+            logger.info(
+                "[backfill] repo=%s healed=%d failed=%d",
+                repo_path, healed, failed,
+            )
+        return {"healed": healed, "failed": failed}
+
     # ── Extended: ingestion of CodeLocatorPayload ─────────────────────────
 
     async def ingest_payload(self, payload: dict) -> dict:
@@ -277,10 +373,15 @@ class SurrealDBLedgerAdapter:
 
         repo = payload.get("repo", "")
         commit_hash = payload.get("commit_hash", "")
+        # Resolve HEAD once per ingest so every region hashes against the
+        # same baseline ref. Without this, bulk ingests that don't carry a
+        # commit_hash stamped empty hashes and decisions were born pending.
+        effective_ref = commit_hash or resolve_head(repo) or "HEAD"
         intents_created = 0
         symbols_mapped = 0
         regions_linked = 0
         ungrounded = []
+        region_ids: list[str] = []
 
         for mapping in payload.get("mappings", []):
             span = mapping.get("span", {})
@@ -324,6 +425,9 @@ class SurrealDBLedgerAdapter:
                 ungrounded.append(description)
                 continue
 
+            # Track per-region derived status so we can aggregate up to the intent.
+            region_statuses: list[str] = []
+
             for region_data in code_regions:
                 symbol_name = region_data.get("symbol", "")
                 file_path = region_data.get("file_path", "")
@@ -331,13 +435,15 @@ class SurrealDBLedgerAdapter:
                 if not symbol_name or not file_path:
                     continue
 
-                # Compute content hash at commit time
+                # Compute content hash at the effective ref. Always — no gate.
+                # When repo is unset or the file/range isn't in git, this
+                # returns None and the region stays pending via derive_status.
                 start_line = region_data.get("start_line", 0)
                 end_line = region_data.get("end_line", 0)
                 content_hash = ""
-                if commit_hash and repo:
+                if repo:
                     content_hash = compute_content_hash(
-                        file_path, start_line, end_line, repo, ref=commit_hash
+                        file_path, start_line, end_line, repo, ref=effective_ref
                     ) or ""
 
                 # Create / update symbol node
@@ -365,6 +471,14 @@ class SurrealDBLedgerAdapter:
                 if not region_id:
                     continue
                 regions_linked += 1
+                region_ids.append(region_id)
+
+                # Baseline == actual at ingest time, so derive_status returns
+                # "reflected" when the hash was computable, "ungrounded" when
+                # the file/range isn't in git yet.
+                region_statuses.append(
+                    derive_status(content_hash, content_hash if content_hash else None)
+                )
 
                 # intent → symbol → code_region edges
                 provenance = {}
@@ -377,9 +491,13 @@ class SurrealDBLedgerAdapter:
                 )
                 await relate_implements(self._client, symbol_id, region_id)
 
-            # Update intent status to pending (has regions now)
-            if intent_id and code_regions:
-                await update_intent_status(self._client, intent_id, "pending")
+            # Aggregate region statuses up to the intent. An intent is
+            # drifted if any region drifted; else reflected if any reflect;
+            # else pending if any pending; else ungrounded (all regions
+            # failed to link or no region could be hashed against HEAD).
+            if intent_id:
+                aggregated = _aggregate_intent_status(region_statuses)
+                await update_intent_status(self._client, intent_id, aggregated)
 
         return {
             "ingested": True,
@@ -391,6 +509,7 @@ class SurrealDBLedgerAdapter:
                 "ungrounded": len(ungrounded),
             },
             "ungrounded_intents": ungrounded,
+            "region_ids": region_ids,
         }
 
     async def get_source_cursor(

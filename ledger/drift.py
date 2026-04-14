@@ -42,6 +42,19 @@ class HashDriftAnalyzer:
             file_path, start_line, end_line, repo_path, ref=ref
         )
 
+        # Self-heal legacy regions that were persisted before v0.4.5's
+        # baseline-stamping fix. If we have no stored hash but the code
+        # exists at ref, adopt actual_hash as the baseline and report
+        # reflected. Without this, regions ingested pre-v0.4.5 stay
+        # permanently pending/ungrounded even after reindex.
+        if not stored_hash and actual_hash is not None:
+            return DriftResult(
+                status="reflected",
+                content_hash=actual_hash,
+                confidence=1.0,
+                explanation="",
+            )
+
         status = derive_status(stored_hash, actual_hash)
         new_hash = actual_hash or stored_hash
 

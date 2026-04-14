@@ -69,6 +69,17 @@ async def _reground_ungrounded(ctx) -> int:
 
 
 async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitResponse:
+    # Self-heal legacy regions with empty content_hash from pre-v0.4.5
+    # ingests. Scoped to ctx.repo_path so multi-repo SurrealDB instances
+    # stay isolated; no-op once every region in this repo has a baseline.
+    try:
+        if hasattr(ctx.ledger, "backfill_empty_hashes"):
+            await ctx.ledger.backfill_empty_hashes(
+                ctx.repo_path, drift_analyzer=ctx.drift_analyzer,
+            )
+    except Exception as exc:
+        logger.warning("[link_commit] backfill failed: %s", exc)
+
     result = await ctx.ledger.ingest_commit(
         commit_hash, ctx.repo_path, drift_analyzer=ctx.drift_analyzer,
     )

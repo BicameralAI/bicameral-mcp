@@ -602,6 +602,35 @@ async def get_regions_for_files(
     return rows
 
 
+async def get_regions_without_hash(
+    client: LedgerClient,
+    repo: str = "",
+) -> list[dict]:
+    """Return regions whose content_hash has never been stamped.
+
+    Used by the backfill sweep in ingest_commit to self-heal legacy regions
+    from pre-v0.4.5 ledgers where ingest skipped hash computation. Filters
+    in Python rather than SurrealQL to avoid v2-vs-v3 NONE/NULL syntax drift.
+
+    When ``repo`` is provided, only regions belonging to that repo are
+    returned — prevents backfill noise from unrelated ledgers in the same
+    SurrealDB database (common during multi-fixture test runs).
+    """
+    rows = await client.query(
+        """
+        SELECT
+            type::string(id) AS region_id,
+            file_path, symbol_name, start_line, end_line, content_hash, repo,
+            <-implements<-symbol<-maps_to<-intent.{id, status, description} AS intents
+        FROM code_region
+        """,
+    )
+    filtered = [r for r in (rows or []) if not r.get("content_hash")]
+    if repo:
+        filtered = [r for r in filtered if str(r.get("repo", "")) == repo]
+    return filtered
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────
 
 
