@@ -81,6 +81,7 @@ class RealCodeLocatorAdapter:
             from code_locator.retrieval.sqlite_vec_client import SqliteVecClient
             vector_client = SqliteVecClient(config.sqlite_db, config.embedding_model)
 
+        self._db = db
         self._validate_tool = ValidateSymbolsTool(db, config)
         self._search_tool = SearchCodeTool(bm25, db, config, vector_client=vector_client)
         self._neighbors_tool = GetNeighborsTool(db, config)
@@ -261,7 +262,7 @@ class RealCodeLocatorAdapter:
         """
         try:
             self._ensure_initialized()
-            db = self._validate_tool._db
+            db = self._db
         except Exception as exc:
             logger.warning("[ground] auto-ground unavailable: %s", exc)
             deferred = sum(1 for m in mappings if not m.get("code_regions"))
@@ -347,7 +348,7 @@ class RealCodeLocatorAdapter:
 
         try:
             self._ensure_initialized()
-            db = self._validate_tool._db
+            db = self._db
         except Exception as exc:
             logger.warning("[resolve_symbols] cannot open symbol DB: %s", exc)
             return payload

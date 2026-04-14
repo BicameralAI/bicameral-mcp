@@ -98,7 +98,7 @@ def _validate_cached_regions(
     """
     try:
         code_graph._ensure_initialized()
-        db = code_graph._validate_tool._db
+        db = code_graph._db
     except Exception:
         return []
 

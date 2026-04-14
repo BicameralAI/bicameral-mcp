@@ -37,7 +37,8 @@ def _make_initialized_adapter():
 
     db = MagicMock()
     config = SimpleNamespace(fuzzy_threshold=80)
-    adapter._validate_tool = SimpleNamespace(_db=db, _config=config)
+    adapter._db = db
+    adapter._validate_tool = SimpleNamespace(_config=config)
     adapter._search_tool = MagicMock()
     adapter._neighbors_tool = MagicMock()
 

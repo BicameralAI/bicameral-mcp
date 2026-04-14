@@ -36,10 +36,9 @@ def _make_code_graph(symbols: dict[str, list[dict]]):
 
     db.lookup_by_name = lookup_by_name
 
-    tool = SimpleNamespace(_db=db)
     graph = SimpleNamespace(
         _ensure_initialized=lambda: None,
-        _validate_tool=tool,
+        _db=db,
     )
     return graph
 
