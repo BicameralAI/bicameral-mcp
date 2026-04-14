@@ -27,23 +27,6 @@ def get_code_locator():
     return RealCodeLocatorAdapter(repo_path=repo_path)
 
 
-def ensure_code_graph_fresh(repo_path: str | None = None) -> None:
-    """Ensure the code graph index exists and matches HEAD.
-
-    Safe to call multiple times — only rebuilds if stale.
-    Called automatically by tools that depend on the code graph.
-    """
-    repo = repo_path or os.getenv("REPO_PATH", ".")
-    ensure_runtime_env()
-    from code_locator.config import load_config
-    config = load_config()
-    ensure_index_matches_repo(repo, config)
-
-
-# Alias for the CodeIntelligencePort factory (same implementation, named for the port)
-get_code_intelligence = get_code_locator
-
-
 class RealCodeLocatorAdapter:
     """MCP-native code locator — exposes raw tools without an LLM agent loop.
 
