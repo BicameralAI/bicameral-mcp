@@ -17,25 +17,71 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 ### 1. Extract candidate decisions
 
-Parse the source content and extract decisions that could plausibly affect code. For each candidate, ask: **"Would this change or constrain an implementation?"**
+Read the source. For each statement, decide whether it's a real implementation decision or whether it should be excluded. Apply the hard-exclude rules first, then the include rules. When in doubt, exclude.
 
-**Include** (implementation-relevant):
-- Architectural choices ("use token bucket for rate limiting")
-- API contracts ("the endpoint returns paginated results")
-- Data model decisions ("store session tokens encrypted at rest")
-- Technology choices ("use tree-sitter for parsing, not regex")
-- Behavioral requirements ("retry failed webhooks 3 times with exponential backoff")
-- Action items with code implications ("add input validation to the checkout flow")
+**HARD EXCLUDE — these patterns are NEVER decisions, even if they sound technical**:
 
-**Exclude** (not implementation-relevant):
-- Business strategy ("target 40-100 design partners at $50K ACV")
-- Market positioning ("differentiate from Copilot via upstream decisions")
-- Open-ended research questions ("what prevents hallucination beyond grounding?")
-- Pricing/packaging decisions with no code impact
-- Team/process decisions ("freeze merges Thursday for release cut")
-- Vague aspirations without concrete technical implications
+| Pattern | Example phrase |
+|---|---|
+| Negation | "we're NOT going to use Redis" |
+| Hedged conditional | "if infra approves, we'll switch to X" |
+| Aspirational | "we should look into" / "eventually" / "someday" / "would love to" |
+| Status quo | "keeping the existing X for now" / "no change" |
+| Parked / deferred | "let's revisit next quarter" / "park it" |
+| Vibes / no observable behavior | "be more performance-focused going forward" |
+| Strategy / hiring / pricing / OKRs / fundraising | "Q3 OKR is at 78%" / "tag SAML in CRM" |
+| Reversed within the same source | speaker A proposes X → blocked → team agrees on Y → only Y is the decision, X is not |
 
-When in doubt, **exclude**. A clean ledger with 5 grounded decisions is more useful than 20 with 15 perpetually ungrounded.
+**INCLUDE — concrete decisions with explicit team commitment**:
+
+- Architectural choices, API contracts, data-model decisions, technology choices
+- Behavioral requirements with clear definition-of-done
+- Configuration values and refinements ("set TTL to 300s", "key on user ID hash")
+- Action items with code implications and a named owner
+
+### Worked examples
+
+These cover the failure modes the skill must handle. Read them carefully — they are the spec.
+
+**Example 1 — Strategic / hedged / negated meeting (extract NOTHING)**
+
+> Q3 planning. Priya: "We should probably look into vector embeddings for search someday." Tomás: "If infra approves we'll switch to ScyllaDB for analytics." Lena: "We're keeping the existing webhook retry logic for now." Jin: "We're definitely not going to use Redis here." Tomás: "Eventually I'd love to migrate off the monolith. Maybe 2027."
+
+→ **Extract: 0 decisions, 0 action items.** Every line is hedged, aspirational, status-quo, or negated. The "we're not going to use Redis" line is a non-decision and must NOT be extracted as a "use Redis" decision.
+
+**Example 2 — Mostly business meeting with one buried real decision**
+
+> Q2 OR review. 40 lines about OKR percentages, headcount, customer escalations, fundraising. Buried at line 28: "Oh, by the way, Priya's going to refactor the auth middleware to use JWTs instead of session cookies — Lena flagged it in the SOC2 review and we need it landed before the audit window closes in June." Then back to OKRs.
+
+→ **Extract: 1 decision** — "Refactor the auth middleware to use JWTs instead of session cookies (motivated by SOC2 audit, deadline before June audit window)." Plus 1 action item to Priya. Do NOT extract OKR percentages, headcount, escalations, fundraising, or marketing items as decisions.
+
+**Example 3 — Compound sentence that packs N decisions**
+
+> "Move the rate limiter from in-memory to Redis with a 100-requests-per-minute cap keyed on user ID hash, add Prometheus counters for hits and misses, switch the lease TTL from 60 seconds to 300 seconds, and emit a structured log line on every reject."
+
+→ **Extract: 5 separate decisions** — (1) move rate limiter from in-memory to Redis, (2) 100 req/min cap keyed on user ID hash, (3) Prometheus counters for hits/misses, (4) lease TTL 60s→300s, (5) structured log line on every reject. Do not collapse these into one.
+
+**Example 4 — Multi-turn debate with reversed pivots**
+
+> Carlos: "Let's use Redis Streams for the webhook queue." Dana: "Infra blocked Streams last quarter." Carlos: "OK, BullMQ then?" Carlos: "Wait, infra also blocked BullMQ." Wei: "SQS?" Team: "SQS FIFO, message group keyed on merchant ID, 5-minute visibility timeout, 6 max receives, dead-letter queue on overflow."
+
+→ **Extract: ONLY the SQS decisions**, not Redis Streams or BullMQ. Specifically: (1) use SQS FIFO for the webhook queue, (2) message group ID = merchant ID, (3) visibility timeout 5 min, (4) max receives 6, (5) DLQ on overflow. The Redis Streams and BullMQ proposals are reversed pivots and must NOT appear in the output.
+
+**Example 5 — Generic vocabulary that should NOT trigger extraction**
+
+> Sara: "We need a better manager for the order workflow. The customer journey from product page to confirmed purchase has too much friction. We should reduce the friction. Add proper handling for the edge cases in the controller." David: "Which controller?" Sara: "Whichever one is closest to where the user-facing latency happens."
+
+→ **Extract: 0 decisions** for the "manager", "customer journey", "friction", and "controller" lines — these are generic business language with no concrete commitment. Do NOT extract a "use a better manager" decision.
+
+**Example 6 — Concrete enumeration mixed with generic chatter**
+
+> Anya: "Add proper handling for the edge cases in the checkout flow — when a payment webhook is delayed, when stock allocation fails midway, when a coupon is invalidated mid-checkout. Right now the user just sees a loading spinner forever."
+
+→ **Extract: 1 decision** — "Handle three failure modes in checkout completion: payment webhook delay, mid-flow stock allocation failure, mid-checkout coupon invalidation, instead of leaving the user on an indefinite loading spinner." Concrete enumeration counts as specificity even though "edge cases" sounds vague at first.
+
+---
+
+When in doubt, **exclude**. A clean ledger with 5 real decisions is more useful than 20 with 15 ghost decisions. If the source's primary topic is OKRs / hiring / fundraising / sales, it is acceptable to return zero decisions.
 
 ### 2. Validate relevance against the codebase
 
