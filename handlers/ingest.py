@@ -80,8 +80,64 @@ def _normalize_payload(payload: dict) -> dict:
     return result
 
 
+# ── FC-3: vocab cache similarity gate ──────────────────────────────
+#
+# The vocab cache uses SurrealDB's ``@0@`` BM25 full-text operator to match
+# incoming descriptions against stored ``query_text``. Without a similarity
+# threshold, two unrelated intents sharing incidental tokens cross-match —
+# witnessed live on Accountable 2026-04-14 where a "Stripe payment-link
+# fallback" decision inherited 8 bogus regions from an earlier "weekly
+# bulletin page" ingest.
+#
+# The gate below computes Jaccard similarity over non-stopword tokens ≥4
+# chars. Cache hits below the threshold are discarded, forcing the caller
+# to fall through to fresh grounding (which is already correct, per FC-2).
+# Jaccard was chosen over embeddings because:
+#   1. Deterministic, no model dependency (git-for-specs.md invariant:
+#      "no LLM in critical indexing path")
+#   2. The downstream ground_mappings pipeline already handles semantic
+#      variation via BM25+graph fusion — an embedding gate here would
+#      double-count
+#   3. 20 LOC vs 200+ LOC with a new dependency
+
+_VOCAB_SIMILARITY_THRESHOLD = 0.5
+
+_VOCAB_STOPWORDS = frozenset({
+    "the", "and", "for", "that", "this", "with", "are", "from", "have",
+    "will", "when", "then", "been", "also", "into", "about", "should",
+    "must", "need", "each", "they", "their", "there", "which", "where",
+    "what", "than", "some", "more", "such", "only", "very", "just",
+    "like", "make", "made", "use", "used", "using", "after", "before",
+    "over", "under", "between", "through", "against",
+})
+
+
+def _content_tokens(text: str) -> set[str]:
+    """Lowercase, non-stopword, ≥4-char tokens for similarity comparison."""
+    import re
+    raw = re.findall(r"[A-Za-z]{4,}", text or "")
+    return {t.lower() for t in raw if t.lower() not in _VOCAB_STOPWORDS}
+
+
+def _jaccard_similarity(a: str, b: str) -> float:
+    """Jaccard coefficient over ``_content_tokens`` sets.
+
+    Returns 0.0 when either set is empty. Returns 1.0 when both strings
+    produce identical token sets.
+    """
+    ta = _content_tokens(a)
+    tb = _content_tokens(b)
+    if not ta or not tb:
+        return 0.0
+    intersection = ta & tb
+    union = ta | tb
+    return len(intersection) / len(union)
+
+
 def _validate_cached_regions(
-    regions: list[dict], code_graph,
+    regions: list[dict],
+    code_graph,
+    current_description: str = "",
 ) -> list[dict]:
     """Check cached code_regions against the live symbol index.
 
@@ -95,6 +151,13 @@ def _validate_cached_regions(
 
     When lookup_by_name returns multiple rows, prefers the row matching
     the cached region's file_path to avoid picking an unrelated symbol.
+
+    v0.4.7 (FC-3): when ``current_description`` is non-empty, the returned
+    region's ``purpose`` field is rewritten to it. Previously this function
+    preserved the cached region's stale ``purpose`` (= the ORIGINAL
+    intent's description), cross-wiring intents so one decision's regions
+    carried another decision's label. Witnessed live on Accountable
+    2026-04-14.
     """
     try:
         code_graph._ensure_initialized()
@@ -120,13 +183,16 @@ def _validate_cached_regions(
             (r for r in rows if r["file_path"] == cached_file),
             rows[0],
         )
-        valid.append({
+        entry = {
             **region,
             "file_path": row["file_path"],
             "start_line": row["start_line"],
             "end_line": row["end_line"],
             "type": row["type"],
-        })
+        }
+        if current_description:
+            entry["purpose"] = current_description  # FC-3: rewrite stale purpose
+        valid.append(entry)
     return valid
 
 
@@ -155,6 +221,7 @@ async def handle_ingest(
     # Runs before ground_mappings — a hit skips the full BM25 pipeline.
     mappings_to_ground = payload.get("mappings") or []
     cache_hits = 0
+    cache_similarity_rejections = 0
     pre_grounded: set[str] = set()
     for mapping in mappings_to_ground:
         if mapping.get("code_regions"):
@@ -167,19 +234,36 @@ async def handle_ingest(
         if not description:
             continue
         try:
-            cached_symbols = await ledger.lookup_vocab_cache(description, repo)
+            cached_symbols, matched_query_text = await ledger.lookup_vocab_cache(description, repo)
             if cached_symbols:
+                # FC-3 similarity gate: the vocab cache lookup uses SurrealDB's
+                # BM25 @0@ operator, which is too loose on its own. Two unrelated
+                # intents sharing incidental tokens can cross-match. Compute
+                # Jaccard similarity between the incoming description and the
+                # matched query_text, and reject the cache hit if it's below
+                # threshold. Falls through to fresh grounding via ground_mappings.
+                similarity = _jaccard_similarity(description, matched_query_text)
+                if similarity < _VOCAB_SIMILARITY_THRESHOLD:
+                    cache_similarity_rejections += 1
+                    logger.info(
+                        "[ingest] vocab cache rejected (similarity %.2f < %.2f): "
+                        "current=%r matched=%r",
+                        similarity, _VOCAB_SIMILARITY_THRESHOLD,
+                        description[:60], matched_query_text[:60],
+                    )
+                    continue
                 valid_regions = _validate_cached_regions(
                     cached_symbols, ctx.code_graph,
+                    current_description=description,  # FC-3: rewrite purpose
                 )
                 if valid_regions:
                     mapping["code_regions"] = valid_regions
                     cache_hits += 1
                     pre_grounded.add(description)
                     logger.info(
-                        "[ingest] vocab cache hit for '%s' (%d/%d regions valid)",
+                        "[ingest] vocab cache hit for '%s' (%d/%d regions valid, sim=%.2f)",
                         description[:60],
-                        len(valid_regions), len(cached_symbols),
+                        len(valid_regions), len(cached_symbols), similarity,
                     )
                 else:
                     logger.debug(

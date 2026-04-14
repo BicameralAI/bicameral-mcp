@@ -86,8 +86,15 @@ class TeamWriteAdapter:
             error=error,
         )
 
-    async def lookup_vocab_cache(self, query_text: str, repo: str) -> list[dict]:
-        """Vocab cache is local bookkeeping — no event emitted."""
+    async def lookup_vocab_cache(
+        self, query_text: str, repo: str,
+    ) -> tuple[list[dict], str]:
+        """Vocab cache is local bookkeeping — no event emitted.
+
+        Returns ``(symbols, matched_query_text)``. The second element is
+        the ``query_text`` that the top cache hit was originally stored
+        against — the caller uses it for FC-3 similarity gating.
+        """
         await self._ensure_ready()
         return await self._inner.lookup_vocab_cache(query_text, repo)
 

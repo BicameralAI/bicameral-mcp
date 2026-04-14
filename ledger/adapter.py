@@ -124,8 +124,13 @@ class SurrealDBLedgerAdapter:
         self,
         query_text: str,
         repo: str,
-    ) -> list[dict]:
-        """Check vocab_cache for cached grounding results."""
+    ) -> tuple[list[dict], str]:
+        """Check vocab_cache for cached grounding results.
+
+        Returns ``(symbols, matched_query_text)``. The matched query text
+        is needed by callers to run the FC-3 similarity gate before
+        deciding whether to reuse the cached symbols.
+        """
         await self._ensure_connected()
         return await lookup_vocab_cache(self._client, query_text, repo)
 

@@ -209,7 +209,10 @@ class TestVocabCacheQueries:
     """Integration tests for lookup_vocab_cache / upsert_vocab_cache."""
 
     async def test_upsert_and_lookup(self, ledger_client):
-        """Write a cache entry, then BM25 search for it."""
+        """Write a cache entry, then BM25 search for it.
+
+        v0.4.7: lookup_vocab_cache returns (symbols, matched_query_text).
+        """
         from ledger.queries import lookup_vocab_cache, upsert_vocab_cache
 
         symbols = [
@@ -218,10 +221,11 @@ class TestVocabCacheQueries:
         ]
         await upsert_vocab_cache(ledger_client, "payment authorization flow", "repo-a", symbols)
 
-        result = await lookup_vocab_cache(ledger_client, "payment authorization", "repo-a")
+        result, matched_query = await lookup_vocab_cache(ledger_client, "payment authorization", "repo-a")
         assert len(result) == 1
         assert result[0]["symbol"] == "authorize"
         assert result[0]["file_path"] == "auth.py"
+        assert matched_query == "payment authorization flow"
 
     async def test_lookup_miss_different_repo(self, ledger_client):
         """Cache entry for repo-a should not match repo-b."""
@@ -231,8 +235,9 @@ class TestVocabCacheQueries:
                      "start_line": 1, "end_line": 5, "type": "function"}]
         await upsert_vocab_cache(ledger_client, "some query", "repo-a", symbols)
 
-        result = await lookup_vocab_cache(ledger_client, "some query", "repo-b")
+        result, matched_query = await lookup_vocab_cache(ledger_client, "some query", "repo-b")
         assert result == []
+        assert matched_query == ""
 
     async def test_lookup_miss_no_match(self, ledger_client):
         """Completely unrelated query returns empty."""
@@ -242,8 +247,9 @@ class TestVocabCacheQueries:
                      "start_line": 1, "end_line": 5, "type": "function"}]
         await upsert_vocab_cache(ledger_client, "payment authorization flow", "repo-a", symbols)
 
-        result = await lookup_vocab_cache(ledger_client, "database migration", "repo-a")
+        result, matched_query = await lookup_vocab_cache(ledger_client, "database migration", "repo-a")
         assert result == []
+        assert matched_query == ""
 
     async def test_hit_count_increments(self, ledger_client):
         """Each lookup should bump hit_count."""
@@ -279,6 +285,6 @@ class TestVocabCacheQueries:
         await upsert_vocab_cache(ledger_client, "test query text", "repo-a", symbols_v1)
         await upsert_vocab_cache(ledger_client, "test query text", "repo-a", symbols_v2)
 
-        result = await lookup_vocab_cache(ledger_client, "test query", "repo-a")
+        result, _ = await lookup_vocab_cache(ledger_client, "test query", "repo-a")
         assert len(result) == 1
         assert result[0]["symbol"] == "new_fn"

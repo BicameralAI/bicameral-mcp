@@ -3,6 +3,31 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.7 — 2026-04-14 — FC-3 Vocab Cache Similarity Gate
+
+Fixes witnessed cross-contamination where the vocab cache reused an unrelated
+intent's code regions — and, worse, labeled them with the original intent's
+`purpose` text. Observed live on Accountable 2026-04-14: a "Stripe payment-link
+fallback" decision inherited 8 bogus regions from an earlier "weekly bulletin
+page" ingest because both descriptions shared incidental tokens.
+
+### Fixed
+
+- **FC-3a — Vocab cache BM25 cross-match.** `lookup_vocab_cache` now returns
+  `(symbols, matched_query_text)`. `handle_ingest` computes Jaccard similarity
+  over non-stopword 4+ char tokens and discards hits below 0.5, forcing a
+  fall-through to fresh grounding via `ground_mappings`. Deterministic, no LLM
+  in the critical indexing path (per `git-for-specs.md`).
+- **FC-3b — Stale `purpose` field on reused regions.** `_validate_cached_regions`
+  now accepts `current_description` and rewrites every returned region's
+  `purpose` field so reused regions carry the *current* intent's text, not the
+  cached one's.
+
+### Migration
+
+No manual action required. `v0.4.6 → v0.4.7` is a handler-layer fix. Existing
+vocab_cache rows remain valid; the gate rejects false positives on read.
+
 ## 0.4.6 — 2026-04-14 — Adoption Floor (Trust + First Wow)
 
 Five initiatives: FC-1 BM25 degeneracy guard, FC-2 multi-region grounding

@@ -222,13 +222,20 @@ async def lookup_vocab_cache(
     query_text: str,
     repo: str,
     max_results: int = 3,
-) -> list[dict]:
+) -> tuple[list[dict], str]:
     """BM25 lookup on vocab_cache for cached grounding results.
 
-    Returns the ``symbols`` array from the top matching cache entry
-    (a list of code_region-shaped dicts). Empty list on miss.
+    Returns a 2-tuple: ``(symbols, matched_query_text)``.
+      - ``symbols`` is the cached code_region-shaped dict list from the
+        top matching cache entry, or ``[]`` on miss.
+      - ``matched_query_text`` is the ``query_text`` that the top hit was
+        originally stored against. The caller uses this to compute a
+        similarity gate (FC-3 fix) before deciding whether to reuse the
+        cached symbols — BM25's ``@0@`` operator is too loose on its
+        own and cross-contaminates unrelated intents.
 
     On hit, increments hit_count and refreshes last_hit for LRU tracking.
+    On miss, returns ``([], "")``.
     """
     rows = await client.query(
         """
@@ -241,7 +248,7 @@ async def lookup_vocab_cache(
         {"query": query_text, "repo": repo, "max_results": max_results},
     )
     if not rows:
-        return []
+        return [], ""
 
     top = rows[0]
     top_id = top.get("id")
@@ -250,7 +257,7 @@ async def lookup_vocab_cache(
             f"UPDATE {top_id} SET hit_count += 1, last_hit = time::now()",
         )
 
-    return top.get("symbols") or []
+    return top.get("symbols") or [], str(top.get("query_text") or "")
 
 
 async def upsert_vocab_cache(
