@@ -436,52 +436,21 @@ UNGROUNDED = [d for d in ALL_DECISIONS if d["status_at_ingest"] == "ungrounded"]
 # invocation, so partial runs are first-class.
 
 TRANSCRIPT_SOURCES: dict[str, dict] = {
-    "medusa-payment-timeout": {
-        "transcript": "pilot/ml/data/transcripts/medusa-payment-timeout.md",
-        "repo_key": "medusa",
-    },
-    "medusa-plugin-migration": {
-        "transcript": "pilot/ml/data/transcripts/medusa-plugin-migration.md",
-        "repo_key": "medusa",
-    },
-    "medusa-webhook-notifications": {
-        "transcript": "pilot/ml/data/transcripts/medusa-webhook-notifications.md",
-        "repo_key": "medusa",
-    },
-    "saleor-checkout-extensibility": {
-        "transcript": "pilot/ml/data/transcripts/saleor-checkout-extensibility.md",
-        "repo_key": "saleor",
-    },
-    "saleor-graphql-permissions": {
-        "transcript": "pilot/ml/data/transcripts/saleor-graphql-permissions.md",
-        "repo_key": "saleor",
-    },
-    "saleor-order-workflows": {
-        "transcript": "pilot/ml/data/transcripts/saleor-order-workflows.md",
-        "repo_key": "saleor",
-    },
-    "vendure-channel-pricing": {
-        "transcript": "pilot/ml/data/transcripts/vendure-channel-pricing.md",
-        "repo_key": "vendure",
-    },
-    "vendure-custom-fields": {
-        "transcript": "pilot/ml/data/transcripts/vendure-custom-fields.md",
-        "repo_key": "vendure",
-    },
-    "vendure-search-reindexing": {
-        "transcript": "pilot/ml/data/transcripts/vendure-search-reindexing.md",
-        "repo_key": "vendure",
-    },
-
     # ── Adversarial corpus (M1 stress categories) ─────────────────
-    # These transcripts deliberately exercise failure modes documented in
-    # visual-plans/quality_metrics/m1-decision-relevance.html. They are
-    # registered under repo_key="adversarial" so the runner reports them
-    # as their own group; the CI workflow aliases that key to the cloned
-    # medusa tree (any indexed code works — adversarial transcripts test
+    # M1 evaluates exclusively against this adversarial corpus. Each
+    # transcript deliberately exercises a failure mode documented in
+    # visual-plans/quality_metrics/m1-decision-relevance.html. The CI
+    # workflow aliases repo_key="adversarial" to the cloned medusa
+    # tree (any indexed code works — adversarial transcripts measure
     # extraction quality, not grounding precision against a specific
     # codebase). Ground truth for each lives at
-    # pilot/mcp/tests/fixtures/extraction/adv-*.json.
+    # pilot/mcp/tests/fixtures/extraction/adv-*.json and is hand-editable.
+    #
+    # Note: the friendly e-commerce corpus (medusa-*, saleor-*, vendure-*)
+    # used to live here as well, but was removed once it became clear that
+    # the friendly transcripts are too easy to be informative about
+    # real-world reliability. The transcript .md files remain in
+    # pilot/ml/data/transcripts/ for reference and other tooling.
     "adv-strat-fake": {
         "transcript": "pilot/ml/data/transcripts/adv-strat-fake.md",
         "repo_key": "adversarial",
