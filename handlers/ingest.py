@@ -203,6 +203,64 @@ def _derive_last_source_ref(payload: dict) -> str:
     return refs[-1] if refs else str(payload.get("query", "")).strip()
 
 
+# ── v0.4.8: post-ingest brief auto-chain ────────────────────────────
+
+
+_BRIEF_TOPIC_MAX = 200
+
+
+def _word_truncate(text: str, limit: int) -> str:
+    """Truncate ``text`` to ``limit`` chars on a word boundary."""
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit]
+    # Drop the trailing (possibly half-word) token if there's still a
+    # space somewhere earlier in the slice. Falls through to the raw
+    # clip when the slice is one giant token with no spaces.
+    if " " in clipped:
+        return clipped.rsplit(" ", 1)[0]
+    return clipped
+
+
+def _derive_brief_topic(payload: dict) -> str:
+    """Pick a topic string for the auto-fired ``handle_brief`` call.
+
+    Priority order:
+      1. ``payload.query`` if the caller supplied one — most accurate
+         signal of what they were asking about.
+      2. The single **longest** raw decision description from
+         ``payload.decisions``. We pick one (not a concatenation) because
+         multi-topic ingests otherwise blend unrelated content into one
+         BM25 query and brief returns a mess. Most ingests cluster around
+         one topic anyway; the longest decision is the richest anchor.
+         Raw ``decisions[]`` avoids the ``[Action:]`` / ``[Open Question]``
+         prefixes that ``_normalize_payload`` injects into ``mappings[].intent``.
+      3. ``payload.title`` as a last resort.
+      4. Empty string → caller skips the brief chain entirely.
+    """
+    query = str(payload.get("query") or "").strip()
+    if query:
+        return _word_truncate(query, _BRIEF_TOPIC_MAX)
+
+    decisions = payload.get("decisions") or []
+    decision_texts: list[str] = []
+    for d in decisions:
+        if not isinstance(d, dict):
+            continue
+        text = str(d.get("description") or d.get("title") or "").strip()
+        if text:
+            decision_texts.append(text)
+    if decision_texts:
+        longest = max(decision_texts, key=len)
+        return _word_truncate(longest, _BRIEF_TOPIC_MAX)
+
+    title = str(payload.get("title") or "").strip()
+    if title:
+        return _word_truncate(title, _BRIEF_TOPIC_MAX)
+
+    return ""
+
+
 async def handle_ingest(
     ctx,
     payload: dict,
@@ -306,14 +364,42 @@ async def handle_ingest(
             authoritative_ref, head_sha[:8], authoritative_ref, authoritative_ref,
         )
 
+    # v0.4.8: writes always invalidate the within-call sync cache. In the
+    # top-level ingest path this is a no-op (no cache exists yet this call),
+    # but the invariant "mutations clear cache" must hold symmetrically —
+    # otherwise a future chain that runs a read handler *before* ingest and
+    # then writes would leave a stale cache covering post-write reads.
+    try:
+        from handlers.link_commit import handle_link_commit, invalidate_sync_cache
+        invalidate_sync_cache(ctx)
+    except Exception:
+        pass
+
     result = await ledger.ingest_payload(payload, ctx=ctx)
 
     # Sync ledger to HEAD and re-ground any previously ungrounded intents
     try:
-        from handlers.link_commit import handle_link_commit
         await handle_link_commit(ctx, "HEAD")
     except Exception as exc:
         logger.warning("[ingest] post-ingest link_commit failed: %s", exc)
+
+    # v0.4.8: auto-fire bicameral_brief on a derived topic so the caller
+    # gets divergence / drift / gap / suggested_question signal in the
+    # same response as the ingest stats. Brief failures are logged and
+    # swallowed — they must not break the ingest itself.
+    brief_response = None
+    try:
+        brief_topic = _derive_brief_topic(payload)
+        if brief_topic:
+            from handlers.brief import handle_brief
+            brief_participants = payload.get("participants") or None
+            brief_response = await handle_brief(
+                ctx,
+                topic=brief_topic,
+                participants=brief_participants,
+            )
+    except Exception as exc:
+        logger.warning("[ingest] post-ingest brief chain failed: %s", exc)
 
     cursor_summary = None
     source_type = str(((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual"))
@@ -367,4 +453,5 @@ async def handle_ingest(
         ),
         ungrounded_intents=list(result.get("ungrounded_intents", [])),
         source_cursor=cursor_summary,
+        brief=brief_response,
     )

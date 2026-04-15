@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,11 @@ class BicameralContext:
     drift_analyzer: object
     authoritative_ref: str = "main"
     authoritative_sha: str = ""
+    # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
+    # because the reference stays pinned; only the dict's contents mutate.
+    # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
+    # repo-state expectations before chaining downstream tools.
+    _sync_state: dict = field(default_factory=dict)
 
     @classmethod
     def from_env(cls) -> BicameralContext:

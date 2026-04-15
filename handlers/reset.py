@@ -83,6 +83,15 @@ async def handle_reset(
         )
 
     # Destructive path — wipe the ledger scoped to this repo.
+    # v0.4.8: invalidate the within-call sync cache so any future chained
+    # handler in this same MCP call (e.g. future tester-mode hint chains)
+    # doesn't read stale decision state from before the wipe.
+    try:
+        from handlers.link_commit import invalidate_sync_cache
+        invalidate_sync_cache(ctx)
+    except Exception:
+        pass
+
     replay_errors: list[str] = []
     try:
         await _wipe_all(ledger, ctx.repo_path)

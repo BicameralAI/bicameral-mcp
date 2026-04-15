@@ -210,6 +210,11 @@ class IngestResponse(BaseModel):
     stats: IngestStats
     ungrounded_intents: list[str]
     source_cursor: SourceCursorSummary | None = None
+    # v0.4.8: ingest auto-fires bicameral_brief on the derived topic and
+    # embeds the full brief response here. None when topic derivation yields
+    # nothing usable, or when the chained brief call fails (logged, not
+    # raised — ingest must not fail because post-phase brief had a hiccup).
+    brief: "BriefResponse | None" = None
 
 
 # ── Tool 6: /bicameral_brief — pre-meeting one-pager ────────────────
@@ -286,3 +291,8 @@ class ResetResponse(BaseModel):
     replay_plan: list[ResetReplayEntry] = []
     replay_errors: list[str] = []
     next_action: str                     # human-readable next step for the caller
+
+
+# v0.4.8: resolve the forward reference on IngestResponse.brief (BriefResponse
+# is defined further down in the file than IngestResponse).
+IngestResponse.model_rebuild()

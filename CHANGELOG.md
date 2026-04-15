@@ -3,6 +3,57 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.8 — 2026-04-14 — Ingest → Brief Auto-Chain
+
+`bicameral.ingest` now automatically fires `bicameral.brief` on a topic
+derived from the payload and returns the brief embedded in
+`IngestResponse.brief`. Callers get divergence detection, drift signal, gap
+extraction, and suggested meeting questions in the same round-trip that
+produced the new decisions — no second tool call required. The killer
+feature: fresh-ingest contradiction alerts. If the new ingest adds a
+decision that conflicts with an existing one on the same symbol, the
+chained brief surfaces the divergence at the moment of creation instead
+of silently.
+
+### Added
+
+- **`IngestResponse.brief: BriefResponse | None`** — fused response field.
+  Populated when the payload has a derivable topic; `None` when it
+  doesn't (payload with only action_items, empty title, empty query).
+- **`_derive_brief_topic(payload)`** — picks topic via priority chain:
+  `payload.query` → longest raw decision description → `payload.title`
+  → empty. Reads raw `payload["decisions"][...]` to avoid the
+  `[Action:]` / `[Open Question]` prefixes that `_normalize_payload`
+  injects into `mapping.intent`. Word-boundary truncation at 200 chars.
+- **Within-call sync dedup guard** (`handlers/link_commit.py`) —
+  `_sync_cache_lookup` / `_store_sync_cache` / `invalidate_sync_cache`
+  short-circuit back-to-back `handle_link_commit("HEAD")` calls within
+  the same MCP invocation so auto-chains don't do N× backfill + drift
+  sweeps. Caches the **full** `LinkCommitResponse` so downstream
+  `sync_status` consumers see real `regions_updated` numbers, not
+  synthetic zeros. Re-reads live HEAD via `git rev-parse` on every
+  lookup so a mid-call commit bypasses the stale cache.
+- **`bicameral-ingest` skill step 5** — teaches the agent to present
+  `IngestResponse.brief` following the bicameral-brief presentation
+  rules (divergences first, drift candidates, decisions, gaps,
+  suggested_questions verbatim).
+
+### Fixed
+
+- **Pre-existing `bicameral.brief` double-sync** — `handle_brief` was
+  calling `link_commit(HEAD)` twice per invocation in v0.4.6 / v0.4.7
+  (once directly, once via its chained `handle_search_decisions`). The
+  v0.4.8 dedup guard collapses this to one sync. Brief gets faster on
+  every call, not just auto-chained ones.
+
+### Migration
+
+No schema changes. `IngestResponse.brief` is optional, so v0.4.7 clients
+ignore it. The sync dedup is transparent — callers can't tell a dedup
+hit from the original call except by the normalized
+`reason="already_synced"` string (which matches the ledger's own
+idempotency wording).
+
 ## 0.4.7 — 2026-04-14 — FC-3 Vocab Cache Similarity Gate
 
 Fixes witnessed cross-contamination where the vocab cache reused an unrelated
