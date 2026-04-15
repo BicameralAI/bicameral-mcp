@@ -37,6 +37,7 @@ from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
+from handlers.preflight import handle_preflight
 from handlers.reset import handle_reset
 from handlers.search_decisions import handle_search_decisions
 from handlers.update import get_update_notice, handle_update
@@ -276,6 +277,42 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="bicameral.preflight",
+            description=(
+                "Proactive context surfacing — call BEFORE implementing, building, modifying, "
+                "refactoring, or adding any code that touches a tracked feature area. Returns "
+                "prior decisions, drifted regions, divergent decision pairs, and unresolved open "
+                "questions linked to the topic, gated by the user's guided_mode setting. "
+                "In normal mode, fires only when there's actionable signal (drift, ungrounded, "
+                "divergence, open question). In guided mode, fires on any matches. "
+                "When fired=false, the agent MUST produce no output and proceed silently — "
+                "that's the trust contract. When fired=true, render the surfaced context with "
+                "a '(bicameral surfaced)' attribution before continuing with the implementation. "
+                "Slash alias: /bicameral:preflight"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": (
+                            "1-line topic capturing the feature area the user is about to "
+                            "implement. Extract from the user's prompt — e.g. 'Stripe webhook "
+                            "payment_intent succeeded' or 'rate limiting middleware sliding window'. "
+                            "Must be ≥4 chars and contain ≥2 non-stopword content tokens, otherwise "
+                            "the handler returns fired=false."
+                        ),
+                    },
+                    "participants": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of teammates the user mentioned — used by the chained brief call",
+                    },
+                },
+                "required": ["topic"],
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -414,6 +451,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             ctx,
             confirm=arguments.get("confirm", False),
             replay=arguments.get("replay", True),
+        )
+    elif name in ("bicameral.preflight", "preflight"):
+        result = await handle_preflight(
+            ctx,
+            topic=arguments["topic"],
+            participants=arguments.get("participants") or None,
         )
     # ── Code locator tools ────────────────────────────────────────
     elif name == "validate_symbols":

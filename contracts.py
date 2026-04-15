@@ -349,6 +349,62 @@ class ResetResponse(BaseModel):
     next_action: str                     # human-readable next step for the caller
 
 
+# ── Tool 9: /bicameral_preflight — proactive context surfacing (v0.4.12) ──
+
+
+class PreflightResponse(BaseModel):
+    """Response envelope for bicameral_preflight(topic).
+
+    The handler runs ``bicameral.search`` (and optionally ``bicameral.brief``)
+    against the topic and returns a gated decision: should the agent
+    surface this context to the user, or proceed silently?
+
+    Gating logic depends on ``ctx.guided_mode``:
+
+    - **Normal mode** (``guided_mode=False``): less intense. ``fired=True``
+      only when search matches contain **actionable signal** — at least one
+      drifted match, ungrounded match, divergent pair, or open question.
+      Plain matches (all reflected, no drift, no questions) → ``fired=False``.
+      Trust contract: surface only when there's something the developer
+      actually needs to know.
+
+    - **Guided mode** (``guided_mode=True``): standard. ``fired=True`` when
+      search returns any matches at all. Surface even on plain matches —
+      the user opted into the loud experience.
+
+    Always-true gates:
+
+    - Topic must validate (≥4 chars, ≥2 non-stopword content tokens, not
+      a generic catch-all). Failed validation → ``fired=False`` with
+      ``reason="topic_too_generic"``.
+    - Per-session dedup: if the same topic was preflight-checked within
+      the last 5 minutes of this MCP server session, ``fired=False`` with
+      ``reason="recently_checked"``.
+
+    On ``fired=False``, the agent produces NO OUTPUT to the user — that's
+    the trust contract. The empty path is silent.
+    """
+    topic: str                           # the topic that was preflight-checked
+    fired: bool                          # True = render output, False = silent skip
+    reason: Literal[
+        "fired",                         # gates passed, render the response
+        "no_matches",                    # search returned nothing
+        "no_actionable_signal",          # normal mode + no drift/divergence/etc
+        "topic_too_generic",             # topic failed deterministic validation
+        "recently_checked",              # per-session dedup hit
+        "guided_mode_off",               # ctx.guided_mode is False AND nothing actionable
+        "preflight_disabled",            # explicit env override mute
+    ]
+    guided_mode: bool                    # echo the flag for caller visibility
+    # Populated when fired=True. Empty when fired=False.
+    decisions: list[BriefDecision] = []
+    drift_candidates: list[BriefDecision] = []
+    divergences: list[BriefDivergence] = []
+    open_questions: list[BriefGap] = []
+    action_hints: list[ActionHint] = []
+    sources_chained: list[str] = []      # which tools were called: ["search"], ["search", "brief"]
+
+
 # v0.4.8: resolve the forward reference on IngestResponse.brief (BriefResponse
 # is defined further down in the file than IngestResponse).
 IngestResponse.model_rebuild()
