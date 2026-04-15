@@ -84,12 +84,45 @@ class LinkCommitResponse(BaseModel):
     undocumented_symbols: list[str] = []
 
 
+class ActionHint(BaseModel):
+    """v0.4.9 (Phase 2): tester-mode directive appended to search/brief
+    responses. Blocking hints MUST be addressed by the agent before any
+    write operation (file edits, commits, PRs, bicameral_ingest). Skill
+    contracts enforce this — the wire protocol itself is advisory.
+
+    Kinds:
+      - ``answer_open_questions`` — matched decisions have unresolved
+        open questions the agent should resolve with the user first.
+      - ``review_drift`` — at least one matched decision is drifted.
+        Surface the drifted region before editing anywhere near it.
+      - ``resolve_divergence`` — two non-superseded decisions contradict
+        on the same symbol. Human resolution required.
+      - ``ground_decision`` — a matched decision has no code regions.
+        Call ``bicameral_ingest`` on the referenced intent with fresh
+        grounding before acting on it.
+
+    Empty when ``ctx.tester_mode`` is False (default), so regular-mode
+    responses are byte-identical to v0.4.8.
+    """
+    kind: Literal[
+        "answer_open_questions",
+        "review_drift",
+        "resolve_divergence",
+        "ground_decision",
+    ]
+    message: str                    # 1-sentence directive, agent-facing
+    blocking: bool                  # True = skill contract forbids writes until addressed
+    refs: list[str] = []            # kind-specific refs (intent_ids, file paths, question texts)
+
+
 class SearchDecisionsResponse(BaseModel):
     query: str
     sync_status: LinkCommitResponse  # result of auto-triggered link_commit
     matches: list[DecisionMatch]
     ungrounded_count: int            # matches with no code region
     suggested_review: list[str]      # intent_ids of drifted/pending to review first
+    # v0.4.9 (Phase 2): populated only when ctx.tester_mode is True.
+    action_hints: list[ActionHint] = []
 
 
 # ── Tool 3: /detect_drift ────────────────────────────────────────────
@@ -269,6 +302,8 @@ class BriefResponse(BaseModel):
     divergences: list[BriefDivergence] = []     # Branch Problem Instance 4 detector output
     gaps: list[BriefGap] = []
     suggested_questions: list[BriefQuestion] = []
+    # v0.4.9 (Phase 2): populated only when ctx.tester_mode is True.
+    action_hints: list[ActionHint] = []
 
 
 # ── Tool 7: /bicameral_reset — fail-safe recovery ───────────────────

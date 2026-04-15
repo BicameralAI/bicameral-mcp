@@ -34,6 +34,7 @@ from contracts import (
     DecisionMatch,
     SearchDecisionsResponse,
 )
+from handlers.action_hints import generate_hints_for_brief
 from handlers.link_commit import handle_link_commit
 from handlers.search_decisions import handle_search_decisions
 from ledger.status import resolve_head
@@ -315,7 +316,7 @@ async def handle_brief(
     # 5. Assemble response
     ref = resolve_head(ctx.repo_path) or "HEAD"
 
-    return BriefResponse(
+    response = BriefResponse(
         topic=topic,
         participants=participants or [],
         as_of=datetime.now(timezone.utc).isoformat(),
@@ -326,3 +327,7 @@ async def handle_brief(
         gaps=gaps,
         suggested_questions=questions,
     )
+    response.action_hints = generate_hints_for_brief(
+        response, tester_mode=getattr(ctx, "tester_mode", False),
+    )
+    return response

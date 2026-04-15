@@ -7,6 +7,7 @@ in the same area with their status. Auto-triggers link_commit(HEAD) first.
 from __future__ import annotations
 
 from contracts import CodeRegionSummary, DecisionMatch, LinkCommitResponse, SearchDecisionsResponse
+from handlers.action_hints import generate_hints_for_search
 from handlers.link_commit import handle_link_commit
 
 
@@ -34,11 +35,20 @@ async def handle_search_decisions(
             for r in m.get("code_regions", [])
         ]
 
-        if not regions:
+        # v0.4.9: trust the intent-level ``status`` that ``search_by_bm25``
+        # selects off the intent node. Previously this handler looked for
+        # ``status`` on raw_regions[0] — but code_region rows don't carry
+        # status (it's an intent property), so the lookup silently returned
+        # the ``"pending"`` default for every match regardless of real
+        # state. That masked drifted decisions from callers and (Phase 2)
+        # broke the ``review_drift`` action_hint generator.
+        intent_status = str(m.get("status") or "").strip()
+        if intent_status in ("reflected", "drifted", "pending", "ungrounded"):
+            status = intent_status
+        elif not regions:
             status = "ungrounded"
         else:
-            raw_regions = m.get("code_regions", [])
-            status = raw_regions[0].get("status", "pending") if raw_regions else "pending"
+            status = "pending"
 
         if status in ("drifted", "pending"):
             suggested_review.append(m["intent_id"])
@@ -56,10 +66,14 @@ async def handle_search_decisions(
 
     ungrounded_count = sum(1 for m in matches if m.status == "ungrounded")
 
-    return SearchDecisionsResponse(
+    response = SearchDecisionsResponse(
         query=query,
         sync_status=sync_status,
         matches=matches,
         ungrounded_count=ungrounded_count,
         suggested_review=suggested_review,
     )
+    response.action_hints = generate_hints_for_search(
+        response, tester_mode=getattr(ctx, "tester_mode", False),
+    )
+    return response

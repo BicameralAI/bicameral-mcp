@@ -6,6 +6,9 @@ import os
 from dataclasses import dataclass, field
 
 
+_TESTER_MODE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
 @dataclass(frozen=True)
 class BicameralContext:
     """Created once per MCP tool call. All services see the same commit."""
@@ -17,6 +20,11 @@ class BicameralContext:
     drift_analyzer: object
     authoritative_ref: str = "main"
     authoritative_sha: str = ""
+    # v0.4.9 (Phase 2): tester mode enables blocking action_hints on
+    # search/brief responses so agents must address drifted decisions,
+    # unresolved open questions, and divergences before making code
+    # changes. Off by default — opt-in via BICAMERAL_TESTER_MODE env var.
+    tester_mode: bool = False
     # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
@@ -33,6 +41,10 @@ class BicameralContext:
         state = get_repo_index_state(repo_path)
         authoritative_ref = detect_authoritative_ref(repo_path)
         authoritative_sha = resolve_ref_sha(repo_path, authoritative_ref) or ""
+        tester_mode = (
+            os.getenv("BICAMERAL_TESTER_MODE", "").strip().lower()
+            in _TESTER_MODE_TRUTHY
+        )
 
         return cls(
             repo_path=repo_path,
@@ -42,4 +54,5 @@ class BicameralContext:
             drift_analyzer=get_drift_analyzer(),
             authoritative_ref=authoritative_ref,
             authoritative_sha=authoritative_sha,
+            tester_mode=tester_mode,
         )

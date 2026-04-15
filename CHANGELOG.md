@@ -3,6 +3,66 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.9 — 2026-04-14 — Tester Mode + Search Status Fix
+
+Phase 2 of v0.4.8. Adds an opt-in **tester mode** that makes
+`bicameral.search` and `bicameral.brief` responses emit **blocking
+action hints** the agent must address before any write operation.
+Hints surface drifted decisions, ungrounded decisions, divergent
+decision pairs, and unresolved open questions linked to the query
+scope. For onboarding, demos, and skill evaluation flows where you
+want bicameral to push signal at the agent instead of waiting for
+the agent to ask.
+
+### Added
+
+- **`BicameralContext.tester_mode: bool`** — parsed from
+  `BICAMERAL_TESTER_MODE` env var at context construction. Accepts
+  `1 / true / yes / on` (case-insensitive). Off by default.
+- **`ActionHint`** — Pydantic model in `contracts.py`. Four kinds:
+  - `review_drift` — drifted decisions in the match set
+  - `ground_decision` — ungrounded decisions in the match set
+  - `resolve_divergence` — two non-superseded decisions contradict on
+    the same symbol (brief only)
+  - `answer_open_questions` — open-question-shaped gaps in scope
+    (brief only)
+  Each hint has `kind`, `message`, `blocking: bool`, and `refs`.
+- **`SearchDecisionsResponse.action_hints` + `BriefResponse.action_hints`**
+  — optional list fields. Empty when `tester_mode=False`, so regular
+  mode is byte-identical to v0.4.8 except for the new empty field.
+- **`handlers/action_hints.py`** — pure post-compute hint generators.
+  Zero extra DB roundtrips; inspect already-computed response objects
+  and emit hints derived from their contents.
+- **`bicameral-tester` skill** — new top-level skill doc explaining
+  when to enable tester mode, what the blocking contract is, how to
+  debug hints that don't fire.
+- **`bicameral-search` + `bicameral-brief` SKILL.md** — new "Tester
+  Mode Contract" sections teaching the agent to address blocking hints
+  before any write.
+
+### Fixed
+
+- **Pre-existing search status bug** — `handle_search_decisions` was
+  reading `status` from `raw_regions[0]` but `code_region` rows don't
+  carry a status field (it's on the intent node). Every search match
+  had been silently reported as `pending` regardless of real state,
+  masking drifted decisions from callers. Now reads intent-level
+  `status` from the `search_by_bm25` row, which already selects it.
+  This is load-bearing for Phase 2: without the fix, the
+  `review_drift` hint generator couldn't fire because no match ever
+  looked drifted to it. Surfaced during the Accountable drift demo
+  walkthrough (see `thoughts/shared/plans/2026-04-14-accountable-drift-demo.md`).
+
+### Migration
+
+No schema changes. `action_hints` is an optional list defaulting to
+`[]`, so v0.4.8 clients ignore it. Tester mode is off by default —
+existing deployments are byte-identical in non-tester mode. The search
+status bug fix is backward-compatible: reflected / drifted decisions
+that were silently misreported as pending now show the correct status.
+This may change downstream UI grouping ("why is this now drifted?") —
+the answer is it was ALWAYS drifted, v0.4.9 just stopped hiding it.
+
 ## 0.4.8 — 2026-04-14 — Ingest → Brief Auto-Chain
 
 `bicameral.ingest` now automatically fires `bicameral.brief` on a topic
