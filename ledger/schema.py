@@ -47,6 +47,12 @@ _TABLES = [
     "DEFINE FIELD status         ON intent TYPE string DEFAULT 'ungrounded' "
     "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON intent TYPE datetime DEFAULT time::now()",
+    # v0.4.13: content-addressable ID derived from canonicalized
+    # description + source_ref. Two team members ingesting the same
+    # source independently produce the same canonical_id and dedupe at
+    # the DB level via the UNIQUE index. See ledger/canonical.py.
+    "DEFINE FIELD canonical_id   ON intent TYPE string DEFAULT ''",
+    "DEFINE INDEX idx_intent_canonical ON intent FIELDS canonical_id UNIQUE",
     # BM25 full-text index on description (SEARCH ANALYZER = v2 syntax)
     "DEFINE INDEX idx_intent_fts ON intent FIELDS description SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75) HIGHLIGHTS",
 
@@ -120,27 +126,41 @@ _TABLES = [
 ]
 
 # Edge tables
+#
+# v0.4.13: every edge table gets a UNIQUE index on (in, out) so the same
+# logical relationship can never be created twice. Without this, team-mode
+# replay creates duplicate edges every time peer event files are
+# materialized — even when the endpoint nodes dedupe correctly. The
+# UNIQUE index pushes idempotency into the DB layer so application code
+# doesn't have to remember to check.
 _EDGES = [
     # source_span → intent (extraction provenance)
     "DEFINE TABLE yields SCHEMAFULL TYPE RELATION IN source_span OUT intent",
     "DEFINE FIELD created_at ON yields TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_yields_unique ON yields FIELDS in, out UNIQUE",
 
     # intent → symbol (vocabulary bridge)
     "DEFINE TABLE maps_to SCHEMAFULL TYPE RELATION IN intent OUT symbol",
     "DEFINE FIELD confidence ON maps_to TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD provenance ON maps_to TYPE object DEFAULT {}",
     "DEFINE FIELD created_at ON maps_to TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_maps_to_unique ON maps_to FIELDS in, out UNIQUE",
 
     # symbol → code_region (code locator result)
     "DEFINE TABLE implements SCHEMAFULL TYPE RELATION IN symbol OUT code_region",
     "DEFINE FIELD confidence ON implements TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD verified   ON implements TYPE bool DEFAULT false",
     "DEFINE FIELD created_at ON implements TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_implements_unique ON implements FIELDS in, out UNIQUE",
 
     # code_region → code_region (structural dependency)
+    # depends_on uses (in, out, edge_type) as the dedup key — different
+    # edge types between the same regions ARE legitimate distinct edges
+    # (e.g., A "calls" B AND A "imports from" B's module).
     "DEFINE TABLE depends_on SCHEMAFULL TYPE RELATION IN code_region OUT code_region",
     "DEFINE FIELD edge_type  ON depends_on TYPE string",
     "DEFINE FIELD created_at ON depends_on TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_depends_on_unique ON depends_on FIELDS in, out, edge_type UNIQUE",
 ]
 
 

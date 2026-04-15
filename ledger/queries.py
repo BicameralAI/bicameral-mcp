@@ -381,38 +381,87 @@ async def upsert_intent(
     speakers: list = (),
     status: str = "ungrounded",
 ) -> str:
-    """Create or update an intent node. Returns the intent ID string."""
+    """Create or update an intent node. Returns the intent ID string.
+
+    v0.4.13: dedup key is now ``canonical_id`` (UUIDv5 derived from
+    canonicalized description + canonicalized source_ref via JCS). Two
+    team members ingesting the same source produce the same
+    canonical_id regardless of formatting variance, and the UNIQUE
+    index on intent.canonical_id rejects the second insert at the DB
+    level. Falls back to existing description-based query if the
+    canonical_id lookup misses (handles legacy rows pre-v0.4.13).
+    """
+    from .canonical import canonical_intent_id
+
+    cid = canonical_intent_id(description, source_type, source_ref)
+
+    # First try lookup by canonical_id — fastest path, dedup-safe even
+    # across formatting drift (whitespace, casing, source_ref format).
+    existing = await client.query(
+        "SELECT id FROM intent WHERE canonical_id = $cid LIMIT 1",
+        {"cid": cid},
+    )
+    if existing:
+        # Update the existing row's mutable fields without touching
+        # canonical_id. Status is the most-mutated field — surface it
+        # explicitly so the writeback semantics stay the same as before.
+        await client.query(
+            f"UPDATE {existing[0]['id']} SET "
+            "rationale = $rationale, feature_hint = $feature_hint, "
+            "meeting_date = $meeting_date, speakers = $speakers, "
+            "status = $status",
+            {
+                "rationale": rationale,
+                "feature_hint": feature_hint,
+                "meeting_date": meeting_date,
+                "speakers": list(speakers),
+                "status": status,
+            },
+        )
+        return str(existing[0]["id"])
+
+    # No canonical match → check legacy rows by (description, source_ref)
+    # to avoid creating duplicates of pre-v0.4.13 ingests on next ingest.
+    legacy = await client.query(
+        "SELECT id FROM intent WHERE description = $d AND source_ref = $sr "
+        "AND (canonical_id = '' OR canonical_id = NONE) LIMIT 1",
+        {"d": description, "sr": source_ref},
+    )
+    if legacy:
+        # Backfill canonical_id on the legacy row + update mutable fields.
+        await client.query(
+            f"UPDATE {legacy[0]['id']} SET "
+            "canonical_id = $cid, rationale = $rationale, "
+            "feature_hint = $feature_hint, meeting_date = $meeting_date, "
+            "speakers = $speakers, status = $status",
+            {
+                "cid": cid,
+                "rationale": rationale,
+                "feature_hint": feature_hint,
+                "meeting_date": meeting_date,
+                "speakers": list(speakers),
+                "status": status,
+            },
+        )
+        return str(legacy[0]["id"])
+
+    # Truly new — CREATE with canonical_id stamped.
     rows = await client.query(
-        """
-        UPSERT intent SET
-            description  = $description,
-            source_type  = $source_type,
-            source_ref   = $source_ref,
-            rationale    = $rationale,
-            feature_hint = $feature_hint,
-            meeting_date = $meeting_date,
-            speakers     = $speakers,
-            status       = $status,
-            created_at   = IF created_at THEN created_at ELSE time::now() END
-        WHERE description = $description AND source_ref = $source_ref
-        """,
+        "CREATE intent SET description=$d, source_type=$st, source_ref=$sr, "
+        "status=$s, canonical_id=$cid, rationale=$rationale, "
+        "feature_hint=$feature_hint, meeting_date=$meeting_date, "
+        "speakers=$speakers",
         {
-            "description": description,
-            "source_type": source_type,
-            "source_ref": source_ref,
+            "d": description,
+            "st": source_type,
+            "sr": source_ref,
+            "s": status,
+            "cid": cid,
             "rationale": rationale,
             "feature_hint": feature_hint,
             "meeting_date": meeting_date,
             "speakers": list(speakers),
-            "status": status,
         },
-    )
-    if rows:
-        return str(rows[0].get("id", ""))
-    # Fallback: create new
-    rows = await client.query(
-        "CREATE intent SET description=$d, source_type=$st, source_ref=$sr, status=$s",
-        {"d": description, "st": source_type, "sr": source_ref, "s": status},
     )
     return str(rows[0].get("id", "")) if rows else ""
 
