@@ -40,7 +40,20 @@ from .queries import (
     upsert_sync_state,
 )
 from .schema import init_schema, migrate
-from .status import compute_content_hash, derive_status, get_changed_files, resolve_head
+from .status import (
+    compute_content_hash,
+    derive_status,
+    get_changed_files,
+    get_changed_files_in_range,
+    resolve_head,
+)
+
+
+# v0.4.11: cap for range sweep. If the diff between last_synced and HEAD
+# spans more files than this, we sweep the first MAX_SWEEP_FILES and report
+# `sweep_scope="range_truncated"` so the caller knows the sweep was partial.
+# The next link_commit will pick up the remainder.
+_MAX_SWEEP_FILES = 200
 
 logger = logging.getLogger(__name__)
 
@@ -232,10 +245,55 @@ class SurrealDBLedgerAdapter:
                 "decisions_reflected": 0,
                 "decisions_drifted": 0,
                 "undocumented_symbols": [],
+                "sweep_scope": "head_only",
+                "range_size": 0,
             }
 
-        # Get changed files from this commit
-        changed_files = get_changed_files(commit_hash, repo_path)
+        # v0.4.11: determine sweep scope. The pre-v0.4.11 behavior was always
+        # head-only (`git show HEAD --name-only`), which missed every file
+        # drifted between last_synced and HEAD. Now the default is range_diff
+        # — sweep every file touched since the cursor — falling back to
+        # head_only when there's no cursor or the range is unreachable.
+        last_synced = (state or {}).get("last_synced_commit", "") or ""
+        sweep_scope: str = "head_only"
+        changed_files: list[str] = []
+
+        if last_synced and last_synced != commit_hash:
+            range_files = get_changed_files_in_range(
+                last_synced, commit_hash, repo_path,
+            )
+            if range_files is None:
+                # Range unreachable (force-push, shallow clone, rebase
+                # discarded the base). Fall back to head-only — partial
+                # but better than crashing. The next sync after a real
+                # commit will recover.
+                logger.warning(
+                    "[link_commit] range %s..%s unreachable, falling "
+                    "back to head-only sweep",
+                    last_synced[:8], commit_hash[:8],
+                )
+                changed_files = get_changed_files(commit_hash, repo_path)
+                sweep_scope = "head_only"
+            else:
+                changed_files = range_files
+                sweep_scope = "range_diff"
+                if len(changed_files) > _MAX_SWEEP_FILES:
+                    logger.warning(
+                        "[link_commit] range sweep capped at %d files "
+                        "(would have swept %d). Remainder will catch up "
+                        "on next sync.",
+                        _MAX_SWEEP_FILES, len(changed_files),
+                    )
+                    changed_files = changed_files[:_MAX_SWEEP_FILES]
+                    sweep_scope = "range_truncated"
+        else:
+            # First-ever sync (no cursor) OR same SHA as cursor.
+            # Head-only is the right scope here.
+            changed_files = get_changed_files(commit_hash, repo_path)
+            sweep_scope = "head_only"
+
+        range_size = len(changed_files)
+
         if not changed_files:
             # Only advance the sync cursor on authoritative refs — pollution guard
             if is_authoritative:
@@ -248,14 +306,20 @@ class SurrealDBLedgerAdapter:
                 "decisions_reflected": 0,
                 "decisions_drifted": 0,
                 "undocumented_symbols": [],
+                "sweep_scope": sweep_scope,
+                "range_size": 0,
             }
 
         # Find all code_regions for changed files
         regions = await get_regions_for_files(self._client, changed_files)
 
         regions_updated = 0
-        decisions_reflected = 0
-        decisions_drifted = 0
+        # v0.4.11: track distinct intent_ids that flipped, not (region, intent)
+        # pairs. A decision with N regions all flipping in the same sweep
+        # used to inflate the counter N times — now it's counted once. Matches
+        # what users expect from "how many decisions just changed status."
+        flipped_to_reflected: set[str] = set()
+        flipped_to_drifted: set[str] = set()
         undocumented_symbols: list[str] = []
 
         for region in regions:
@@ -318,10 +382,13 @@ class SurrealDBLedgerAdapter:
                 old_status = intent.get("status", "ungrounded")
                 if is_authoritative:
                     await update_intent_status(self._client, intent_id, new_status)
+                # v0.4.11: dedupe by intent_id. A decision with multiple
+                # regions all flipping in the same sweep is one flipped
+                # decision, not N. Sets collapse the duplicates.
                 if new_status == "reflected" and old_status != "reflected":
-                    decisions_reflected += 1
+                    flipped_to_reflected.add(intent_id)
                 elif new_status == "drifted" and old_status != "drifted":
-                    decisions_drifted += 1
+                    flipped_to_drifted.add(intent_id)
 
             # Flag as undocumented if no intents mapped
             intents = [i for i in (region.get("intents") or []) if i is not None]
@@ -339,9 +406,11 @@ class SurrealDBLedgerAdapter:
             "commit_hash": commit_hash,
             "reason": "new_commit",
             "regions_updated": regions_updated,
-            "decisions_reflected": decisions_reflected,
-            "decisions_drifted": decisions_drifted,
+            "decisions_reflected": len(flipped_to_reflected),
+            "decisions_drifted": len(flipped_to_drifted),
             "undocumented_symbols": list(set(undocumented_symbols)),
+            "sweep_scope": sweep_scope,
+            "range_size": range_size,
         }
 
     async def backfill_empty_hashes(

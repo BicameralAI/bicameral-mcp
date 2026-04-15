@@ -74,14 +74,35 @@ class DecisionMatch(BaseModel):
 
 
 class LinkCommitResponse(BaseModel):
-    """Returned by /link_commit and embedded in /search_decisions + /detect_drift."""
+    """Returned by /link_commit and embedded in /search_decisions + /detect_drift.
+
+    v0.4.11 (latent drift fix):
+      - ``decisions_reflected`` and ``decisions_drifted`` count **distinct
+        intent_ids** that flipped this sweep, not (region, intent) pairs.
+        A decision with 5 regions all flipping to drifted now reports 1,
+        not 5. Matches user mental model.
+      - ``sweep_scope`` and ``range_size`` describe what the sweep covered.
+        ``head_only`` is the v0.4.10 behavior — only files in the HEAD
+        commit's own diff. ``range_diff`` is the v0.4.11 default — files
+        changed between ``last_synced_commit`` and HEAD. ``range_truncated``
+        means the range exceeded ``MAX_SWEEP_FILES`` (200) so we capped it
+        and only swept the first chunk; the remainder will catch up on
+        next sync.
+    """
     commit_hash: str
     synced: bool                      # False = new work done; True = fast-path
     reason: Literal["new_commit", "already_synced", "no_changes"]
     regions_updated: int = 0
-    decisions_reflected: int = 0     # pending → reflected this run
-    decisions_drifted: int = 0       # reflected → drifted this run
+    decisions_reflected: int = 0     # distinct intents that flipped to reflected
+    decisions_drifted: int = 0       # distinct intents that flipped to drifted
     undocumented_symbols: list[str] = []
+    # v0.4.11: sweep scope provenance.
+    sweep_scope: Literal[
+        "head_only",       # files in HEAD commit only (first sync, or fallback)
+        "range_diff",      # files in last_synced..HEAD range (default after first sync)
+        "range_truncated", # range exceeded MAX_SWEEP_FILES; capped
+    ] = "head_only"
+    range_size: int = 0              # number of files swept in this run
 
 
 class ActionHint(BaseModel):
