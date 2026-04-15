@@ -71,6 +71,12 @@ class DecisionMatch(BaseModel):
     code_regions: list[CodeRegionSummary]
     drift_evidence: str = ""
     related_constraints: list[str] = []
+    # v0.4.14: meeting context — the raw passage from the source that
+    # produced this decision, plus the meeting date if known. Pulled
+    # from source_span.text via the yields reverse edge. Empty when
+    # the source_span has no text or no link to this intent.
+    source_excerpt: str = ""
+    meeting_date: str = ""
 
 
 class LinkCommitResponse(BaseModel):
@@ -157,6 +163,9 @@ class DriftEntry(BaseModel):
     lines: tuple[int, int]
     drift_evidence: str = ""
     source_ref: str
+    # v0.4.14: meeting context tied to this decision (see DecisionMatch).
+    source_excerpt: str = ""
+    meeting_date: str = ""
 
 
 class DetectDriftResponse(BaseModel):
@@ -285,6 +294,9 @@ class BriefDecision(BaseModel):
     code_regions: list[CodeRegionSummary] = []
     severity_tier: int = 1  # 1=L1, 2=L2, 3=L3 — populated by v0.4.7 severity config
     drift_evidence: str = ""
+    # v0.4.14: meeting context tied to this decision (see DecisionMatch).
+    source_excerpt: str = ""
+    meeting_date: str = ""
 
 
 class BriefGap(BaseModel):

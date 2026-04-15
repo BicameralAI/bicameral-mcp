@@ -176,7 +176,14 @@ async def search_by_bm25(
     max_results: int = 10,
     min_confidence: float = 0.5,
 ) -> list[dict]:
-    """BM25 search on intent.description."""
+    """BM25 search on intent.description.
+
+    v0.4.14: also pulls ``source_span.text`` (raw passage) + ``meeting_date``
+    via the ``yields`` reverse edge so callers can render the meeting
+    excerpt that produced the decision. The first source_span linked to
+    the intent is used; multiple spans (same decision mentioned in
+    multiple meetings) collapse to the earliest one for stability.
+    """
     rows = await client.query(
         """
         SELECT
@@ -193,16 +200,14 @@ async def search_by_bm25(
                 end_line,
                 purpose,
                 content_hash
-            } AS code_regions
+            } AS code_regions,
+            <-yields<-source_span.{text, meeting_date} AS source_spans
         FROM intent
         WHERE description @0@ $query
         LIMIT $n
         """,
         {"query": query, "n": max_results},
     )
-    # @0@ already filtered to matching documents.
-    # Assign position-based confidence (1.0 for first match, decreasing).
-    # Note: embedded SurrealDB v2 always returns search::score=0.0 — use count instead.
     total = len(rows)
     for i, row in enumerate(rows):
         ca = row.pop("created_at", None)
@@ -211,6 +216,21 @@ async def search_by_bm25(
         for region in (row.get("code_regions") or []):
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
+        # v0.4.14: collapse source_spans → top-level source_excerpt + meeting_date.
+        # Filter out:
+        #   - empty-text spans (placeholder rows from ingests with no passage)
+        #   - synthetic spans created by _reground_ungrounded, which writes
+        #     text=description as a placeholder. Those aren't real meeting
+        #     context; the original ingest's span is.
+        spans = row.pop("source_spans", None) or []
+        description = row.get("description", "")
+        real_spans = [
+            s for s in spans
+            if s and s.get("text") and s.get("text") != description
+        ]
+        first_span = real_spans[0] if real_spans else None
+        row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
+        row["meeting_date"] = (first_span.get("meeting_date") if first_span else "") or ""
     return _normalize_decisions(rows)
 
 
@@ -294,7 +314,13 @@ async def get_decisions_for_file(
     client: LedgerClient,
     file_path: str,
 ) -> list[dict]:
-    """Reverse traversal: code_region → symbol → intent for a given file."""
+    """Reverse traversal: code_region → symbol → intent for a given file.
+
+    v0.4.14: also pulls ``source_excerpt`` + ``meeting_date`` per intent
+    via a follow-up batch query against the ``yields`` reverse edge so
+    the drift handler can render the meeting passage that produced
+    each decision.
+    """
     rows = await client.query(
         """
         SELECT
@@ -322,6 +348,7 @@ async def get_decisions_for_file(
     # Flatten: one row per (region, intent) pair
     results = []
     seen_intent_ids: set[str] = set()
+    intent_id_set: set[str] = set()
     for region_row in rows:
         region = {
             "file_path": region_row.get("file_path", ""),
@@ -337,16 +364,61 @@ async def get_decisions_for_file(
             if iid in seen_intent_ids:
                 continue
             seen_intent_ids.add(iid)
+            intent_id_set.add(iid)
             results.append({
                 "intent_id": iid,
                 "description": intent.get("description", ""),
                 "source_type": intent.get("source_type", ""),
                 "source_ref": intent.get("source_ref", ""),
+                "source_excerpt": "",
+                "meeting_date": "",
                 "speaker": "",
                 "ingested_at": str(intent.get("created_at", "")),
                 "status": intent.get("status", "ungrounded"),
                 "code_region": region,
             })
+
+    # v0.4.14: backfill source_excerpt + meeting_date via yields reverse edge.
+    # Single batched query keeps this O(1) extra DB roundtrip regardless of
+    # how many intents matched the file. Compares stringified IDs because
+    # SurrealDB's bind for record-ref IN clause is finicky in embedded mode.
+    if intent_id_set:
+        excerpt_rows = await client.query(
+            """
+            SELECT
+                type::string(id) AS intent_id,
+                <-yields<-source_span.{text, meeting_date} AS source_spans
+            FROM intent
+            WHERE type::string(id) IN $ids
+            """,
+            {"ids": list(intent_id_set)},
+        )
+        excerpt_by_intent: dict[str, tuple[str, str]] = {}
+        # Build a description lookup so we can filter synthetic
+        # _reground_ungrounded spans (text == description) the same way
+        # search_by_bm25 does.
+        desc_by_intent = {e["intent_id"]: e.get("description", "") for e in results}
+        for r in (excerpt_rows or []):
+            iid = str(r.get("intent_id", ""))
+            desc = desc_by_intent.get(iid, "")
+            spans = r.get("source_spans") or []
+            real_spans = [
+                s for s in spans
+                if s and s.get("text") and s.get("text") != desc
+            ]
+            first = real_spans[0] if real_spans else None
+            if first:
+                excerpt_by_intent[iid] = (
+                    str(first.get("text") or ""),
+                    str(first.get("meeting_date") or ""),
+                )
+        for entry in results:
+            iid = entry["intent_id"]
+            if iid in excerpt_by_intent:
+                excerpt, mdate = excerpt_by_intent[iid]
+                entry["source_excerpt"] = excerpt
+                entry["meeting_date"] = mdate
+
     return results
 
 

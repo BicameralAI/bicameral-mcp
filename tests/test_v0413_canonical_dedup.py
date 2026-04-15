@@ -193,6 +193,7 @@ async def test_upsert_intent_collapses_whitespace_variant(monkeypatch, surreal_u
     intent row, dedupe via canonical_id."""
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", surreal_url)
+    reset_ledger_singleton()
 
     ledger = get_ledger()
     if hasattr(ledger, "connect"):
@@ -252,6 +253,7 @@ async def test_upsert_intent_distinguishes_real_differences(monkeypatch, surreal
     """Different decisions on the same source produce different rows."""
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", surreal_url)
+    reset_ledger_singleton()
 
     ledger = get_ledger()
     if hasattr(ledger, "connect"):

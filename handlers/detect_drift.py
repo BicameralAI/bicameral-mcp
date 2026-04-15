@@ -58,6 +58,8 @@ async def handle_detect_drift(
             lines=tuple(region.get("lines", (0, 0))),
             drift_evidence=drift_evidence,
             source_ref=d.get("source_ref", ""),
+            source_excerpt=d.get("source_excerpt", ""),
+            meeting_date=d.get("meeting_date", ""),
         ))
 
     source = "working_tree" if use_working_tree else "HEAD"

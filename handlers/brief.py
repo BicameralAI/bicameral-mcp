@@ -262,6 +262,9 @@ def _to_brief_decision(m: DecisionMatch) -> BriefDecision:
         ],
         severity_tier=1,  # v0.4.6: no severity config, all decisions default L1
         drift_evidence=m.drift_evidence,
+        # v0.4.14: forward meeting context from the matched DecisionMatch
+        source_excerpt=m.source_excerpt,
+        meeting_date=m.meeting_date,
     )
 
 

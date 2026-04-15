@@ -3,6 +3,50 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.14 — 2026-04-15 — Source Excerpt + Meeting Date in Read Responses
+
+The "tie meeting context to code" value prop only worked at write time.
+At read time, the brief / drift / search responses returned the
+decision text and the source_ref string but stripped the raw source
+passage that produced the decision — even though `source_span.text`
+was sitting in the ledger waiting to be surfaced. Surfaced during
+demo gallery work when the visual was forced to either invent
+context or look thin.
+
+### Added
+
+- **`DecisionMatch.source_excerpt` + `meeting_date`** (search responses)
+- **`DriftEntry.source_excerpt` + `meeting_date`** (drift responses)
+- **`BriefDecision.source_excerpt` + `meeting_date`** (brief responses)
+- **`search_by_bm25`** now pulls source_span.text + meeting_date via
+  `<-yields<-source_span.{text, meeting_date}` reverse traversal in
+  the same query — no extra DB roundtrip.
+- **`get_decisions_for_file`** does a follow-up batched query against
+  the matched intent IDs to backfill the same fields. Single round-trip
+  regardless of how many intents touch the file.
+- **Synthetic-span filter**: `_reground_ungrounded` writes
+  placeholder source_spans where `text == intent.description` to
+  trigger lazy grounding. Both query paths filter those out so the
+  excerpt always reflects the original meeting passage, never the
+  bookkeeping placeholder.
+
+### Tests
+
+- 4 new cases in `tests/test_v0414_source_excerpt.py`:
+  - search response surfaces source_excerpt + meeting_date
+  - brief response surfaces source_excerpt + meeting_date
+  - drift response surfaces source_excerpt + meeting_date (via the
+    follow-up batched query)
+  - empty source_span text → empty source_excerpt (graceful, no
+    leak from synthetic reground spans)
+
+### Migration
+
+No schema changes. `source_span.text` and `source_span.meeting_date`
+were already stored at ingest. v0.4.14 just plumbs them through to
+the read responses. Pre-v0.4.14 clients that ignore `source_excerpt`
+and `meeting_date` see no change.
+
 ## 0.4.13 — 2026-04-14 — Content-Addressable Dedup (Team Mode Hardening)
 
 Closes the team-mode dedup gap. Previously, when two developers
