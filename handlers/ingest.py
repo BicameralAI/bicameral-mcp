@@ -35,7 +35,11 @@ def _normalize_payload(payload: dict) -> dict:
     }
 
     for d in validated.decisions:
-        text = d.description or d.title
+        # v0.4.16: accept ``text`` as a synonym for ``description`` / ``title``.
+        # The natural-format example in skills/bicameral-ingest/SKILL.md
+        # documents ``{text: "..."}`` — without this fallback, Pydantic
+        # silently drops the unknown field and the decision evaporates.
+        text = d.description or d.title or d.text
         if not text:
             continue
         mappings.append({
@@ -51,10 +55,19 @@ def _normalize_payload(payload: dict) -> dict:
         })
 
     for a in validated.action_items:
-        text = f"[Action: {a.owner}] {a.action}"
+        # v0.4.16: accept ``text`` as a synonym for ``action``. Without this
+        # fallback, an action_item following the SKILL.md example literally
+        # (`{text: "...", owner: "..."}`) produces a phantom
+        # ``[Action: <owner>] `` prefix with no body, which then BM25-grounds
+        # against any code symbol containing "Action" in its name. Witnessed
+        # live during the v0.4.16 dogfood ingest of the demo gallery.
+        body = a.action or a.text
+        if not body:
+            continue
+        intent = f"[Action: {a.owner}] {body}"
         mappings.append({
-            "intent": text,
-            "span": {**source_meta, "text": text},
+            "intent": intent,
+            "span": {**source_meta, "text": intent},
             "symbols": [],
             "code_regions": [],
         })
@@ -388,6 +401,7 @@ async def handle_ingest(
     # same response as the ingest stats. Brief failures are logged and
     # swallowed — they must not break the ingest itself.
     brief_response = None
+    brief_topic: str | None = None
     try:
         brief_topic = _derive_brief_topic(payload)
         if brief_topic:
@@ -400,6 +414,26 @@ async def handle_ingest(
             )
     except Exception as exc:
         logger.warning("[ingest] post-ingest brief chain failed: %s", exc)
+
+    # v0.4.16: when the brief produced decisions, chain into the gap
+    # judge to attach a caller-session judgment_payload. The payload
+    # carries the rubric + context pack; the caller's Claude session
+    # applies it in its own LLM context. Server never calls an LLM.
+    # Standalone bicameral.brief calls never go through this path —
+    # only the ingest auto-chain attaches the payload.
+    judgment_payload = None
+    if (
+        brief_response is not None
+        and brief_response.decisions
+        and brief_topic
+    ):
+        try:
+            from handlers.gap_judge import handle_judge_gaps
+            judgment_payload = await handle_judge_gaps(
+                ctx, topic=brief_topic,
+            )
+        except Exception as exc:
+            logger.warning("[ingest] post-brief gap-judge chain failed: %s", exc)
 
     cursor_summary = None
     source_type = str(((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual"))
@@ -454,4 +488,5 @@ async def handle_ingest(
         ungrounded_intents=list(result.get("ungrounded_intents", [])),
         source_cursor=cursor_summary,
         brief=brief_response,
+        judgment_payload=judgment_payload,
     )

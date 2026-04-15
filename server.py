@@ -35,6 +35,7 @@ from context import BicameralContext
 from handlers.brief import handle_brief
 from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
+from handlers.gap_judge import handle_judge_gaps
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
@@ -122,7 +123,7 @@ async def list_tools() -> list[Tool]:
                     "min_confidence": {
                         "type": "number",
                         "default": 0.5,
-                        "description": "Minimum BM25 confidence score (0–1)",
+                        "description": "Minimum match confidence (0–1). Lower values widen the search; higher values demand stronger relevance.",
                     },
                 },
                 "required": ["query"],
@@ -175,9 +176,16 @@ async def list_tools() -> list[Tool]:
             name="bicameral.ingest",
             description=(
                 "Ingest decisions into the ledger. Accepts two payload formats: "
-                "(1) Internal: {mappings: [{intent, span, symbols, code_regions}]} "
-                "(2) Natural: {decisions: [{title, description}], action_items: [...], open_questions: [...]} "
-                "Auto-grounds decisions to code via BM25. Ensures code graph freshness before grounding. "
+                "(1) Internal: {query, mappings: [{intent, span: {text, source_type, source_ref, meeting_date}, "
+                "symbols, code_regions: [{symbol, file_path, start_line, end_line, type}]}]}. "
+                "(2) Natural: {query, source, title, date, participants, "
+                "decisions: [{description, id?, title?, status?, participants?}], "
+                "action_items: [{action, owner?, due?}], open_questions?: [string]}. "
+                "Canonical decision text field is `description` (also accepts `title` as a synonym and `text` as a "
+                "v0.4.16+ alias). Canonical action-item text field is `action` (also accepts `text` as an alias). "
+                "At least one text field per decision must be non-empty or the decision is silently dropped. "
+                "The `query` field drives the post-ingest auto-brief and gap-judge chain — always pass it. "
+                "Auto-grounds decisions to code via semantic search over the symbol graph. Ensures the code index is fresh before grounding. "
                 "Slash alias: /bicameral:ingest"
             ),
             inputSchema={
@@ -257,7 +265,7 @@ async def list_tools() -> list[Tool]:
                 "and returns a replay plan listing the source_cursors that existed before the wipe, "
                 "so the caller can re-run the original bicameral_ingest calls. "
                 "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
-                "Pass confirm=true to actually wipe. Scoped by repo, so multi-repo SurrealDB "
+                "Pass confirm=true to actually wipe. Scoped by repo, so multi-repo ledger "
                 "instances stay isolated. "
                 "Slash alias: /bicameral:reset"
             ),
@@ -313,6 +321,41 @@ async def list_tools() -> list[Tool]:
                 "required": ["topic"],
             },
         ),
+        Tool(
+            name="bicameral.judge_gaps",
+            description=(
+                "Caller-session LLM gap judge (v0.4.16). Given a topic, returns a structured "
+                "context pack — decisions in scope with source excerpts, cross-symbol related "
+                "decision ids, phrasing-based gaps, and a 5-category rubric with a judgment "
+                "prompt. The calling agent applies the rubric to the pack IN ITS OWN SESSION, "
+                "using its own LLM and filesystem tools for the infrastructure_gap crawl. "
+                "The server never calls an LLM, never holds an API key. Returns None (honest "
+                "empty path) when no decisions match the topic. Typically fired automatically "
+                "by the bicameral-ingest skill after the post-ingest brief; also callable "
+                "standalone. Rubric categories: missing_acceptance_criteria, "
+                "underdefined_edge_cases, infrastructure_gap, underspecified_integration, "
+                "missing_data_requirements. "
+                "Slash alias: /bicameral:judge_gaps"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": (
+                            "Topic or feature area to judge gaps on (e.g. 'onboarding email flow'). "
+                            "Reuses the same retrieval contract as bicameral.brief."
+                        ),
+                    },
+                    "max_decisions": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Maximum decisions to include in the context pack",
+                    },
+                },
+                "required": ["topic"],
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -336,7 +379,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="search_code",
             description=(
-                "Search the codebase using BM25 text search and structural graph traversal. "
+                "Search the codebase using text search and structural graph traversal. "
                 "Returns ranked code locations with file paths, line numbers, and scores. "
                 "Optionally provide symbol_ids from validate_symbols to activate "
                 "graph-based retrieval for better results."
@@ -378,7 +421,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="extract_symbols",
             description=(
-                "Extract all symbols (functions, classes) from a source file via tree-sitter. "
+                "Extract all symbols (functions, classes) from a source file via static parsing. "
                 "Returns symbol names, types, and line ranges. No index required."
             ),
             inputSchema={
@@ -458,6 +501,19 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             topic=arguments["topic"],
             participants=arguments.get("participants") or None,
         )
+    elif name in ("bicameral.judge_gaps", "judge_gaps"):
+        result = await handle_judge_gaps(
+            ctx,
+            topic=arguments["topic"],
+            max_decisions=arguments.get("max_decisions", 10),
+        )
+        # Honest empty path — handler returns None when no matches.
+        # Emit an empty envelope the agent can detect and skip on.
+        if result is None:
+            return [TextContent(
+                type="text",
+                text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
+            )]
     # ── Code locator tools ────────────────────────────────────────
     elif name == "validate_symbols":
         data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])

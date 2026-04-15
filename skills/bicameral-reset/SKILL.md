@@ -89,5 +89,5 @@ next_action: Ledger wiped for repo ... Re-run the original bicameral_ingest call
 
 1. **NEVER call `confirm=True` without an explicit user yes.** Even if the user said "nuke it" earlier in the conversation, the dry-run and confirmation flow still runs.
 2. **Never auto-fire.** Reset is always user-initiated.
-3. **Scoped by repo.** The wipe only touches rows for the current repo. Other repos sharing the same SurrealDB instance are unaffected — reassure the user of this if they're working on multiple projects.
+3. **Scoped by repo.** The wipe only touches rows for the current repo. Other repos sharing the same ledger instance are unaffected — reassure the user of this if they're working on multiple projects.
 4. **Replay is a handoff.** Bicameral does NOT store raw source documents. "Replay plan" means the caller still needs the original transcripts to re-ingest them.

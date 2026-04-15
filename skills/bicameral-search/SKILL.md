@@ -19,9 +19,10 @@ Pre-flight check before coding — surface past decisions relevant to what you'r
    - `query` — natural language description of the feature or area (from user input or $ARGUMENTS)
    - `min_confidence` — 0.3 for broad search, 0.7 for precise matches
 2. Present the results clearly:
-   - For each matching decision: description, status (reflected/drifted/pending/ungrounded), who decided it, when, and what code it maps to
+   - For each matching decision: `description`, `status` (reflected/drifted/pending/ungrounded), `source_ref` + `meeting_date` (from v0.4.14), `source_excerpt` if available, and the code regions it maps to
    - Highlight any **drifted** decisions — these are constraints that may have been violated
    - Highlight any **pending** decisions — these are agreed-upon but not yet implemented
+   - Note: `DecisionMatch` does NOT carry an author/speaker field. The closest "who" is the `source_ref` (meeting ID, Slack thread, Notion page) — don't claim to know who made the decision unless the source_excerpt attributes it explicitly.
 3. If relevant, suggest how the found constraints should inform the user's implementation plan
 
 ## Arguments

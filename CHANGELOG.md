@@ -3,6 +3,131 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.16 — 2026-04-15 — Caller-Session Gap Judge + Natural-Format Fix
+
+Two things land in this release: the new v0.4.16 gap-judge rubric
+(caller-session LLM, server never reasons) and a load-bearing fix to
+the natural-format ingest path that was silently dropping decisions
+during a live dogfood of the demo gallery.
+
+### Added
+
+- **`bicameral.judge_gaps(topic)`** — new MCP tool (the 10th). Returns
+  a `GapJudgmentPayload` containing decisions in scope, source
+  excerpts, cross-symbol related decision ids, phrasing-based gaps,
+  a 5-category rubric, and a natural-language judgment prompt. The
+  **caller's Claude session** applies the rubric — the server never
+  calls an LLM, never holds an API key. Preserves the
+  `no-LLM-in-the-server` invariant from `git-for-specs.md`.
+- **5-category rubric, fixed order** (picked from the Timesink
+  Standard for wow × safety — all "absence of" detections, low
+  hallucination risk):
+  1. `missing_acceptance_criteria` (`bullet_list`)
+  2. `underdefined_edge_cases` (`happy_sad_table`) — the "sad path
+     never specified" category; load-bearing for the public demo
+     gallery Flow 01 promise
+  3. `infrastructure_gap` (`checklist`, **requires codebase crawl**)
+     — the agent uses its own Glob/Read/Grep tools against the
+     category's `canonical_paths` (`.github/workflows/`, `Dockerfile`,
+     `docker-compose.yml`, `terraform/`, `k8s/`, `.env.example`,
+     `infra/`, `deploy/`) to verify implied infra
+  4. `underspecified_integration` (`dependency_radar`)
+  5. `missing_data_requirements` (`checklist`)
+- **`IngestResponse.judgment_payload`** — always populated when the
+  ingest → brief auto-chain fires and the brief has at least one
+  decision. Standalone `bicameral.brief` calls never carry it.
+- **`handlers/gap_judge.py`** — pure context-pack builder. Reuses
+  `handle_search_decisions` for retrieval, groups matches by
+  `(symbol, file_path)` to populate `related_decision_ids`, reuses
+  `_extract_gaps` to forward phrasing-based gaps as pre-cited
+  evidence.
+- **`skills/bicameral-judge-gaps/SKILL.md`** — caller-session rubric
+  application contract. Tells the agent to reason over the pack in
+  its own LLM context, render one section per category in rubric
+  order, cite every finding, and surface verbatim.
+- **Pre-ingest boundary detection** in `skills/bicameral-ingest/SKILL.md`
+  (step 0). When the input is oversize (≥2000 tokens, ≥3 H1
+  headings, ≥5 speaker turns, or ≥3 topical themes), the skill
+  instructs the agent to propose a segmentation preview, wait for
+  user confirmation (edit / merge / rename / skip), fan out
+  `bicameral.ingest` per segment, and roll up a single aggregate
+  summary at the end. Structural signals first (markdown headings,
+  speaker turns, timestamp clusters); semantic clustering only as
+  fallback. Entirely skill-side — no server changes.
+- **Post-brief judge-gaps chain** in `skills/bicameral-ingest/SKILL.md`
+  (step 6). When the response carries a `judgment_payload`, the
+  ingest skill delegates rubric rendering to `bicameral-judge-gaps`.
+
+### Fixed
+
+- **`handlers/ingest._normalize_payload` — natural-format field-name
+  drift.** The SKILL.md example documented
+  `decisions: [{ text: "..." }]` while the handler only read
+  `d.description or d.title`. Pydantic silently dropped the unknown
+  `text` field, every decision evaporated, and the only output was
+  `action_items` whose `text` field was likewise dropped — producing
+  `[Action: <owner>] ` phantom prefixes that BM25-grounded against
+  any symbol containing "Action" in its name (live dogfood: matched
+  to unrelated `use-toast.ts` Action enums). Fix: added `text` as a
+  tolerant alias on both `IngestDecision` and `IngestActionItem`,
+  updated `_normalize_payload` to fall through to the alias, added
+  an empty-drop guard so action items with no body never produce a
+  phantom prefix.
+- **`skills/bicameral-ingest/SKILL.md`** — natural-format example
+  rewritten to document canonical `description` / `action` fields
+  with `text` explicitly called out as a tolerant alias. Removed
+  the self-contradicting "do NOT invent title/description" warning
+  (those are the canonical fields, not forbidden ones). Also ported
+  the rich HARD EXCLUDE table + 3 worked examples from the
+  historically-divergent `.claude/skills/` mirror so both trees now
+  carry the same extraction guidance.
+- **`skills/bicameral-search/SKILL.md`** — removed the "who decided
+  it" instruction. `DecisionMatch` has no author/speaker field; the
+  agent could never fulfill the promise. Replaced with explicit
+  guidance to cite `source_ref` + `meeting_date` + `source_excerpt`.
+- **`skills/bicameral-preflight/SKILL.md`** — `reason` enum list was
+  missing `guided_mode_off`. Completed the list with per-reason gloss.
+- **`skills/bicameral-brief/SKILL.md`** — claimed "six fields";
+  actual `BriefResponse` has 10. Reworded as "six presentation
+  buckets plus metadata". Added `judgment_payload` delegation note
+  for the chained-from-ingest case.
+- **`server.py` — `bicameral.ingest` tool description** now fully
+  documents the natural-format field shape (canonical + alias
+  fields, priority order, `query` requirement) so an agent reading
+  just the tool schema gets correct field names.
+- **Backend jargon leaking into user-facing tool descriptions.**
+  Replaced `BM25` / `SurrealDB` / `tree-sitter` references in the
+  `bicameral.search` / `bicameral.ingest` / `bicameral.reset` tool
+  descriptions — and in the `search_code` / `extract_symbols`
+  code-locator tools — with user-facing terminology ("match
+  confidence", "ledger instance", "semantic search over the symbol
+  graph", "static parsing").
+
+### Tests
+
+- `tests/test_v0416_gap_judge.py` — 12 tests: rubric shape + literal
+  guards, `_build_context_decisions` unit test for cross-symbol
+  `related_decision_ids`, honest empty path, context pack build,
+  phrasing-gap forwarding, ingest chain attach, empty-brief skip,
+  standalone-brief guard, non-fatal chain failure.
+- `tests/test_v0416_natural_format_fields.py` — 12 tests pinning the
+  dogfood fix: canonical `description` / `title` / `action` survive,
+  `text` alias works, priority order (`description > title > text`),
+  empty-text decisions are dropped, empty-text action_items are
+  dropped (the specific guard against the `[Action: owner] ` phantom),
+  the exact dogfood payload shape produces 3 real mappings, mixed
+  canonical + alias in one payload, default `owner="unassigned"`.
+
+### Migration
+
+No schema changes. `IngestResponse` grows one optional field
+(`judgment_payload`), default `None`. Pre-v0.4.16 clients that ignore
+the field see no change. `BriefResponse` is entirely unchanged.
+Agents following the pre-v0.4.16 SKILL.md example literally (with
+`{text: "..."}`) continue to work, because the handler now accepts
+`text` as an alias on both decisions and action_items. Agents using
+the canonical `description` / `action` fields also continue to work.
+
 ## 0.4.14 — 2026-04-15 — Source Excerpt + Meeting Date in Read Responses
 
 The "tie meeting context to code" value prop only worked at write time.

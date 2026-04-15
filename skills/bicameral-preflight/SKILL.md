@@ -91,9 +91,13 @@ Look at `response.fired`:
 - **`fired == false`** → produce **NO OUTPUT** about the preflight.
   Do not say "I checked bicameral and found nothing." Do not say "no
   relevant context." Just proceed silently with the user's original
-  request. The reason field tells you why (no_matches,
-  no_actionable_signal, topic_too_generic, recently_checked,
-  preflight_disabled) — useful for debugging, never user-facing.
+  request. The `reason` field tells you why — useful for debugging,
+  never user-facing. Possible reasons: `no_matches`,
+  `no_actionable_signal` (normal mode only, no drift/divergence),
+  `topic_too_generic` (failed deterministic topic validation),
+  `recently_checked` (per-session dedup hit within 5 min),
+  `guided_mode_off` (hit signal but guided mode disabled and nothing
+  actionable), `preflight_disabled` (explicit env override mute).
 
 - **`fired == true`** → render the surfaced block (next step) BEFORE
   doing any code work.

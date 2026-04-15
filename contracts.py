@@ -213,17 +213,32 @@ class IngestMapping(BaseModel):
 
 
 class IngestDecision(BaseModel):
-    """One decision in the natural LLM-generated format."""
+    """One decision in the natural LLM-generated format.
+
+    Accepted text fields, in priority order: ``description`` → ``title``
+    → ``text``. ``text`` is a tolerant alias for agents that follow the
+    SKILL.md example literally. If all three are empty the decision is
+    silently dropped from the normalized payload.
+    """
     id: str = ""
     title: str = ""
     description: str = ""
+    text: str = ""  # v0.4.16: alias for description — tolerant of natural-format callers
     status: str = ""
     participants: list[str] = []
 
 
 class IngestActionItem(BaseModel):
+    """One action item in the natural LLM-generated format.
+
+    Accepted text fields, in priority order: ``action`` → ``text``.
+    ``text`` is a tolerant alias so an agent following the SKILL.md
+    ``{ text: "...", owner: "..." }`` example still produces real
+    mappings instead of empty ``[Action: <owner>]`` prefixes.
+    """
     owner: str = "unassigned"
     action: str = ""
+    text: str = ""  # v0.4.16: alias for action — tolerant of natural-format callers
     due: str = ""
 
 
@@ -278,6 +293,12 @@ class IngestResponse(BaseModel):
     # nothing usable, or when the chained brief call fails (logged, not
     # raised — ingest must not fail because post-phase brief had a hiccup).
     brief: "BriefResponse | None" = None
+    # v0.4.16: populated when the ingest→brief auto-chain fires AND the
+    # brief produced at least one decision. The caller-session LLM gap
+    # judge renders the rubric sections from this payload. Standalone
+    # bicameral.brief calls never carry a judgment_payload — only the
+    # ingest chain path attaches it. None when the chain skips or fails.
+    judgment_payload: "GapJudgmentPayload | None" = None
 
 
 # ── Tool 6: /bicameral_brief — pre-meeting one-pager ────────────────
@@ -417,6 +438,112 @@ class PreflightResponse(BaseModel):
     sources_chained: list[str] = []      # which tools were called: ["search"], ["search", "brief"]
 
 
+# ── Tool 10: /bicameral_judge_gaps — caller-session LLM gap judge (v0.4.16) ──
+
+
+class GapRubricCategory(BaseModel):
+    """One rubric category the caller-session agent applies to decisions
+    in the context pack.
+
+    The category defines:
+
+    - ``key`` — stable identifier (matches Timesink Standard type keys)
+    - ``title`` — human-readable section header
+    - ``prompt`` — the natural-language instruction the agent follows
+      for this category
+    - ``output_shape`` — the structured visual shape the agent renders
+      (absence_matrix / happy_sad_table / checklist / bullet_list /
+      dependency_radar)
+    - ``requires_codebase_crawl`` — True for ``infrastructure_gap``,
+      False for the rest. When True, the skill instructs the agent
+      to Glob/Read the ``canonical_paths`` to verify.
+    - ``canonical_paths`` — populated only when
+      ``requires_codebase_crawl`` is True
+
+    The server builds this statically; the caller's agent reasons over
+    it. Server never calls an LLM.
+    """
+    key: Literal[
+        "missing_acceptance_criteria",
+        "underdefined_edge_cases",
+        "infrastructure_gap",
+        "underspecified_integration",
+        "missing_data_requirements",
+    ]
+    title: str
+    prompt: str
+    output_shape: Literal[
+        "bullet_list",
+        "happy_sad_table",
+        "absence_matrix",
+        "dependency_radar",
+        "checklist",
+    ]
+    requires_codebase_crawl: bool = False
+    canonical_paths: list[str] = []
+
+
+class GapRubric(BaseModel):
+    """The full rubric — 5 categories picked for wow × safety. Stable
+    across releases; version bumps require a plan update.
+
+    The category order is load-bearing — the caller-session agent is
+    instructed to render sections in this order. Reordering changes
+    the user experience.
+    """
+    version: str = "v0.4.16"
+    categories: list[GapRubricCategory]
+
+
+class GapJudgmentContextDecision(BaseModel):
+    """One decision in the context pack for the judgment pass.
+
+    A strict subset of BriefDecision carrying only the fields the
+    caller agent needs to reason: description, source_excerpt,
+    source_ref, meeting_date, and cross-references to related
+    decisions on the same symbol (so the agent can see tension
+    without re-querying).
+    """
+    intent_id: str
+    description: str
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    source_excerpt: str = ""
+    source_ref: str = ""
+    meeting_date: str = ""
+    # intent_ids of other decisions on the same symbol — surfaces
+    # cross-decision context without requiring the agent to re-query
+    related_decision_ids: list[str] = []
+
+
+class GapJudgmentPayload(BaseModel):
+    """The caller-session gap judgment pack.
+
+    The server populates this; the caller's Claude session reasons
+    over it using its own LLM and filesystem tools. Server never
+    calls an LLM, never holds an API key. Preserves the
+    ``no-LLM-in-the-server`` invariant from ``git-for-specs.md``.
+
+    Attached to ``IngestResponse.judgment_payload`` when the
+    ingest → brief auto-chain fires and the brief produced at least
+    one decision. Standalone ``bicameral.brief`` responses never
+    carry this field.
+    """
+    topic: str
+    as_of: str  # ISO datetime, matches BriefResponse.as_of when chained
+    decisions: list[GapJudgmentContextDecision] = []
+    # phrasing-based gaps already caught by _extract_gaps — included so
+    # the agent can cite them as pre-existing evidence instead of
+    # re-discovering them
+    phrasing_gaps: list[BriefGap] = []
+    rubric: GapRubric
+    # natural-language instructions for the caller agent — tells it
+    # how to apply the rubric and in what format to render. The skill
+    # doubles down on "surface VERBATIM" but this gives per-call
+    # reinforcement and keeps the contract co-located with the data.
+    judgment_prompt: str
+
+
 # v0.4.8: resolve the forward reference on IngestResponse.brief (BriefResponse
 # is defined further down in the file than IngestResponse).
+# v0.4.16: also resolves IngestResponse.judgment_payload forward reference.
 IngestResponse.model_rebuild()

@@ -15,6 +15,51 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 ## Steps
 
+### 0. Boundary detection (pre-ingest, v0.4.16+)
+
+**Trigger** — before extracting any decisions, check whether the input is oversize. Any of the following signals means you must segment the document before ingesting:
+
+- Raw content exceeds ~2000 tokens
+- Markdown document contains ≥ 3 H1 headings or ≥ 5 H2 headings
+- Transcript contains ≥ 5 distinct speaker turns with ≥ 30s gaps between clusters
+- Your first-pass read identifies ≥ 3 distinct topical themes
+
+**If none of these trigger**, skip to step 1 — single-shot ingest stays the common case.
+
+**If oversize**, run the boundary-detection flow:
+
+1. **Use structural signals first**. For markdown PRDs, split on H1/H2 headings. For transcripts, use speaker-turn gaps and timestamp clusters. For Slack exports, use thread boundaries. Only fall back to free-form semantic clustering when no structural signals exist.
+
+2. **Build a segmentation preview** — one entry per proposed topic block:
+   ```
+   Topic N:
+     title: <short title, 3–6 words>
+     summary: <one line, what the segment is about>
+     source_range: <line range, page range, or timestamp range>
+     est_decisions: <integer, ~how many decisions you expect this segment to yield>
+   ```
+
+3. **Present the preview to the user VERBATIM** as a numbered list, with every topic visible (title + 1-line summary + source range + estimated decision count). End with: *"Confirm, edit (merge / rename / skip), or re-split?"*
+
+4. **Wait for the user's response**. Accept natural-language edits:
+   - "merge 3 and 4" → combine topics 3 and 4 into one block
+   - "skip 5" → drop topic 5 from the plan
+   - "rename 1 to X" → update title
+   - "re-split with 8 topics instead of 5" → re-run segmentation with a finer granularity
+   - "confirm" (or equivalent) → proceed to ingest
+   
+   If the user made any structural edit, re-present the updated preview and wait again. Loop until the user confirms.
+
+5. **Fan out**: after confirmation, call `bicameral.ingest` **once per topic block**. Pass that topic's `title` as the `query` field. Derive each block's decisions from only its own source range. Each call goes through its own brief auto-chain + gap-judge attach.
+
+6. **Roll up at the end**: after all ingests complete, present a single aggregate summary — total decisions ingested, total drifts flagged, total divergences, total gap-judgment findings — followed by per-topic highlights (the 1–2 most actionable findings per topic). Do NOT replay every brief; the user already saw the plan.
+
+**Anti-patterns — reject these**:
+- Silently auto-splitting without showing the preview
+- Firing N ingests back-to-back without the roll-up (user drowns in N separate briefs)
+- Using semantic clustering as the first move when structural signals exist (wastes tokens)
+- Fabricating topic titles or decision estimates you aren't confident in — if uncertain, mark as `?` in the preview and let the user decide
+
 ### 1. Extract candidate decisions
 
 Read the source. For each statement, decide whether it's a real implementation decision or whether it should be excluded. Apply the hard-exclude rules first, then the include rules. When in doubt, exclude.
@@ -39,6 +84,8 @@ Read the source. For each statement, decide whether it's a real implementation d
 - Configuration values and refinements ("set TTL to 300s", "key on user ID hash")
 - Action items with code implications and a named owner
 
+When in doubt, **exclude**. A clean ledger with 5 grounded decisions is more useful than 20 with 15 perpetually ungrounded.
+
 ### Worked examples
 
 These cover the failure modes the skill must handle. Read them carefully — they are the spec.
@@ -61,28 +108,6 @@ These cover the failure modes the skill must handle. Read them carefully — the
 
 → **Extract: 5 separate decisions** — (1) move rate limiter from in-memory to Redis, (2) 100 req/min cap keyed on user ID hash, (3) Prometheus counters for hits/misses, (4) lease TTL 60s→300s, (5) structured log line on every reject. Do not collapse these into one.
 
-**Example 4 — Multi-turn debate with reversed pivots**
-
-> Carlos: "Let's use Redis Streams for the webhook queue." Dana: "Infra blocked Streams last quarter." Carlos: "OK, BullMQ then?" Carlos: "Wait, infra also blocked BullMQ." Wei: "SQS?" Team: "SQS FIFO, message group keyed on merchant ID, 5-minute visibility timeout, 6 max receives, dead-letter queue on overflow."
-
-→ **Extract: ONLY the SQS decisions**, not Redis Streams or BullMQ. Specifically: (1) use SQS FIFO for the webhook queue, (2) message group ID = merchant ID, (3) visibility timeout 5 min, (4) max receives 6, (5) DLQ on overflow. The Redis Streams and BullMQ proposals are reversed pivots and must NOT appear in the output.
-
-**Example 5 — Generic vocabulary that should NOT trigger extraction**
-
-> Sara: "We need a better manager for the order workflow. The customer journey from product page to confirmed purchase has too much friction. We should reduce the friction. Add proper handling for the edge cases in the controller." David: "Which controller?" Sara: "Whichever one is closest to where the user-facing latency happens."
-
-→ **Extract: 0 decisions** for the "manager", "customer journey", "friction", and "controller" lines — these are generic business language with no concrete commitment. Do NOT extract a "use a better manager" decision.
-
-**Example 6 — Concrete enumeration mixed with generic chatter**
-
-> Anya: "Add proper handling for the edge cases in the checkout flow — when a payment webhook is delayed, when stock allocation fails midway, when a coupon is invalidated mid-checkout. Right now the user just sees a loading spinner forever."
-
-→ **Extract: 1 decision** — "Handle three failure modes in checkout completion: payment webhook delay, mid-flow stock allocation failure, mid-checkout coupon invalidation, instead of leaving the user on an indefinite loading spinner." Concrete enumeration counts as specificity even though "edge cases" sounds vague at first.
-
----
-
-When in doubt, **exclude**. A clean ledger with 5 real decisions is more useful than 20 with 15 ghost decisions. If the source's primary topic is OKRs / hiring / fundraising / sales, it is acceptable to return zero decisions.
-
 ### 2. Validate relevance against the codebase
 
 For each candidate decision, use the code locator tools to check whether it touches real code:
@@ -97,22 +122,63 @@ This step is a lightweight filter, not an exhaustive audit. Spend ~1 search per 
 
 Call `bicameral.ingest` with a `payload` using the **natural format** (preferred). Only include decisions that passed the relevance filter from step 2.
 
-**Natural format** (use this):
+**Natural format** — canonical fields (use this shape):
+
 ```
 payload: {
-  decisions: [{ text: "..." }],
-  action_items: [{ text: "...", owner: "..." }]
+  query: "<topic / feature area — drives the auto-brief>",
+  source: "transcript",                      # or "notion", "slack", "document", "manual"
+  title: "<source identifier, e.g. sprint-14-planning>",
+  date: "2026-04-15",                         # ISO date the meeting / doc happened
+  participants: ["Ian", "Brian"],             # optional
+  decisions: [
+    {
+      description: "Cache user sessions in Redis for horizontal scaling",
+      id: "sprint-14-planning#session-cache"  # optional stable id
+    },
+    {
+      description: "Apply 10% discount on orders ≥ $100"
+    }
+  ],
+  action_items: [
+    { action: "Write retry tests for checkout webhook", owner: "Ian" }
+  ]
 }
 ```
 
-Do NOT invent extra fields like `title`, `description`, `id`, or `status` — the handler will silently ignore them and produce 0 intents. Stick to the fields in the tool schema. Do NOT include `open_questions` unless they have direct implementation implications.
+**Field rules** — get these right or decisions evaporate:
 
-**Internal format** (only if natural format fails):
+- **`decisions[].description`** is the canonical text field. `title` is accepted as a synonym for back-compat; `text` is tolerated as an alias (v0.4.16+). At least one of the three must be non-empty or the decision is silently dropped.
+- **`action_items[].action`** is the canonical text field. `text` is tolerated as an alias (v0.4.16+). `owner` defaults to `"unassigned"`. `due` is an optional ISO date.
+- **`query`** is load-bearing: it's the topic the post-ingest auto-brief and gap-judge chain fire on. If you omit it, the handler falls through to the longest decision description as a topic guess — usable but less focused. **When fanning out from the boundary-detection flow (step 0), always pass each segment's title as `query`.**
+- **`participants`** on the payload populates `span.speakers` for every decision. Put the meeting attendees here, not on individual decisions.
+- Do NOT include `open_questions` unless they have direct implementation implications — they're accepted as `list[str]` but clutter the ledger with non-code entries.
+
+**Internal format** — only if you already have pre-resolved code regions from `search_code` / `validate_symbols`:
+
 ```
 payload: {
-  mappings: [{ intent: "...", span: { text: "...", source_type: "transcript" } }]
+  query: "...",
+  mappings: [
+    {
+      intent: "Cache user sessions in Redis",
+      span: {
+        text: "<source excerpt>",
+        source_type: "transcript",
+        source_ref: "sprint-14-planning",
+        meeting_date: "2026-04-15"
+      },
+      symbols: ["SessionCache"],
+      code_regions: [
+        { file_path: "src/lib/session.ts", symbol: "SessionCache",
+          start_line: 42, end_line: 89, type: "class" }
+      ]
+    }
+  ]
 }
 ```
+
+Use the natural format in the common case. Fall through to internal format only when you already have verified file/line pins — otherwise you'll bypass auto-grounding and lose the BM25 + graph-fusion mapping.
 
 ### 4. Report results
 
@@ -120,6 +186,75 @@ Show the user:
 - How many candidate decisions were extracted vs. how many passed the relevance filter
 - How many were ingested, how many mapped to code, how many are ungrounded
 - If decisions were dropped, briefly list what was excluded and why (e.g., "Dropped 3 strategic/market decisions")
+
+### 5. Present the auto-fired brief (v0.4.8+)
+
+`bicameral.ingest` auto-fires `bicameral.brief` on a topic derived from the
+payload and returns the brief inside ``IngestResponse.brief``. **When
+``brief`` is non-null, present it immediately after the ingest summary
+using the bicameral-brief presentation rules.** In particular:
+
+- **Lead with divergences** (`brief.divergences`) whenever non-empty. The
+  fresh ingest may have just introduced a decision that contradicts an
+  existing one on the same symbol — that's the single highest-stakes
+  signal bicameral can carry, and the whole reason the brief auto-fires
+  after ingest. Surface each divergence as a bold warning with the
+  symbol, file path, and summary line.
+- Then `brief.drift_candidates`, then `brief.decisions` (grouped by status,
+  skipping duplicates that already appear in drift_candidates), then
+  `brief.gaps`, then `brief.suggested_questions` **verbatim**.
+- Skip any bucket that's empty. If every bucket is empty, say so plainly —
+  it means the fresh ingest didn't touch any prior decisions and no
+  divergences exist. That itself is useful information.
+- **Never** paraphrase `suggested_questions`. They're templated to be
+  neutral-voice; paraphrasing reintroduces the "me vs you" framing the
+  tool exists to remove.
+
+The full presentation contract lives in `skills/bicameral-brief/SKILL.md`
+and is the canonical reference — this step just cross-links it.
+
+When `brief` is `null` (e.g. the payload had no derivable topic or the
+chained brief call failed), skip this step silently. The ingest summary
+from step 4 is sufficient on its own.
+
+### 6. Apply the gap-judge rubric (v0.4.16+)
+
+When the ingest response contains a non-null `judgment_payload`, chain
+into the `bicameral-judge-gaps` skill to render the rubric sections.
+
+- The `judgment_payload` is only attached by the ingest → brief auto-chain
+  (never by standalone `bicameral.brief` calls). If you see it, it means
+  the brief produced at least one decision and the server built a context
+  pack for caller-session reasoning.
+- **Apply the rubric in your own session**. The server has already
+  shipped you the decisions (with source excerpts), the rubric (5
+  categories, fixed order), and the `judgment_prompt`. Your job is to
+  reason over the pack using your own LLM context and, for the
+  `infrastructure_gap` category, use your Glob / Read / Grep tools to
+  verify implied infrastructure against the category's `canonical_paths`.
+- **Output one section per category, in rubric order**. Each section
+  starts with the category's `title` as a header. The body uses the
+  category's `output_shape`:
+  - `bullet_list` → a plain bulleted list
+  - `happy_sad_table` → a two-column table (Happy path specified ↔ Missing sad path)
+  - `checklist` → `✓ / ○ / ?` prefixed items
+  - `absence_matrix` → a checkbox grid
+  - `dependency_radar` → a system-by-system list with ✓ discussed / ○ not discussed
+- **Cite everything**. Every bullet / row / checklist item must reference
+  either a `source_ref` + `meeting_date` from the payload OR a `file:line`
+  from your codebase crawl. An uncited item is a bug in your output.
+- **Surface VERBATIM**. Quote `source_excerpt` directly. Never paraphrase
+  the rubric prompts, never editorialize, never add "as an AI…" hedges.
+- **Honest empty path**. If a category produces no findings for this
+  pack, emit exactly this single line under its header: `✓ no gaps found`.
+  Do not skip the header — the user needs to see that the category was
+  applied and found nothing, which itself is information.
+
+The full rendering contract is in `skills/bicameral-judge-gaps/SKILL.md`.
+This step is a delegation pointer.
+
+When `judgment_payload` is `null` (the brief had no decisions, or the
+chain failed), skip this step silently.
 
 ## Arguments
 

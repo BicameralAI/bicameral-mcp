@@ -39,7 +39,7 @@ bicameral.brief(
 
 ## How to present the response
 
-The `BriefResponse` has six fields. Present them **in this order**, and respect the rule below:
+The `BriefResponse` has six presentation buckets (plus metadata — `topic`, `participants`, `as_of`, `ref`, `action_hints`). Present the buckets **in this order**, and respect the rule below:
 
 1. **`divergences` — ALWAYS FIRST if non-empty.** Two contradictory decisions on the same symbol is the highest-stakes signal the brief can carry. The meeting's first agenda item should be picking which one wins. Surface each divergence as a bold warning with the symbol, file, and summary line.
 2. **`drift_candidates`** — decisions whose code diverged from recorded intent. Present each with status badge (`⚠ DRIFTED`), file:line, and drift evidence.
@@ -48,6 +48,21 @@ The `BriefResponse` has six fields. Present them **in this order**, and respect 
 5. **`suggested_questions`** — the depersonalization hook. **Surface these VERBATIM**, not paraphrased. They're templated so bicameral is the one asking, not the user.
 
 Skip any bucket that's empty. If everything is empty, say so plainly — that itself is useful information.
+
+## v0.4.16 — judgment_payload delegation
+
+When this skill is reached via the `bicameral-ingest` auto-chain, the
+full response envelope may carry an additional `judgment_payload` field
+alongside the brief. That payload is the context pack for the v0.4.16
+gap judge and belongs to a separate skill.
+
+- **Standalone `bicameral.brief` calls never carry a `judgment_payload`** —
+  only the ingest → brief → judgment auto-chain attaches it. If you're
+  called directly with a topic, render the brief as above and stop.
+- **If you see a `judgment_payload`** (because you're chained from
+  ingest), render the brief sections as above, then delegate the
+  rubric-rendering to `skills/bicameral-judge-gaps/SKILL.md`. Do not
+  re-implement the rubric here.
 
 ## Examples
 
