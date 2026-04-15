@@ -3,6 +3,94 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.18 — 2026-04-15 — `bicameral.doctor` + hard-remove `bicameral.drift`
+
+Closes the drift → scan_branch → doctor sunset arc started in v0.4.17.
+`bicameral.doctor` replaces `bicameral.drift` as the user-facing
+"check for drift" entry point with a single composition tool that
+auto-detects scope: file if the caller names a file, branch + repo-
+wide ledger summary otherwise, empty if there's nothing to scan.
+
+### Added
+
+- **`bicameral.doctor(file_path?, base_ref?, head_ref?, use_working_tree?)`**
+  — new MCP tool. No explicit `scope` argument — the handler infers
+  file vs branch vs empty from what was passed in. One-stop answer
+  to "what's drifted" / "what's broken" / "run a health check"
+  requests.
+- **`DoctorResponse`** Pydantic contract with `scope` ∈ {`file`,
+  `branch`, `empty`} plus optional `file_scan` (full
+  `DetectDriftResponse`), `branch_scan` (full `ScanBranchResponse`),
+  `ledger_summary` (compact repo-wide status counts), and
+  `action_hints`.
+- **`DoctorLedgerSummary`** — five-number status summary (`total`,
+  `drifted`, `pending`, `ungrounded`, `reflected`) computed from a
+  single `get_all_decisions` roundtrip. Surfaced alongside the
+  branch scan so the agent can frame branch drift against ledger-
+  wide health ("2 of the 5 repo-wide drifts are outside this
+  branch").
+- **`handlers/doctor.py`** — auto-detecting composition handler.
+  Delegates to `handle_detect_drift` for file scope, composes
+  `handle_scan_branch` + `_build_ledger_summary` for branch scope.
+  Dedup/merge action hints across sub-scans by `kind` so the agent
+  sees one set, not two.
+- **`skills/bicameral-doctor/SKILL.md`** — trigger phrasings, per-
+  scope rendering rules, branch-vs-ledger contrast framing, explicit
+  "don't fan out scan_branch as a second opinion" anti-pattern.
+
+### Removed
+
+- **`bicameral.drift`** — the tool is gone from `list_tools()` and
+  the dispatch block. Soft-deprecated in v0.4.17, hard-removed now.
+  Per-file drift is still available via `bicameral.doctor(file_path=...)`
+  with byte-identical response content nested under
+  `DoctorResponse.file_scan`.
+- **`skills/bicameral-drift/SKILL.md`** and
+  **`.claude/skills/bicameral-drift/SKILL.md`** — deleted. The
+  trigger phrasings they covered now live on `bicameral-doctor`.
+
+### Kept
+
+- **`handlers/detect_drift.py`** stays in place as an **internal
+  helper**. `handle_detect_drift` is no longer exposed as an MCP
+  tool, but `handle_doctor` imports and calls it for the file-scope
+  path. `raw_decisions_to_drift_entries` stays as the shared pure
+  helper feeding both doctor and scan_branch.
+
+### Tests
+
+- `tests/test_v0418_doctor.py` — 12 tests across four layers:
+  - Pure composition (hint merging dedup, empty-scope response shape)
+  - Logic with stubbed sub-handlers (empty scope, branch scope with
+    ledger summary, file scope delegation, non-fatal
+    `get_all_decisions` failure)
+  - Server-level guards (drift removed from `list_tools`,
+    `handle_detect_drift` still importable, `raw_decisions_to_drift_entries`
+    still importable)
+  - Integration against real surreal ledger + seeded git repo
+    (file scope end-to-end, branch scope end-to-end with a real
+    range_diff)
+- 65/65 combined regression across v0.4.18 + v0.4.17 + v0.4.16 +
+  v0.4.14 + v0.4.8.
+
+### Migration
+
+**Breaking for callers of the raw `bicameral.drift` tool**, but
+soft-landed: the tool was already marked DEPRECATED in v0.4.17's
+description, so any agent reading the schema at that time saw the
+notice. Callers need to switch to `bicameral.doctor(file_path=...)`
+to get the same per-file behavior — the response content is
+byte-identical, just nested inside `DoctorResponse.file_scan`.
+
+**Not breaking for callers of the `bicameral-drift` skill**: the
+skill is gone, but `bicameral-doctor`'s trigger phrasings fully
+cover the old skill's phrasings, and the default scope for a
+file-less request is now a branch sweep with ledger context —
+strictly richer than the old drift behavior.
+
+No schema changes to the ledger. Pre-v0.4.18 `IngestResponse` /
+`BriefResponse` / `ScanBranchResponse` shapes are unchanged.
+
 ## 0.4.17 — 2026-04-15 — `scan_branch` + drift soft-deprecate + jargon lint
 
 Three things land together in a small release. Motivated by a live

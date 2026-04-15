@@ -35,6 +35,7 @@ from context import BicameralContext
 from handlers.brief import handle_brief
 from handlers.decision_status import handle_decision_status
 from handlers.detect_drift import handle_detect_drift
+from handlers.doctor import handle_doctor
 from handlers.gap_judge import handle_judge_gaps
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
@@ -128,34 +129,6 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["query"],
-            },
-        ),
-        Tool(
-            name="bicameral.drift",
-            description=(
-                "DEPRECATED in v0.4.17 — prefer bicameral.scan_branch for multi-file drift "
-                "audits; this tool still works for single-file scope. Removal planned for v0.4.18. "
-                "Code review check for ONE file: given a file path, surface all decisions "
-                "that touch symbols in that file — highlighting any that diverge from current "
-                "content. Fire only when the user explicitly names a single file. For "
-                "'what's drifted on this branch' / 'scan my PR' / any whole-branch check, "
-                "use bicameral.scan_branch. "
-                "Slash alias: /bicameral:drift"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "File path relative to repo root",
-                    },
-                    "use_working_tree": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "True = compare against disk (pre-commit), False = compare against HEAD",
-                    },
-                },
-                "required": ["file_path"],
             },
         ),
         Tool(
@@ -399,6 +372,54 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="bicameral.doctor",
+            description=(
+                "Auto-detecting health check. Picks the right scope for the user's intent "
+                "without them needing to know which sub-tool to call. "
+                "Behavior: if a file_path is given, runs a file-scoped drift check. Otherwise "
+                "sweeps every decision touching the current branch (base_ref → HEAD), plus a "
+                "repo-wide status summary so the branch drift is contextualized against ledger "
+                "health. Fires on any 'check drift' / 'what's broken' / 'run a health check' / "
+                "'is anything wrong' phrasing; this is the default entry point for discrepancy "
+                "investigation. Never returns an LLM-generated narrative — the response is a "
+                "structured envelope the agent renders section by section. "
+                "Slash alias: /bicameral:doctor"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": (
+                            "Optional repo-relative path. When given, doctor runs a file-scoped "
+                            "check on that file. When omitted, doctor runs a branch-scoped sweep."
+                        ),
+                    },
+                    "base_ref": {
+                        "type": "string",
+                        "description": (
+                            "Optional base ref for the branch sweep (ignored when file_path is "
+                            "set). Defaults to BICAMERAL_AUTHORITATIVE_REF env var, falling "
+                            "back to 'main'."
+                        ),
+                    },
+                    "head_ref": {
+                        "type": "string",
+                        "default": "HEAD",
+                        "description": "Optional head ref for the branch sweep. Defaults to HEAD.",
+                    },
+                    "use_working_tree": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "True = include uncommitted working-tree changes. False (default) = "
+                            "compare committed refs only."
+                        ),
+                    },
+                },
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -501,12 +522,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             max_results=arguments.get("max_results", 10),
             min_confidence=arguments.get("min_confidence", 0.5),
         )
-    elif name in ("bicameral.drift", "detect_drift"):
-        result = await handle_detect_drift(
-            ctx,
-            file_path=arguments["file_path"],
-            use_working_tree=arguments.get("use_working_tree", True),
-        )
     elif name in ("bicameral.link_commit", "link_commit"):
         result = await handle_link_commit(
             ctx,
@@ -560,6 +575,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     elif name in ("bicameral.scan_branch", "scan_branch"):
         result = await handle_scan_branch(
             ctx,
+            base_ref=arguments.get("base_ref"),
+            head_ref=arguments.get("head_ref"),
+            use_working_tree=arguments.get("use_working_tree", False),
+        )
+    elif name in ("bicameral.doctor", "doctor"):
+        result = await handle_doctor(
+            ctx,
+            file_path=arguments.get("file_path"),
             base_ref=arguments.get("base_ref"),
             head_ref=arguments.get("head_ref"),
             use_working_tree=arguments.get("use_working_tree", False),

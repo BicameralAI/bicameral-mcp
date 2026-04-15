@@ -215,6 +215,49 @@ class ScanBranchResponse(BaseModel):
     action_hints: list[ActionHint] = []
 
 
+# ── Tool 11 replacement: /doctor — auto-detect composition (v0.4.18) ──
+
+
+class DoctorLedgerSummary(BaseModel):
+    """Compact ledger-wide health summary surfaced alongside the
+    branch scan. Counts every tracked decision by status so the
+    agent can flag "there are 12 drifted decisions repo-wide" even
+    when the branch scan only covers a few of them.
+    """
+    total: int = 0
+    drifted: int = 0
+    pending: int = 0
+    ungrounded: int = 0
+    reflected: int = 0
+
+
+class DoctorResponse(BaseModel):
+    """Response envelope for bicameral.doctor().
+
+    The ``scope`` field records what the handler auto-detected:
+
+    - ``"file"``  — the caller passed a ``file_path``. ``file_scan``
+      is populated (a full ``DetectDriftResponse``), ``branch_scan``
+      and ``ledger_summary`` are ``None``.
+    - ``"branch"`` — no ``file_path``. ``branch_scan`` is populated
+      (a full ``ScanBranchResponse``) and ``ledger_summary`` carries
+      the repo-wide status count so the agent can contextualize the
+      branch drift against ledger-wide health.
+    - ``"empty"`` — no file, no branch range, nothing to scan (e.g.
+      the repo has no tracked decisions yet). All sub-fields ``None``.
+
+    Designed so the ``bicameral-doctor`` skill always gets a
+    structured envelope regardless of what scope the handler picked.
+    The skill renders whichever sub-field is populated without
+    needing to know why.
+    """
+    scope: Literal["file", "branch", "empty"]
+    file_scan: "DetectDriftResponse | None" = None
+    branch_scan: "ScanBranchResponse | None" = None
+    ledger_summary: DoctorLedgerSummary | None = None
+    action_hints: list[ActionHint] = []
+
+
 # ── Tool 4: /link_commit — re-exported here for direct use ───────────
 # (LinkCommitResponse defined above alongside SearchDecisionsResponse)
 
