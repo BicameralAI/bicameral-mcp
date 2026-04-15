@@ -3,6 +3,112 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.13 — 2026-04-14 — Content-Addressable Dedup (Team Mode Hardening)
+
+Closes the team-mode dedup gap. Previously, when two developers
+ingested the same source independently, the dedup key was
+`(description, source_ref)` — vulnerable to whitespace, casing,
+Unicode punctuation variants, and source_ref format drift (e.g.
+`#payments:1726113809.330439` vs `payments-1726113809330439`). Now
+the dedup key is a content-addressable `canonical_id` derived
+deterministically from the canonicalized payload via JCS + UUIDv5,
+so two writers producing the same logical event produce the same ID
+regardless of formatting variance.
+
+Pattern source: web research on production dedup approaches (git's
+content-addressable storage, Wikidata canonical IDs, NATS subject
+naming, Stripe idempotency keys derived from request body). The
+pattern collapses cleanly because bicameral's deterministic-side
+graph (intent ↔ symbol ↔ code_region) only needs DB-level edge
+uniqueness; the ambiguous side (source ↔ intent) gets the canonical
+ID treatment.
+
+### Added
+
+- **`ledger/canonical.py`** — pure-function module for canonical ID
+  derivation:
+  - `canonicalize_source_ref(source_type, raw)` — normalizes Slack /
+    Notion / GitHub / transcript references to a stable form. Strips
+    format separators (`#`, `-`, `.`, `:`), lowercases, extracts
+    stable tokens (timestamps, page UUIDs).
+  - `canonicalize_text(text)` — NFC normalization + Unicode
+    punctuation variant replacement (curly quotes, em dash, ellipsis,
+    nbsp) + lowercase + whitespace collapse. Closes the
+    paraphrase-as-formatting gap.
+  - `canonical_json_bytes(obj)` — JCS-lite (RFC 8785) serialization:
+    sorted keys, no whitespace, deterministic byte output. No
+    third-party dependency.
+  - `canonical_intent_id(description, source_type, source_ref)` —
+    composes the three steps above and computes
+    `UUIDv5(BICAMERAL_NAMESPACE, jcs)`. Same input → same UUID, every
+    writer.
+  - `canonical_source_span_id(...)` — same shape for source_span
+    nodes.
+- **`intent.canonical_id` field + `idx_intent_canonical UNIQUE`**
+  index in `ledger/schema.py`. New ingests stamp the canonical_id;
+  the unique index rejects duplicate inserts at the DB level.
+- **DB-level edge UNIQUE indexes**:
+  - `idx_yields_unique` on `yields(in, out)`
+  - `idx_maps_to_unique` on `maps_to(in, out)`
+  - `idx_implements_unique` on `implements(in, out)`
+  - `idx_depends_on_unique` on `depends_on(in, out, edge_type)` —
+    different edge types between the same regions ARE legitimate
+    distinct edges, so `edge_type` is part of the key.
+  Pushes idempotency into the DB layer so application code doesn't
+  have to remember to check.
+- **Content-addressable event filenames**. `EventFileWriter.write`
+  now derives a 12-char content hash from `(event_type, payload)`
+  via JCS + UUIDv5 and uses it as the filename suffix:
+  `{timestamp}-{content_hash}.json`. Two writers producing the same
+  logical event produce the same suffix. When the event files end
+  up in the same git repo on sync, git sees them as identical files
+  (same path, same content) instead of a merge conflict —
+  filesystem-level dedup via content addressing. Pattern from NATS
+  JetStream's per-subject discard-policy via subject-as-identity.
+
+### Changed
+
+- **`upsert_intent`** now uses `canonical_id` as the primary dedup
+  key. Falls back to legacy `(description, source_ref)` lookup +
+  backfills `canonical_id` on legacy rows so pre-v0.4.13 ledgers
+  upgrade transparently on first re-ingest. New ingests are stamped
+  with `canonical_id` immediately.
+
+### Tests
+
+- 25 new cases in `tests/test_v0413_canonical_dedup.py`:
+  - Source ref canonicalization (Slack 3 variants, Notion title +
+    UUID, GitHub `/` vs `#`, transcript whitespace, unknown type
+    fallback)
+  - Text canonicalization (curly quotes, em dash, nbsp, whitespace,
+    casing, NFC)
+  - Canonical ID determinism (same input → same UUID, distinguishes
+    real differences, valid UUID v5 string format)
+  - JCS sorted-key + no-whitespace invariants
+  - End-to-end: `ledger.ingest_payload` twice with whitespace +
+    source_ref format variance produces 1 row, not 2
+  - Different decisions on the same source produce different rows
+- Full v0.4.13 regression: 211 passed.
+
+### Migration
+
+No breaking changes. New `intent.canonical_id` field defaults to
+`""` and is populated by:
+- New ingests (stamp on first call to `upsert_intent`)
+- Legacy fallback path: when an old `(description, source_ref)` row
+  is matched, `canonical_id` is backfilled before the update returns
+
+The `idx_intent_canonical UNIQUE` index allows multiple `""` values
+(SurrealDB treats empty strings as distinct), so legacy rows with
+empty canonical_id don't conflict. As they get touched by re-ingest,
+they pick up canonical IDs and start participating in the dedup
+gate.
+
+Edge UNIQUE indexes apply to NEW edges only — existing duplicate
+edges from pre-v0.4.13 ingests are not deduped automatically.
+Run `bicameral.reset(confirm=true)` followed by re-ingest if you
+want to clean up legacy duplicates.
+
 ## 0.4.12.1 — 2026-04-14 — Team Adapter Signature Drift Hotfix
 
 Hotfix for a class of latent regressions in `events/team_adapter.py`
