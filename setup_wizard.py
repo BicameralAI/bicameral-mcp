@@ -318,15 +318,43 @@ def _select_collaboration_mode() -> str:
     return "solo"
 
 
-def _write_collaboration_config(repo_path: Path, mode: str) -> None:
-    """Write .bicameral/config.yaml with the collaboration mode."""
+def _select_guided_mode() -> bool:
+    """Prompt user for guided-mode intensity.
+
+    Guided mode makes bicameral stop the agent when it detects
+    discrepancies (drifted decisions, divergences, open questions).
+    Normal mode still surfaces those as advisory hints, but doesn't
+    block writes.
+    """
+    if not _is_interactive():
+        return False
+
+    print("\n  Interaction intensity:")
+    print("    1. Normal  — bicameral flags discrepancies as advisory hints (default)")
+    print("    2. Guided  — bicameral stops you when it detects discrepancies")
+    choice = input("  Choice [1/2]: ").strip()
+
+    return choice == "2"
+
+
+def _write_collaboration_config(
+    repo_path: Path,
+    mode: str,
+    guided: bool = False,
+) -> None:
+    """Write .bicameral/config.yaml with the collaboration mode and
+    guided-mode flag.
+    """
     config_path = repo_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        f"# Bicameral collaboration config\nmode: {mode}\n",
+        "# Bicameral configuration\n"
+        f"mode: {mode}\n"
+        f"guided: {'true' if guided else 'false'}\n",
         encoding="utf-8",
     )
     print(f"  Collaboration: {mode} mode")
+    print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
 
 
 def _ensure_gitignore(repo_path: Path, mode: str = "solo") -> None:
@@ -407,9 +435,10 @@ def run_setup(repo_hint: str | None = None) -> int:
         print(f"\n  Note: using '{command} -m bicameral_mcp' as runner.")
         print("  Install a package runner for zero-install: pip install pipx")
 
-    # Step 4: Collaboration mode + gitignore
+    # Step 4: Collaboration mode + guided intensity + gitignore
     collab_mode = _select_collaboration_mode()
-    _write_collaboration_config(repo_path, collab_mode)
+    guided = _select_guided_mode()
+    _write_collaboration_config(repo_path, collab_mode, guided=guided)
     _ensure_gitignore(repo_path, mode=collab_mode)
 
     if collab_mode == "team":

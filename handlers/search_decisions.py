@@ -74,6 +74,6 @@ async def handle_search_decisions(
         suggested_review=suggested_review,
     )
     response.action_hints = generate_hints_for_search(
-        response, tester_mode=getattr(ctx, "tester_mode", False),
+        response, guided_mode=getattr(ctx, "guided_mode", False),
     )
     return response

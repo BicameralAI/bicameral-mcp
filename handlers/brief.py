@@ -328,6 +328,6 @@ async def handle_brief(
         suggested_questions=questions,
     )
     response.action_hints = generate_hints_for_brief(
-        response, tester_mode=getattr(ctx, "tester_mode", False),
+        response, guided_mode=getattr(ctx, "guided_mode", False),
     )
     return response

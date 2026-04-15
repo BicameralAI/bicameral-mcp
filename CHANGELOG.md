@@ -3,6 +3,73 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.10 — 2026-04-14 — Guided Mode (Always-On Hints)
+
+Reframes v0.4.9's tester mode. **`action_hints` now fire whenever
+findings exist, regardless of mode.** The flag controls **intensity**,
+not existence. Also adds setup-wizard configuration so the choice is
+durable across sessions.
+
+### Renamed
+
+- `tester_mode` → **`guided_mode`** everywhere (context field, env
+  var, skill name, tests, docstrings). Reads better, matches the
+  user-facing language ("guide me through this codebase").
+- `BICAMERAL_TESTER_MODE` → **`BICAMERAL_GUIDED_MODE`** env var.
+- `bicameral-tester` skill → **`bicameral-guided`** skill.
+- `tests/test_v049_tester_mode.py` → `tests/test_v0410_guided_mode.py`.
+
+### Changed — semantic shift
+
+- **Hints are always-on.** Pre-v0.4.10, `action_hints` was empty
+  unless tester mode was enabled. Now it's populated whenever the
+  response contains findings — drifted decisions, ungrounded matches,
+  divergent pairs, open questions. The `guided_mode` flag controls:
+  - **`blocking: bool`** — `True` in guided mode (skill contract
+    forbids writes), `False` in normal mode (advisory only).
+  - **`message` tone** — imperative ("review BEFORE making changes")
+    in guided mode, advisory ("heads up — N decision(s) look
+    drifted") in normal mode. Two distinct message variants per hint
+    kind so the user can tell at a glance.
+- **Normal mode is no longer silent.** A regular search query that
+  returns a drifted decision now surfaces a non-blocking hint. The
+  agent should mention it to the user (one line is enough) and
+  continue. This makes bicameral consistently push signal at the
+  user, with intensity dialed by their setup choice.
+
+### Added
+
+- **Setup wizard prompt** — `bicameral setup` now asks:
+  ```
+    Interaction intensity:
+      1. Normal  — bicameral flags discrepancies as advisory hints (default)
+      2. Guided  — bicameral stops you when it detects discrepancies
+    Choice [1/2]:
+  ```
+  The choice is written to `.bicameral/config.yaml` as `guided: true`
+  or `guided: false`. Edit the file directly to change later.
+- **Config file resolution.** `BicameralContext.from_env()` reads
+  `.bicameral/config.yaml` for the durable `guided` flag.
+  `BICAMERAL_GUIDED_MODE` env var (truthy: `1 / true / yes / on`,
+  falsy: `0 / false / no / off`) is a one-off override that wins
+  over the file. Unset → fall back to the file → fall back to
+  `false`.
+- **`bicameral-guided` SKILL.md** — full contract for both intensity
+  modes. Replaces the v0.4.9 `bicameral-tester` skill.
+
+### Migration
+
+No schema changes. Existing v0.4.9 installs:
+
+- `BICAMERAL_TESTER_MODE` env var no longer recognized — set
+  `BICAMERAL_GUIDED_MODE` instead. (Same truthy/falsy semantics.)
+- `.bicameral/config.yaml` files without a `guided:` field default to
+  `false` (normal mode). Re-run `bicameral setup` to be prompted, or
+  add `guided: true` / `guided: false` manually.
+- Pre-v0.4.10 callers that ignored `action_hints` are unaffected —
+  the field is still optional and still populates a list, just one
+  that's no longer always empty.
+
 ## 0.4.9 — 2026-04-14 — Tester Mode + Search Status Fix
 
 Phase 2 of v0.4.8. Adds an opt-in **tester mode** that makes

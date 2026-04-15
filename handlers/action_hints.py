@@ -1,21 +1,32 @@
-"""v0.4.9 (Phase 2) — tester mode action hint generators.
+"""v0.4.9+ — action hint generators for search and brief responses.
 
-When ``ctx.tester_mode`` is True, search and brief responses are
-augmented with ``ActionHint`` objects that tell the agent what MUST
-be addressed before any write operation. The generators are pure,
-post-compute, zero extra DB calls — they inspect the already-computed
-response object and emit hints derived from its contents.
+Hints fire whenever a response contains findings worth flagging
+(drifted decisions, ungrounded matches, divergent pairs, open
+questions). The ``guided_mode`` flag (v0.4.10) dials the **intensity**:
+
+  - ``guided_mode=False`` (default) — hints are **advisory**. ``blocking``
+    is False and the message uses softer, suggestive language ("heads
+    up — N decision(s) drifted, review before editing near them if you
+    can"). The agent is free to proceed; the hint is informational.
+
+  - ``guided_mode=True`` — hints are **blocking**. ``blocking`` is True
+    and the message uses imperative language ("N matched decision(s)
+    have drifted — review BEFORE making any changes"). The
+    ``bicameral-guided`` skill contract forbids write operations until
+    each blocking hint is resolved.
 
 Design anchors:
-  - **Zero DB roundtrips.** Hint generation runs after the handler has
-    already paid its query cost. If a generator needs data that isn't
-    already on the response, it doesn't fire. This keeps tester mode
-    free-at-cost for the server.
-  - **Hints are advisory at the wire, blocking at the skill.** MCP
-    can't force the agent to do anything. We set ``blocking=True``
-    and rely on the ``bicameral-tester`` skill contract to teach the
-    agent to stop until each blocking hint is resolved.
-  - **No LLM here.** All heuristics are deterministic. Matches the
+  - **Zero DB roundtrips.** Generators run after the handler has already
+    paid its query cost. If a generator needs data that isn't already on
+    the response, it doesn't fire. Tester-mode correctness at no server
+    cost.
+  - **Always-on, intensity-gated.** Pre-v0.4.10 these were gated on the
+    whole tester_mode flag; non-tester mode saw zero hints. That was
+    wrong — a reflected decision in a normal session should STILL get a
+    heads-up if it's linked to a drifted region. The guided flag now
+    only toggles ``blocking`` + message tone, not the existence of the
+    hint.
+  - **No LLM.** All heuristics deterministic, matches the
     ``handlers/brief.py`` invariant from v0.4.6.
 """
 
@@ -28,27 +39,87 @@ from contracts import (
 )
 
 
+# ── Message variants ───────────────────────────────────────────────
+
+
+def _drift_message(count: int, guided: bool) -> str:
+    if guided:
+        return (
+            f"{count} matched decision(s) have drifted — the current code "
+            f"no longer reflects what was decided. Review the drifted "
+            f"regions and confirm the code still matches stored intent "
+            f"BEFORE making changes."
+        )
+    return (
+        f"Heads up — {count} matched decision(s) look drifted from their "
+        f"recorded intent. Review the regions below before editing near "
+        f"them; the stored baseline may be stale."
+    )
+
+
+def _ground_message(count: int, guided: bool) -> str:
+    if guided:
+        return (
+            f"{count} matched decision(s) are recorded but have no code "
+            f"grounding yet. Before implementing, confirm with the user "
+            f"what should exist — or call bicameral_ingest with a "
+            f"refreshed payload to ground them."
+        )
+    return (
+        f"Note — {count} matched decision(s) are recorded but haven't been "
+        f"grounded to code yet. If you're about to implement them, you "
+        f"may want to call bicameral_ingest first to capture the actual "
+        f"grounding."
+    )
+
+
+def _divergence_message(count: int, guided: bool) -> str:
+    if guided:
+        return (
+            f"{count} divergent decision pair(s) detected on the same "
+            f"symbol. Two non-superseded decisions contradict each other "
+            f"— pick which wins with the user and mark the loser "
+            f"superseded via bicameral_update BEFORE any code change."
+        )
+    return (
+        f"Heads up — {count} divergent decision pair(s) detected on the "
+        f"same symbol. Two non-superseded decisions contradict each "
+        f"other; worth surfacing to the user before you act on either."
+    )
+
+
+def _open_questions_message(count: int, guided: bool) -> str:
+    if guided:
+        return (
+            f"{count} unanswered open question(s) linked to this topic. "
+            f"Surface them to the user and resolve them with a follow-up "
+            f"bicameral_ingest BEFORE implementing any related code."
+        )
+    return (
+        f"Note — {count} unanswered open question(s) are in scope for "
+        f"this topic. Worth surfacing to the user if you're about to "
+        f"implement something related."
+    )
+
+
 # ── Generators ──────────────────────────────────────────────────────
 
 
 def generate_hints_for_search(
     response: SearchDecisionsResponse,
-    tester_mode: bool,
+    guided_mode: bool,
 ) -> list[ActionHint]:
-    """Inspect a ``SearchDecisionsResponse`` and emit blocking hints.
+    """Inspect a ``SearchDecisionsResponse`` and emit action hints.
 
-    Fires:
-      - ``review_drift`` when any matched decision has status=drifted.
-        Refs: the drifted decisions' intent_ids.
-      - ``ground_decision`` when the response has ungrounded matches
-        (already surfaced via ``suggested_review`` but we promote it
-        to a blocking hint so the agent can't quietly ignore it).
+    Hints fire whenever findings exist, regardless of ``guided_mode``.
+    The flag controls **intensity**: ``guided_mode=True`` sets
+    ``blocking=True`` and swaps to imperative messages;
+    ``guided_mode=False`` sets ``blocking=False`` with advisory tone.
 
-    Returns [] when ``tester_mode`` is False.
+    Kinds:
+      - ``review_drift`` — matched decisions with status=drifted
+      - ``ground_decision`` — matched decisions with status=ungrounded
     """
-    if not tester_mode:
-        return []
-
     hints: list[ActionHint] = []
 
     drifted = [m for m in response.matches if m.status == "drifted"]
@@ -61,13 +132,8 @@ def generate_hints_for_search(
         })
         hints.append(ActionHint(
             kind="review_drift",
-            message=(
-                f"{len(drifted)} matched decision(s) have drifted — the "
-                f"current code no longer reflects what was decided. "
-                f"Review the drifted regions and confirm the code still "
-                f"matches stored intent BEFORE making changes."
-            ),
-            blocking=True,
+            message=_drift_message(len(drifted), guided_mode),
+            blocking=guided_mode,
             refs=[m.intent_id for m in drifted] + files,
         ))
 
@@ -75,13 +141,8 @@ def generate_hints_for_search(
     if ungrounded:
         hints.append(ActionHint(
             kind="ground_decision",
-            message=(
-                f"{len(ungrounded)} matched decision(s) are recorded but "
-                f"have no code grounding yet. Before implementing, confirm "
-                f"with the user what should exist — or call "
-                f"bicameral_ingest with a refreshed payload to ground them."
-            ),
-            blocking=True,
+            message=_ground_message(len(ungrounded), guided_mode),
+            blocking=guided_mode,
             refs=[m.intent_id for m in ungrounded],
         ))
 
@@ -90,24 +151,18 @@ def generate_hints_for_search(
 
 def generate_hints_for_brief(
     response: BriefResponse,
-    tester_mode: bool,
+    guided_mode: bool,
 ) -> list[ActionHint]:
-    """Inspect a ``BriefResponse`` and emit blocking hints.
+    """Inspect a ``BriefResponse`` and emit action hints.
 
-    Fires:
-      - ``resolve_divergence`` when ``response.divergences`` is non-empty.
-        Highest-stakes signal — the brief already leads with it, but
-        the hint makes it blocking.
-      - ``answer_open_questions`` when ``response.gaps`` contains
-        open_question-shaped entries. Refs: the gap description texts.
-      - ``review_drift`` when ``response.drift_candidates`` is non-empty
-        (subset of matched decisions with status=drifted).
+    Hints fire whenever findings exist, regardless of ``guided_mode``.
+    The flag controls intensity only.
 
-    Returns [] when ``tester_mode`` is False.
+    Kinds:
+      - ``resolve_divergence`` — brief.divergences non-empty
+      - ``review_drift`` — brief.drift_candidates non-empty
+      - ``answer_open_questions`` — brief.gaps contains open-question gaps
     """
-    if not tester_mode:
-        return []
-
     hints: list[ActionHint] = []
 
     if response.divergences:
@@ -117,26 +172,16 @@ def generate_hints_for_brief(
         ]
         hints.append(ActionHint(
             kind="resolve_divergence",
-            message=(
-                f"{len(response.divergences)} divergent decision pair(s) "
-                f"detected on the same symbol. Two non-superseded decisions "
-                f"contradict each other — pick which wins with the user "
-                f"and mark the loser superseded via bicameral_update BEFORE "
-                f"any code change."
-            ),
-            blocking=True,
+            message=_divergence_message(len(response.divergences), guided_mode),
+            blocking=guided_mode,
             refs=refs,
         ))
 
     if response.drift_candidates:
         hints.append(ActionHint(
             kind="review_drift",
-            message=(
-                f"{len(response.drift_candidates)} decision(s) in scope have "
-                f"drifted — the code no longer reflects intent. Surface each "
-                f"drifted region to the user before editing near it."
-            ),
-            blocking=True,
+            message=_drift_message(len(response.drift_candidates), guided_mode),
+            blocking=guided_mode,
             refs=[d.intent_id for d in response.drift_candidates],
         ))
 
@@ -147,13 +192,8 @@ def generate_hints_for_brief(
     if open_q_gaps:
         hints.append(ActionHint(
             kind="answer_open_questions",
-            message=(
-                f"{len(open_q_gaps)} unanswered open question(s) linked to "
-                f"this topic. Surface them to the user and resolve them "
-                f"with a follow-up bicameral_ingest BEFORE implementing "
-                f"any related code."
-            ),
-            blocking=True,
+            message=_open_questions_message(len(open_q_gaps), guided_mode),
+            blocking=guided_mode,
             refs=[g.description[:140] for g in open_q_gaps],
         ))
 

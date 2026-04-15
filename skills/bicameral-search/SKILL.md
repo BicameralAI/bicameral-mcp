@@ -28,30 +28,40 @@ Pre-flight check before coding — surface past decisions relevant to what you'r
 
 $ARGUMENTS — the feature, task, or area to search for prior decisions about
 
-## Tester Mode Contract (v0.4.9+)
+## Action Hint Contract (v0.4.10+)
 
-When the server runs with `BICAMERAL_TESTER_MODE=1`, the response
-includes an `action_hints` list. **Hints with `blocking: true` MUST be
-addressed before any write operation** (file edits, commits, PRs,
-`bicameral_ingest`). Kinds that can fire on search responses:
+The response always includes an `action_hints` list. Two intensities,
+controlled by the `guided` flag in `.bicameral/config.yaml` (chosen at
+`bicameral setup` time) or the `BICAMERAL_GUIDED_MODE=1` env var
+override:
 
-- **`review_drift`** — one or more matched decisions are drifted. The
-  recorded intent no longer matches the current code. Surface the
-  drifted files to the user and confirm the code still reflects intent
-  BEFORE making changes near them. Refs list includes the drifted
-  `intent_id`s and the file paths they touch.
+- **Normal mode** (`guided: false`, default) — hints fire when
+  findings exist but with `blocking: false` and an advisory tone
+  ("heads up — N decision(s) look drifted"). **Mention the hint to
+  the user in your response** (one line is enough) and continue with
+  what they asked for. It's a heads-up, not a stop sign.
+- **Guided mode** (`guided: true`) — same hints with `blocking: true`
+  and imperative tone ("N matched decision(s) have drifted — review
+  BEFORE making changes"). **Address each blocking hint before any
+  write operation** (file edit, commit, PR, `bicameral_ingest`).
+
+Kinds that can fire on search responses:
+
+- **`review_drift`** — one or more matched decisions are drifted.
+  Refs: drifted `intent_id`s + the file paths they touch.
 - **`ground_decision`** — one or more matched decisions have no code
-  grounding yet. Before implementing something described by an
-  ungrounded decision, confirm with the user what should exist, then
-  call `bicameral_ingest` with a refreshed payload to ground them.
+  grounding yet. Refs: the ungrounded `intent_id`s.
 
-When `action_hints` is empty (the default in non-tester mode), proceed
-normally. Empty is not an error — it means the server is in regular
-mode or none of the matches triggered any hint.
+When `action_hints` is empty, none of the matches triggered any hint
+— proceed normally.
 
-Never paraphrase a hint's `message` field to the user — surface it
-verbatim so the tester can observe exactly what the server is
-signaling.
+**Never paraphrase a hint's `message` field** — surface it verbatim
+so the user can observe exactly what the server signaled. The
+phrasing intentionally varies by mode so the user can tell at a
+glance whether the agent is being advised or required to pause.
+
+For the full guided-mode contract, see
+`skills/bicameral-guided/SKILL.md`.
 
 ## Example
 

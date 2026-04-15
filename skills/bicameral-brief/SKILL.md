@@ -117,22 +117,41 @@ owns, try briefing on that instead — e.g.
 3. **No LLM summarization in v0.4.6.** The heuristics under the hood are deterministic. Don't layer your own LLM interpretation on top of the response — present it as-is and let the user ask follow-up questions.
 4. **Short is better than comprehensive.** If the brief response has 30 decisions, show the top 10 by status severity (drifted → reflected → pending → ungrounded) and note the full count.
 
-## Tester Mode Contract (v0.4.9+)
+## Action Hint Contract (v0.4.10+)
 
-When the server runs with `BICAMERAL_TESTER_MODE=1`, the response
-includes an `action_hints` list. **Hints with `blocking: true` MUST be
-addressed before any write operation** (file edits, commits, PRs,
-`bicameral_ingest`). Kinds that can fire on brief responses:
+The response always includes an `action_hints` list. Two intensities,
+controlled by the `guided` flag in `.bicameral/config.yaml` (chosen at
+`bicameral setup` time) or the `BICAMERAL_GUIDED_MODE=1` env var
+override:
+
+- **Normal mode** (`guided: false`, default) — hints fire when
+  findings exist but with `blocking: false` and an advisory tone
+  ("heads up — N divergent decision pair(s) detected"). **Mention
+  the hint to the user in your response** (one line is enough) and
+  continue with what they asked for. It's a heads-up, not a stop
+  sign.
+- **Guided mode** (`guided: true`) — same hints with `blocking: true`
+  and imperative tone ("N divergent decision pair(s) — pick the
+  winner BEFORE any code change"). **Address each blocking hint
+  before any write operation** (file edit, commit, PR,
+  `bicameral_ingest`).
+
+Kinds that can fire on brief responses:
 
 - **`resolve_divergence`** — two non-superseded decisions contradict
-  each other on the same symbol. Highest-stakes signal. Show both
-  decisions to the user, let them pick which wins, then mark the loser
-  superseded via `bicameral_update`.
+  each other on the same symbol. Highest-stakes signal. Refs:
+  `symbol (file_path)` strings.
 - **`review_drift`** — one or more decisions in scope have drifted.
-  Surface each drifted region before editing near it.
-- **`answer_open_questions`** — gap extraction found open questions
-  linked to this topic. Surface them to the user and resolve them with
-  a follow-up `bicameral_ingest` before implementing any related code.
+  Refs: drifted `intent_id`s.
+- **`answer_open_questions`** — gap extraction found open-question
+  shaped gaps in scope. Refs: truncated gap descriptions.
 
-When `action_hints` is empty, present the brief normally. Never
-paraphrase a hint's `message` field — surface it verbatim.
+When `action_hints` is empty, present the brief normally — none of
+the brief's findings triggered any hint.
+
+**Never paraphrase a hint's `message` field** — surface it verbatim.
+The phrasing intentionally varies by mode so the user can tell at a
+glance whether the agent is being advised or required to pause.
+
+For the full guided-mode contract, see
+`skills/bicameral-guided/SKILL.md`.
