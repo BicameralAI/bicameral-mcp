@@ -3,6 +3,69 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.11 — 2026-04-14 — Latent Drift Fix (Range-Diff Sweep + Distinct Counters)
+
+Fixes a class of "invisible drift" where decisions silently went stale
+because `link_commit` only swept files in HEAD's own diff. After a
+gap of N commits without a bicameral invocation, drift introduced by
+intermediate commits stayed hidden until someone happened to re-edit
+the same files. Now `link_commit` sweeps every file touched between
+the last sync cursor and HEAD, so dark-period drift surfaces on the
+next call.
+
+### Fixed
+
+- **Latent drift via head-only sweep**. `ingest_commit` previously
+  enumerated changed files via `git show <head> --name-only`, which
+  only sees the head commit's own diff. Drift introduced by commits
+  N+1..N+5 was invisible if the user didn't run a bicameral tool
+  during that window, then ran one against commit N+5 whose own diff
+  didn't re-touch the drifted files. Fix: when the sync cursor lags
+  HEAD, run `git diff --name-only last_synced..HEAD` and sweep every
+  file in the range. New `sweep_scope` field on `LinkCommitResponse`
+  reports `head_only` (first sync, or fallback) vs `range_diff`
+  (default after first sync) vs `range_truncated` (range exceeded
+  cap; sweep was partial). Range cap defaults to 200 files; remainder
+  catches up on next sync.
+- **Inflated drift counters via per-(region, intent) counting**.
+  `decisions_drifted` and `decisions_reflected` previously incremented
+  once per `(region, intent)` pair that flipped — a decision with N
+  regions all flipping in the same sweep counted as N. Witnessed on
+  the Accountable demo where one Google Calendar decision flipped 4
+  regions and the counter reported `decisions_drifted=4` while only
+  1 distinct intent was actually drifted. Fix: dedupe by intent_id
+  via sets; counters now report the number of distinct decisions
+  whose status flipped, matching what users mentally expect from
+  "how many decisions just changed status."
+
+### Added
+
+- **`LinkCommitResponse.sweep_scope`** —
+  `Literal["head_only", "range_diff", "range_truncated"]`. Tells the
+  caller whether this sweep saw HEAD-only files or the full
+  last_synced..HEAD range. A "backlog sweep" after a dark period
+  reports `range_diff` with a large `range_size`, so a UI can frame
+  "47 decisions drifted" as "first scan after 6 weeks" instead of
+  "what the hell happened today."
+- **`LinkCommitResponse.range_size`** — number of files swept this
+  run. Zero for the `no_changes` and `already_synced` fast paths.
+- **`get_changed_files_in_range(base_sha, head_sha, repo_path)`** in
+  `ledger/status.py`. Runs `git diff --name-only base..head`. Returns
+  `None` (sentinel) when the diff fails (force-push, shallow clone,
+  unreachable base SHA) so the caller can fall back to head-only
+  scope without crashing.
+
+### Migration
+
+No schema changes. Existing `LinkCommitResponse` consumers see two
+new optional fields with sane defaults (`sweep_scope="head_only"`,
+`range_size=0`) — backward compatible. The semantic shift is in the
+counter values: deployments that scraped the old per-region counts
+will see smaller numbers in `decisions_drifted` /
+`decisions_reflected` because the same flip is now counted once per
+intent instead of once per region. The new behavior matches what the
+field name implies; the old behavior was a bug.
+
 ## 0.4.10 — 2026-04-14 — Guided Mode (Always-On Hints)
 
 Reframes v0.4.9's tester mode. **`action_hints` now fire whenever

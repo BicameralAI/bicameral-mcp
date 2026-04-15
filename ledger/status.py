@@ -212,6 +212,50 @@ def get_changed_files(commit_hash: str, repo_path: str) -> list[str]:
         return []
 
 
+def get_changed_files_in_range(
+    base_sha: str,
+    head_sha: str,
+    repo_path: str,
+) -> list[str] | None:
+    """Return files touched between ``base_sha`` and ``head_sha``.
+
+    v0.4.11 (latent drift fix): when ``link_commit`` runs after a gap of
+    multiple commits since the last sync, sweeping only ``HEAD --name-only``
+    misses every file drifted by intermediate commits. This helper runs
+    ``git diff --name-only base..head`` to enumerate the full set of files
+    touched across the gap, so the drift sweep covers everything that
+    needs re-checking.
+
+    Returns:
+        - ``list[str]`` of changed file paths (possibly empty when the
+          two refs touch no different files)
+        - ``None`` when the diff failed (force-push, shallow clone,
+          unreachable base SHA, etc.) — caller should fall back to
+          ``get_changed_files(head_sha, repo_path)`` for head-only scope.
+
+    The ``None`` sentinel matters: empty list means "ran successfully,
+    no files differ" while ``None`` means "the range is unreachable."
+    """
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--name-only", f"{base_sha}..{head_sha}"],
+            cwd=Path(repo_path).resolve(),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            logger.warning(
+                "[status] git diff %s..%s failed: %s",
+                base_sha[:8], head_sha[:8], result.stderr[:200],
+            )
+            return None
+        return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        logger.warning("[status] git diff range error: %s", e)
+        return None
+
+
 def resolve_head(repo_path: str) -> str | None:
     """Return current HEAD SHA."""
     try:

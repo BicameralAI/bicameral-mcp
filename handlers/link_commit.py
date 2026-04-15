@@ -231,6 +231,8 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         decisions_reflected=result.get("decisions_reflected", 0),
         decisions_drifted=result.get("decisions_drifted", 0),
         undocumented_symbols=result.get("undocumented_symbols", []),
+        sweep_scope=result.get("sweep_scope", "head_only"),
+        range_size=result.get("range_size", 0),
     )
     _store_sync_cache(ctx, commit_hash, response)
     return response
