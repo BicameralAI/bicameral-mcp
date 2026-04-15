@@ -75,6 +75,36 @@ Show the user:
 - How many were ingested, how many mapped to code, how many are ungrounded
 - If decisions were dropped, briefly list what was excluded and why (e.g., "Dropped 3 strategic/market decisions")
 
+### 5. Present the auto-fired brief (v0.4.8+)
+
+`bicameral.ingest` auto-fires `bicameral.brief` on a topic derived from the
+payload and returns the brief inside ``IngestResponse.brief``. **When
+``brief`` is non-null, present it immediately after the ingest summary
+using the bicameral-brief presentation rules.** In particular:
+
+- **Lead with divergences** (`brief.divergences`) whenever non-empty. The
+  fresh ingest may have just introduced a decision that contradicts an
+  existing one on the same symbol — that's the single highest-stakes
+  signal bicameral can carry, and the whole reason the brief auto-fires
+  after ingest. Surface each divergence as a bold warning with the
+  symbol, file path, and summary line.
+- Then `brief.drift_candidates`, then `brief.decisions` (grouped by status,
+  skipping duplicates that already appear in drift_candidates), then
+  `brief.gaps`, then `brief.suggested_questions` **verbatim**.
+- Skip any bucket that's empty. If every bucket is empty, say so plainly —
+  it means the fresh ingest didn't touch any prior decisions and no
+  divergences exist. That itself is useful information.
+- **Never** paraphrase `suggested_questions`. They're templated to be
+  neutral-voice; paraphrasing reintroduces the "me vs you" framing the
+  tool exists to remove.
+
+The full presentation contract lives in `skills/bicameral-brief/SKILL.md`
+and is the canonical reference — this step just cross-links it.
+
+When `brief` is `null` (e.g. the payload had no derivable topic or the
+chained brief call failed), skip this step silently. The ingest summary
+from step 4 is sufficient on its own.
+
 ## Arguments
 
 $ARGUMENTS — the transcript text, file path, or description of what to ingest
