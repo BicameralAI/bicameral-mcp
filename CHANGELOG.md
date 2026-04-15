@@ -3,6 +3,102 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.12 — 2026-04-14 — Preflight (Proactive Context Surfacing)
+
+Adds `bicameral.preflight(topic)` — a proactive context-surfacing tool
+the agent calls BEFORE implementing code. Returns prior decisions,
+drifted regions, divergent decision pairs, and unresolved open
+questions linked to the topic, gated by the user's `guided_mode`
+setting. Closes the loop on the "tech debt accrues because developers
+make tiny architectural decisions without full insight" problem —
+bicameral now pushes the relevant context at the agent without
+waiting for an explicit query.
+
+### Added
+
+- **`bicameral.preflight(topic, participants?)`** — new MCP tool. Wraps
+  `bicameral.search` (and conditionally `bicameral.brief`) with a
+  Python-enforced gate that decides whether to surface based on
+  `ctx.guided_mode`:
+
+  - **Normal mode** (`guided_mode=false`, default) — *less intense*.
+    `fired=true` only when search matches contain **actionable signal**
+    (drift, ungrounded, divergence, open question). Plain matches are
+    silenced. Trust contract: surface only when there's something the
+    developer actually needs to know.
+  - **Guided mode** (`guided_mode=true`) — *standard*. `fired=true` on
+    any matches. Surface even on plain matches; the user opted into
+    the loud experience.
+
+  The gate logic lives in `handlers/preflight.py`, not in skill
+  markdown — enforced regardless of agent compliance.
+
+- **`PreflightResponse` contract** — populated when `fired=true`,
+  empty when `fired=false`. Carries `decisions`, `drift_candidates`,
+  `divergences`, `open_questions`, `action_hints` (with intensity
+  inherited from `guided_mode`), and `sources_chained` (which tools
+  the handler called: `["search"]` or `["search", "brief"]`).
+
+- **`bicameral-preflight` skill** at
+  `pilot/mcp/skills/bicameral-preflight/SKILL.md`. Auto-fires on
+  implementation verbs (`add`, `build`, `create`, `implement`,
+  `modify`, `refactor`, `update`, `fix`). Has an explicit "SKIP FOR"
+  list (read-only questions, doc-only edits, dependency updates,
+  typo fixes) so it doesn't fire on bare maintenance prompts.
+  Renders the `PreflightResponse` with a `(bicameral surfaced — ...)`
+  attribution prefix when `fired=true`. **Produces zero output when
+  `fired=false`** — the trust contract.
+
+- **Per-session topic dedup** in `ctx._sync_state["preflight_topics"]`.
+  Same topic preflight-checked within 5 minutes of the session is
+  silently skipped (`reason="recently_checked"`). Avoids the
+  "developer asks 4 follow-up questions about the same Stripe
+  webhook → preflight fires 4 times" annoyance.
+
+- **`BICAMERAL_PREFLIGHT_MUTE`** env var. One-line mute for the
+  current session. Truthy values (`1 / true / yes / on`) make
+  `handle_preflight` return `fired=false` with
+  `reason="preflight_disabled"` for every call.
+
+- **Brief chain** is conditional. The handler chains to
+  `bicameral.brief` when search has matches AND any match is drifted
+  or ungrounded — that's the cheap signal for "there's more to know."
+  In guided mode, the chain fires unconditionally (because the user
+  wants the full picture). When brief throws or returns empty, the
+  handler falls back to search-derived decisions and continues.
+
+### Robustness contract
+
+- **Fail open everywhere.** Search fails → `fired=false` silently.
+  Brief fails → fall back to search-only rendering. Topic invalid →
+  silent skip. Dedup hit → silent skip. Empty matches → silent skip.
+  Preflight is never a hard blocker on bicameral being unavailable.
+- **Honest empty path.** `fired=false` means the agent produces ZERO
+  output to the user about preflight. No "I checked and found
+  nothing" noise.
+- **Verbatim attribution.** Every cited decision in the rendered block
+  carries its `source_ref` so the user can trace it.
+- **Topic validation** is deterministic (≥4 chars, ≥2 non-stopword
+  content tokens, not a generic catch-all). Implementation verbs
+  (`implement`, `build`, etc.) are stopwords so "implement webhook"
+  fails validation but "implement Stripe webhook" passes.
+
+### Tests
+
+- 26 cases in `tests/test_v0412_preflight.py` covering: topic
+  validation, dedup hits + TTL expiry, env var mute, every fired /
+  not-fired path (no_matches, no_actionable_signal, topic_too_generic,
+  recently_checked, preflight_disabled, fired), normal-vs-guided mode
+  interaction (Q1=B), brief chain conditional firing (Q1=B), search
+  failure fail-open, brief failure fall-back.
+- Full v0.4.12 regression: 189 passed.
+
+### Migration
+
+No schema changes. New tool `bicameral.preflight` is additive — v0.4.11
+clients ignore it. The skill auto-fires only when Claude's skill matcher
+picks it up; users who haven't installed the skill see no change.
+
 ## 0.4.11 — 2026-04-14 — Latent Drift Fix (Range-Diff Sweep + Distinct Counters)
 
 Fixes a class of "invisible drift" where decisions silently went stale
