@@ -3,6 +3,56 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.12.1 — 2026-04-14 — Team Adapter Signature Drift Hotfix
+
+Hotfix for a class of latent regressions in `events/team_adapter.py`
+that have been silently breaking team mode since v0.4.6. Surfaced
+during v0.4.12 preflight dogfooding on bicameral's own repo (which
+runs in team mode) — every `link_commit` call had been failing with
+`TypeError: TeamWriteAdapter.ingest_commit() got an unexpected keyword
+argument 'authoritative_ref'`, causing the bicameral ledger's 23
+decisions to be stuck `ungrounded` because the grounding sweep never
+ran.
+
+Six releases of latent breakage. Caught by dogfooding the v0.4.12
+preflight tool against a real team-mode repo for the first time.
+
+### Fixed
+
+- **`TeamWriteAdapter.ingest_commit`** now forwards the
+  `authoritative_ref` kwarg added by v0.4.6's pollution guard. Without
+  this, every team-mode `handle_link_commit` call raised TypeError.
+- **`TeamWriteAdapter.ingest_payload`** now forwards the `ctx` kwarg
+  added by v0.4.6's pollution fix. Without this, team-mode ingest
+  raised TypeError on every call.
+- **`TeamWriteAdapter.backfill_empty_hashes`** added as a pass-through.
+  Used by `handle_link_commit` for the v0.4.5 self-heal sweep. Was
+  silently degraded via `hasattr()` check — backfill never ran in
+  team mode.
+- **`TeamWriteAdapter.get_all_source_cursors`** added as a pass-through.
+  Used by `handle_reset` for dry-run summaries. Would have raised
+  AttributeError on first team-mode reset call.
+- **`TeamWriteAdapter.wipe_all_rows`** added as a pass-through. Used
+  by `handle_reset(confirm=True)`. Would have raised AttributeError on
+  first team-mode confirmed reset.
+
+### Added
+
+- **`tests/test_v0412_1_team_adapter_drift.py`** — 28 cases that use
+  `inspect.signature` to assert the wrapper's public methods accept
+  the same kwargs as the inner adapter. Any future signature drift
+  fails CI loudly. The exact regression pattern that broke v0.4.6
+  silently for six releases is now blocked at PR time.
+
+### Migration
+
+No schema changes. No API surface changes. Pure wrapper hardening.
+Existing team-mode users will find that `link_commit` actually runs
+sweeps now, which means previously-stuck-`ungrounded` decisions will
+flip to `reflected` or `drifted` based on real code state. May surface
+a backlog of latent drift on first run after the upgrade — that's
+expected and correct.
+
 ## 0.4.12 — 2026-04-14 — Preflight (Proactive Context Surfacing)
 
 Adds `bicameral.preflight(topic)` — a proactive context-surfacing tool

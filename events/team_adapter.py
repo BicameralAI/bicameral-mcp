@@ -45,23 +45,44 @@ class TeamWriteAdapter:
 
     # ── Write methods (intercepted: event file first, then DB) ───────────
 
-    async def ingest_payload(self, payload: dict) -> dict:
-        """Write ingest event, then delegate to inner adapter."""
+    async def ingest_payload(self, payload: dict, ctx=None) -> dict:
+        """Write ingest event, then delegate to inner adapter.
+
+        v0.4.12.1: forward the ``ctx`` kwarg added in v0.4.6's pollution
+        fix. Without this, handle_ingest's ``ledger.ingest_payload(payload, ctx=ctx)``
+        call fails in team mode with TypeError, which means EVERY team-mode
+        ingest has been broken since v0.4.6.
+        """
         await self._ensure_ready()
         self._writer.write("ingest.completed", payload)
-        return await self._inner.ingest_payload(payload)
+        return await self._inner.ingest_payload(payload, ctx=ctx)
 
     async def ingest_commit(
-        self, commit_hash: str, repo_path: str, drift_analyzer=None,
+        self,
+        commit_hash: str,
+        repo_path: str,
+        drift_analyzer=None,
+        authoritative_ref: str = "",
     ) -> dict:
-        """Write link_commit event, then delegate to inner adapter."""
+        """Write link_commit event, then delegate to inner adapter.
+
+        v0.4.12.1: forward the ``authoritative_ref`` kwarg added in
+        v0.4.6's pollution guard. Without this, every team-mode
+        ``handle_link_commit`` call silently failed with a TypeError —
+        bicameral's own bicameral repo (which runs in team mode) had
+        all 23 decisions stuck ungrounded because the link_commit sweep
+        never ran. Surfaced during v0.4.12 preflight dogfooding.
+        """
         await self._ensure_ready()
         self._writer.write(
             "link_commit.completed",
             {"commit_hash": commit_hash, "repo_path": repo_path},
         )
         return await self._inner.ingest_commit(
-            commit_hash, repo_path, drift_analyzer=drift_analyzer,
+            commit_hash,
+            repo_path,
+            drift_analyzer=drift_analyzer,
+            authoritative_ref=authoritative_ref,
         )
 
     async def upsert_source_cursor(
@@ -130,3 +151,31 @@ class TeamWriteAdapter:
     ) -> dict | None:
         await self._ensure_ready()
         return await self._inner.get_source_cursor(repo, source_type, source_scope)
+
+    # v0.4.12.1: pass-throughs for adapter methods added since v0.4.5 that
+    # the team wrapper never gained. handle_link_commit / handle_reset call
+    # these and silently degraded (or crashed) in team mode pre-v0.4.12.1.
+
+    async def backfill_empty_hashes(
+        self, repo_path: str, drift_analyzer=None,
+    ) -> dict:
+        """Self-heal regions with empty content_hash from pre-v0.4.5
+        ingests. Pure local read+update — no event emitted."""
+        await self._ensure_ready()
+        return await self._inner.backfill_empty_hashes(
+            repo_path, drift_analyzer=drift_analyzer,
+        )
+
+    async def get_all_source_cursors(self, repo: str) -> list[dict]:
+        """List every source_cursor row for a repo. Used by handle_reset's
+        dry-run summary. Pure local read."""
+        await self._ensure_ready()
+        return await self._inner.get_all_source_cursors(repo)
+
+    async def wipe_all_rows(self, repo: str) -> None:
+        """Wipe every bicameral row scoped to ``repo``. Used by
+        handle_reset(confirm=True). Destructive, no event emitted —
+        the reset itself is the event from the team's perspective.
+        """
+        await self._ensure_ready()
+        await self._inner.wipe_all_rows(repo)
