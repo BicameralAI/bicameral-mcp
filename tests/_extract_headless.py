@@ -141,13 +141,14 @@ def _extract_step1_excerpt(skill_md: str) -> str:
     steps_idx = skill_md.find("## Steps")
     body = skill_md[steps_idx:] if steps_idx != -1 else skill_md
 
-    headers = list(_STEP_HEADER_RE.finditer(body))
-    if not headers:
+    step1_re = re.compile(r"^###\s+1\.\s+", re.MULTILINE)
+    step1_match = step1_re.search(body)
+    if not step1_match:
         return body.strip()
 
-    first = headers[0]
-    second_start = headers[1].start() if len(headers) >= 2 else len(body)
-    return body[first.start():second_start].strip()
+    next_header = _STEP_HEADER_RE.search(body, step1_match.end())
+    end = next_header.start() if next_header else len(body)
+    return body[step1_match.start():end].strip()
 
 
 def _cache_path(skill_sha: str, transcript_sha: str, model: str) -> Path:

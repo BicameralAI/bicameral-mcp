@@ -185,6 +185,7 @@ class RealCodeLocatorAdapter:
         fuzzy_threshold: int,
         max_symbols: int,
         hits: list[dict] | None = None,
+        mapping_symbol_names: list[str] | None = None,
     ) -> list[dict]:
         """Attempt to ground a single description at the given threshold tier.
 
@@ -218,6 +219,15 @@ class RealCodeLocatorAdapter:
                 matched_ids = {v["symbol_id"] for v in validated if v.get("symbol_id")}
             except Exception as exc:
                 logger.debug("[ground] fuzzy validate failed for '%s': %s", description[:60], exc)
+
+        if mapping_symbol_names:
+            for name in mapping_symbol_names:
+                try:
+                    rows = db.lookup_by_name(name)
+                    for row in rows:
+                        matched_ids.add(row["id"])
+                except Exception as exc:
+                    logger.debug("[ground] symbol name lookup failed for '%s': %s", name, exc)
 
         # Stage 1: multi-file fused retrieval (FC-2 fix, v0.4.6).
         # Previously this stage took only the top-1 BM25 hit via next(),
@@ -358,6 +368,7 @@ class RealCodeLocatorAdapter:
                 code_regions = self._ground_single(
                     description, db, bm25_thresh, fuzzy_thresh, max_sym,
                     hits=hits,
+                    mapping_symbol_names=mapping.get("symbols"),
                 )
                 if code_regions:
                     tier_used = tier_idx
