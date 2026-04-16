@@ -43,10 +43,11 @@ from handlers.ingest import handle_ingest
 
 def test_rubric_has_five_canonical_categories():
     """Guards against silent rubric drift. Order is load-bearing —
-    the skill renders sections in this exact sequence."""
+    the skill renders sections in this exact sequence. v0.4.19 keeps
+    the 5-key order but narrows scope to business requirement gaps."""
     rubric = _build_rubric()
     assert isinstance(rubric, GapRubric)
-    assert rubric.version == "v0.4.16"
+    assert rubric.version == "v0.4.19"
     keys = [c.key for c in rubric.categories]
     assert keys == [
         "missing_acceptance_criteria",
@@ -58,7 +59,10 @@ def test_rubric_has_five_canonical_categories():
 
 
 def test_rubric_category_shapes_match_contract():
-    """Each category has its documented output_shape + crawl flag."""
+    """Each category has its documented output_shape. v0.4.19: all
+    categories have requires_codebase_crawl=False and empty
+    canonical_paths — the business-requirement rubric reasons over
+    source excerpts only, never the filesystem."""
     rubric = _build_rubric()
     by_key = {c.key: c for c in rubric.categories}
 
@@ -68,21 +72,45 @@ def test_rubric_category_shapes_match_contract():
     assert by_key["underdefined_edge_cases"].output_shape == "happy_sad_table"
     assert by_key["underdefined_edge_cases"].requires_codebase_crawl is False
 
+    # v0.4.19: infrastructure_gap reframed as "implied infrastructure
+    # commitments not signed off" — pure source-excerpt reasoning, no
+    # codebase crawl.
     infra = by_key["infrastructure_gap"]
     assert infra.output_shape == "checklist"
-    assert infra.requires_codebase_crawl is True
-    assert len(infra.canonical_paths) >= 5, (
-        "infrastructure_gap must ship with a non-trivial canonical_paths "
-        f"list for the caller agent to crawl; got {infra.canonical_paths}"
+    assert infra.requires_codebase_crawl is False, (
+        "v0.4.19 reframed infrastructure_gap to business commitments; "
+        "requires_codebase_crawl must be False"
     )
-    assert ".github/workflows/" in infra.canonical_paths
-    assert "Dockerfile" in infra.canonical_paths
+    assert infra.canonical_paths == [], (
+        "v0.4.19 removed filesystem crawl from infrastructure_gap; "
+        f"canonical_paths must be empty, got {infra.canonical_paths}"
+    )
 
     assert by_key["underspecified_integration"].output_shape == "dependency_radar"
     assert by_key["underspecified_integration"].requires_codebase_crawl is False
 
     assert by_key["missing_data_requirements"].output_shape == "checklist"
     assert by_key["missing_data_requirements"].requires_codebase_crawl is False
+
+
+def test_no_category_requires_codebase_crawl():
+    """v0.4.19 invariant: the business-requirement rubric is pure
+    source-excerpt reasoning. No category may require filesystem
+    verification — if a future category needs it, that's a product
+    decision that needs to update the skill + judgment_prompt
+    accordingly (which explicitly says "No codebase citations")."""
+    rubric = _build_rubric()
+    for cat in rubric.categories:
+        assert cat.requires_codebase_crawl is False, (
+            f"Category {cat.key} requires codebase crawl — v0.4.19 "
+            "scope is business requirement gaps only, which are "
+            "source-excerpt reasoning"
+        )
+        assert cat.canonical_paths == [], (
+            f"Category {cat.key} ships non-empty canonical_paths "
+            f"({cat.canonical_paths}); v0.4.19 rubric has no "
+            "filesystem crawl step"
+        )
 
 
 def test_judgment_prompt_mentions_verbatim_contract():
@@ -310,7 +338,7 @@ async def test_judge_gaps_builds_context_pack(_isolated_ledger):
     )
     assert judgment is not None, "judge_gaps must build a pack on matches"
     assert judgment.topic == "apply 10% discount on orders"
-    assert judgment.rubric.version == "v0.4.16"
+    assert judgment.rubric.version == "v0.4.19"
     assert len(judgment.rubric.categories) == 5
     assert "VERBATIM" in judgment.judgment_prompt
     assert judgment.as_of, "as_of must be populated with ISO datetime"

@@ -43,7 +43,7 @@ _TABLES = [
     "DEFINE FIELD source_type    ON intent TYPE string",
     "DEFINE FIELD source_ref     ON intent TYPE string DEFAULT ''",
     "DEFINE FIELD meeting_date   ON intent TYPE string DEFAULT ''",
-    "DEFINE FIELD speakers       ON intent TYPE array DEFAULT []",
+    "DEFINE FIELD speakers       ON intent TYPE array<string> DEFAULT []",
     "DEFINE FIELD status         ON intent TYPE string DEFAULT 'ungrounded' "
     "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON intent TYPE datetime DEFAULT time::now()",
@@ -86,7 +86,7 @@ _TABLES = [
     "DEFINE FIELD text           ON source_span TYPE string",
     "DEFINE FIELD source_type    ON source_span TYPE string",       # transcript | notion | slack | manual
     "DEFINE FIELD source_ref     ON source_span TYPE string DEFAULT ''",  # meeting ID, page URL, etc.
-    "DEFINE FIELD speakers       ON source_span TYPE array DEFAULT []",
+    "DEFINE FIELD speakers       ON source_span TYPE array<string> DEFAULT []",
     "DEFINE FIELD meeting_date   ON source_span TYPE string DEFAULT ''",
     "DEFINE FIELD created_at     ON source_span TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_span_ref    ON source_span FIELDS source_type, source_ref",

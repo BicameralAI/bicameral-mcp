@@ -59,6 +59,9 @@ async def handle_decision_status(
             code_regions=regions,
             drift_evidence=d.get("drift_evidence", ""),
             blast_radius=d.get("blast_radius", []),
+            source_excerpt=d.get("source_excerpt", ""),
+            meeting_date=d.get("meeting_date", ""),
+            speakers=d.get("speakers", []),
         ))
 
     return DecisionStatusResponse(

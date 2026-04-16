@@ -3,6 +3,99 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.19 — 2026-04-16 — source-span surfacing + business-requirement scope for ingest and gap judge
+
+Three themes this release: (1) the source_span → status surfacing fix
+that started the release, (2) narrowing the gap-judge rubric to
+business requirement gaps only, (3) restricting ingest to track only
+implementation decisions tied to business drivers.
+
+### Scope narrowed — business requirement gaps only
+
+- **`handlers/gap_judge.py`** — rubric reframed. All 5 categories
+  now surface **business requirement gaps** only (product, policy,
+  and commitment holes a PM, founder, compliance reviewer, or
+  procurement lead would need to resolve). Engineering gaps (wire
+  protocols, migration scripts, Dockerfile content, CI pipelines,
+  retries, race conditions, schema indices) are explicitly rejected
+  in each category's prompt.
+- **`infrastructure_gap` reframed** — no longer "does the code have
+  a Dockerfile?" but "did the team sign off on the business
+  commitments (cost center, vendor lock-in, SLA, data residency,
+  scale assumption) this decision implies?" `requires_codebase_crawl`
+  flipped to `False`, `canonical_paths` cleared. The rubric is now
+  pure source-excerpt reasoning — no filesystem crawl step.
+- **`GapRubric.version`** bumped to `v0.4.19`. Judgment prompt
+  rewritten to enforce the business-only scope and to reject
+  codebase-citation findings (no filesystem tools in this rubric).
+- **`skills/bicameral-judge-gaps/SKILL.md`** — rewritten to match:
+  each category prompt names specifically what to reject (technical
+  failure modes, migration mechanics, wire protocols), plus a new
+  anti-pattern entry forbidding engineering-gap findings.
+
+### Ingest filter — business-tied decisions only
+
+- **`skills/bicameral-ingest/SKILL.md`** (step 1) — added a
+  **business-tie filter** between the HARD EXCLUDE and INCLUDE
+  rules. Engineering-only and security-only decisions (retry logic,
+  dependency bumps, refactor cleanup, test hygiene, CSRF/JWT
+  rotation, Prometheus counters) are rejected unless the same
+  source names a business driver (compliance deadline, customer
+  contract, pricing/packaging commitment, SLA, regulated-data
+  handling, named stakeholder-observable outcome).
+- **Worked examples updated** — Example 3 now shows a compound
+  sentence where every decision carries a business driver;
+  Example 4 is the same shape without a driver and extracts zero;
+  Example 5 demonstrates the security-hygiene rejection (key
+  rotation out, GDPR redaction in).
+- The filter lives in the skill (caller-LLM), not the server — the
+  no-LLM-in-the-server invariant from `git-for-specs.md` is
+  preserved.
+
+### Fixed — source-span surfacing
+
+Closes a long-standing gap where natural-format ingest populated
+`source_span` rows but status output never surfaced them. Three
+underlying bugs were found and fixed as one coherent patch:
+
+### Fixed
+
+- **`adapter.py:547` — `upsert_intent()` call dropped `meeting_date` /
+  `speakers`**. The natural-ingest normalizer built a span dict with
+  those fields, but the adapter only passed them to `upsert_source_span`.
+  As a result the `intent` row's columns were always empty even when
+  the source_span had the data.
+- **`queries.py::get_all_decisions` — no `yields` JOIN**. The status
+  handler's query read only `intent` columns, so `source_excerpt` was
+  unreachable. Added the `<-yields<-source_span.{text, meeting_date,
+  speakers}` traversal (mirrors `search_by_bm25`'s v0.4.14 pattern) and
+  the empty-span / synthetic-span filter that drops `text == description`
+  placeholders written by `_reground_ungrounded`.
+- **`schema.py` — `speakers TYPE array` silently dropped items**.
+  SurrealDB 2.x embedded drops array values when the field type omits
+  an inner type; `TYPE array<string>` persists them. Applied to both
+  `intent.speakers` and `source_span.speakers`. Discovered while
+  sanity-checking the natural-ingest round-trip.
+
+### Added
+
+- **`IngestDecision.source_excerpt`** — optional raw passage per
+  decision in the natural-format payload. When provided, stored as
+  `source_span.text`; when omitted, `_normalize_payload` falls back to
+  the decision description as a placeholder (and the downstream filter
+  suppresses it from the rendered excerpt, preserving v0.4.14 search
+  semantics).
+- **`DecisionStatusEntry.source_excerpt` / `meeting_date` /
+  `speakers`** — three new fields on the status response contract.
+  Populated from the intent row first (fresh ingests) with a
+  source_span fallback (legacy rows ingested before the adapter fix).
+
+### Migration
+
+Schema version stays at 2 — the `array<string>` change is idempotent
+on empty rows (which is what all existing `speakers` values are after
+the silent-drop bug). No data migration required.
+
 ## 0.4.18 — 2026-04-15 — `bicameral.doctor` + hard-remove `bicameral.drift`
 
 Closes the drift → scan_branch → doctor sunset arc started in v0.4.17.

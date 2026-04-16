@@ -550,6 +550,8 @@ class SurrealDBLedgerAdapter:
                 source_type=source_type,
                 source_ref=source_ref,
                 status=initial_status,
+                meeting_date=span.get("meeting_date", ""),
+                speakers=span.get("speakers", []),
             )
             intents_created += 1
 

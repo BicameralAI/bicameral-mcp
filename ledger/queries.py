@@ -151,7 +151,8 @@ async def get_all_decisions(
                 end_line,
                 purpose,
                 content_hash
-            }} AS code_regions
+            }} AS code_regions,
+            <-yields<-source_span.{{text, meeting_date, speakers}} AS source_spans
         FROM intent
         {where}
         ORDER BY created_at DESC
@@ -167,6 +168,24 @@ async def get_all_decisions(
         for region in (row.get("code_regions") or []):
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
+    # Collapse source_spans → top-level source_excerpt, and backfill
+    # meeting_date / speakers from the span when the intent row is missing
+    # them (rows ingested before the adapter fix that propagates span fields
+    # onto the intent node). Mirrors search_by_bm25's span handling: drop
+    # empty-text spans and synthetic spans written by _reground_ungrounded.
+    for row in rows:
+        spans = row.pop("source_spans", None) or []
+        description = row.get("description", "")
+        real_spans = [
+            s for s in spans
+            if s and s.get("text") and s.get("text") != description
+        ]
+        first_span = real_spans[0] if real_spans else None
+        row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
+        if not row.get("meeting_date"):
+            row["meeting_date"] = (first_span.get("meeting_date") if first_span else "") or ""
+        if not row.get("speakers"):
+            row["speakers"] = (first_span.get("speakers") if first_span else []) or []
     return _normalize_decisions(rows)
 
 

@@ -50,6 +50,13 @@ class DecisionStatusEntry(BaseModel):
     code_regions: list[CodeRegionSummary]
     drift_evidence: str = ""          # populated when status = "drifted"
     blast_radius: list[str] = []      # symbol names of structural dependents (1-hop)
+    # Meeting context — raw passage from the source that produced this
+    # decision, plus the meeting date and participants when known. Pulled
+    # from source_span.text via the yields reverse edge (with fallback to
+    # intent row fields for rows ingested pre-span-propagation-fix).
+    source_excerpt: str = ""
+    meeting_date: str = ""
+    speakers: list[str] = []
 
 
 class DecisionStatusResponse(BaseModel):
@@ -306,6 +313,13 @@ class IngestDecision(BaseModel):
     text: str = ""  # v0.4.16: alias for description — tolerant of natural-format callers
     status: str = ""
     participants: list[str] = []
+    # Raw passage from the source that produced this decision. When
+    # provided, it is stored as the source_span.text and surfaced on
+    # status/search as source_excerpt. Leave empty when no distinct
+    # passage exists (the decision description is not an excerpt — it's
+    # the conclusion), and the ingest path will skip creating a
+    # placeholder source_span row.
+    source_excerpt: str = ""
 
 
 class IngestActionItem(BaseModel):
@@ -534,11 +548,12 @@ class GapRubricCategory(BaseModel):
     - ``output_shape`` — the structured visual shape the agent renders
       (absence_matrix / happy_sad_table / checklist / bullet_list /
       dependency_radar)
-    - ``requires_codebase_crawl`` — True for ``infrastructure_gap``,
-      False for the rest. When True, the skill instructs the agent
-      to Glob/Read the ``canonical_paths`` to verify.
+    - ``requires_codebase_crawl`` — v0.4.19 narrowed the rubric to
+      business-requirement gaps only, so this is always False. Kept
+      on the contract for forward compatibility and for any future
+      category that legitimately needs filesystem verification.
     - ``canonical_paths`` — populated only when
-      ``requires_codebase_crawl`` is True
+      ``requires_codebase_crawl`` is True (always empty under v0.4.19).
 
     The server builds this statically; the caller's agent reasons over
     it. Server never calls an LLM.
@@ -564,14 +579,21 @@ class GapRubricCategory(BaseModel):
 
 
 class GapRubric(BaseModel):
-    """The full rubric — 5 categories picked for wow × safety. Stable
-    across releases; version bumps require a plan update.
+    """The full rubric — 5 business-requirement categories picked for
+    wow × safety. Stable across releases; version bumps require a plan
+    update.
+
+    v0.4.19 narrowed the rubric to business requirement gaps only
+    (product / policy / commitment holes) and dropped the codebase-
+    crawl step from ``infrastructure_gap``, reframing it as "implied
+    infrastructure commitments not signed off" (cost, vendor lock-in,
+    SLA, compliance surface).
 
     The category order is load-bearing — the caller-session agent is
     instructed to render sections in this order. Reordering changes
     the user experience.
     """
-    version: str = "v0.4.16"
+    version: str = "v0.4.19"
     categories: list[GapRubricCategory]
 
 

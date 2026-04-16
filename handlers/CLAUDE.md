@@ -8,4 +8,11 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #5415 | 7:08 PM | ⚖️ | Phase 2 Implementation Plan: BicameralContext Request-Scoped Snapshot | ~659 |
+
+### Apr 16, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #5963 | 2:18 PM | 🔴 | Fixed source_span.speakers schema type to properly store meeting context | ~453 |
+| #5960 | 2:16 PM | 🔵 | Source excerpt missing from get_all_decisions query | ~355 |
 </claude-mem-context>

@@ -42,11 +42,15 @@ def _normalize_payload(payload: dict) -> dict:
         text = d.description or d.title or d.text
         if not text:
             continue
+        # Prefer the explicit raw passage when the caller provides one.
+        # Fall back to the decision text only as a placeholder — downstream
+        # yields-JOIN filters drop text==description spans as synthetic.
+        span_text = d.source_excerpt or text
         mappings.append({
             "intent": text,
             "span": {
                 **source_meta,
-                "text": text,
+                "text": span_text,
                 "source_ref": d.id or source_meta["source_ref"],
                 "speakers": d.participants or source_meta["speakers"],
             },

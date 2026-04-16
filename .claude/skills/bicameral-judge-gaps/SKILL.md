@@ -1,11 +1,11 @@
 ---
 name: bicameral-judge-gaps
-description: Apply the v0.4.16 gap-judgment rubric to a context pack from bicameral_judge_gaps. Fired automatically when an ingest response carries a judgment_payload. Caller-session LLM — the server never reasoned about these gaps, you do.
+description: Apply the v0.4.19 business-requirement gap-judgment rubric to a context pack from bicameral_judge_gaps. Fired automatically when an ingest response carries a judgment_payload. Scope is business requirement gaps ONLY — product, policy, and commitment holes. Engineering gaps (wire protocols, migrations, Dockerfiles, CI, retries) are out of scope and explicitly rejected. Caller-session LLM — the server never reasoned about these gaps, you do.
 ---
 
 # Bicameral Judge-Gaps
 
-This is the **caller-session LLM** half of the v0.4.16 gap judge. The
+This is the **caller-session LLM** half of the v0.4.19 gap judge. The
 server (`handlers/gap_judge.py`) built a structured context pack —
 decisions in scope, source excerpts, cross-symbol related decision
 ids, phrasing-based gaps, a 5-category rubric, and a judgment prompt
@@ -14,6 +14,16 @@ session and render the findings.
 
 **Server contract**: no LLM was called on the server side. The rubric
 and judgment_prompt are static. All reasoning happens here.
+
+**Scope (v0.4.19)**: this rubric surfaces **business requirement
+gaps** only — product, policy, and commitment holes a PM, founder,
+compliance reviewer, or procurement lead would need to resolve before
+engineering can ship with confidence. Engineering gaps (wire
+protocols, migration scripts, Dockerfile content, CI pipelines,
+retries, race conditions, schema indices) are **out of scope** and
+explicitly rejected in each category's prompt. A finding that's
+technically correct but engineering-focused is a bug in this rubric.
+No codebase crawl is required — reason over `source_excerpt` only.
 
 ## When to use
 
@@ -47,59 +57,86 @@ You receive a `GapJudgmentPayload` with:
 - `rubric.categories[]` — the 5 categories, in fixed order
 - `judgment_prompt` — reinforcement of the rules below
 
-## The 5 rubric categories (fixed order)
+## The 5 rubric categories (fixed order, all business-only)
 
 1. **`missing_acceptance_criteria`** (`bullet_list`)
-   For each decision, ask: does the `source_excerpt` define a testable
-   "done" condition? If not, list the specific missing acceptance
-   questions the room still needs to answer. Quote `source_excerpt`
-   verbatim on citation.
+   For each decision, ask: does the `source_excerpt` define a
+   testable **business** outcome for "done"? A business outcome is
+   observable by a stakeholder — a user sees X, a metric moves to Y,
+   a compliance check passes. Implementation milestones (code lands,
+   tests pass, deploy succeeds) are NOT acceptance criteria — ignore
+   them. If missing, list the specific acceptance questions the room
+   still needs to answer. Quote `source_excerpt` verbatim.
 
 2. **`underdefined_edge_cases`** (`happy_sad_table`)
-   For each decision, identify the happy path (what IS specified) and
-   the sad path holes (failure modes, boundary conditions, error
-   handling deferred or absent). Render as a two-column table:
-   | Happy path (specified) | Missing sad path (deferred) |
-   Use only evidence in `source_excerpt`. Never invent a failure mode
-   the team didn't hint at.
+   For each decision, identify the happy path (what IS specified)
+   and the sad path holes from a **business/product** standpoint:
+   user-state boundaries (free vs paid, anonymous vs logged-in,
+   first-time vs returning), policy exceptions (refunds, overrides,
+   escalations), tier boundaries, lifecycle events (churn,
+   reactivation, account close). Do **NOT** surface technical
+   failure modes (retries, timeouts, network errors, SMTP failures,
+   race conditions) — those are engineering concerns. Render:
+   | Happy path (specified) | Missing sad path (business edge deferred) |
 
-3. **`infrastructure_gap`** (`checklist`, **requires codebase crawl**)
-   For each decision, enumerate implied infrastructure: database,
-   cache, queue, CDN, env vars, secrets, CI/CD jobs, deploy targets.
-   Then use your Glob / Read / Grep tools to check the category's
-   `canonical_paths` for each implied item. Render a checklist:
-   - `✓ Implied X → found in <file_path>:<line>` (always cite file:line)
-   - `○ Implied Y → missing` (not found in any canonical_path)
-   - `? Implied Z → ambiguous` (partial match, cite it)
-   Never claim a match without citing file:line. Never fabricate
-   implied infra the decision didn't imply.
+3. **`infrastructure_gap`** (`checklist`) — **reframed in v0.4.19**
+   For each decision, ask whether the implementation implicitly
+   commits the business to infrastructure that the team hasn't
+   discussed. Business commitments hidden in infra choices include:
+   - New SaaS dependency → cost center, procurement, renewal risk
+   - Specific cloud vendor / region → vendor lock-in, data portability
+   - Data residency jurisdiction → legal / compliance review
+   - Implicit SLA (uptime, latency, throughput) → did product commit
+     externally?
+   - Scale assumption (traffic, storage growth, concurrent users) →
+     did product validate the numbers?
+   Do **NOT** surface technical hygiene gaps (missing Dockerfile,
+   missing CI job, missing env var) — those are engineering. Only
+   surface items a PM, CFO, or legal reviewer would need to approve.
+   Render a checklist:
+   - `○ Decision implies <business commitment> → not discussed / no sign-off`
+   Quote the `source_excerpt` phrase that implied the commitment.
 
 4. **`underspecified_integration`** (`dependency_radar`)
-   For each decision, extract external systems/APIs it implies
-   touching (name them explicitly from `source_excerpt`). Compare
-   against the set of systems discussed in related decisions'
-   excerpts. Render as:
-   - `✓ System A → discussed in <intent_id>`
-   - `○ System B → touched but never discussed`
-   Never invent an integration the decision didn't name.
+   For each decision, extract the external **providers** it implies
+   a business relationship with — payment processor, email/SMS
+   provider, analytics, CRM, support platform, auth provider, etc.
+   Focus on the **business choice** (which vendor, what contract
+   tier, what data-sharing scope), NOT the wire protocol / auth
+   scheme / API version (engineering details, out of scope).
+   Compare against providers explicitly named in related decisions.
+   Render:
+   - `✓ Provider A → named in decision <intent_id>`
+   - `○ Provider B → implied but never named (which vendor?)`
+   - `○ Category C → implied but provider category never discussed`
+   Never invent a provider the decision didn't name or clearly imply.
 
 5. **`missing_data_requirements`** (`checklist`)
-   For each decision, ask: does it imply schema changes, migrations,
-   data retention, or PII handling? If the decision implies any of
-   these but neither the `source_excerpt` nor related decisions
-   address them, surface as:
-   - `○ Decision implies <schema_change> → not addressed`
-   Cite the exact phrase in `source_excerpt` that implied the data
-   change. Never fabricate a schema implication.
+   For each decision, ask whether it implies handling personal /
+   regulated / sensitive data without a stated **policy**. Policy
+   gaps include:
+   - PII / PHI fields collected → classification / consent
+     documented?
+   - Retention duration → how long is it kept; what triggers
+     deletion?
+   - User consent / opt-in → captured at what moment; revocable how?
+   - Audit trail / access logging → who can see what is logged?
+   - Cross-border data flow → residency / GDPR / CCPA review?
+   Do **NOT** surface schema mechanics (migration scripts, column
+   types, index choices) — those are engineering. Only surface items
+   a legal, privacy, or compliance reviewer would flag. Render:
+   - `○ Decision implies <policy area> → not addressed`
+   Quote the exact `source_excerpt` phrase that implied the data
+   concern.
 
 ## Output contract
 
 - **One section per category, in rubric order.** Each section starts
   with the category `title` as a header (e.g. `### Missing acceptance criteria`).
-- **Every bullet / row / checklist item MUST cite** either:
-  - A `source_ref` + `meeting_date` from the payload, OR
-  - A `file:line` from your codebase crawl (`infrastructure_gap` only)
-  An uncited item is a bug. Do not emit uncited findings.
+- **Every bullet / row / checklist item MUST cite** a `source_ref` +
+  `meeting_date` from the payload. v0.4.19 dropped all codebase
+  citations — this rubric does not use filesystem tools. An uncited
+  item is a bug. Do not emit uncited findings.
 - **If a category produces no findings**, emit exactly this single
   line under its header: `✓ no gaps found`. Do not skip the header —
   the user needs to see the category was applied.
@@ -108,7 +145,7 @@ You receive a `GapJudgmentPayload` with:
   hedges like "as an AI…" or "it seems that…".
 - **Do not reorder categories.** Rubric order is load-bearing — the
   user learns to scan in the order `acceptance → edge cases → infra
-  → integration → data`.
+  commitments → integration → data policy`.
 - **Do not add categories** that aren't in the rubric. If you notice
   something interesting that doesn't fit any of the 5, mention it in
   a plain-text postscript under a clearly-labelled `## Observations
@@ -124,46 +161,55 @@ You receive a `GapJudgmentPayload` with:
 - Editorialising ("this is concerning", "the team should…")
 - Using hedges ("might be", "possibly", "it seems")
 - Paraphrasing `source_excerpt` instead of quoting it
-- Fabricating infra, integrations, or schema implications the
-  decision did not state or imply
+- **Surfacing engineering gaps** — retry logic, SMTP failure modes,
+  Dockerfile absence, schema migration scripts, wire protocol choice,
+  auth scheme, race conditions, index choices. These are out of
+  scope for this rubric. If you see one, suppress it.
+- Fabricating commitments, providers, or policy implications the
+  decision did not state or clearly imply
 - Skipping a category header because it's empty — always emit the
   header with `✓ no gaps found`
+- Crawling the codebase — v0.4.19 removed the filesystem step; every
+  finding cites the payload, not files
 
 ## Example output structure
 
 ```
-Gap judgment for `onboarding email flow` — 5 categories, 7 findings total.
+Gap judgment for `onboarding email flow` — 5 categories, 6 findings total.
 
 ### Missing acceptance criteria
 - Decision "Send onboarding email after first login" — source_excerpt says
   "mirrors the welcome-email anti-ghost rule" (brainstorm-2026-04-15 ·
-  2026-04-15) but does not define what makes the email flow "done" —
-  no success criterion, no completion test.
+  2026-04-15) but does not define a stakeholder-observable success
+  condition (open rate, click rate, drop-off threshold, "user returns
+  within 48h" — none specified).
 
 ### Happy path specified, sad path deferred
-| Happy path (specified) | Missing sad path (deferred) |
+| Happy path (specified) | Missing sad path (business edge deferred) |
 |---|---|
-| "Send onboarding email after first login" (brainstorm-2026-04-15) | What if SMTP send fails? retry / drop / queue — not specified |
+| "Send onboarding email after first login" (brainstorm-2026-04-15 · 2026-04-15) | What if user signed up via team invite vs self-serve? — user state boundary not addressed |
+| same | What if user is on a paid trial vs free tier? — policy exception not addressed |
 
-### Implied infrastructure not verified
-- ○ Implied SMTP/email service → missing
-  Crawled .github/workflows/, Dockerfile, docker-compose.yml, terraform/,
-  k8s/ — no email service declared.
-- ✓ Implied background worker → found in docker-compose.yml:12
-  (redis worker is provisioned; email delivery presumably queues here)
+### Implied infrastructure commitments not signed off
+- ○ Decision implies new email-provider SaaS dependency → cost
+  center / procurement not discussed
+  "Send onboarding email after first login" (brainstorm-2026-04-15 ·
+  2026-04-15) assumes an email sending provider exists; neither cost
+  tier nor vendor was named.
 
-### External systems touched but not discussed
-- ○ Welcome email service → touched but never discussed
-  The related decision "Welcome email after first invoice succeeds"
-  (pricing-review · 2026-03-08) references a welcome-email flow but
-  neither decision names the provider (SendGrid? Postmark? SES?).
+### Vendor / provider choices not settled
+- ○ Category: email / transactional-mail provider → implied but
+  provider category never named (SendGrid? Postmark? SES?)
+  (brainstorm-2026-04-15 · 2026-04-15)
 
-### Data model implications not addressed
-- ○ Decision implies tracking "first login" timestamp → not addressed
-  "Send onboarding email after first login" (brainstorm-2026-04-15)
-  implies a `users.first_login_at` column or event, but neither the
-  decision nor related decisions address where this is stored or
-  when it's set.
+### Data policy gaps (PII, retention, consent, audit)
+- ○ Decision implies capturing "first login" timestamp → retention
+  policy not addressed
+  "Send onboarding email after first login" (brainstorm-2026-04-15 ·
+  2026-04-15) implies storing a login-time signal per user; how long
+  it's kept and whether it's deleted on account close is not stated.
+- ○ Decision implies sending email to user address → consent /
+  opt-in moment not addressed (same source)
 ```
 
 ## Arguments
