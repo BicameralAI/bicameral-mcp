@@ -27,9 +27,15 @@ from fixtures.expected.decisions import ALL_DECISIONS
 
 
 def get_adapter(repo_path: str):
-    """Initialize code locator adapter for a repo (fresh instance each call)."""
+    """Initialize code locator adapter for a repo (fresh instance each call).
+
+    Checks .bicameral/local/ first (team mode), then .bicameral/ (solo mode).
+    """
     os.environ["REPO_PATH"] = repo_path
-    os.environ["CODE_LOCATOR_SQLITE_DB"] = str(Path(repo_path) / ".bicameral" / "code-graph.db")
+    local_db = Path(repo_path) / ".bicameral" / "local" / "code-graph.db"
+    solo_db = Path(repo_path) / ".bicameral" / "code-graph.db"
+    db_path = str(local_db if local_db.exists() else solo_db)
+    os.environ["CODE_LOCATOR_SQLITE_DB"] = db_path
 
     from adapters.code_locator import RealCodeLocatorAdapter
     adapter = RealCodeLocatorAdapter(repo_path=repo_path)
@@ -132,12 +138,32 @@ def evaluate(
         # Grounding tier (from coverage loop)
         grounding_tier = top_regions[0].get("grounding_tier") if top_regions else None
 
+        # recall@files: fraction of expected_file_patterns covered by any
+        # region in code_regions (not just top-K — grounding stores all).
+        all_region_files = {r.get("file_path", "") for r in all_regions}
+        if expected_files:
+            matched_file_patterns = sum(
+                1 for pat in expected_files
+                if any(pat in fp for fp in all_region_files)
+            )
+            recall_at_files = matched_file_patterns / len(expected_files)
+        else:
+            recall_at_files = 0
+
+        # File cardinality: how many distinct files appear in code_regions.
+        file_cardinality = len(all_region_files - {""})
+
+        is_multi_region = d.get("multi_region", False)
+
         entry = {
             "description": d["description"][:80],
             "query": query,
             "precision": round(precision, 2),
             "recall": round(recall, 2),
             "mrr": round(mrr, 2),
+            "recall_at_files": round(recall_at_files, 2),
+            "file_cardinality": file_cardinality,
+            "multi_region": is_multi_region,
             "grounded": bool(code_regions),
             "grounding_tier": grounding_tier,
             "regions": len(top_regions),
@@ -168,14 +194,18 @@ def evaluate(
         if verbose:
             status = "hit" if mrr > 0 else ("grounded" if code_regions else "MISS")
             tier_str = f" tier={grounding_tier}" if grounding_tier is not None else ""
-            print(f"  [{status}{tier_str}] {entry['description']}")
+            mr_str = " [multi-region]" if is_multi_region else ""
+            print(f"  [{status}{tier_str}]{mr_str} {entry['description']}")
             print(f"    query: {query}")
-            print(f"    P@{top_k}={precision:.0%} R={recall:.0%} MRR={mrr:.2f} regions={len(code_regions)}")
+            print(f"    P@{top_k}={precision:.0%} R={recall:.0%} MRR={mrr:.2f} R@files={recall_at_files:.0%} files={file_cardinality} regions={len(code_regions)}")
             if recall == 0 and expected_symbols:
                 print(f"    expected: {list(expected_symbols)[:3]}")
                 print(f"    found:    {list(found_symbols)[:3]}")
                 if first_relevant_full:
                     print(f"    (relevant region at rank {first_relevant_full} in full list)")
+            if is_multi_region and recall_at_files < 1.0:
+                missing = [p for p in expected_files if not any(p in fp for fp in all_region_files)]
+                print(f"    missing file patterns: {missing}")
 
     # Aggregate
     n = len(results)
@@ -195,6 +225,23 @@ def evaluate(
         if r.get("mrr", 0) == 0 and r.get("first_relevant_rank_full") is not None
     )
 
+    # recall@files (all decisions)
+    avg_recall_at_files = sum(r.get("recall_at_files", 0) for r in results) / n
+
+    # recall@files (multi-region only)
+    mr_results = [r for r in results if r.get("multi_region")]
+    mr_count = len(mr_results)
+    mr_recall_at_files = (
+        sum(r.get("recall_at_files", 0) for r in mr_results) / mr_count
+        if mr_count else 0
+    )
+
+    # File-cardinality distribution
+    cardinalities = [r.get("file_cardinality", 0) for r in results]
+    card_dist = {}
+    for c in cardinalities:
+        card_dist[c] = card_dist.get(c, 0) + 1
+
     # Tier distribution
     tier_counts = {}
     for r in results:
@@ -211,6 +258,10 @@ def evaluate(
         "grounding_rate": round(grounding_rate, 3),
         "false_positive_rate": round(fp_rate, 3),
         "rank_overflow_count": rank_overflow_count,
+        "avg_recall_at_files": round(avg_recall_at_files, 3),
+        "multi_region_count": mr_count,
+        "multi_region_recall_at_files": round(mr_recall_at_files, 3),
+        "file_cardinality_distribution": dict(sorted(card_dist.items())),
         "tier_distribution": tier_counts,
         "top_k": top_k,
         "results": results,
@@ -274,7 +325,11 @@ def main():
         query_mode = "description" if args.use_description else "keywords[0]"
         tier_dist = report.get("tier_distribution", {})
         tier_str = " ".join(f"T{k}={v}" for k, v in sorted(tier_dist.items()))
-        print(f"\n{'='*50}")
+        card_dist = report.get("file_cardinality_distribution", {})
+        card_str = " ".join(f"{k}f={v}" for k, v in sorted(card_dist.items()))
+        mr_count = report.get("multi_region_count", 0)
+        mr_raf = report.get("multi_region_recall_at_files", 0)
+        print(f"\n{'='*55}")
         print(f"  [{repo_name}] (query mode: {query_mode})")
         print(f"  Precision@{args.top_k}:  {report['avg_precision_at_k']:.1%}")
         print(f"  Recall:        {report['avg_recall']:.1%}")
@@ -282,10 +337,12 @@ def main():
         print(f"  Hit Rate:      {report['hit_rate']:.1%}")
         print(f"  Grounding:     {report['grounding_rate']:.1%}")
         print(f"  FP Rate:       {report['false_positive_rate']:.1%}")
+        print(f"  Recall@Files:  {report['avg_recall_at_files']:.1%} (all) | {mr_raf:.1%} (multi-region, n={mr_count})")
+        print(f"  File Cards:    {card_str or 'none'}")
         print(f"  Tiers:         {tier_str or 'none'}")
         print(f"  Rank Overflow: {report['rank_overflow_count']} (miss in top-{args.top_k}, hit in full list)")
         print(f"  Decisions:     {report['total_decisions']}")
-        print(f"{'='*50}\n")
+        print(f"{'='*55}\n")
 
     # Aggregate across repos
     mrr_values = [r["mrr_at_k"] for r in all_reports.values()]
