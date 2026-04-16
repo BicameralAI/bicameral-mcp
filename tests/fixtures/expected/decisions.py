@@ -394,6 +394,106 @@ VENDURE_SEARCH = [
     },
 ]
 
+# ── Bicameral MCP: Multi-Region Grounding (FC-2 eval, v0.4.6+) ──────
+# These decisions intentionally span 3+ files. They exercise the
+# multi-file grounding pipeline that v0.4.6 introduced to fix the
+# FC-2 "single-anchor collapse" pathology. Each entry lists the full
+# set of expected_file_patterns covering ALL implementation files —
+# recall@files measures whether the grounder finds the full spread.
+BICAMERAL_MULTI_REGION = [
+    {
+        "description": "Auto-grounding pipeline: ingest transcript, extract intents, search code via BM25 and graph fusion, ground to code regions, store in ledger",
+        "source_ref": "bicameral-mcp-multi-region",
+        "keywords": ["auto-grounding", "ground_mappings", "ingest pipeline", "coverage loop"],
+        "expected_symbols": [
+            "handle_ingest",
+            "RealCodeLocatorAdapter",
+            "SearchCodeTool",
+            "SurrealDBLedgerAdapter",
+        ],
+        "expected_file_patterns": [
+            "handlers/ingest",
+            "adapters/code_locator",
+            "code_locator/tools/search_code",
+            "ledger/adapter",
+        ],
+        "prd_failure_mode": "CONTEXT_SCATTERED",
+        "status_at_ingest": "reflected",
+        "multi_region": True,
+    },
+    {
+        "description": "Multi-channel code retrieval: BM25 text search, structural graph traversal from symbol seeds, and RRF rank fusion to produce a unified file ranking",
+        "source_ref": "bicameral-mcp-multi-region",
+        "keywords": ["BM25", "graph traversal", "RRF fusion", "search_code", "multi-channel retrieval"],
+        "expected_symbols": [
+            "SearchCodeTool",
+            "Bm25sClient",
+            "rrf_fuse",
+        ],
+        "expected_file_patterns": [
+            "code_locator/tools/search_code",
+            "code_locator/retrieval/bm25s_client",
+            "code_locator/fusion/rrf",
+        ],
+        "prd_failure_mode": "CONTEXT_SCATTERED",
+        "status_at_ingest": "reflected",
+        "multi_region": True,
+    },
+    {
+        "description": "Drift detection flow: detect changed files in a commit, look up intents grounded to those files, recompute status via hash comparison, update intent status",
+        "source_ref": "bicameral-mcp-multi-region",
+        "keywords": ["drift detection", "link_commit", "derive_status", "hash comparison", "detect_drift"],
+        "expected_symbols": [
+            "handle_link_commit",
+            "handle_detect_drift",
+            "derive_status",
+            "HashDriftAnalyzer",
+        ],
+        "expected_file_patterns": [
+            "handlers/link_commit",
+            "handlers/detect_drift",
+            "ledger/status",
+            "ledger/drift",
+        ],
+        "prd_failure_mode": "CONTEXT_SCATTERED",
+        "status_at_ingest": "reflected",
+        "multi_region": True,
+    },
+    {
+        "description": "Team collaboration mode: dual-write adapter intercepts mutations, emits event files, materializes peer events on startup for multi-user ledger sync",
+        "source_ref": "bicameral-mcp-multi-region",
+        "keywords": ["team mode", "dual-write", "event sourcing", "TeamWriteAdapter", "materializer"],
+        "expected_symbols": [
+            "TeamWriteAdapter",
+            "EventFileWriter",
+            "EventMaterializer",
+        ],
+        "expected_file_patterns": [
+            "events/team_adapter",
+            "events/writer",
+            "events/materializer",
+        ],
+        "prd_failure_mode": "CONTEXT_SCATTERED",
+        "status_at_ingest": "reflected",
+        "multi_region": True,
+    },
+    {
+        "description": "Coverage loop tier broadening: strict threshold first, then relaxed, then broad — each tier adjusts BM25 score threshold, fuzzy match threshold, and max symbols to progressively widen grounding search",
+        "source_ref": "bicameral-mcp-multi-region",
+        "keywords": ["coverage loop", "tier broadening", "_ground_single", "fuzzy threshold", "COVERAGE_TIERS"],
+        "expected_symbols": [
+            "RealCodeLocatorAdapter",
+        ],
+        "expected_file_patterns": [
+            "adapters/code_locator",
+            "code_locator/tools/search_code",
+        ],
+        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
+        "status_at_ingest": "reflected",
+        "multi_region": True,
+    },
+]
+
 # ── Aggregated registry ───────────────────────────────────────────────
 
 ALL_DECISIONS = (
@@ -406,7 +506,11 @@ ALL_DECISIONS = (
     + VENDURE_PRICING
     + VENDURE_CUSTOM_FIELDS
     + VENDURE_SEARCH
+    + BICAMERAL_MULTI_REGION
 )
+
+# Multi-region decisions only (FC-2 eval)
+MULTI_REGION = [d for d in ALL_DECISIONS if d.get("multi_region")]
 
 # Grouped by failure mode for PRD failure mode tests
 BY_FAILURE_MODE: dict[str, list[dict]] = {}
