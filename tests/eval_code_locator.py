@@ -27,9 +27,15 @@ from fixtures.expected.decisions import ALL_DECISIONS
 
 
 def get_adapter(repo_path: str):
-    """Initialize code locator adapter for a repo (fresh instance each call)."""
+    """Initialize code locator adapter for a repo (fresh instance each call).
+
+    Checks .bicameral/local/ first (team mode), then .bicameral/ (solo mode).
+    """
     os.environ["REPO_PATH"] = repo_path
-    os.environ["CODE_LOCATOR_SQLITE_DB"] = str(Path(repo_path) / ".bicameral" / "code-graph.db")
+    local_db = Path(repo_path) / ".bicameral" / "local" / "code-graph.db"
+    solo_db = Path(repo_path) / ".bicameral" / "code-graph.db"
+    db_path = str(local_db if local_db.exists() else solo_db)
+    os.environ["CODE_LOCATOR_SQLITE_DB"] = db_path
 
     from adapters.code_locator import RealCodeLocatorAdapter
     adapter = RealCodeLocatorAdapter(repo_path=repo_path)
