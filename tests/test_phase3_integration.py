@@ -61,8 +61,9 @@ def _dump(name: str, data: dict | list) -> None:
 async def _dump_graph(label: str) -> dict:
     """Dump raw SurrealDB graph state and write as artifact."""
     ledger = get_ledger()
-    await ledger._ensure_connected()
-    client = ledger._client
+    inner = getattr(ledger, "_inner", ledger)
+    await inner._ensure_connected()
+    client = inner._client
 
     intents = await client.query("SELECT * FROM intent")
     symbols = await client.query("SELECT * FROM symbol")

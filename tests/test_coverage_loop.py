@@ -144,7 +144,7 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         call_count = {"n": 0}
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
             call_count["n"] += 1
             if bm25_t == 0.5:  # tier 0
                 return [{"symbol": "found", "file_path": "a.py",
@@ -167,7 +167,7 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         tiers_tried = []
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
             tiers_tried.append(bm25_t)
             if bm25_t == 0.3:  # tier 1
                 return [{"symbol": "weak_match", "file_path": "b.py",
@@ -189,7 +189,7 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         tiers_tried = []
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
             tiers_tried.append(bm25_t)
             return []
 
@@ -238,7 +238,7 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         tiers_tried = []
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
             tiers_tried.append((bm25_t, hits))
             return []
 
@@ -272,7 +272,7 @@ class TestGroundMappingsCoverageLoop:
         """Each code_region gets a grounding_tier field matching the tier used."""
         adapter, db = _make_initialized_adapter()
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
             if bm25_t == 0.3:  # tier 1
                 return [
                     {"symbol": "sym1", "file_path": "a.py",
@@ -299,7 +299,7 @@ class TestGroundMappingsCoverageLoop:
         """Batch summary log is emitted with tier distribution."""
         adapter, db = _make_initialized_adapter()
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None):
+        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
             # "intent zero" matches at tier 0, "intent one" at tier 1, "intent two" never
             if "zero" in desc and bm25_t == 0.5:
                 return [{"symbol": "a", "file_path": "a.py",
