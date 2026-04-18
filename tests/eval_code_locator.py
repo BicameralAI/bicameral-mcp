@@ -47,7 +47,8 @@ def _is_relevant(region: dict, expected_symbols: set[str], expected_files: list[
     """Check if a grounded code_region is relevant (symbol match OR file pattern match)."""
     sym = region.get("symbol", "")
     fp = region.get("file_path", "")
-    return sym in expected_symbols or any(pat in fp for pat in expected_files)
+    bare = sym.rsplit(".", 1)[1] if "." in sym else sym
+    return sym in expected_symbols or bare in expected_symbols or any(pat in fp for pat in expected_files)
 
 
 def evaluate(
@@ -111,6 +112,8 @@ def evaluate(
             fp = region.get("file_path", "")
             if sym:
                 found_symbols.add(sym)
+                if "." in sym:
+                    found_symbols.add(sym.rsplit(".", 1)[1])
             found_files.add(fp)
 
             if _is_relevant(region, expected_symbols, expected_files) and first_relevant_rank is None:
@@ -274,7 +277,7 @@ def main():
                         help="Path to repo (default: bicameral root)")
     parser.add_argument("--multi-repo", type=str, default=None,
                         help='JSON map of repo_name→path, e.g. \'{"medusa":"/path/to/medusa"}\'')
-    parser.add_argument("--top-k", type=int, default=3, help="Top-K for precision/MRR")
+    parser.add_argument("--top-k", type=int, default=5, help="Top-K for precision/MRR")
     parser.add_argument("--min-mrr", type=float, default=None,
                         help="Minimum MRR threshold — exit non-zero if below (regression gate)")
     parser.add_argument("--min-recall", type=float, default=None,

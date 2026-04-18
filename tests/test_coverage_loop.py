@@ -1,7 +1,7 @@
 """Tests for the coverage loop (Phase 2 drift fix).
 
 Tests _ground_single tier progression, BM25 caching across tiers,
-and threshold relaxation in ground_mappings.
+and rank-based file selection in ground_mappings.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ def _make_initialized_adapter():
     adapter._db = db
     adapter._validate_tool = SimpleNamespace(config=config)
     adapter._search_tool = MagicMock()
+    adapter._search_tool.bm25.count_corpus_tokens.return_value = 5
     adapter._neighbors_tool = MagicMock()
 
     return adapter, db
@@ -51,18 +52,18 @@ def _make_initialized_adapter():
 class TestGroundSingle:
     """Unit tests for _ground_single."""
 
-    def test_stage1_bm25_hit_above_threshold(self):
-        """Stage 1 grounds when BM25 hit score >= threshold."""
+    def test_stage1_rank_based_file_selection(self):
+        """Stage 1 grounds using rank-based file selection from fused results."""
         adapter, db = _make_initialized_adapter()
         sym = _make_symbol_row(1, "authorize", "payments/auth.py")
         db.lookup_by_file.return_value = [sym]
 
-        hits = [{"file_path": "payments/auth.py", "score": 0.7}]
+        hits = [{"file_path": "payments/auth.py", "score": 0.02}]
 
         with patch.object(adapter, "_validate_with_threshold", return_value=[]):
             regions = adapter._ground_single(
                 "authorize payment calls", db,
-                bm25_threshold=0.5, fuzzy_threshold=80, max_symbols=3,
+                max_files=2, fuzzy_threshold=80, max_symbols=5,
                 hits=hits,
             )
 
@@ -70,23 +71,36 @@ class TestGroundSingle:
         assert regions[0]["symbol"] == "authorize"
         assert regions[0]["file_path"] == "payments/auth.py"
 
-    def test_stage1_bm25_hit_below_threshold_skips(self):
-        """Stage 1 skips when BM25 hit score < threshold."""
+    def test_max_files_caps_file_count(self):
+        """max_files limits how many distinct files are used from fused results."""
         adapter, db = _make_initialized_adapter()
-        hits = [{"file_path": "payments/auth.py", "score": 0.3}]
+        sym_a = _make_symbol_row(1, "sym_a", "file_a.py")
+        sym_b = _make_symbol_row(2, "sym_b", "file_b.py")
+        sym_c = _make_symbol_row(3, "sym_c", "file_c.py")
+        db.lookup_by_file.side_effect = lambda fp: {
+            "file_a.py": [sym_a],
+            "file_b.py": [sym_b],
+            "file_c.py": [sym_c],
+        }.get(fp, [])
+
+        hits = [
+            {"file_path": "file_a.py", "score": 0.03},
+            {"file_path": "file_b.py", "score": 0.02},
+            {"file_path": "file_c.py", "score": 0.01},
+        ]
 
         with patch.object(adapter, "_validate_with_threshold", return_value=[]):
             regions = adapter._ground_single(
-                "authorize payment calls", db,
-                bm25_threshold=0.5, fuzzy_threshold=80, max_symbols=3,
+                "test query", db,
+                max_files=1, fuzzy_threshold=80, max_symbols=5,
                 hits=hits,
             )
 
-        assert regions == []
-        db.lookup_by_file.assert_not_called()
+        assert len(regions) == 1
+        assert regions[0]["file_path"] == "file_a.py"
 
     def test_stage2_fuzzy_fallback(self):
-        """Stage 2 runs when Stage 1 finds no BM25 hit."""
+        """Stage 2 runs when Stage 1 finds no qualifying files."""
         adapter, db = _make_initialized_adapter()
         sym = _make_symbol_row(42, "processPayment", "pay.py", 20, 40)
         db.lookup_by_id.return_value = sym
@@ -96,8 +110,8 @@ class TestGroundSingle:
         with patch.object(adapter, "_validate_with_threshold", return_value=validated):
             regions = adapter._ground_single(
                 "process payment logic", db,
-                bm25_threshold=0.5, fuzzy_threshold=80, max_symbols=5,
-                hits=[],  # no BM25 hits
+                max_files=2, fuzzy_threshold=80, max_symbols=5,
+                hits=[],
             )
 
         assert len(regions) == 1
@@ -109,12 +123,12 @@ class TestGroundSingle:
         syms = [_make_symbol_row(i, f"sym{i}", "big_file.py", i * 10, i * 10 + 5) for i in range(10)]
         db.lookup_by_file.return_value = syms
 
-        hits = [{"file_path": "big_file.py", "score": 0.8}]
+        hits = [{"file_path": "big_file.py", "score": 0.03}]
 
         with patch.object(adapter, "_validate_with_threshold", return_value=[]):
             regions = adapter._ground_single(
                 "something about this file", db,
-                bm25_threshold=0.5, fuzzy_threshold=80, max_symbols=3,
+                max_files=2, fuzzy_threshold=80, max_symbols=3,
                 hits=hits,
             )
 
@@ -126,7 +140,7 @@ class TestGroundSingle:
 
         regions = adapter._ground_single(
             "the and for",  # all stop words
-            db, bm25_threshold=0.5, fuzzy_threshold=80, max_symbols=3,
+            db, max_files=2, fuzzy_threshold=80, max_symbols=5,
             hits=[],
         )
 
@@ -144,9 +158,9 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         call_count = {"n": 0}
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
+        def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
             call_count["n"] += 1
-            if bm25_t == 0.5:  # tier 0
+            if max_f == 2:  # tier 0
                 return [{"symbol": "found", "file_path": "a.py",
                          "start_line": 1, "end_line": 10, "type": "function",
                          "purpose": desc}]
@@ -167,9 +181,9 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         tiers_tried = []
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
-            tiers_tried.append(bm25_t)
-            if bm25_t == 0.3:  # tier 1
+        def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
+            tiers_tried.append(max_f)
+            if max_f == 4:  # tier 1
                 return [{"symbol": "weak_match", "file_path": "b.py",
                          "start_line": 1, "end_line": 5, "type": "function",
                          "purpose": desc}]
@@ -182,15 +196,15 @@ class TestGroundMappingsCoverageLoop:
             ])
 
         assert resolved[0]["code_regions"][0]["symbol"] == "weak_match"
-        assert tiers_tried == [0.5, 0.3]  # tier 0 then tier 1
+        assert tiers_tried == [2, 4]  # tier 0 then tier 1
 
     def test_all_tiers_fail_leaves_ungrounded(self):
         """When all 3 tiers fail, mapping stays without code_regions."""
         adapter, db = _make_initialized_adapter()
         tiers_tried = []
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
-            tiers_tried.append(bm25_t)
+        def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
+            tiers_tried.append(max_f)
             return []
 
         with patch.object(adapter, "_ground_single", side_effect=fake_ground_single), \
@@ -200,7 +214,7 @@ class TestGroundMappingsCoverageLoop:
             ])
 
         assert not resolved[0].get("code_regions")
-        assert tiers_tried == [0.5, 0.3, 0.1]  # all 3 tiers
+        assert tiers_tried == [2, 4, 6]  # all 3 tiers
 
     def test_bm25_search_called_once_per_mapping(self):
         """BM25 search is called once and reused across tiers."""
@@ -238,8 +252,8 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
         tiers_tried = []
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
-            tiers_tried.append((bm25_t, hits))
+        def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
+            tiers_tried.append((max_f, hits))
             return []
 
         with patch.object(adapter, "_ground_single", side_effect=fake_ground_single), \
@@ -272,8 +286,8 @@ class TestGroundMappingsCoverageLoop:
         """Each code_region gets a grounding_tier field matching the tier used."""
         adapter, db = _make_initialized_adapter()
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
-            if bm25_t == 0.3:  # tier 1
+        def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
+            if max_f == 4:  # tier 1
                 return [
                     {"symbol": "sym1", "file_path": "a.py",
                      "start_line": 1, "end_line": 5, "type": "function",
@@ -299,13 +313,13 @@ class TestGroundMappingsCoverageLoop:
         """Batch summary log is emitted with tier distribution."""
         adapter, db = _make_initialized_adapter()
 
-        def fake_ground_single(desc, db_, bm25_t, fuzzy_t, max_s, hits=None, **kwargs):
+        def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
             # "intent zero" matches at tier 0, "intent one" at tier 1, "intent two" never
-            if "zero" in desc and bm25_t == 0.5:
+            if "zero" in desc and max_f == 2:
                 return [{"symbol": "a", "file_path": "a.py",
                          "start_line": 1, "end_line": 5, "type": "function",
                          "purpose": desc}]
-            if "one" in desc and bm25_t == 0.3:
+            if "one" in desc and max_f == 4:
                 return [{"symbol": "b", "file_path": "b.py",
                          "start_line": 1, "end_line": 5, "type": "function",
                          "purpose": desc}]

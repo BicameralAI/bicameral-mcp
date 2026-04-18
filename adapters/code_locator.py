@@ -142,11 +142,11 @@ class RealCodeLocatorAdapter:
     # ── Grounding methods (moved from handlers/ingest.py) ────────────
 
     # Progressive broadening tiers for coverage loop.
-    # Each tier: (bm25_threshold, fuzzy_threshold, max_symbols)
+    # Each tier: (max_files, fuzzy_threshold, max_symbols)
     _COVERAGE_TIERS = [
-        (0.5, 80, 3),   # Tier 0: strict (current behavior)
-        (0.3, 70, 5),   # Tier 1: relaxed
-        (0.1, 60, 5),   # Tier 2: broad
+        (2, 80, 5),    # Tier 0: strict — top 2 files, high fuzzy, 5 symbols
+        (4, 70, 8),    # Tier 1: relaxed — top 4 files, medium fuzzy, 8 symbols
+        (6, 60, 10),   # Tier 2: broad — top 6 files, low fuzzy, 10 symbols
     ]
 
     _STOP_WORDS = frozenset({
@@ -184,7 +184,7 @@ class RealCodeLocatorAdapter:
         self,
         description: str,
         db,
-        bm25_threshold: float,
+        max_files: int,
         fuzzy_threshold: int,
         max_symbols: int,
         hits: list[dict] | None = None,
@@ -239,77 +239,69 @@ class RealCodeLocatorAdapter:
 
         matched_ids = set(matched_scores)
 
-        # Stage 1: multi-file fused retrieval (FC-2 fix, v0.4.6).
-        # Previously this stage took only the top-1 BM25 hit via next(),
-        # which collapsed multi-file features to a single anchor — the
-        # "Google Calendar one-click add events → admin-test-data-generator.ts"
-        # pathology. Now we:
-        #   a) Re-run search_code with fuzzy-matched symbol_ids as seeds
-        #      to activate the graph channel
-        #   b) Take up to max_symbols DISTINCT qualifying files from the
-        #      fused ranking
-        #   c) Pull symbols from each file, budgeted fairly
-        try:
-            if matched_ids:
-                fused = self.search_code(description, symbol_ids=sorted(matched_ids))
-            else:
-                fused = hits  # BM25-only fallback when nothing to seed
-        except Exception as exc:
-            logger.debug("[ground] fused search failed for '%s': %s — falling back to BM25-only", description[:60], exc)
-            fused = hits
-
-        qualifying_files: list[str] = []
-        seen_files: set[str] = set()
-        for h in fused:
-            if h.get("score", 0) < bm25_threshold:
-                continue
-            fp = h.get("file_path", "")
-            if fp and fp not in seen_files:
-                seen_files.add(fp)
-                qualifying_files.append(fp)
-            if len(qualifying_files) >= max_symbols:
-                break
-
-        if qualifying_files:
-            # Fair per-file budget so no single file monopolizes the region
-            # list. With max_symbols=5 and 3 files, each file gets ~1-2 slots.
-            per_file_budget = max(1, max_symbols // len(qualifying_files))
-            try:
-                for fp in qualifying_files:
-                    file_symbols = db.lookup_by_file(fp)
-                    if not file_symbols:
-                        continue
-                    file_symbol_ids = {row["id"] for row in file_symbols}
-                    relevant_ids = matched_ids & file_symbol_ids
-                    ranked = sorted(
-                        file_symbols,
-                        key=lambda r: (r["id"] not in relevant_ids, -matched_scores.get(r["id"], 0)),
-                    )
-                    for row in ranked[:per_file_budget]:
-                        code_regions.append({
-                            "symbol": row["qualified_name"] or row["name"],
-                            "file_path": row["file_path"],
-                            "start_line": row["start_line"],
-                            "end_line": row["end_line"],
-                            "type": row["type"],
-                            "purpose": description,
-                        })
-                    if len(code_regions) >= max_symbols:
-                        break
-            except Exception as exc:
-                logger.warning("[ground] multi-file ranking failed for '%s': %s", description[:60], exc)
-            code_regions = code_regions[:max_symbols]
-
-        # Stage 2: fuzzy-symbol fallback when Stage 1 found nothing.
-        # Unchanged from v0.4.5 semantics.
-        if not code_regions and matched_ids:
+        # Stage 1: fuzzy-symbol direct lookup.
+        # When fuzzy matching found symbols, resolve them directly — this is
+        # the highest-precision path since matched_scores already rank by
+        # relevance. File-level retrieval (Stage 2) serves as enrichment.
+        if matched_ids:
             try:
                 score_ranked_ids = sorted(matched_scores, key=matched_scores.get, reverse=True)
                 code_regions = self._regions_from_symbol_ids(
                     score_ranked_ids[:max_symbols], db, description,
                 )
             except Exception as exc:
-                logger.warning("[ground] fuzzy fallback failed: %s", exc)
+                logger.warning("[ground] fuzzy direct lookup failed: %s", exc)
+
+        # Stage 2: file-level fused retrieval.
+        # When Stage 1 found nothing (no fuzzy matches or lookup failed),
+        # fall back to BM25 + graph retrieval to find relevant files.
+        if not code_regions:
+            try:
+                if matched_ids:
+                    fused = self.search_code(description, symbol_ids=sorted(matched_ids))
+                else:
+                    fused = hits
+            except Exception as exc:
+                logger.debug("[ground] fused search failed for '%s': %s — falling back to BM25-only", description[:60], exc)
+                fused = hits
+
+            qualifying_files: list[str] = []
+            seen_files: set[str] = set()
+            for h in fused:
+                fp = h.get("file_path", "")
+                if fp and fp not in seen_files:
+                    seen_files.add(fp)
+                    qualifying_files.append(fp)
+                if len(qualifying_files) >= max_files:
+                    break
+
+            if qualifying_files:
+                per_file_budget = max(1, max_symbols // len(qualifying_files))
+                try:
+                    for fp in qualifying_files:
+                        file_symbols = db.lookup_by_file(fp)
+                        if not file_symbols:
+                            continue
+                        file_symbol_ids = {row["id"] for row in file_symbols}
+                        relevant_ids = matched_ids & file_symbol_ids
+                        ranked = sorted(
+                            file_symbols,
+                            key=lambda r: (r["id"] not in relevant_ids, -matched_scores.get(r["id"], 0)),
+                        )
+                        for row in ranked[:per_file_budget]:
+                            code_regions.append({
+                                "symbol": row["qualified_name"] or row["name"],
+                                "file_path": row["file_path"],
+                                "start_line": row["start_line"],
+                                "end_line": row["end_line"],
+                                "type": row["type"],
+                                "purpose": description,
+                            })
+                        if len(code_regions) >= max_symbols:
+                            break
+                except Exception as exc:
+                    logger.warning("[ground] multi-file ranking failed for '%s': %s", description[:60], exc)
+                code_regions = code_regions[:max_symbols]
 
         return code_regions
 
@@ -353,7 +345,7 @@ class RealCodeLocatorAdapter:
             # to ``log-error-to-slack/index.ts:getFeatureName`` by tiebreak.
             # Under-specified queries belong as ungrounded open questions.
             try:
-                corpus_token_count = self._bm25.count_corpus_tokens(description)
+                corpus_token_count = self._search_tool.bm25.count_corpus_tokens(description)
             except Exception as exc:
                 logger.debug("[ground] FC-1 token count failed for '%s': %s", description[:60], exc)
                 corpus_token_count = 2  # fail-open: do not block grounding on detector failure
@@ -375,9 +367,9 @@ class RealCodeLocatorAdapter:
             code_regions: list[dict] = []
             tier_used = -1
 
-            for tier_idx, (bm25_thresh, fuzzy_thresh, max_sym) in enumerate(self._COVERAGE_TIERS):
+            for tier_idx, (max_files, fuzzy_thresh, max_sym) in enumerate(self._COVERAGE_TIERS):
                 code_regions = self._ground_single(
-                    description, db, bm25_thresh, fuzzy_thresh, max_sym,
+                    description, db, max_files, fuzzy_thresh, max_sym,
                     hits=hits,
                     mapping_symbol_names=mapping.get("symbols"),
                 )

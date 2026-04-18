@@ -127,7 +127,7 @@ def _adapter_with_fakes(
     adapter.search_code = _search_code_stub  # type: ignore[method-assign]
 
     def _validate_stub(candidates, threshold):
-        return [{"symbol_id": sid} for sid in fuzzy_symbol_ids]
+        return [{"symbol_id": sid, "match_score": 85} for sid in fuzzy_symbol_ids]
 
     adapter._validate_with_threshold = _validate_stub  # type: ignore[method-assign]
 
@@ -137,19 +137,15 @@ def _adapter_with_fakes(
 # ── Tests ────────────────────────────────────────────────────────────
 
 
-def test_ground_single_activates_graph_channel_when_fuzzy_matches():
+def test_ground_single_uses_fuzzy_direct_lookup_when_matches_exist():
     """When fuzzy validation returns symbol IDs, ``_ground_single`` must
-    re-run ``search_code`` with those IDs as seeds so the graph channel
-    in the fusion layer activates.
+    resolve them directly via Stage 1 (fuzzy-symbol direct lookup) without
+    needing file-level BM25/RRF retrieval. This bypasses the BM25 noise
+    that could promote irrelevant files (the original FC-2 pathology).
     """
     bm25_hits = [
         {"file_path": "wrong_test_fixture.ts", "score": 0.9},
         {"file_path": "real_component.tsx", "score": 0.4},
-    ]
-    fused_hits = [
-        # After RRF fusion with graph channel, real_component.tsx wins
-        {"file_path": "real_component.tsx", "score": 0.95},
-        {"file_path": "wrong_test_fixture.ts", "score": 0.5},
     ]
     symbols = {
         "real_component.tsx": [
@@ -162,36 +158,30 @@ def test_ground_single_activates_graph_channel_when_fuzzy_matches():
 
     adapter, call_log = _adapter_with_fakes(
         bm25_hits=bm25_hits,
-        fused_hits=fused_hits,
+        fused_hits=[],
         symbols_by_file=symbols,
-        fuzzy_symbol_ids=[1, 2],
+        fuzzy_symbol_ids=[1],
     )
 
     regions = adapter._ground_single(
         description="google calendar one-click add events",
         db=adapter._db,
-        bm25_threshold=0.3,
+        max_files=4,
         fuzzy_threshold=70,
         max_symbols=5,
         hits=bm25_hits,
     )
 
-    # Assert search_code was called TWICE — once for initial BM25, then
-    # once more with symbol_ids to activate the graph channel.
-    fused_calls = [c for c in call_log if c[1] is not None]
-    assert len(fused_calls) >= 1, (
-        f"_ground_single did not activate the graph channel. "
-        f"search_code calls: {call_log}"
+    # Stage 1 (fuzzy direct) should resolve without calling search_code
+    assert call_log == [], (
+        f"With fuzzy matches, search_code should not be called. "
+        f"Got calls: {call_log}"
     )
-    # The graph seed call must carry the fuzzy-matched symbol IDs
-    _, symbol_ids = fused_calls[0]
-    assert symbol_ids == [1, 2], f"Expected seed ids [1, 2], got {symbol_ids}"
 
-    # Assert the winning region is from the fused top, not the BM25 top
     assert len(regions) >= 1
     top_file = regions[0]["file_path"]
     assert top_file == "real_component.tsx", (
-        f"Expected graph-channel fusion to promote real_component.tsx, "
+        f"Expected fuzzy-matched symbol to resolve to real_component.tsx, "
         f"got {top_file}. Full regions: {regions}"
     )
 
@@ -232,7 +222,7 @@ def test_ground_single_emits_multi_file_regions():
     regions = adapter._ground_single(
         description="one-click add events to google calendar",
         db=adapter._db,
-        bm25_threshold=0.3,
+        max_files=4,
         fuzzy_threshold=70,
         max_symbols=5,
         hits=bm25_hits,
@@ -272,7 +262,7 @@ def test_ground_single_respects_max_symbols_cap():
     regions = adapter._ground_single(
         description="many relevant content tokens here please",
         db=adapter._db,
-        bm25_threshold=0.3,
+        max_files=4,
         fuzzy_threshold=70,
         max_symbols=3,
         hits=bm25_hits,
@@ -302,7 +292,7 @@ def test_ground_single_falls_back_to_bm25_when_no_fuzzy_matches():
     regions = adapter._ground_single(
         description="xyzzy plugh gnusto",
         db=adapter._db,
-        bm25_threshold=0.3,
+        max_files=4,
         fuzzy_threshold=70,
         max_symbols=5,
         hits=bm25_hits,
