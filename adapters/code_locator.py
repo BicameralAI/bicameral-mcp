@@ -159,6 +159,27 @@ class RealCodeLocatorAdapter:
 
     _COMPOUND_RE = re.compile(r"[A-Za-z]\w*(?:[_.][A-Za-z]\w*)+")
 
+    @staticmethod
+    def _pascal_ngrams(
+        description: str, stop_words: frozenset, max_n: int = 3, min_len: int = 6,
+    ) -> list[str]:
+        """Generate PascalCase bigrams/trigrams from adjacent words.
+
+        Uses 3+ char tokens so short words like 'job', 'bus', 'app' participate.
+        """
+        parts = [
+            w for w in re.findall(r"[a-zA-Z]{3,}", description)
+            if w.lower() not in stop_words
+        ]
+        ngrams: list[str] = []
+        seen: set[str] = set()
+        for n in range(2, max_n + 1):
+            for i in range(len(parts) - n + 1):
+                candidate = "".join(w.capitalize() for w in parts[i : i + n])
+                if len(candidate) >= min_len and candidate not in seen:
+                    seen.add(candidate)
+                    ngrams.append(candidate)
+        return ngrams
 
     def _regions_from_symbol_ids(self, symbol_ids: list[int], db, description: str) -> list[dict]:
         """Resolve a list of symbol IDs to code_region dicts."""
@@ -207,16 +228,11 @@ class RealCodeLocatorAdapter:
             w for w in re.findall(r"[a-zA-Z]{4,}", description)
             if w.lower() not in self._STOP_WORDS
         ]
+        pascal_ngrams = self._pascal_ngrams(description, self._STOP_WORDS)
         tokens = compounds + word_tokens
 
-        # Pre-compute fuzzy-validated symbol IDs once. These serve two
-        # purposes below:
-        #   1. Seed the graph channel in search_code() so RRF fusion
-        #      (code_locator/fusion/rrf.py) actually activates. Without
-        #      a seed the graph channel is skipped and the pipeline
-        #      collapses to BM25-only.
-        #   2. Rank symbols within each qualifying file (relevant ones
-        #      come first).
+        tokens = tokens + pascal_ngrams
+
         matched_scores: dict[int, float] = {}
         if tokens:
             try:
@@ -240,9 +256,8 @@ class RealCodeLocatorAdapter:
         matched_ids = set(matched_scores)
 
         # Stage 1: fuzzy-symbol direct lookup.
-        # When fuzzy matching found symbols, resolve them directly — this is
-        # the highest-precision path since matched_scores already rank by
-        # relevance.
+        # Ngram-matched symbols (multi-word PascalCase) are more specific than
+        # single-word matches, so they sort first at equal scores.
         if matched_ids:
             try:
                 score_ranked_ids = sorted(matched_scores, key=matched_scores.get, reverse=True)

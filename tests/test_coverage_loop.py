@@ -393,3 +393,76 @@ class TestValidateWithThreshold:
         assert captured_threshold["value"] == 60
         # Restored after
         assert adapter._validate_tool.config.fuzzy_threshold == 80
+
+
+# ── PascalCase ngram tests ─────────────────────────────────────────
+
+
+class TestPascalNgrams:
+    """Unit tests for _pascal_ngrams PascalCase candidate generation."""
+
+    def test_basic_bigrams(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "payment provider service", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert "PaymentProvider" in ngrams
+        assert "ProviderService" in ngrams
+
+    def test_trigrams_generated(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "payment provider service", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert "PaymentProviderService" in ngrams
+
+    def test_short_words_included(self):
+        """3-char words like 'job' and 'bus' participate in ngrams."""
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "job scheduler service", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert "JobScheduler" in ngrams
+        assert "JobSchedulerService" in ngrams
+
+    def test_event_bus(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "event bus service", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert "EventBus" in ngrams
+        assert "EventBusService" in ngrams
+
+    def test_stop_words_excluded(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "the payment and provider", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert "PaymentProvider" in ngrams
+        assert not any("The" in ng or "And" in ng for ng in ngrams)
+
+    def test_min_length_filter(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "go run", RealCodeLocatorAdapter._STOP_WORDS, min_len=6,
+        )
+        assert "GoRun" not in ngrams
+
+    def test_empty_description(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert ngrams == []
+
+    def test_single_word_no_ngrams(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "payment", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert ngrams == []
+
+    def test_max_n_respected(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "payment provider service", RealCodeLocatorAdapter._STOP_WORDS, max_n=2,
+        )
+        assert "PaymentProvider" in ngrams
+        assert "PaymentProviderService" not in ngrams
+
+    def test_no_duplicates(self):
+        ngrams = RealCodeLocatorAdapter._pascal_ngrams(
+            "payment payment provider", RealCodeLocatorAdapter._STOP_WORDS,
+        )
+        assert len(ngrams) == len(set(ngrams))
