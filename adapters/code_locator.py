@@ -157,6 +157,9 @@ class RealCodeLocatorAdapter:
         "like", "make", "made", "use", "used", "using", "after", "before",
     })
 
+    _COMPOUND_RE = re.compile(r"[A-Za-z]\w*(?:[_.][A-Za-z]\w*)+")
+
+
     def _regions_from_symbol_ids(self, symbol_ids: list[int], db, description: str) -> list[dict]:
         """Resolve a list of symbol IDs to code_region dicts."""
         regions = []
@@ -199,10 +202,12 @@ class RealCodeLocatorAdapter:
         if hits is None:
             hits = []
 
-        tokens = [
+        compounds = [c for c in self._COMPOUND_RE.findall(description) if len(c) >= 4]
+        word_tokens = [
             w for w in re.findall(r"[a-zA-Z]{4,}", description)
             if w.lower() not in self._STOP_WORDS
         ]
+        tokens = compounds + word_tokens
 
         # Pre-compute fuzzy-validated symbol IDs once. These serve two
         # purposes below:
