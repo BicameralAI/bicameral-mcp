@@ -26,6 +26,57 @@ file→symbol resolution in `_ground_single()` is architecturally unable
 to solve it — BM25 has no signal about which SYMBOL within a file is
 relevant, only which FILE matches the query.
 
+## Codex Adversarial Review Findings (2026-04-19)
+
+An adversarial review of the prior incremental PR flagged two issues
+that this plan must address:
+
+### Finding: `_KEYWORD_WORDS` blocklist strips semantically useful terms
+
+The current keyword blocklist in `adapters/code_locator.py` contains
+words like `error`, `service`, `event`, `model`, `field`, `type`,
+`worker`, `query`, `struct`. These were added to prevent NL words from
+fuzzy-matching short symbols (e.g. "void"→`Void`, "state"→`State`).
+
+But they also block critical code suffixes:
+- `error` → prevents "checkout error" from generating `CheckoutError` bigram
+- `service` → prevents "payment provider service" from matching `PaymentProviderService`
+- `event` → prevents "event bus" from generating `EventBus` bigram
+- `field` → prevents "custom field" from generating `CustomField` bigram
+- `worker` → prevents "search worker" from matching worker configs
+
+**Impact on this plan**: Symbol-level BM25 sidesteps this problem
+entirely — the keyword blocklist only affects the fuzzy-matching path,
+which becomes a secondary channel. The primary symbol-level BM25 search
+operates on the raw description text, so "checkout error" will directly
+match the `CheckoutError` symbol document without any token filtering.
+
+**Pre-implementation action**: Before Phase 1, audit `_KEYWORD_WORDS`
+and remove terms that are semantically meaningful as code suffixes
+(`error`, `service`, `event`, `model`, `field`, `type`, `worker`,
+`query`). Keep only true NL noise words (`void`, `return`, `state`,
+`currently`, `causes`, etc.). This improves the fallback fuzzy path
+regardless of whether symbol-level BM25 is implemented.
+
+### Finding: Benchmark integrity — eval/fixture changes may inflate metrics
+
+The prior PR relaxed ground truth fixtures (removed phantom symbols,
+broadened file patterns) and changed the eval metric (case-insensitive
+matching, all-component extraction). While each change is individually
+justifiable, together they risk masking whether the pipeline actually
+improved.
+
+**Action for this plan**: Phase 5 must include a **dual-benchmark
+evaluation**:
+1. Run eval on the ORIGINAL fixtures (pre-PR, commit `f06b5df`) to
+   prove the symbol-level BM25 pipeline improves recall on the harder,
+   unchanged benchmark
+2. Run eval on the corrected fixtures to show the full picture
+3. Report BOTH numbers in the commit message
+
+This ensures we can claim real retrieval improvement, not just
+measurement improvement.
+
 ## Solution: Symbol-Level BM25 Index
 
 Index one BM25 document per **symbol** instead of per file. The query
@@ -207,12 +258,41 @@ bm25.index_symbols(index_dir, symbol_db=_sdb)      # symbol-level (new)
 
 Lazy-load the symbol index in `Bm25sClient._load()`.
 
-### Phase 5: Eval + Tune (~1 hour)
+### Phase 0: Keyword Blocklist Audit (prerequisite, ~20 min)
 
-- Run eval on all 3 repos
+**File**: `adapters/code_locator.py`
+
+Before building symbol-level BM25, fix the `_KEYWORD_WORDS` blocklist
+that suppresses semantically meaningful code terms. Remove: `error`,
+`service`, `event`, `events`, `model`, `field`, `fields`, `type`,
+`types`, `worker`, `query`, `queries`, `struct`, `create`, `update`,
+`delete`. Keep: `void`, `return`, `returns`, `throw`, `throws`, `state`,
+`status`, `call`, `calls`, `value`, `values`, `class`, `object`,
+`function`, `method`, and all the NL-only words (`currently`, `causes`,
+etc.).
+
+Run eval BEFORE and AFTER this change to measure the isolated impact
+on the fuzzy-matching path. This improvement helps even if symbol-level
+BM25 is never shipped.
+
+### Phase 5: Dual-Benchmark Eval + Tune (~1.5 hours)
+
+**Dual-benchmark requirement** (from adversarial review):
+
+1. Checkout the ORIGINAL fixtures at commit `f06b5df` (pre-PR baseline)
+   into a temp file. Run eval against those fixtures with the new
+   symbol-level pipeline. This proves retrieval improved on the harder
+   benchmark.
+2. Run eval against the current (corrected) fixtures. This shows the
+   full picture.
+3. Report BOTH sets of numbers in the commit message.
+
+Additional steps:
 - Tune RRF channel weights (symbol vs file vs graph)
-- Verify MRR >= 0.75, target recall >= 45%
-- Run full 49-test suite
+- Verify MRR >= 0.75, target recall >= 45% on corrected fixtures
+- Verify recall improves on original fixtures too (even if absolute
+  number is lower due to phantom symbols)
+- Run full test suite
 
 ## Expected Impact
 
@@ -248,6 +328,12 @@ Lazy-load the symbol index in `Bm25sClient._load()`.
    `search_code` — symbol-level search would need new mocks. Coverage
    loop tests mock `_ground_single` directly — they still work.
 
+5. **Benchmark validity**: Prior PR changed both the pipeline AND the
+   eval metric/fixtures. To avoid conflating measurement improvement
+   with retrieval improvement, Phase 5 requires dual-benchmark eval
+   (original + corrected fixtures). If recall only improves on the
+   corrected fixtures, the gain is suspect.
+
 ## Files Modified
 
 | File | Change |
@@ -261,7 +347,7 @@ Lazy-load the symbol index in `Bm25sClient._load()`.
 
 ## Timeline
 
-Total: ~5 hours across 2 sessions.
+Total: ~6 hours across 2 sessions.
 
-- Session 1 (3h): Phases 1-2 — build symbol index + wire into pipeline
-- Session 2 (2h): Phases 3-5 — dual-index fusion + eval + tune
+- Session 1 (3.5h): Phase 0 (keyword audit) + Phases 1-2 (symbol index + pipeline)
+- Session 2 (2.5h): Phases 3-5 (dual-index fusion + dual-benchmark eval + tune)
