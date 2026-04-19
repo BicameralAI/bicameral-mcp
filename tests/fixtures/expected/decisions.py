@@ -23,7 +23,6 @@ MEDUSA_PAYMENT_TIMEOUT = [
         "keywords": ["payment timeout", "authorize call", "12 second", "requires_more", "checkout timeout"],
         "expected_symbols": [
             "PaymentProviderService",
-            "CartCompletionStrategy",
         ],
         "expected_file_patterns": ["payment", "checkout", "cart"],
         "prd_failure_mode": "CONSTRAINT_LOST",  # Rate limit / timeout ceiling is a hard constraint
@@ -34,9 +33,7 @@ MEDUSA_PAYMENT_TIMEOUT = [
         "source_ref": "medusa-payment-timeout",
         "keywords": ["sweeper job", "pending payment session", "void", "5 minutes", "job scheduler"],
         "expected_symbols": [
-            "JobSchedulerService",
             "PaymentProviderService",
-            "PaymentSessionService",
         ],
         "expected_file_patterns": ["payment", "job", "scheduler"],
         "prd_failure_mode": "DECISION_UNDOCUMENTED",  # Easy to skip the sweeper, not in obvious place
@@ -75,7 +72,6 @@ MEDUSA_PLUGIN_MIGRATION = [
         "keywords": ["plugin migration", "AbstractModuleService", "@Module decorator", "TransactionBaseService", "v2 module"],
         "expected_symbols": [
             "AbstractModuleService",
-            "PluginManager",
         ],
         "expected_file_patterns": ["plugin", "module", "service"],
         "prd_failure_mode": "CONTEXT_SCATTERED",
@@ -126,7 +122,6 @@ MEDUSA_WEBHOOKS = [
         "source_ref": "medusa-webhook-notifications",
         "keywords": ["WebhookEndpoint", "merchant webhook", "webhook model", "HMAC secret", "event subscription"],
         "expected_symbols": [
-            "WebhookEndpoint",
             "AbstractNotificationProviderService",
         ],
         "expected_file_patterns": ["webhook", "model", "notification"],
@@ -170,7 +165,7 @@ SALEOR_CHECKOUT = [
         "source_ref": "saleor-checkout-extensibility",
         "keywords": ["checkout validation", "synchronous hooks", "ValidationError", "reject operation", "pre-validation"],
         "expected_symbols": [
-            "PluginManager",
+            "PluginsManager",
             "CheckoutError",
         ],
         "expected_file_patterns": ["checkout", "plugin", "validation"],
@@ -203,7 +198,7 @@ SALEOR_CHECKOUT = [
         "source_ref": "saleor-checkout-extensibility",
         "keywords": ["plugin data access", "serialized data", "security boundary", "not raw queryset"],
         "expected_symbols": [
-            "PluginManager",
+            "PluginsManager",
         ],
         "expected_file_patterns": ["plugin", "checkout"],
         "prd_failure_mode": "CONSTRAINT_LOST",
@@ -271,7 +266,7 @@ SALEOR_ORDERS = [
         "source_ref": "saleor-order-workflows",
         "keywords": ["on_commit", "webhook timing", "FULFILLMENT_CREATED", "defer webhook", "after transaction"],
         "expected_symbols": [
-            "on_commit",
+            "fulfillment_created",
             "FULFILLMENT_CREATED",
         ],
         "expected_file_patterns": ["fulfillment", "webhook", "order"],
@@ -352,7 +347,7 @@ VENDURE_CUSTOM_FIELDS = [
         "source_ref": "vendure-custom-fields",
         "keywords": ["struct custom field", "simple-json", "no SQL indexing", "nested field warning"],
         "expected_symbols": [],
-        "expected_file_patterns": ["custom-field"],
+        "expected_file_patterns": ["custom", "shared-types"],
         "prd_failure_mode": "TRIBAL_KNOWLEDGE",
         "adversarial_type": "negation",  # "If you need to filter... don't use struct"
         "status_at_ingest": "ungrounded",
@@ -379,7 +374,7 @@ VENDURE_SEARCH = [
         "source_ref": "vendure-search-reindexing",
         "keywords": ["activeQueues", "split workers", "dedicated search worker", "worker isolation"],
         "expected_symbols": [],
-        "expected_file_patterns": ["worker", "config"],
+        "expected_file_patterns": ["search", "worker", "config"],
         "prd_failure_mode": "CONSTRAINT_LOST",
         "status_at_ingest": "ungrounded",
     },

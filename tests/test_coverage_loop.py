@@ -176,7 +176,7 @@ class TestGroundMappingsCoverageLoop:
 
         def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
             call_count["n"] += 1
-            if max_f == 2:  # tier 0
+            if max_f == 3:  # tier 0
                 return [{"symbol": "found", "file_path": "a.py",
                          "start_line": 1, "end_line": 10, "type": "function",
                          "purpose": desc}]
@@ -199,7 +199,7 @@ class TestGroundMappingsCoverageLoop:
 
         def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
             tiers_tried.append(max_f)
-            if max_f == 4:  # tier 1
+            if max_f == 5:  # tier 1
                 return [{"symbol": "weak_match", "file_path": "b.py",
                          "start_line": 1, "end_line": 5, "type": "function",
                          "purpose": desc}]
@@ -212,7 +212,7 @@ class TestGroundMappingsCoverageLoop:
             ])
 
         assert resolved[0]["code_regions"][0]["symbol"] == "weak_match"
-        assert tiers_tried == [2, 4]  # tier 0 then tier 1
+        assert tiers_tried == [3, 5]  # tier 0 then tier 1
 
     def test_all_tiers_fail_leaves_ungrounded(self):
         """When all 3 tiers fail, mapping stays without code_regions."""
@@ -230,7 +230,7 @@ class TestGroundMappingsCoverageLoop:
             ])
 
         assert not resolved[0].get("code_regions")
-        assert tiers_tried == [2, 4, 6]  # all 3 tiers
+        assert tiers_tried == [3, 5, 7]  # all 3 tiers
 
     def test_bm25_search_called_once_per_mapping(self):
         """BM25 search is called once and reused across tiers."""
@@ -303,7 +303,7 @@ class TestGroundMappingsCoverageLoop:
         adapter, db = _make_initialized_adapter()
 
         def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
-            if max_f == 4:  # tier 1
+            if max_f == 5:  # tier 1
                 return [
                     {"symbol": "sym1", "file_path": "a.py",
                      "start_line": 1, "end_line": 5, "type": "function",
@@ -331,11 +331,11 @@ class TestGroundMappingsCoverageLoop:
 
         def fake_ground_single(desc, db_, max_f, fuzzy_t, max_s, hits=None, **kwargs):
             # "intent zero" matches at tier 0, "intent one" at tier 1, "intent two" never
-            if "zero" in desc and max_f == 2:
+            if "zero" in desc and max_f == 3:
                 return [{"symbol": "a", "file_path": "a.py",
                          "start_line": 1, "end_line": 5, "type": "function",
                          "purpose": desc}]
-            if "one" in desc and max_f == 4:
+            if "one" in desc and max_f == 5:
                 return [{"symbol": "b", "file_path": "b.py",
                          "start_line": 1, "end_line": 5, "type": "function",
                          "purpose": desc}]

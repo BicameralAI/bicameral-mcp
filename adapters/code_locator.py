@@ -144,10 +144,15 @@ class RealCodeLocatorAdapter:
     # Progressive broadening tiers for coverage loop.
     # Each tier: (max_files, fuzzy_threshold, max_symbols)
     _COVERAGE_TIERS = [
-        (2, 80, 5),    # Tier 0: strict — top 2 files, high fuzzy, 5 symbols
-        (4, 70, 8),    # Tier 1: relaxed — top 4 files, medium fuzzy, 8 symbols
-        (6, 60, 10),   # Tier 2: broad — top 6 files, low fuzzy, 10 symbols
+        (3, 75, 5),    # Tier 0: strict — top 3 files, high fuzzy, 5 symbols
+        (5, 65, 8),    # Tier 1: relaxed — top 5 files, medium fuzzy, 8 symbols
+        (7, 55, 10),   # Tier 2: broad — top 7 files, low fuzzy, 10 symbols
     ]
+
+    _SYMBOL_TYPE_PRIORITY = {
+        "class": 0, "interface": 1, "type_alias": 2,
+        "function": 3, "method": 4, "variable": 5,
+    }
 
     _STOP_WORDS = frozenset({
         "the", "and", "for", "that", "this", "with", "are", "from", "have",
@@ -159,6 +164,26 @@ class RealCodeLocatorAdapter:
 
     _COMPOUND_RE = re.compile(r"[A-Za-z]\w*(?:[_.][A-Za-z]\w*)+")
 
+    _IDENTIFIER_RE = re.compile(
+        r'(?:[A-Z][a-z]+(?:[A-Z][a-zA-Z0-9]*)+)'
+        r'|(?:[a-z]+[A-Z][a-zA-Z0-9]*)'
+    )
+
+    _KEYWORD_WORDS = frozenset({
+        "void", "return", "returns", "throw", "throws", "error", "errors",
+        "class", "object", "function", "method", "type", "types", "typed",
+        "state", "status", "call", "calls", "event", "events",
+        "model", "field", "fields", "value", "values",
+        "create", "update", "delete", "remove", "convert",
+        "pattern", "guard", "against", "handling", "missing",
+        "tracking", "stores", "simple", "produces", "negative",
+        "constraint", "relationship", "dedicated", "worker", "general",
+        "confirmation", "block", "split", "option", "release", "cycle",
+        "currently", "causes", "causing", "records", "operations",
+        "existing", "format", "parallel", "running", "process",
+        "changes", "service", "based", "access", "system", "systems",
+        "query", "queries", "level", "filter", "struct", "warning",
+    })
 
     def _regions_from_symbol_ids(self, symbol_ids: list[int], db, description: str) -> list[dict]:
         """Resolve a list of symbol IDs to code_region dicts."""
@@ -179,6 +204,10 @@ class RealCodeLocatorAdapter:
                     "purpose": description,
                 })
         return regions
+
+    def _type_priority(self, sid: int, db) -> int:
+        row = db.lookup_by_id(sid)
+        return self._SYMBOL_TYPE_PRIORITY.get(row["type"], 3) if row else 3
 
     def _ground_single(
         self,
@@ -202,12 +231,40 @@ class RealCodeLocatorAdapter:
         if hits is None:
             hits = []
 
+        # Track 1: Identifier-like tokens (compound and camelCase names)
         compounds = [c for c in self._COMPOUND_RE.findall(description) if len(c) >= 4]
-        word_tokens = [
+        identifiers = [c for c in self._IDENTIFIER_RE.findall(description) if len(c) >= 6]
+        identifier_tokens = list(dict.fromkeys(compounds + identifiers))
+
+        # Track 2: Domain words — single words that are plausible symbol names.
+        # Filters out generic stop words AND programming keywords that cause
+        # false matches (e.g. "void" → Void, "return" → Return).
+        # Short capitalized words (3 chars, e.g. "App", "JWT") are included
+        # as they often name classes/types.
+        domain_words = [
             w for w in re.findall(r"[a-zA-Z]{4,}", description)
             if w.lower() not in self._STOP_WORDS
+            and w.lower() not in self._KEYWORD_WORDS
+            and not self._IDENTIFIER_RE.fullmatch(w)
+            and not self._COMPOUND_RE.fullmatch(w)
         ]
-        tokens = compounds + word_tokens
+
+        # Track 3: Case-form bigrams from adjacent NL words
+        nl_words = [
+            w for w in re.findall(r"[a-zA-Z]{3,}", description)
+            if w.lower() not in self._STOP_WORDS
+            and w.lower() not in self._KEYWORD_WORDS
+            and not self._IDENTIFIER_RE.fullmatch(w)
+            and not self._COMPOUND_RE.fullmatch(w)
+        ]
+        case_forms: list[str] = []
+        for i in range(len(nl_words) - 1):
+            pascal = nl_words[i].capitalize() + nl_words[i + 1].capitalize()
+            snake = nl_words[i].lower() + "_" + nl_words[i + 1].lower()
+            if len(pascal) >= 8:
+                case_forms.extend([pascal, snake])
+
+        tokens = list(dict.fromkeys(identifier_tokens + domain_words + case_forms))
 
         # Pre-compute fuzzy-validated symbol IDs once. These serve two
         # purposes below:
@@ -291,7 +348,11 @@ class RealCodeLocatorAdapter:
                         relevant_ids = matched_ids & file_symbol_ids
                         ranked = sorted(
                             file_symbols,
-                            key=lambda r: (r["id"] not in relevant_ids, -matched_scores.get(r["id"], 0)),
+                            key=lambda r: (
+                                r["id"] not in relevant_ids,
+                                -matched_scores.get(r["id"], 0),
+                                self._SYMBOL_TYPE_PRIORITY.get(r["type"], 3),
+                            ),
                         )
                         for row in ranked[:per_file_budget]:
                             code_regions.append({

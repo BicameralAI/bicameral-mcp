@@ -20,7 +20,7 @@ class CodeLocatorConfig:
     bm25_backend: str = "bm25s"  # "bm25s" for MVP, "zoekt" post-MVP
 
     # RRF
-    rrf_k: int = 60
+    rrf_k: int = 40
     max_retrieval_results: int = 20
     channel_weights: dict[str, float] = field(
         default_factory=lambda: {"bm25": 1.0, "graph": 1.2, "vector": 0.6}
