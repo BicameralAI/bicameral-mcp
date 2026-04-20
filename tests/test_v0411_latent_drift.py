@@ -310,14 +310,28 @@ def test_link_commit_response_contract_has_new_fields():
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_distinct_intents_when_one_decision_has_multiple_drifted_regions(
+async def test_multi_region_edits_emit_pending_checks_per_region(
     _isolated_ledger,
 ):
-    """A decision with multiple regions, all flipping to drifted in the
-    same sweep, should report decisions_drifted=1 (not N).
+    """v3 baseline: one intent mapped to N regions → N pending checks on
+    a multi-region edit; ``decisions_drifted`` stays 0 until the caller
+    LLM resolves them.
 
-    Set up: ingest one decision that maps to TWO regions in the same
-    file. Edit BOTH regions. Run link_commit. Counter should show 1.
+    Pre-v3 this test asserted ``decisions_drifted == 1`` on the v0.4.11
+    dedup-by-intent_id invariant: an intent flipping on N regions in the
+    same sweep should be counted once. That invariant still holds under
+    v3 in spirit, but the semantics flipped — hash-only changes project
+    to PENDING, not DRIFTED, because REFLECTED/DRIFTED both require a
+    verdict (plan 2026-04-20). A full verification of the dedup invariant
+    now requires seeding compliance_check rows with differing verdicts;
+    that will move into a resolve_compliance-level test once Phase 3
+    lands.
+
+    The v3-visible claim this test makes is more specific: the
+    pending_compliance_checks batch includes one entry PER (intent,
+    region) pair. The caller LLM needs to see each region's code_body
+    independently so it can issue per-region verdicts — the intent
+    aggregates as compliant only if every linked region is compliant.
     """
     repo_root = _isolated_ledger
     ledger = get_ledger()
@@ -391,8 +405,31 @@ async def test_distinct_intents_when_one_decision_has_multiple_drifted_regions(
     ctx2 = _ctx()
     r2 = await handle_link_commit(ctx2, "HEAD")
 
-    assert r2.decisions_drifted == 1, (
-        f"One intent maps to two drifted regions; counter must show 1 "
-        f"distinct decision flipped, got {r2.decisions_drifted}. "
-        f"This is the v0.4.11 dedup-by-intent_id fix."
+    assert r2.decisions_drifted == 0, (
+        f"v3: hash-change alone cannot declare DRIFTED — requires a "
+        f"non-compliant verdict. Got decisions_drifted={r2.decisions_drifted}."
     )
+    assert r2.decisions_reflected == 0
+
+    # Both regions should produce pending checks — one per (intent, region).
+    assert len(r2.pending_compliance_checks) == 2, (
+        f"Expected 2 pending checks (one per region), got "
+        f"{len(r2.pending_compliance_checks)}: {r2.pending_compliance_checks!r}"
+    )
+
+    # Same intent across both checks (proves the shared-intent case).
+    intent_ids = {p.intent_id for p in r2.pending_compliance_checks}
+    assert len(intent_ids) == 1, (
+        f"Multi-region test: pending checks should share one intent_id, "
+        f"got {intent_ids}"
+    )
+
+    # Distinct region_ids — the caller needs independent verdicts per region.
+    region_ids = {p.region_id for p in r2.pending_compliance_checks}
+    assert len(region_ids) == 2, (
+        f"Expected 2 distinct region_ids in the batch, got {region_ids}"
+    )
+
+    # Phase is drift (hash-mismatch triggered re-emission).
+    phases = {p.phase for p in r2.pending_compliance_checks}
+    assert phases == {"drift"}, f"Expected drift-phase checks, got {phases}"

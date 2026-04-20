@@ -9,9 +9,42 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from .client import LedgerClient
+from .client import LedgerClient, LedgerError
 
 logger = logging.getLogger(__name__)
+
+
+# ── Idempotent edge creation ──────────────────────────────────────────────
+#
+# The edge tables (maps_to, implements, yields) each have a UNIQUE(in, out)
+# index so the same logical relationship can never be created twice. Per
+# schema.py: "The UNIQUE index pushes idempotency into the DB layer so
+# application code doesn't have to remember to check."
+#
+# Team-mode event replay (events/materializer.py) re-calls ingest_payload
+# for every prior event on every connect, which re-issues every RELATE.
+# The expectation is: duplicates are rejected by the DB, and that rejection
+# is treated as a no-op success.
+#
+# Prior to v3: LedgerClient.execute() silently discarded the error string,
+# so this worked by accident. Now that execute() raises LedgerError, the
+# idempotency contract has to be explicit. This helper is where it lives.
+async def _execute_idempotent_edge(
+    client: LedgerClient, sql: str, vars: dict | None = None
+) -> None:
+    """Run a RELATE statement that may hit a UNIQUE(in, out) violation.
+
+    A "Database index ... already contains" error is treated as success —
+    the edge already exists, which is the intended end state. Any other
+    LedgerError re-raises.
+    """
+    try:
+        await client.execute(sql, vars)
+    except LedgerError as exc:
+        if "already contains" not in str(exc):
+            raise
+        # Duplicate edge — already at desired end state, no-op.
+
 
 # ── Sync state ────────────────────────────────────────────────────────────
 
@@ -623,6 +656,31 @@ async def upsert_code_region(
     return str(rows[0].get("id", "")) if rows else ""
 
 
+async def get_compliance_verdict(
+    client: LedgerClient,
+    intent_id: str,
+    region_id: str,
+    content_hash: str,
+) -> dict | None:
+    """Return the cached LLM verdict for this exact code shape, or None.
+
+    The cache key is ``(intent_id, region_id, content_hash)``. When a
+    verdict exists, ``derive_status`` can project REFLECTED or DRIFTED
+    without a new LLM call. When it doesn't, the drift sweep emits a
+    pending_compliance_check for the caller LLM to resolve.
+
+    Plan: 2026-04-20-ingest-time-verification.md (Phase 2).
+    """
+    rows = await client.query(
+        "SELECT compliant, confidence, explanation, phase, checked_at "
+        "FROM compliance_check "
+        "WHERE intent_id = $i AND region_id = $r AND content_hash = $h "
+        "LIMIT 1",
+        {"i": intent_id, "r": region_id, "h": content_hash},
+    )
+    return rows[0] if rows else None
+
+
 async def relate_maps_to(
     client: LedgerClient,
     intent_id: str,
@@ -630,9 +688,10 @@ async def relate_maps_to(
     confidence: float = 0.8,
     provenance: dict | None = None,
 ) -> None:
-    """Create intent → maps_to → symbol edge (idempotent via DELETE + CREATE)."""
+    """Create intent → maps_to → symbol edge. Idempotent via UNIQUE(in, out)."""
     prov = provenance or {}
-    await client.execute(
+    await _execute_idempotent_edge(
+        client,
         f"RELATE {intent_id}->maps_to->{symbol_id} SET confidence=$c, provenance=$p, created_at=time::now()",
         {"c": confidence, "p": prov},
     )
@@ -644,8 +703,9 @@ async def relate_implements(
     region_id: str,
     confidence: float = 0.8,
 ) -> None:
-    """Create symbol → implements → code_region edge."""
-    await client.execute(
+    """Create symbol → implements → code_region edge. Idempotent via UNIQUE(in, out)."""
+    await _execute_idempotent_edge(
+        client,
         f"RELATE {symbol_id}->implements->{region_id} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
@@ -697,8 +757,9 @@ async def relate_yields(
     span_id: str,
     intent_id: str,
 ) -> None:
-    """Create source_span → yields → intent edge (extraction provenance)."""
-    await client.execute(
+    """Create source_span → yields → intent edge. Idempotent via UNIQUE(in, out)."""
+    await _execute_idempotent_edge(
+        client,
         f"RELATE {span_id}->yields->{intent_id} SET created_at=time::now()",
     )
 

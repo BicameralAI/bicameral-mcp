@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from .client import LedgerClient
+from .client import LedgerClient, LedgerError
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 #   - Constraint changes
 #   - Table removals
 #   - Anything that would break existing data
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Analyzers
 _ANALYZERS = [
@@ -123,6 +123,32 @@ _TABLES = [
     "DEFINE FIELD status          ON source_cursor TYPE string DEFAULT 'ok'",
     "DEFINE FIELD error           ON source_cursor TYPE string DEFAULT ''",
     "DEFINE INDEX idx_source_cursor ON source_cursor FIELDS repo, source_type, source_scope UNIQUE",
+
+    # compliance_check — LLM verification cache (plan: 2026-04-20-ingest-time-verification).
+    # Every caller-session LLM judgment lands here: ingest-time grounding,
+    # drift detection, re-grounding, supersession, divergence. Cache key is
+    # (intent_id, region_id, content_hash) — the hash of the code the LLM
+    # actually evaluated. Query path: look up this exact tuple; hit → reuse
+    # verdict, miss → next drift sweep emits a pending_compliance_check.
+    "DEFINE TABLE compliance_check SCHEMAFULL",
+    "DEFINE FIELD intent_id    ON compliance_check TYPE string",
+    "DEFINE FIELD region_id    ON compliance_check TYPE string",
+    "DEFINE FIELD content_hash ON compliance_check TYPE string",
+    "DEFINE FIELD commit_hash  ON compliance_check TYPE string DEFAULT ''",
+    "DEFINE FIELD compliant    ON compliance_check TYPE bool",
+    "DEFINE FIELD confidence   ON compliance_check TYPE string "
+    "ASSERT $value IN ['high', 'medium', 'low']",
+    "DEFINE FIELD explanation  ON compliance_check TYPE string DEFAULT ''",
+    "DEFINE FIELD phase        ON compliance_check TYPE string "
+    "ASSERT $value IN ['ingest', 'drift', 'regrounding', 'supersession', 'divergence'] "
+    "DEFAULT 'drift'",
+    "DEFINE FIELD checked_at   ON compliance_check TYPE datetime DEFAULT time::now()",
+    # Cache key: exactly one verdict per (intent, region, content_hash).
+    # Replaying the same batch is a no-op — foundational for idempotent resolve_compliance.
+    "DEFINE INDEX idx_cc_cache_key ON compliance_check FIELDS intent_id, region_id, content_hash UNIQUE",
+    "DEFINE INDEX idx_cc_intent    ON compliance_check FIELDS intent_id",
+    "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
+    "DEFINE INDEX idx_cc_commit    ON compliance_check FIELDS commit_hash",
 ]
 
 # Edge tables
@@ -200,19 +226,41 @@ async def _migrate_v1_to_v2(client: LedgerClient) -> None:
     """v1 → v2: vocab_cache.symbols needs FLEXIBLE TYPE array for nested objects.
 
     Re-define the field so existing DBs can store code_region-shaped dicts.
-    init_schema() already includes the new DEFINE, but existing DBs may have
-    the old strict TYPE array which strips nested objects.
+    init_schema() already includes the new DEFINE, so on fresh DBs this
+    redefinition is redundant and SurrealDB v2 rejects it with "already
+    exists." That rejection used to be silently discarded; now the client
+    raises, so we swallow the specific "already exists" case here and
+    re-raise anything else.
     """
-    await client.execute(
-        "DEFINE FIELD symbols ON vocab_cache FLEXIBLE TYPE array DEFAULT []",
-    )
+    try:
+        await client.execute(
+            "DEFINE FIELD symbols ON vocab_cache FLEXIBLE TYPE array DEFAULT []",
+        )
+    except LedgerError as exc:
+        if "already exists" not in str(exc):
+            raise
+        logger.debug("[migration] v1 → v2: vocab_cache.symbols already FLEXIBLE — skipping")
     logger.info("[migration] v1 → v2: vocab_cache.symbols → FLEXIBLE TYPE array")
+
+
+async def _migrate_v2_to_v3(client: LedgerClient) -> None:
+    """v2 → v3: compliance_check table — LLM verification cache.
+
+    Non-breaking: init_schema() already created the new table via DEFINE
+    before migrate() runs. This migration just stamps the version so the
+    schema_meta row reflects current code.
+
+    Part of the unified compliance verification rollout
+    (thoughts/shared/plans/2026-04-20-ingest-time-verification.md).
+    """
+    logger.info("[migration] v2 → v3: compliance_check table (non-breaking)")
 
 
 # Registry: version → migration function that brings DB from version-1 to version
 _MIGRATIONS: dict[int, ...] = {
     1: _migrate_v0_to_v1,
     2: _migrate_v1_to_v2,
+    3: _migrate_v2_to_v3,
 }
 
 

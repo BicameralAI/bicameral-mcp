@@ -86,6 +86,33 @@ class DecisionMatch(BaseModel):
     meeting_date: str = ""
 
 
+class PendingComplianceCheck(BaseModel):
+    """One verification job batched for the caller LLM to resolve.
+
+    The drift sweep emits a PendingComplianceCheck for every (intent, region,
+    content_hash) tuple that has no cached verdict. The caller LLM reads
+    ``intent_description`` + ``code_body`` (optionally ``old_code_body`` for
+    drift-phase comparisons), decides whether the code implements the intent,
+    and writes the verdict back via ``bicameral.resolve_compliance``.
+
+    The ``content_hash`` is echoed back by the caller so the compliance_check
+    row lands keyed on the code shape that was actually evaluated. Once the
+    row exists, subsequent drift sweeps on the same code shape are cache
+    hits — zero LLM calls until the code changes.
+
+    Plan: 2026-04-20-ingest-time-verification.md (Phase 2).
+    """
+    phase: Literal["ingest", "drift", "regrounding"]
+    intent_id: str
+    region_id: str
+    intent_description: str
+    file_path: str
+    symbol: str
+    content_hash: str                   # key the verdict must be written against
+    code_body: str = ""                 # extracted via tree-sitter, capped
+    old_code_body: str | None = None    # drift-phase only: the prior shape for diff context
+
+
 class LinkCommitResponse(BaseModel):
     """Returned by /link_commit and embedded in /search_decisions + /detect_drift.
 
@@ -101,6 +128,15 @@ class LinkCommitResponse(BaseModel):
         means the range exceeded ``MAX_SWEEP_FILES`` (200) so we capped it
         and only swept the first chunk; the remainder will catch up on
         next sync.
+
+    v3 schema (plan 2026-04-20):
+      - ``pending_compliance_checks`` carries every (intent, region,
+        content_hash) tuple the sweep found with no cached verdict. The
+        caller LLM resolves them via ``bicameral.resolve_compliance`` in
+        one batch round-trip. Empty on fully-cached sweeps.
+      - ``verification_instruction`` is the natural-language directive
+        the skill layer echoes to the caller so it knows what to do with
+        the batch.
     """
     commit_hash: str
     synced: bool                      # False = new work done; True = fast-path
@@ -116,6 +152,9 @@ class LinkCommitResponse(BaseModel):
         "range_truncated", # range exceeded MAX_SWEEP_FILES; capped
     ] = "head_only"
     range_size: int = 0              # number of files swept in this run
+    # v3 schema: caller-LLM verification batch.
+    pending_compliance_checks: list[PendingComplianceCheck] = []
+    verification_instruction: str = ""
 
 
 class ActionHint(BaseModel):
@@ -393,6 +432,12 @@ class IngestResponse(BaseModel):
     # bicameral.brief calls never carry a judgment_payload — only the
     # ingest chain path attaches it. None when the chain skips or fails.
     judgment_payload: "GapJudgmentPayload | None" = None
+    # v3 schema (plan 2026-04-20): the full LinkCommitResponse from the
+    # post-ingest auto-chain, including ``pending_compliance_checks`` the
+    # caller LLM should resolve. None when the auto-chain failed (logged,
+    # not raised). Consumers read sync_status.pending_compliance_checks to
+    # get the batch — same shape as search / detect_drift / doctor.
+    sync_status: LinkCommitResponse | None = None
 
 
 # ── Tool 6: /bicameral_brief — pre-meeting one-pager ────────────────

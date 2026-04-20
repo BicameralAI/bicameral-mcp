@@ -3,6 +3,72 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.20 — 2026-04-20 — unified compliance verification (cache-aware status, pending checks)
+
+The grounding pipeline used to silently promote BM25 candidates to
+REFLECTED whenever the content hash matched. That confused retrieval
+with verification — a high-keyword-overlap match against divergent
+code looked indistinguishable from a verified one, and `doctor` was
+unable to call out the difference.
+
+This release introduces the foundation of the unified compliance
+verification plan
+([thoughts/shared/plans/2026-04-20-ingest-time-verification.md](thoughts/shared/plans/2026-04-20-ingest-time-verification.md)).
+REFLECTED is now earned by a caller-LLM verdict cached in the new
+`compliance_check` table, keyed on `(intent_id, region_id, content_hash)`.
+The drift sweep emits a batched `pending_compliance_checks` payload for
+every unverified shape; the caller LLM evaluates and (in 0.4.21+) writes
+back via `bicameral.resolve_compliance`.
+
+### Behavior change — visible to existing users
+
+After upgrading, decisions that previously projected as REFLECTED
+(via hash-only inference) now project as PENDING. There is no data
+loss — every `maps_to` edge stays — but status reflects honest state:
+"grounded but not verified." Once `bicameral.resolve_compliance` ships
+in 0.4.21, the caller LLM resolves the pending batch and verified
+decisions return to REFLECTED. Until then, expect a one-time
+"everything is pending" baseline. This is the intended migration.
+
+### Added — `compliance_check` cache
+
+- New table `compliance_check` (schema v3) with UNIQUE
+  `(intent_id, region_id, content_hash)` cache key. Reads project
+  status from this cache without LLM calls. Phase enum reserves
+  `ingest`, `drift`, `regrounding`, `supersession`, `divergence`
+  upfront so future flows don't need a schema migration.
+- `ledger.queries.get_compliance_verdict()` — the cache lookup.
+- `ledger.status.derive_status(stored_hash, actual_hash, cached_verdict)`
+  — extended signature; verdict-aware projection.
+- `LinkCommitResponse.pending_compliance_checks` — batched verification
+  jobs from the drift sweep, propagated through every consumer of the
+  auto-chain (search, doctor, scan_branch, ingest).
+- `IngestResponse.sync_status` — the post-ingest LinkCommitResponse,
+  including pending_compliance_checks.
+
+### Added — honest ledger client
+
+- `ledger.client.LedgerError` — raised by `LedgerClient.execute()`
+  and `.query()` when SurrealDB returns an error string. Replaces
+  the silent-discard behavior that previously masked UNIQUE
+  violations, ASSERT failures, and malformed queries.
+- `ledger.queries._execute_idempotent_edge` — explicit helper that
+  catches "already contains" UNIQUE-violation errors as success for
+  edge-creation paths (`relate_maps_to`, `relate_implements`,
+  `relate_yields`). Idempotency for team-mode event replay is now
+  visible at the call site instead of hidden in the client.
+- `_migrate_v1_to_v2` now tolerates the redundant `DEFINE FIELD`
+  rejection on fresh DBs.
+
+### Fixed
+
+- `adapter.py` line-number update after tree-sitter symbol re-resolution
+  was running `UPDATE $rid SET ...` with `$rid` bound to a string —
+  SurrealDB v2 rejects this. The error was silently discarded under the
+  old client behavior, so symbol renames and line-shifts never actually
+  persisted to the ledger. Switched to inline `UPDATE {region_id} SET ...`
+  matching the existing edge-helper pattern.
+
 ## 0.4.19 — 2026-04-16 — source-span surfacing + business-requirement scope for ingest and gap judge
 
 Three themes this release: (1) the source_span → status surfacing fix

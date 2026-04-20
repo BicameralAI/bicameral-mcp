@@ -8,7 +8,17 @@ from __future__ import annotations
 
 import logging
 
-from contracts import LinkCommitResponse
+from contracts import LinkCommitResponse, PendingComplianceCheck
+
+
+_VERIFICATION_INSTRUCTION = (
+    "Evaluate each pending_compliance_check — decide whether the code_body "
+    "semantically implements the intent_description. Call "
+    "bicameral.resolve_compliance with phase=<group phase> and a batch of "
+    "verdicts: [{intent_id, region_id, content_hash, compliant, confidence, "
+    "explanation}]. Group by phase if the batch mixes phases. One tool call "
+    "resolves the whole batch."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,6 +233,9 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
 
     await _reground_ungrounded(ctx)
 
+    pending_raw = result.get("pending_compliance_checks", []) or []
+    pending = [PendingComplianceCheck(**p) for p in pending_raw]
+
     response = LinkCommitResponse(
         commit_hash=result["commit_hash"],
         synced=result["synced"],
@@ -233,6 +246,8 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         undocumented_symbols=result.get("undocumented_symbols", []),
         sweep_scope=result.get("sweep_scope", "head_only"),
         range_size=result.get("range_size", 0),
+        pending_compliance_checks=pending,
+        verification_instruction=_VERIFICATION_INSTRUCTION if pending else "",
     )
     _store_sync_cache(ctx, commit_hash, response)
     return response

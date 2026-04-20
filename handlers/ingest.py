@@ -394,9 +394,12 @@ async def handle_ingest(
 
     result = await ledger.ingest_payload(payload, ctx=ctx)
 
-    # Sync ledger to HEAD and re-ground any previously ungrounded intents
+    # Sync ledger to HEAD and re-ground any previously ungrounded intents.
+    # The LinkCommitResponse carries ``pending_compliance_checks`` from the
+    # drift sweep — the caller LLM resolves them via bicameral.resolve_compliance.
+    sync_status = None
     try:
-        await handle_link_commit(ctx, "HEAD")
+        sync_status = await handle_link_commit(ctx, "HEAD")
     except Exception as exc:
         logger.warning("[ingest] post-ingest link_commit failed: %s", exc)
 
@@ -493,4 +496,5 @@ async def handle_ingest(
         source_cursor=cursor_summary,
         brief=brief_response,
         judgment_payload=judgment_payload,
+        sync_status=sync_status,
     )

@@ -18,6 +18,7 @@ from pathlib import Path
 from .client import LedgerClient
 from .queries import (
     get_all_decisions,
+    get_compliance_verdict,
     get_decisions_for_file,
     get_regions_for_files,
     get_regions_without_hash,
@@ -45,8 +46,38 @@ from .status import (
     derive_status,
     get_changed_files,
     get_changed_files_in_range,
+    get_git_content,
     resolve_head,
 )
+
+
+_CODE_BODY_LINE_CAP = 200
+
+
+def _extract_code_body(
+    file_path: str,
+    start_line: int,
+    end_line: int,
+    repo_path: str,
+    ref: str,
+) -> str:
+    """Return the symbol's source lines at ``ref``, capped at 200 lines.
+
+    Used to build ``PendingComplianceCheck.code_body`` so the caller LLM
+    has the actual code to evaluate the intent against. Truncation marker
+    is inline so the LLM knows it didn't get the full body.
+    """
+    content = get_git_content(file_path, start_line, end_line, repo_path, ref=ref)
+    if content is None:
+        return ""
+    lines = content.splitlines()
+    s = max(0, start_line - 1)
+    e = min(len(lines), end_line)
+    body = lines[s:e]
+    if len(body) > _CODE_BODY_LINE_CAP:
+        truncated = len(body) - _CODE_BODY_LINE_CAP
+        body = body[:_CODE_BODY_LINE_CAP] + [f"... ({truncated} more lines truncated)"]
+    return "\n".join(body)
 
 
 # v0.4.11: cap for range sweep. If the diff between last_synced and HEAD
@@ -321,6 +352,10 @@ class SurrealDBLedgerAdapter:
         flipped_to_reflected: set[str] = set()
         flipped_to_drifted: set[str] = set()
         undocumented_symbols: list[str] = []
+        # v3 schema (plan 2026-04-20): per-sweep batch of verification jobs
+        # for the caller LLM. One entry per (intent, region, content_hash)
+        # tuple with no cached verdict. Handed up to LinkCommitResponse.
+        pending_checks: list[dict] = []
 
         for region in regions:
             region_id = region.get("region_id", "")
@@ -339,7 +374,10 @@ class SurrealDBLedgerAdapter:
             ]
             source_context = " | ".join(intent_descriptions)
 
-            # Delegate drift analysis to the port implementation
+            # Delegate hash computation to the port implementation. The
+            # ``status`` field on the result is advisory only under v3 —
+            # final status is re-derived below with compliance_check cache
+            # awareness. Only ``content_hash`` is load-bearing here.
             drift_result = await drift_analyzer.analyze_region(
                 file_path=file_path,
                 symbol_name=symbol_name,
@@ -351,8 +389,7 @@ class SurrealDBLedgerAdapter:
                 source_context=source_context,
             )
 
-            new_status = drift_result.status
-            new_hash = drift_result.content_hash
+            actual_hash = drift_result.content_hash
 
             # Pollution guard: only persist baseline writes when the
             # caller's ref matches the authoritative ref. Non-authoritative
@@ -360,17 +397,36 @@ class SurrealDBLedgerAdapter:
             # but do NOT touch stored hashes or intent statuses.
             if is_authoritative:
                 # Update the region's content_hash + pinned_commit
-                await update_region_hash(self._client, region_id, new_hash, commit_hash)
+                await update_region_hash(self._client, region_id, actual_hash, commit_hash)
                 # If the analyzer resolved new line numbers (via symbol resolution),
                 # detect and update them by re-resolving here for the ledger update.
                 from .status import resolve_symbol_lines
                 resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
                 if resolved and (resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line")):
+                    # Inline the record id — SurrealDB v2 can't bind a RecordID
+                    # through a string parameter. Previously ``UPDATE $rid SET ...``
+                    # with ``{"rid": "code_region:xyz"}`` returned an error
+                    # string that the silent-swallow client discarded, so
+                    # line-number updates here never actually persisted.
+                    # Matches the ``RELATE {intent_id}->...`` pattern used
+                    # by the edge helpers.
                     await self._client.query(
-                        "UPDATE $rid SET start_line = $sl, end_line = $el",
-                        {"rid": region_id, "sl": resolved[0], "el": resolved[1]},
+                        f"UPDATE {region_id} SET start_line = $sl, end_line = $el",
+                        {"sl": resolved[0], "el": resolved[1]},
                     )
             regions_updated += 1
+
+            # Lazy code-body extraction — only pay the tree-sitter / git show
+            # cost if we actually need to emit a pending check for this region.
+            # Cached across intents linked to the same region.
+            region_code_body: str | None = None
+
+            # v3 schema: phase classifies the emission. A region with no prior
+            # baseline hash is an ingest-phase verification (first time seeing
+            # this code); a region with a different prior hash is a drift-phase
+            # re-verification (code changed and the cache doesn't cover the
+            # new shape yet).
+            phase = "ingest" if not stored_hash else "drift"
 
             # Update all intents mapped to this region (also pollution-guarded)
             for intent in (region.get("intents") or []):
@@ -380,8 +436,24 @@ class SurrealDBLedgerAdapter:
                 if not intent_id:
                     continue
                 old_status = intent.get("status", "ungrounded")
+
+                # v3: look up the compliance_check cache for this exact
+                # (intent, region, current-code-shape) tuple. A hit lets us
+                # project REFLECTED / DRIFTED with no LLM round-trip. A
+                # miss means we need the caller LLM to evaluate.
+                verdict: dict | None = None
+                if actual_hash:
+                    verdict = await get_compliance_verdict(
+                        self._client, intent_id, region_id, actual_hash,
+                    )
+
+                new_status = derive_status(
+                    stored_hash, actual_hash, cached_verdict=verdict,
+                )
+
                 if is_authoritative:
                     await update_intent_status(self._client, intent_id, new_status)
+
                 # v0.4.11: dedupe by intent_id. A decision with multiple
                 # regions all flipping in the same sweep is one flipped
                 # decision, not N. Sets collapse the duplicates.
@@ -389,6 +461,29 @@ class SurrealDBLedgerAdapter:
                     flipped_to_reflected.add(intent_id)
                 elif new_status == "drifted" and old_status != "drifted":
                     flipped_to_drifted.add(intent_id)
+
+                # v3: emit a pending_compliance_check when code exists
+                # but we have no verdict for this shape. Idempotent by
+                # the UNIQUE(intent_id, region_id, content_hash) index on
+                # compliance_check — the caller's resolve_compliance
+                # write is keyed on the same tuple, so repeat sweeps
+                # before resolve don't produce duplicate cache rows.
+                if actual_hash and verdict is None:
+                    if region_code_body is None:
+                        region_code_body = _extract_code_body(
+                            file_path, start_line, end_line,
+                            repo_path, ref=commit_hash,
+                        )
+                    pending_checks.append({
+                        "phase": phase,
+                        "intent_id": intent_id,
+                        "region_id": region_id,
+                        "intent_description": str(intent.get("description", "")),
+                        "file_path": file_path,
+                        "symbol": symbol_name,
+                        "content_hash": actual_hash,
+                        "code_body": region_code_body,
+                    })
 
             # Flag as undocumented if no intents mapped
             intents = [i for i in (region.get("intents") or []) if i is not None]
@@ -411,6 +506,7 @@ class SurrealDBLedgerAdapter:
             "undocumented_symbols": list(set(undocumented_symbols)),
             "sweep_scope": sweep_scope,
             "range_size": range_size,
+            "pending_compliance_checks": pending_checks,
         }
 
     async def backfill_empty_hashes(

@@ -173,22 +173,34 @@ def compute_content_hash(
 def derive_status(
     stored_hash: str,
     actual_hash: str | None,
+    cached_verdict: dict | None = None,
 ) -> str:
-    """Derive intent status from hash comparison.
+    """Derive intent status from hash state + optional LLM compliance verdict.
 
-    - actual_hash is None → symbol absent at this ref → 'pending'
-    - stored_hash is empty → never been indexed → 'ungrounded'
-    - actual_hash == stored_hash → code unchanged → 'reflected' (or last set status)
-    - actual_hash != stored_hash → code changed since baseline → 'drifted'
+    Cache-aware semantics (post-v3 schema; plan: 2026-04-20-ingest-time-verification):
 
-    Note: 'reflected' vs 'drifted' from hash alone is best-effort.
-    Phase 3 will add an LLM drift judge for semantic comparison.
+    - ``stored_hash`` empty            → ``ungrounded`` (never indexed)
+    - ``actual_hash`` is ``None``      → ``pending`` (symbol absent at ref)
+    - ``cached_verdict`` is ``None``   → ``pending`` (code exists, no verified
+                                         judgment for this content shape)
+    - ``cached_verdict['compliant']``  → ``reflected``
+    - otherwise                        → ``drifted`` (verdict says code does
+                                         not implement the decision)
+
+    Callers that haven't been refactored to look up the ``compliance_check``
+    cache pass ``cached_verdict=None`` and see ``pending`` where they
+    previously saw ``reflected`` / ``drifted``. That is intentional: under
+    the new plan, REFLECTED status MUST be earned by a caller-LLM verdict.
+    ``adapter.ingest_commit`` (the drift-sweep site) looks up the cache
+    via ``get_compliance_verdict(...)`` and passes the result here.
     """
     if not stored_hash:
         return "ungrounded"
     if actual_hash is None:
         return "pending"
-    if actual_hash == stored_hash:
+    if cached_verdict is None:
+        return "pending"
+    if cached_verdict.get("compliant"):
         return "reflected"
     return "drifted"
 

@@ -143,9 +143,20 @@ def _ctx() -> BicameralContext:
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_ingest_of_existing_symbol_is_reflected_immediately(_isolated_ledger):
-    """A region grounded against code that exists at HEAD must be born
-    reflected — not stuck at pending because no baseline hash was stamped.
+async def test_ingest_of_existing_symbol_is_pending_until_verified(_isolated_ledger):
+    """v3 baseline: grounded-but-unverified regions project as PENDING.
+
+    Pre-v3 this test asserted REFLECTED immediately after ingest — the
+    "born reflected" shortcut where a hash match was treated as proof that
+    the code implemented the decision. The unified-compliance plan
+    (2026-04-20-ingest-time-verification.md) explicitly breaks that
+    shortcut: REFLECTED requires a compliance_check row from a caller-LLM
+    verdict. Ingest alone gets you the baseline hash and a region link —
+    it does NOT constitute verification.
+
+    The drift-sweep auto-chain on ingest will emit a pending_compliance_check
+    for this intent; the caller LLM is expected to resolve it. Until then,
+    PENDING is the honest status.
     """
     repo_root = _isolated_ledger
     ledger = get_ledger()
@@ -166,21 +177,32 @@ async def test_ingest_of_existing_symbol_is_reflected_immediately(_isolated_ledg
 
     ctx = _ctx()
     status = await handle_decision_status(ctx, filter="all")
-    assert status.summary.get("reflected", 0) == 1, (
-        f"Expected 1 reflected intent immediately after ingest, "
+    assert status.summary.get("reflected", 0) == 0, (
+        f"v3 must not auto-promote to REFLECTED without a verdict, "
         f"got summary={status.summary!r}"
     )
-    assert status.summary.get("pending", 0) == 0, (
-        f"No intent should be pending when the grounded symbol exists at HEAD, "
+    assert status.summary.get("pending", 0) == 1, (
+        f"Expected 1 pending intent (grounded but unverified), "
         f"got summary={status.summary!r}"
     )
 
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_edit_to_grounded_symbol_flips_to_drifted(_isolated_ledger):
-    """After ingest, a real code edit on the grounded region must flip the
-    decision's status from reflected to drifted on the next link_commit.
+async def test_hash_change_alone_does_not_flip_status_without_verdict(_isolated_ledger):
+    """v3 baseline: a code edit invalidates the cache but cannot declare
+    drift by itself.
+
+    Pre-v3 this test asserted REFLECTED → DRIFTED across an edit, treating
+    hash mismatch as proof of drift. Under v3 that is semantically
+    insufficient — "the bytes changed" does not entail "the decision is
+    no longer satisfied." A cosmetic refactor, rename, or reformat can
+    change the hash while preserving compliance.
+
+    The honest post-edit status is PENDING: the cache has no verdict for
+    the new content_hash, so we need the caller LLM to evaluate before
+    calling it drifted. The drift-sweep emits a pending_compliance_check
+    for the new shape; resolve_compliance flips it to REFLECTED or DRIFTED.
     """
     repo_root = _isolated_ledger
     ledger = get_ledger()
@@ -198,7 +220,10 @@ async def test_edit_to_grounded_symbol_flips_to_drifted(_isolated_ledger):
 
     ctx = _ctx()
     pre = await handle_decision_status(ctx, filter="all")
-    assert pre.summary.get("reflected", 0) == 1
+    assert pre.summary.get("pending", 0) == 1, (
+        f"Pre-edit baseline is PENDING under v3 (grounded, unverified), "
+        f"got summary={pre.summary!r}"
+    )
 
     # Invert the discount threshold — real semantic change, not cosmetic
     _commit_edit(
@@ -214,11 +239,14 @@ async def test_edit_to_grounded_symbol_flips_to_drifted(_isolated_ledger):
 
     await handle_link_commit(ctx, "HEAD")
     post = await handle_decision_status(ctx, filter="all")
-    assert post.summary.get("drifted", 0) == 1, (
-        f"Edit to grounded symbol must flip to drifted, "
+    assert post.summary.get("drifted", 0) == 0, (
+        f"v3 must not declare DRIFTED from a hash change alone — requires "
+        f"a non-compliant verdict. Got summary={post.summary!r}"
+    )
+    assert post.summary.get("pending", 0) == 1, (
+        f"Post-edit cache miss projects PENDING until resolve_compliance runs, "
         f"got summary={post.summary!r}"
     )
-    assert post.summary.get("reflected", 0) == 0
 
 
 @pytest.mark.phase2
@@ -255,11 +283,20 @@ async def test_phantom_range_stays_pending(_isolated_ledger):
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_backfill_heals_legacy_empty_hash_regions(_isolated_ledger):
-    """Simulate a pre-v0.4.5 ledger by clearing content_hash on an ingested
-    region and flipping its status to pending. The next link_commit must
-    run the backfill sweep and flip the decision to reflected without
-    needing the commit to touch the file.
+async def test_backfill_restores_hash_but_stays_pending_without_verdict(_isolated_ledger):
+    """v3 baseline: backfill re-stamps content_hash but does not auto-heal
+    to REFLECTED.
+
+    Pre-v3 this test asserted that backfill self-heals legacy empty-hash
+    regions to REFLECTED. That shortcut is gone under v3: restoring the
+    hash only gives us a cache key; REFLECTED still requires a caller-LLM
+    verdict against that hash. Backfill's job shrinks to "make the region
+    addressable by the compliance cache" — verification is a separate
+    step.
+
+    Post-backfill, the next drift-sweep emits a pending_compliance_check
+    for the newly-hashed region. The caller LLM resolves it via
+    bicameral.resolve_compliance; only then does status flip to REFLECTED.
     """
     repo_root = _isolated_ledger
     ledger = get_ledger()
@@ -290,10 +327,22 @@ async def test_backfill_heals_legacy_empty_hash_regions(_isolated_ledger):
 
     ctx = _ctx()
     # handle_decision_status auto-calls handle_link_commit, which runs the
-    # backfill sweep before the normal drift loop. No code edit, no commit.
+    # backfill sweep before the normal drift loop. Backfill re-stamps
+    # content_hash; cache lookup finds no verdict → stays PENDING.
     status = await handle_decision_status(ctx, filter="all")
-    assert status.summary.get("reflected", 0) == 1, (
-        f"Backfill must self-heal pre-v0.4.5 empty-hash regions, "
+    assert status.summary.get("reflected", 0) == 0, (
+        f"v3 backfill must not auto-heal to REFLECTED without a verdict, "
         f"got summary={status.summary!r}"
     )
-    assert status.summary.get("pending", 0) == 0
+    assert status.summary.get("pending", 0) == 1, (
+        f"Post-backfill region is hashed but unverified → PENDING, "
+        f"got summary={status.summary!r}"
+    )
+
+    # Defensive: confirm backfill actually re-stamped the content_hash
+    # (the cache-key is now populated even though the verdict isn't).
+    post_rows = await client.query("SELECT content_hash FROM code_region")
+    hashes = [r.get("content_hash", "") for r in post_rows]
+    assert any(h for h in hashes), (
+        f"Backfill should have populated content_hash, got {hashes!r}"
+    )
