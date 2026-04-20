@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from .client import LedgerClient
+from .client import LedgerClient, LedgerError
 
 logger = logging.getLogger(__name__)
 
@@ -226,12 +226,20 @@ async def _migrate_v1_to_v2(client: LedgerClient) -> None:
     """v1 → v2: vocab_cache.symbols needs FLEXIBLE TYPE array for nested objects.
 
     Re-define the field so existing DBs can store code_region-shaped dicts.
-    init_schema() already includes the new DEFINE, but existing DBs may have
-    the old strict TYPE array which strips nested objects.
+    init_schema() already includes the new DEFINE, so on fresh DBs this
+    redefinition is redundant and SurrealDB v2 rejects it with "already
+    exists." That rejection used to be silently discarded; now the client
+    raises, so we swallow the specific "already exists" case here and
+    re-raise anything else.
     """
-    await client.execute(
-        "DEFINE FIELD symbols ON vocab_cache FLEXIBLE TYPE array DEFAULT []",
-    )
+    try:
+        await client.execute(
+            "DEFINE FIELD symbols ON vocab_cache FLEXIBLE TYPE array DEFAULT []",
+        )
+    except LedgerError as exc:
+        if "already exists" not in str(exc):
+            raise
+        logger.debug("[migration] v1 → v2: vocab_cache.symbols already FLEXIBLE — skipping")
     logger.info("[migration] v1 → v2: vocab_cache.symbols → FLEXIBLE TYPE array")
 
 

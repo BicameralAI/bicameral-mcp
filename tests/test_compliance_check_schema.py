@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from ledger.client import LedgerClient
+from ledger.client import LedgerClient, LedgerError
 from ledger.schema import SCHEMA_VERSION, init_schema, migrate
 
 
@@ -26,24 +26,6 @@ async def _fresh_client() -> LedgerClient:
     await init_schema(c)
     await migrate(c)
     return c
-
-
-async def _raw_create(c: LedgerClient, sql: str, vars: dict | None = None) -> tuple[bool, str]:
-    """Run a CREATE statement and classify the outcome.
-
-    SurrealDB 2.x embedded returns constraint errors as strings rather than
-    raising — ``LedgerClient.execute()`` discards those silently. This helper
-    goes under the client to the raw SDK so tests can assert on rejection
-    behavior.
-
-    Returns ``(inserted, message)``:
-      - ``(True, "")`` when the row was created
-      - ``(False, error_string)`` when the DB rejected the statement
-    """
-    result = await c._db.query(sql, vars)
-    if isinstance(result, str):
-        return False, result
-    return True, ""
 
 
 # ── Version stamp ────────────────────────────────────────────────────
@@ -76,24 +58,20 @@ async def test_unique_cache_key_rejects_duplicate_tuple():
     """
     c = await _fresh_client()
     try:
-        ok, _ = await _raw_create(
-            c,
+        await c.execute(
             "CREATE compliance_check SET intent_id = $i, region_id = $r, "
             "content_hash = $h, compliant = true, confidence = 'high', "
             "explanation = 'first', phase = 'ingest'",
             {"i": "intent:a", "r": "code_region:x", "h": "hash_abc"},
         )
-        assert ok, "first insert should succeed"
 
-        inserted, msg = await _raw_create(
-            c,
-            "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-            "content_hash = $h, compliant = false, confidence = 'low', "
-            "explanation = 'second', phase = 'drift'",
-            {"i": "intent:a", "r": "code_region:x", "h": "hash_abc"},
-        )
-        assert not inserted, f"duplicate should be rejected, got {msg!r}"
-        assert "idx_cc_cache_key" in msg, f"expected cache-key index in error, got {msg!r}"
+        with pytest.raises(LedgerError, match="idx_cc_cache_key"):
+            await c.execute(
+                "CREATE compliance_check SET intent_id = $i, region_id = $r, "
+                "content_hash = $h, compliant = false, confidence = 'low', "
+                "explanation = 'second', phase = 'drift'",
+                {"i": "intent:a", "r": "code_region:x", "h": "hash_abc"},
+            )
 
         # Defensive: the first row's compliant=true must still be what's stored.
         rows = await c.query("SELECT compliant FROM compliance_check")
@@ -145,15 +123,13 @@ async def test_confidence_enum_rejects_invalid_value():
     """confidence must be 'high' | 'medium' | 'low'."""
     c = await _fresh_client()
     try:
-        inserted, msg = await _raw_create(
-            c,
-            "CREATE compliance_check SET intent_id = 'intent:a', "
-            "region_id = 'code_region:x', content_hash = 'h', "
-            "compliant = true, confidence = 'very_high', "
-            "explanation = '', phase = 'ingest'",
-        )
-        assert not inserted, f"invalid confidence should be rejected, got {msg!r}"
-        assert "confidence" in msg
+        with pytest.raises(LedgerError, match="confidence"):
+            await c.execute(
+                "CREATE compliance_check SET intent_id = 'intent:a', "
+                "region_id = 'code_region:x', content_hash = 'h', "
+                "compliant = true, confidence = 'very_high', "
+                "explanation = '', phase = 'ingest'"
+            )
         # No row should exist.
         rows = await c.query("SELECT id FROM compliance_check")
         assert len(rows) == 0
@@ -167,15 +143,13 @@ async def test_phase_enum_rejects_invalid_value():
     """phase must be one of the five reserved values."""
     c = await _fresh_client()
     try:
-        inserted, msg = await _raw_create(
-            c,
-            "CREATE compliance_check SET intent_id = 'intent:a', "
-            "region_id = 'code_region:x', content_hash = 'h', "
-            "compliant = true, confidence = 'high', "
-            "explanation = '', phase = 'mystery_phase'",
-        )
-        assert not inserted, f"invalid phase should be rejected, got {msg!r}"
-        assert "phase" in msg
+        with pytest.raises(LedgerError, match="phase"):
+            await c.execute(
+                "CREATE compliance_check SET intent_id = 'intent:a', "
+                "region_id = 'code_region:x', content_hash = 'h', "
+                "compliant = true, confidence = 'high', "
+                "explanation = '', phase = 'mystery_phase'"
+            )
         rows = await c.query("SELECT id FROM compliance_check")
         assert len(rows) == 0
     finally:

@@ -15,6 +15,19 @@ from surrealdb import AsyncSurreal, RecordID
 logger = logging.getLogger(__name__)
 
 
+class LedgerError(RuntimeError):
+    """Raised when SurrealDB rejects a statement at the application layer.
+
+    SurrealDB 2.x embedded returns constraint errors (UNIQUE violations,
+    field ASSERT failures, malformed queries) as string results instead
+    of raising at the SDK level. Prior to v3-schema work this client
+    silently discarded those strings, which meant failed writes could
+    masquerade as successes. ``execute()`` and ``query()`` now convert
+    error-string responses into this exception so failures surface at
+    the call site.
+    """
+
+
 def _normalize(value: Any) -> Any:
     """Recursively convert SDK types to plain Python objects."""
     if isinstance(value, RecordID):
@@ -71,17 +84,35 @@ class LedgerClient:
             self._db = None
 
     async def query(self, sql: str, vars: dict | None = None) -> list[dict]:
-        """Run a SurrealQL statement and return a list of normalized dicts."""
+        """Run a SurrealQL statement and return a list of normalized dicts.
+
+        Raises:
+            LedgerError: when SurrealDB rejects the statement (returns an
+                error string instead of rows). Common causes: malformed
+                SurrealQL, permission failures, ASSERT violations on the
+                underlying SELECT.
+        """
         if self._db is None:
             raise RuntimeError("LedgerClient not connected — call await client.connect() first")
         result = await self._db.query(sql, vars)
+        if isinstance(result, str):
+            raise LedgerError(f"SurrealDB rejected query: {result}\nSQL: {sql[:300]}")
         return _normalize(result) if isinstance(result, list) else []
 
     async def execute(self, sql: str, vars: dict | None = None) -> None:
-        """Run a SurrealQL statement, discarding the result (DDL / DML)."""
+        """Run a SurrealQL statement, discarding the result (DDL / DML).
+
+        Raises:
+            LedgerError: when SurrealDB rejects the statement. Catches
+                the class of silent-failure bugs where a UNIQUE violation
+                or ASSERT failure gets returned as an error string and
+                the caller proceeds believing the write succeeded.
+        """
         if self._db is None:
             raise RuntimeError("LedgerClient not connected")
-        await self._db.query(sql, vars)
+        result = await self._db.query(sql, vars)
+        if isinstance(result, str):
+            raise LedgerError(f"SurrealDB rejected statement: {result}\nSQL: {sql[:300]}")
 
     async def execute_many(self, statements: list[str]) -> None:
         """Run multiple DDL/DML statements in sequence (one at a time)."""
