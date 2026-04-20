@@ -1,8 +1,12 @@
-"""EventMaterializer — replays event files into the local ledger DB.
+"""EventMaterializer — replays JSONL event logs into the local ledger (v0.4.20).
 
-On startup in team mode, reads all event files from .bicameral/events/,
-filters to events newer than the watermark, and replays them into the
-SurrealDBLedgerAdapter in chronological order.
+One file per contributor: ``.bicameral/events/{email}.jsonl``. Watermark
+is a JSON ``{email: byte_offset}`` map at ``.bicameral/local/watermark``.
+Replay resumes from the stored offset per author.
+
+Auto-migrates legacy ``{email}/*.json`` layout (v0.4.13 – v0.4.19) on
+first startup, then deletes the old files. DB-level ``canonical_id``
+UNIQUE makes any re-replay safe.
 """
 
 from __future__ import annotations
@@ -15,95 +19,85 @@ logger = logging.getLogger(__name__)
 
 
 class EventMaterializer:
-    """Watermark-based incremental event replay."""
-
     def __init__(self, events_dir: Path, local_dir: Path) -> None:
         self._events_dir = events_dir
         self._watermark_path = local_dir / "watermark"
         local_dir.mkdir(parents=True, exist_ok=True)
 
-    def _read_watermark(self) -> str:
-        """Read the last-materialized event timestamp (or empty string)."""
-        if self._watermark_path.exists():
-            return self._watermark_path.read_text(encoding="utf-8").strip()
-        return ""
+    def _read_offsets(self) -> dict[str, int]:
+        if not self._watermark_path.exists():
+            return {}
+        raw = self._watermark_path.read_text(encoding="utf-8").strip()
+        try:
+            data = json.loads(raw) if raw else {}
+            return {k: int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        except (json.JSONDecodeError, ValueError, TypeError):
+            # Legacy timestamp-string watermark (≤v0.4.19) — discard; DB dedup covers re-replay.
+            return {}
 
-    def _write_watermark(self, timestamp: str) -> None:
-        """Persist the watermark."""
-        self._watermark_path.write_text(timestamp + "\n", encoding="utf-8")
-
-    @staticmethod
-    def _extract_timestamp(filename: str) -> str:
-        """Extract the ISO timestamp prefix from an event filename.
-
-        Filenames look like: 20260410T180000Z-a1b2c3d4.json
-        Returns the timestamp portion: 20260410T180000Z
-        """
-        stem = filename.rsplit(".", 1)[0]  # strip .json
-        return stem.rsplit("-", 1)[0]      # strip -uuid
+    def _migrate_legacy(self) -> None:
+        """Consolidate legacy ``{email}/*.json`` → ``{email}.jsonl``, once."""
+        if not self._events_dir.exists():
+            return
+        for d in sorted(self._events_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            legacy = sorted(d.glob("*.json"), key=lambda f: f.name)
+            if not legacy:
+                continue
+            out_path = self._events_dir / f"{d.name}.jsonl"
+            with open(out_path, "ab") as out:
+                for f in legacy:
+                    try:
+                        env = json.loads(f.read_text(encoding="utf-8"))
+                    except (json.JSONDecodeError, OSError):
+                        continue
+                    env.pop("event_id", None)
+                    out.write((json.dumps(env, separators=(",", ":"), default=str) + "\n").encode())
+                    f.unlink()
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+            logger.info("[migrate] %d legacy events → %s.jsonl", len(legacy), d.name)
 
     async def replay_new_events(self, inner_adapter) -> int:
-        """Replay events newer than the watermark into the inner adapter.
-
-        Args:
-            inner_adapter: SurrealDBLedgerAdapter (must already be connected).
-
-        Returns:
-            Number of events replayed.
-        """
         if not self._events_dir.exists():
             return 0
+        self._migrate_legacy()
 
-        watermark = self._read_watermark()
-
-        # Glob all event files across all user directories
-        event_files = sorted(
-            self._events_dir.glob("*/*.json"),
-            key=lambda f: f.name,  # lexicographic = chronological
-        )
-
-        # Filter to new events (>= to handle multiple events in the same second;
-        # upsert idempotency makes re-applying safe)
-        new_events = [
-            f for f in event_files
-            if self._extract_timestamp(f.name) >= watermark
-        ] if watermark else event_files
-
-        if not new_events:
-            return 0
-
-        logger.info(
-            "[materializer] replaying %d new events (watermark: %s)",
-            len(new_events),
-            watermark or "(none)",
-        )
-
+        offsets = self._read_offsets()
+        new_offsets = dict(offsets)
         replayed = 0
-        for event_file in new_events:
-            try:
-                event = json.loads(event_file.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as exc:
-                logger.warning("[materializer] skipping bad event %s: %s", event_file, exc)
+
+        for path in sorted(self._events_dir.glob("*.jsonl")):
+            author = path.stem
+            start = offsets.get(author, 0)
+            size = path.stat().st_size
+            if size < start:  # file shrank (history rewrite) — re-read
+                start = 0
+            if size == start:
                 continue
+            with open(path, "rb") as f:
+                f.seek(start)
+                for raw in f:
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    etype, payload = event.get("event_type", ""), event.get("payload", {})
+                    if etype == "ingest.completed":
+                        await inner_adapter.ingest_payload(payload)
+                        replayed += 1
+                    elif etype == "link_commit.completed":
+                        await inner_adapter.ingest_commit(
+                            payload.get("commit_hash", ""), payload.get("repo_path", ""),
+                        )
+                        replayed += 1
+                new_offsets[author] = f.tell()
 
-            event_type = event.get("event_type", "")
-            payload = event.get("payload", {})
-
-            if event_type == "ingest.completed":
-                await inner_adapter.ingest_payload(payload)
-                replayed += 1
-            elif event_type == "link_commit.completed":
-                await inner_adapter.ingest_commit(
-                    payload.get("commit_hash", ""),
-                    payload.get("repo_path", ""),
-                )
-                replayed += 1
-            else:
-                logger.warning("[materializer] unknown event type: %s", event_type)
-
-        # Update watermark to the latest event timestamp
-        latest_ts = self._extract_timestamp(new_events[-1].name)
-        self._write_watermark(latest_ts)
-
-        logger.info("[materializer] replayed %d events, watermark → %s", replayed, latest_ts)
+        if new_offsets != offsets:
+            self._watermark_path.write_text(json.dumps(new_offsets) + "\n", encoding="utf-8")
+        if replayed:
+            logger.info("[materializer] replayed %d events", replayed)
         return replayed

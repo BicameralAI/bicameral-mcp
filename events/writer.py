@@ -1,30 +1,38 @@
-"""EventFileWriter — atomic JSON event file writer.
+"""EventJsonlWriter — append-only JSONL event log writer (v0.4.20).
 
-Writes immutable event files to .bicameral/events/{author}/.
+Each contributor owns a single file: ``.bicameral/events/{email}.jsonl``.
+Events are appended one per line. Git merges are additive (both sides
+only append), and a single ``write()`` under O_APPEND is atomic for
+lines up to PIPE_BUF (~4 KB on Linux / macOS) — we take an advisory
+flock for anything larger.
 
-v0.4.13: filenames are content-addressable —
-``{timestamp}-{content_hash}.json`` where content_hash is a
-deterministic UUIDv5 derived from the payload via JCS. Two team
-members writing the same logical event produce the same content_hash,
-so git's filesystem-level dedup collapses identical files at the sync
-layer (no merge conflict, no duplicate event to materialize). The
-timestamp prefix is preserved for chronological replay ordering, but
-the dedup happens via the hash suffix.
+Replaces the v0.4.13 one-file-per-event layout (content-addressable
+JSON files under ``{email}/`` subdirectories). Dedup now relies on the
+DB-level ``canonical_id`` UNIQUE index instead of filesystem collisions.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from .models import EventEnvelope
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+class EventEnvelope(BaseModel):
+    """One event line in ``{email}.jsonl``."""
+    schema_version: int = 2
+    event_type: str
+    author: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 def _get_git_email(repo_path: str | Path) -> str:
@@ -32,8 +40,7 @@ def _get_git_email(repo_path: str | Path) -> str:
     try:
         result = subprocess.run(
             ["git", "config", "user.email"],
-            capture_output=True, text=True, timeout=5,
-            cwd=str(repo_path),
+            capture_output=True, text=True, timeout=5, cwd=str(repo_path),
         )
         email = result.stdout.strip()
         if email:
@@ -44,13 +51,13 @@ def _get_git_email(repo_path: str | Path) -> str:
 
 
 class EventFileWriter:
-    """Writes append-only JSON event files to a per-user directory."""
+    """Appends events to ``.bicameral/events/{author}.jsonl``."""
 
     def __init__(self, events_dir: Path, author_email: str) -> None:
         self._events_dir = events_dir
         self._author = author_email
-        self._user_dir = events_dir / author_email
-        self._user_dir.mkdir(parents=True, exist_ok=True)
+        self._path = events_dir / f"{author_email}.jsonl"
+        events_dir.mkdir(parents=True, exist_ok=True)
 
     @property
     def author(self) -> str:
@@ -60,71 +67,21 @@ class EventFileWriter:
     def events_dir(self) -> Path:
         return self._events_dir
 
+    @property
+    def path(self) -> Path:
+        return self._path
+
     def write(self, event_type: str, payload: dict[str, Any]) -> Path:
-        """Write an event file atomically. Returns the path to the written file.
-
-        v0.4.13: filename suffix is a deterministic UUIDv5 hash of the
-        ``(event_type, payload)`` tuple. Two writers producing the same
-        logical event produce the same suffix — so when both event files
-        end up in the same git repo on sync, git sees them as identical
-        files (same path, same content) instead of a merge conflict.
-        Filesystem-level dedup via content addressing.
-
-        The timestamp prefix is still present so lexicographic ordering
-        equals chronological ordering for replay. If two events with the
-        same content arrive in the same second from different writers,
-        their filenames will tie at the timestamp and differ at the
-        author directory — replay handles that fine.
-        """
-        now = datetime.now(timezone.utc)
-        ts = now.strftime("%Y%m%dT%H%M%SZ")
-        content_hash = self._content_hash(event_type, payload)
-
+        """Append one event line. Returns the JSONL file path."""
         envelope = EventEnvelope(
-            event_id=f"{ts}-{content_hash}",
-            event_type=event_type,
-            author=self._author,
-            timestamp=now,
-            payload=payload,
+            event_type=event_type, author=self._author, payload=payload,
         )
-
-        filename = f"{ts}-{content_hash}.json"
-        path = self._user_dir / filename
-
-        # If a content-addressable file already exists at this path
-        # (same writer ingested the same event twice), skip — the
-        # existing file is byte-identical by definition.
-        if path.exists():
-            logger.debug(
-                "[events] dedup: %s/%s already exists, skipping write",
-                self._author, filename,
-            )
-            return path
-
-        # Atomic write: tmp file then rename
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(envelope.model_dump(), indent=2, default=str),
-            encoding="utf-8",
-        )
-        tmp.rename(path)
-
-        logger.info("[events] wrote %s/%s", self._author, filename)
-        return path
-
-    @staticmethod
-    def _content_hash(event_type: str, payload: dict[str, Any]) -> str:
-        """Derive a stable 12-char hash from event content via JCS+UUIDv5.
-
-        v0.4.13: same logical event from any writer produces the same
-        hash. Used as the filename suffix so identical events collide
-        at the filesystem level (free git dedup).
-        """
-        canonical = json.dumps(
-            {"event_type": event_type, "payload": payload},
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-            default=str,
-        )
-        return uuid5(NAMESPACE_URL, canonical).hex[:12]
+        line = json.dumps(envelope.model_dump(), separators=(",", ":"), default=str) + "\n"
+        with open(self._path, "ab") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.write(line.encode("utf-8"))
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        logger.debug("[events] appended %s to %s.jsonl", event_type, self._author)
+        return self._path
