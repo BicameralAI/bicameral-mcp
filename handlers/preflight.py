@@ -201,6 +201,20 @@ async def handle_preflight(
             guided_mode=guided_mode,
         )
 
+    # Lazy HEAD catch-up: if HEAD has advanced since the last link_commit sync
+    # (e.g. a commit was made outside of a bicameral.ingest call), run it now
+    # so the search below reflects the latest committed code.
+    # Swallow all exceptions — preflight must never block on ledger issues.
+    try:
+        from handlers.link_commit import handle_link_commit, _read_current_head_sha
+        live_head = _read_current_head_sha(ctx.repo_path)
+        sync_state = getattr(ctx, "_sync_state", None) or {}
+        if live_head and live_head != sync_state.get("last_sync_sha"):
+            await handle_link_commit(ctx, "HEAD")
+            logger.debug("[preflight] lazy link_commit ran for %s", live_head[:8])
+    except Exception as exc:
+        logger.debug("[preflight] lazy link_commit failed: %s", exc)
+
     sources_chained: list[str] = []
 
     # Step 1 — call search. Cheap, single ledger query.

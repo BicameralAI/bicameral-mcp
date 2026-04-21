@@ -63,25 +63,15 @@ def _normalize_payload(payload: dict) -> dict:
             mapping["feature_group"] = d.feature_group
         mappings.append(mapping)
 
-    for a in validated.action_items:
-        # v0.4.16: accept ``text`` as a synonym for ``action``. Without this
-        # fallback, an action_item following the SKILL.md example literally
-        # (`{text: "...", owner: "..."}`) produces a phantom
-        # ``[Action: <owner>] `` prefix with no body, which then BM25-grounds
-        # against any code symbol containing "Action" in its name. Witnessed
-        # live during the v0.4.16 dogfood ingest of the demo gallery.
-        body = a.action or a.text
-        if not body:
-            continue
-        intent = f"[Action: {a.owner}] {body}"
-        mappings.append({
-            "intent": intent,
-            "span": {**source_meta, "text": intent},
-            "symbols": [],
-            "code_regions": [],
-        })
+    # Action items are task assignments, not product decisions — they belong in a
+    # ticket tracker, not the decision ledger.  We accept them in the payload for
+    # backwards compat but do not write them to the ledger.
 
     for q in validated.open_questions:
+        # Open questions are requirement gaps: a known unknown that is neither
+        # claimed (no source commitment) nor fulfilled (no code). They are stored
+        # with the "[Open Question]" prefix so the history handler can surface
+        # them as "gap" status entries rather than ordinary decisions.
         text = f"[Open Question] {q}"
         mappings.append({
             "intent": text,
@@ -338,6 +328,22 @@ async def handle_ingest(
 
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
+
+    # For agent_session / manual ingests (gap answers, inline resolutions),
+    # backfill the git user email as the speaker when speakers is empty.
+    # Transcript/slack/document spans carry their own speaker lists; only
+    # session-originated spans lack an author and need this backfill.
+    _SESSION_SOURCE_TYPES = {"agent_session", "manual"}
+    _git_email_cache: str | None = None
+    for mapping in payload.get("mappings") or []:
+        span = mapping.get("span") or {}
+        if span.get("source_type") in _SESSION_SOURCE_TYPES and not span.get("speakers"):
+            if _git_email_cache is None:
+                from events.writer import _get_git_email
+                _git_email_cache = _get_git_email(ctx.repo_path)
+            if _git_email_cache and _git_email_cache != "unknown":
+                span["speakers"] = [_git_email_cache]
+
     payload = ctx.code_graph.resolve_symbols(payload)
 
     # Stop-and-ask v1: supersession candidate detection.
@@ -542,7 +548,7 @@ async def handle_ingest(
         source_refs,
     )
 
-    return IngestResponse(
+    ingest_response = IngestResponse(
         ingested=bool(result.get("ingested", False)),
         repo=str(result.get("repo", repo)),
         query=str(payload.get("query", "")),
@@ -566,3 +572,11 @@ async def handle_ingest(
         judgment_payload=judgment_payload,
         sync_status=sync_status,
     )
+
+    try:
+        from dashboard.server import notify_dashboard
+        await notify_dashboard(ctx)
+    except Exception:
+        pass
+
+    return ingest_response

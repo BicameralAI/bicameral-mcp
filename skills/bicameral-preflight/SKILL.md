@@ -1,6 +1,6 @@
 ---
 name: bicameral-preflight
-description: Pre-flight context check BEFORE implementing code. Auto-fires on implementation requests using verbs like "add", "build", "create", "implement", "modify", "refactor", "update", "fix", or any prompt asking Claude to write or change source code. Surfaces prior decisions, drifted regions, divergences, and open questions linked to the feature area BEFORE Claude starts writing. Silent if no relevant context exists. SKIP FOR — read-only questions, debugging without code changes, documentation-only edits, simple typo fixes, dependency updates.
+description: Pre-flight context check BEFORE implementing code. AUTO-FIRES on ANY prompt that involves writing, changing, or touching source code — including: "add", "build", "create", "implement", "modify", "refactor", "update", "fix", "change", "write", "edit", "move", "rename", "remove", "delete", "extract", "convert", "integrate", "deploy", "ship", "configure", "connect", "extend", "migrate", "wire up", "hook up", "set up", "complete", "finish", "continue". Also fires when user asks HOW to implement something (they are about to implement it). Surfaces prior decisions, drifted regions, divergences, and open questions BEFORE Claude writes any code. SKIP ONLY FOR — purely read-only questions with zero code intent, documentation-only typo fixes, dependency version bumps with no semantic change.
 ---
 
 # Bicameral Preflight
@@ -22,8 +22,9 @@ The empty path is silent.
 
 ## When to fire
 
-Auto-fire on prompts that ask Claude to write, modify, or refactor
-code:
+Auto-fire on ANY prompt that involves writing, changing, or touching
+source code. When in doubt, fire — a silent miss is worse than a
+redundant check. Examples:
 
 - *"add a Stripe webhook handler for payment_intent.succeeded"*
 - *"refactor the rate limiting middleware to use sliding window"*
@@ -33,19 +34,28 @@ code:
 - *"create a migration to add the audit_log table"*
 - *"continue what we started yesterday on the email queue"* (use
   conversation context to extract the topic)
+- *"how should I implement the retry logic?"* (asking HOW = about to implement)
+- *"wire up the new endpoint to the frontend"*
+- *"finish the auth middleware work"*
+- *"migrate the payment flow to the new provider"*
+- *"rename the function to snake_case"*
+- *"remove the deprecated API call"*
+- *"set up the webhook integration"*
 
 ## When NOT to fire
 
-The "SKIP FOR" list in the description is load-bearing. Do NOT fire on:
+**Only skip for these narrow cases** — when there is ZERO intent to write code:
 
-- *"how does the rate limiter work?"* (read-only question)
-- *"why is this test failing?"* (debugging, no code change yet)
-- *"fix the typo in the README"* (doc-only edit)
-- *"bump lodash to 4.17.21"* (dependency update, no semantic change)
-- *"what does this function do?"* (explanation, not implementation)
+- *"how does the rate limiter work?"* (purely read-only — but if they say "how should I build it", FIRE)
+- *"fix the typo in the README"* (doc-only, no code change)
+- *"bump lodash to 4.17.21"* (dependency version bump only, no semantic change)
 
-If the user is asking you to SHOW or EXPLAIN, not BUILD or CHANGE,
-preflight does not fire.
+**Do NOT use "why is this test failing?" as a skip trigger** — debugging
+a test often precedes writing a fix. If the user asks to fix it, fire.
+
+If uncertain whether the user will write code, **fire anyway** — the
+handler is gated on actionable signal and will stay silent if nothing
+relevant is found. The cost of a false fire is one silent no-op.
 
 ## Steps
 

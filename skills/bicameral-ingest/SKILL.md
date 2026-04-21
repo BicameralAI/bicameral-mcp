@@ -1,6 +1,6 @@
 ---
 name: bicameral-ingest
-description: Ingest a meeting transcript or PRD into the decision ledger. Use when the user pastes a transcript, shares meeting notes, or wants to track decisions from a document.
+description: Ingest decisions into the decision ledger. AUTO-TRIGGER on ANY of these: (1) user pastes or mentions a transcript, meeting notes, Slack thread, PRD, spec, or design doc; (2) user says "we decided", "we agreed", "the plan is", "the requirement is", "track this", "log this", "remember this decision", or describes an outcome from a meeting/conversation; (3) user shares notes even informally — e.g. "in our sync yesterday we decided X"; (4) user answers a gap or open question that was previously surfaced by bicameral. When in doubt, ingest — a false trigger that captures zero decisions is cheaper than missing a real decision.
 ---
 
 # Bicameral Ingest
@@ -9,9 +9,11 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 ## When to use
 
-- User pastes or references a meeting transcript
-- User shares a PRD, design doc, or Slack thread
-- User says "track these decisions" or "ingest this"
+- User pastes or references a meeting transcript, PRD, design doc, spec, or Slack thread
+- User describes the outcome of a meeting or conversation, even informally
+- User says "track this", "log this", "we decided X", "we agreed on Y", "the requirement is Z"
+- User answers an open question / gap surfaced by bicameral preflight or history
+- User shares notes or describes a product decision, even without a structured document
 
 ## Steps
 
@@ -165,44 +167,70 @@ assign a **feature group** to each decision. A feature group is a short,
 canonical noun phrase (2–4 words, title-case, no verbs): e.g.
 `"Google Calendar"`, `"Checkout Flow"`, `"Auth Middleware"`.
 
+**Default rule — same source, same group.** When all decisions in this
+ingest come from a single source about a single coherent topic, assign
+the **same `feature_group` to every decision**. This is the common case:
+a Slack thread about "account status SSOT" produces 4 decisions that all
+belong to `"Account Status"`, not one group per decision. Only split into
+multiple groups when decisions clearly cover distinct, unrelated features.
+
 **Procedure:**
 
-1. **Propose a group for each decision** using the decision text and any
-   surrounding context.
+1. **Name the feature group first** from the source title, query, or
+   dominant topic. Derive one candidate group name before examining
+   individual decisions. A short noun phrase (2–4 words, title-case):
+   `"Account Status"`, `"Email Dispatch"`, `"Checkout Flow"`.
 
-2. **Prefer existing group names.** If `bicameral.history` was called
+2. **Assign that group to every decision by default.** Only diverge for
+   a specific decision if it's clearly about a different, unrelated
+   feature — in which case go to step 4.
+
+3. **Prefer existing group names.** If `bicameral.history` was called
    earlier in this session and its result is in context, match against
    existing `HistoryFeature.name` values. Reuse verbatim if an existing
-   name shares ≥ 2 significant content words with the decision.
+   name shares ≥ 2 significant content words with the proposed group.
 
-3. **Stop-and-ask on ambiguity.** If any decision has no confident group
-   assignment — the decision text is ambiguous or spans multiple unrelated
-   features — surface it explicitly before calling `bicameral.ingest`:
+4. **Stop-and-ask ONLY for cross-feature decisions.** If a specific
+   decision clearly spans or belongs to a different feature than the
+   dominant group, surface it before calling `bicameral.ingest`:
 
    ```
    ⚠ I'm not sure how to categorize this decision:
      "<decision text>"
 
+   Proposed group for the rest: "<dominant group>"
+
    Options:
-     a) "<existing group A>"  (existing)
-     b) "<existing group B>"  (existing)
-     c) "<proposed new group>" (new)
+     a) Use "<dominant group>" anyway
+     b) "<existing group B>" (existing)
+     c) "<proposed different group>" (new)
      d) Enter a different group name
 
    Which feature does this belong to?
    ```
 
-   Wait for the user's response. Do not proceed with the ingest call
-   until every decision has a confirmed group.
+   Wait for the user's response. Do not ask for every decision — only
+   the ones that genuinely don't fit the dominant group.
 
-4. **Pass `feature_group`** on each decision in the ingest payload.
+5. **Pass `feature_group`** on each decision in the ingest payload.
    For the internal format, add `feature_group` at the mapping level.
    For the natural format, add it on each decision object:
    ```
    decisions: [
-     { "description": "...", "feature_group": "Checkout Flow", ... }
+     { "description": "...", "feature_group": "Account Status", ... }
    ]
    ```
+   For the internal format:
+   ```
+   mappings: [
+     { "intent": "...", "feature_group": "Account Status", ... }
+   ]
+   ```
+
+   **Never omit `feature_group`.** An unset `feature_group` causes the
+   decision to fall back to `source_ref` grouping — every decision ends
+   up in its own feature row in the dashboard. This is the primary cause
+   of the "5 decisions, 5 features" problem.
 
 ### 2. Resolve code regions via the MCP retrieval tools (v0.4.23+ default)
 
