@@ -566,9 +566,9 @@ class HistoryDecision(BaseModel):
     id: str                       # decision_id
     summary: str                  # canonical decision text
     featureId: str
-    status: Literal["reflected", "drifted", "ungrounded", "superseded", "discovered"]
-    sources: list[HistorySource]          # 1+ input spans; empty for discovered
-    fulfillment: HistoryFulfillment | None = None  # None when ungrounded or discovered without grounding
+    status: Literal["reflected", "drifted", "ungrounded", "superseded", "discovered", "gap"]
+    sources: list[HistorySource]          # 1+ input spans; empty for discovered/gap
+    fulfillment: HistoryFulfillment | None = None  # None when ungrounded/gap/discovered
     drift_evidence: str | None = None    # human-readable delta when drifted
 
 
@@ -584,6 +584,16 @@ class HistoryResponse(BaseModel):
     truncated: bool = False
     total_features: int = 0
     as_of: str = ""               # git ref evaluated against
+
+
+# ── Tool 13: bicameral.dashboard ─────────────────────────────────────
+
+
+class DashboardResponse(BaseModel):
+    """Response from bicameral.dashboard."""
+    url: str                       # http://localhost:{port}
+    status: Literal["started", "already_running"]
+    port: int
 
 
 # Forward references

@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-13 tools:
+14 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -10,6 +10,7 @@
   bicameral.resolve_compliance — caller-LLM compliance verdict write-back (v0.5.0 three-way)
   bicameral.ratify            — product sign-off on a decision (double-entry ledger)
   bicameral.history           — read-only ledger dump grouped by feature area
+  bicameral.dashboard         — launch live decision dashboard with SSE push updates
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   search_code                 — BM25 + graph search with RRF fusion
   get_neighbors               — 1-hop structural graph traversal around a symbol
@@ -45,6 +46,7 @@ from handlers.ratify import handle_ratify
 from handlers.resolve_compliance import handle_resolve_compliance
 from handlers.history import handle_history
 from handlers.update import get_update_notice, handle_update
+from dashboard.server import get_dashboard_server
 
 SERVER_NAME = "bicameral-mcp"
 try:
@@ -62,6 +64,7 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.resolve_compliance",
     "bicameral.ratify",
     "bicameral.history",
+    "bicameral.dashboard",
     "validate_symbols",
     "search_code",
     "get_neighbors",
@@ -402,6 +405,30 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="bicameral.dashboard",
+            description=(
+                "Launch (or return the URL of) the live decision dashboard. "
+                "Spins up a local HTTP server inside the MCP process, serves an "
+                "interactive single-page view of the full decision ledger, and "
+                "pushes live updates via SSE whenever bicameral.ingest or "
+                "bicameral.link_commit writes new data. "
+                "Subsequent calls return the existing URL immediately — the server "
+                "is a singleton and stays running for the session. "
+                "Fires on: 'open dashboard', 'show live history', 'launch dashboard'. "
+                "Slash alias: /bicameral:dashboard"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "open_browser": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "When true, instruct the caller to open the URL in a browser",
+                    },
+                },
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -506,6 +533,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         data = await handle_update(
             action=arguments["action"],
             current_version=SERVER_VERSION,
+            repo_path=str(ctx.repo_path),
         )
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
     elif name in ("bicameral.reset", "reset"):
@@ -554,6 +582,35 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             include_superseded=arguments.get("include_superseded", True),
             as_of=arguments.get("as_of"),
         )
+        # Inject empty-ledger guidance so the caller-LLM doesn't bypass ingest.
+        if result.total_features == 0:
+            payload = result.model_dump()
+            payload["_guidance"] = (
+                "The decision ledger is empty — no decisions have been ingested yet. "
+                "STOP: do not read the codebase or make code changes yet. "
+                "Instead: (1) call bicameral.ingest with the meeting transcript, "
+                "Slack thread, or document that contains the relevant decisions; "
+                "(2) review the extracted decisions in the ingest response; "
+                "(3) only then use those decisions to guide the implementation."
+            )
+            update_notice = get_update_notice(SERVER_VERSION)
+            if update_notice:
+                payload["_update"] = update_notice
+            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+    elif name in ("bicameral.dashboard", "dashboard"):
+        from contracts import DashboardResponse
+        srv = get_dashboard_server()
+        if not srv.running:
+            await srv.start(ctx_factory=BicameralContext.from_env)
+            status = "started"
+        else:
+            status = "already_running"
+        result = DashboardResponse(url=srv.url, status=status, port=srv.port)
+        payload = result.model_dump()
+        update_notice = get_update_notice(SERVER_VERSION)
+        if update_notice:
+            payload["_update"] = update_notice
+        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
     # ── Code locator tools ────────────────────────────────────────
     elif name == "validate_symbols":
         data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
@@ -579,6 +636,24 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     update_notice = get_update_notice(SERVER_VERSION)
     if update_notice:
         payload["_update"] = update_notice
+
+    # After a successful ingest that extracted decisions, remind the caller-LLM
+    # to review those decisions before touching any code.
+    if name in ("bicameral.ingest", "ingest"):
+        stats = payload.get("stats") or {}
+        created = stats.get("intents_created", 0)
+        if created > 0:
+            grounded = stats.get("grounded", 0)
+            ungrounded = stats.get("ungrounded", 0)
+            payload["_guidance"] = (
+                f"Ingest complete: {created} decision(s) extracted "
+                f"({grounded} grounded to code, {ungrounded} ungrounded). "
+                "STOP: review the 'brief' and 'ungrounded_decisions' fields above "
+                "before making any code changes. Use those decisions — not your own "
+                "analysis — as the implementation spec. "
+                "Call bicameral.history to see the full ledger at any time."
+            )
+
     return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
 
@@ -617,6 +692,11 @@ async def run_smoke_test() -> dict[str, object]:
 
 
 async def serve_stdio() -> None:
+    # Start the live dashboard HTTP sidecar in the background.
+    # It binds to a free port and stays running for the session.
+    dashboard_srv = get_dashboard_server()
+    await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
+
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,

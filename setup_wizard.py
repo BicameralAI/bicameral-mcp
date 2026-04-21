@@ -279,6 +279,65 @@ def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo") -> b
     return True
 
 
+# Hook command injected into the user's .claude/settings.json.
+# Fires after every Bash tool use; if the command was a git write-op
+# (commit / merge / pull / rebase continue), outputs a message instructing
+# the agent to call bicameral.link_commit so the decision ledger stays fresh.
+_BICAMERAL_HOOK_COMMAND = (
+    "python3 -c \""
+    "import json,sys; "
+    "d=json.load(sys.stdin); "
+    "c=d.get('tool_input',{}).get('command','').lstrip(); "
+    "ops=('git commit','git merge ','git pull','git rebase --continue'); "
+    "[print('bicameral: git write-op detected — call bicameral.link_commit"
+    "(commit_hash=\\'HEAD\\') now to sync the decision ledger') "
+    "for _ in [1] if any(c.startswith(op) for op in ops)]\""
+)
+
+
+def _install_claude_hooks(repo_path: Path) -> bool:
+    """Merge the bicameral PostToolUse hook into .claude/settings.json.
+
+    Idempotent — safe to call on every setup run. Returns True if a new
+    entry was written, False if already present.
+    """
+    settings_path = repo_path / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    hooks = existing.setdefault("hooks", {})
+    post_tool_use: list = hooks.setdefault("PostToolUse", [])
+
+    # Idempotency: skip if any existing Bash entry already references bicameral
+    for entry in post_tool_use:
+        if entry.get("matcher") == "Bash":
+            for h in entry.get("hooks", []):
+                if "bicameral" in h.get("command", ""):
+                    return False
+
+    # Find or create a Bash matcher entry
+    bash_entry = next(
+        (e for e in post_tool_use if e.get("matcher") == "Bash"), None
+    )
+    if bash_entry is None:
+        bash_entry = {"matcher": "Bash", "hooks": []}
+        post_tool_use.append(bash_entry)
+
+    bash_entry["hooks"].append({
+        "type": "command",
+        "command": _BICAMERAL_HOOK_COMMAND,
+    })
+
+    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    return True
+
+
 def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
     skills_src = Path(__file__).parent / "skills"
@@ -450,11 +509,13 @@ def run_setup(repo_hint: str | None = None) -> int:
     for agent_key in agents:
         _install_for_agent(agent_key, repo_path, mode=collab_mode)
 
-    # Step 6: Install skills (Claude Code only)
+    # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
         num_skills = _install_skills(repo_path)
         if num_skills:
             print(f"  Claude Code: installed {num_skills} slash commands")
+        if _install_claude_hooks(repo_path):
+            print("  Claude Code: installed git hook → bicameral.link_commit auto-sync")
 
     # Summary
     agent_names = ", ".join(AGENTS[a]["name"] for a in agents)
@@ -464,10 +525,11 @@ def run_setup(repo_hint: str | None = None) -> int:
 
     if "claude" in agents:
         print("  Claude Code slash commands:")
-        print("    /bicameral:ingest  — ingest a meeting transcript or PRD")
-        print("    /bicameral:search  — pre-flight: check prior decisions")
-        print("    /bicameral:drift   — check a file for drifted decisions")
-        print("    /bicameral:status  — implementation status dashboard")
+        print("    /bicameral:ingest     — ingest a transcript, Slack thread, or PRD")
+        print("    /bicameral:preflight  — pre-flight: surface decisions before coding")
+        print("    /bicameral:history    — list all tracked decisions by feature area")
+        print("    /bicameral:dashboard  — open live decision dashboard in browser")
+        print("    /bicameral:reset      — nuke and replay the ledger (emergency)")
         print()
 
     print("  Or just ask naturally:")

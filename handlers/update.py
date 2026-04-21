@@ -89,7 +89,44 @@ def get_update_notice(current_version: str) -> dict | None:
     }
 
 
-async def handle_update(action: str, current_version: str) -> dict:
+def _reinstall_skills(repo_path: str) -> int:
+    """Re-copy skill SKILL.md files from the newly-installed package into the repo."""
+    try:
+        import importlib.util
+        spec = importlib.util.find_spec("setup_wizard")
+        if spec is None or spec.origin is None:
+            return 0
+        from pathlib import Path
+        skills_src = Path(spec.origin).parent / "skills"
+        if not skills_src.exists():
+            return 0
+        skills_dst = Path(repo_path) / ".claude" / "skills"
+        count = 0
+        for skill_dir in sorted(skills_src.iterdir()):
+            if not skill_dir.is_dir():
+                continue
+            skill_md = skill_dir / "SKILL.md"
+            if not skill_md.exists():
+                continue
+            dst_dir = skills_dst / skill_dir.name
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            (dst_dir / "SKILL.md").write_text(skill_md.read_text())
+            count += 1
+
+        # Re-install the git hook alongside skills on every upgrade
+        try:
+            from setup_wizard import _install_claude_hooks
+            _install_claude_hooks(Path(repo_path))
+        except Exception:
+            pass
+
+        return count
+    except Exception as exc:
+        logger.debug("[update] skill reinstall failed: %s", exc)
+        return 0
+
+
+async def handle_update(action: str, current_version: str, repo_path: str = "") -> dict:
     """Handle bicameral.update tool calls."""
     if action == "check":
         recommended = _fetch_recommended_version()
@@ -134,12 +171,19 @@ async def handle_update(action: str, current_version: str) -> dict:
             if result.returncode == 0:
                 # Bust the cache so the next check reflects the new version
                 _save_cache({})
+                skills_updated = _reinstall_skills(repo_path) if repo_path else 0
+                skills_note = (
+                    f" Updated {skills_updated} skill(s) in .claude/skills/."
+                    if skills_updated
+                    else ""
+                )
                 return {
                     "status": "upgraded",
                     "from_version": current_version,
                     "to_version": recommended,
+                    "skills_updated": skills_updated,
                     "message": (
-                        f"Upgraded to v{recommended}. "
+                        f"Upgraded to v{recommended}.{skills_note} "
                         "Restart the MCP server to use the new version."
                     ),
                 }

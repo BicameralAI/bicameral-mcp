@@ -16,3 +16,4 @@ test-results/
 
 # Bicameral MCP local data (team mode — events/ is committed)
 .bicameral/local/
+.gstack/

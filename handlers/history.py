@@ -50,20 +50,36 @@ def _slugify(name: str) -> str:
     return slug.strip("-") or "uncategorized"
 
 
+_ACTION_PREFIX = "[Action:"
+_QUESTION_PREFIX = "[Open Question]"
+
+
+def _is_action_item(description: str) -> bool:
+    return description.startswith(_ACTION_PREFIX)
+
+
+def _is_open_question(description: str) -> bool:
+    return description.startswith(_QUESTION_PREFIX)
+
+
 def _decision_status_for_history(
+    description: str,
     decision_status: str,
     has_code_regions: bool,
     has_sources: bool,
 ) -> str:
     """Map internal decision status to HistoryDecision status literal.
 
-    Rules:
+    Rules (in priority order):
+    - "[Open Question]" prefix → "gap" (requirement gap: neither claimed nor fulfilled)
     - superseded → "superseded"
     - no sources (no input_span) → "discovered"
     - has code regions, drifted → "drifted"
     - has code regions, reflected → "reflected"
     - no code regions → "ungrounded"
     """
+    if _is_open_question(description):
+        return "gap"
     if decision_status == "superseded":
         return "superseded"
     if not has_sources:
@@ -141,6 +157,7 @@ def _row_to_history_decision(
             ))
 
     history_status = _decision_status_for_history(
+        description=description,
         decision_status=status,
         has_code_regions=bool(code_regions),
         has_sources=bool(sources),
@@ -238,11 +255,11 @@ def _feature_key_for_row(row: dict) -> str:
 
 
 def _priority_for_feature(decisions: list[HistoryDecision]) -> int:
-    """Features with drifted or ungrounded decisions sort first (lower = higher priority)."""
+    """Features with drifted, ungrounded, or gap decisions sort first (lower = higher priority)."""
     statuses = {d.status for d in decisions}
     if "drifted" in statuses:
         return 0
-    if "ungrounded" in statuses:
+    if "ungrounded" in statuses or "gap" in statuses:
         return 1
     return 2
 
@@ -270,9 +287,13 @@ async def handle_history(
 
     rows = await _fetch_all_decisions_enriched(ledger)
 
-    # Group by feature key
+    # Group by feature key — skip action items entirely (they're task assignments,
+    # not decisions, and were only written to the ledger by legacy ingests).
     feature_groups: dict[str, list[dict]] = {}
     for row in rows:
+        description = str(row.get("description") or "")
+        if _is_action_item(description):
+            continue
         key = _feature_key_for_row(row)
         feature_groups.setdefault(key, []).append(row)
 

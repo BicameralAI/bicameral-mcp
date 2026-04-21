@@ -250,4 +250,11 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         verification_instruction=_VERIFICATION_INSTRUCTION if pending else "",
     )
     _store_sync_cache(ctx, commit_hash, response)
+
+    try:
+        from dashboard.server import notify_dashboard
+        await notify_dashboard(ctx)
+    except Exception:
+        pass
+
     return response
