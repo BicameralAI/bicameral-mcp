@@ -270,3 +270,41 @@ async def test_migrate_is_idempotent_at_v3():
         assert rows[0]["version"] == 3
     finally:
         await c.close()
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_init_schema_is_idempotent_against_existing_db():
+    """Regression for the v0.4.20→v0.4.22 hotfix: init_schema must
+    survive re-running against a database that already has every
+    analyzer, table, field, and index defined.
+
+    SurrealDB v2 rejects redundant DEFINE statements with "already
+    exists". Pre-v0.4.20 that rejection was silently discarded by the
+    client — Phase 1b made the client raise, which turned every MCP
+    server startup against a persistent surrealkv DB into an
+    unrecoverable error because init_schema runs on every connect.
+
+    Post-hotfix: init_schema tolerates "already exists" so re-connects
+    are safe, while still surfacing real DDL errors.
+    """
+    c = LedgerClient(url="memory://", ns="init_idem_test", db="ledger")
+    try:
+        await c.connect()
+        # First init — creates everything.
+        await init_schema(c)
+        # Second init — must not raise despite every DEFINE being redundant.
+        await init_schema(c)
+        # Third init, just to lock the invariant.
+        await init_schema(c)
+
+        # Sanity: schema still works after repeated inits.
+        await c.execute(
+            "CREATE intent SET description = 'init-idem test', "
+            "source_type = 'manual'"
+        )
+        rows = await c.query("SELECT description FROM intent")
+        assert len(rows) == 1
+        assert rows[0]["description"] == "init-idem test"
+    finally:
+        await c.close()

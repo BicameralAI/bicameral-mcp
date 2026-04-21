@@ -198,10 +198,41 @@ _META = [
 ]
 
 
+async def _execute_define_idempotent(client: LedgerClient, sql: str) -> None:
+    """Run a DEFINE statement; treat "already exists" as success.
+
+    SurrealDB v2 rejects ``DEFINE ANALYZER``/``TABLE``/``FIELD``/``INDEX``
+    when the target already exists. Pre-v0.4.20 the client silently
+    discarded that rejection, which masked the fact that the DDL was
+    never actually idempotent. v0.4.20 made the client raise (Phase 1b);
+    this helper re-establishes the idempotency the ``init_schema``
+    docstring promises — surgically, so other ``execute`` paths keep
+    surfacing real errors.
+
+    Any SurrealDB rejection that is NOT "already exists" re-raises as
+    ``LedgerError`` — schema bugs still surface loudly.
+    """
+    try:
+        await client.execute(sql)
+    except LedgerError as exc:
+        if "already exists" not in str(exc):
+            raise
+
+
 async def init_schema(client: LedgerClient) -> None:
-    """Create all tables, indexes, and analyzers. Idempotent (DEFINE is safe to re-run)."""
-    all_statements = _ANALYZERS + _TABLES + _EDGES + _META
-    await client.execute_many(all_statements)
+    """Create all tables, indexes, and analyzers.
+
+    Idempotent: running against an already-initialized database is a
+    no-op. Hardened in v0.4.22 after v0.4.20's Phase 1b exposed that the
+    prior "idempotency" relied on the client silently discarding
+    "already exists" rejections. Each DEFINE statement now runs through
+    ``_execute_define_idempotent`` so we keep DDL idempotent while
+    still raising on real DDL bugs.
+    """
+    for sql in (_ANALYZERS + _TABLES + _EDGES + _META):
+        sql = sql.strip()
+        if sql:
+            await _execute_define_idempotent(client, sql)
 
 
 # ── Migrations ──────────────────────────────────────────────────────────
