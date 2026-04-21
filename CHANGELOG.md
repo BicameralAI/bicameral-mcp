@@ -3,6 +3,69 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.23 — 2026-04-21 — caller-LLM-driven retrieval + search_hint recall booster
+
+Addresses the BM25 vocab-mismatch problem that surfaced after v0.4.20
+made grounding status honest. Decisions whose natural-language
+description doesn't lexically overlap with the real code identifier
+vocabulary were getting bound to whatever file incidentally shared a
+keyword — "email dispatch" binding to a React toast reducer's
+`dispatch`, "active subscriber" binding to an unrelated `AcquisitionFunnel.tsx`
+`ActiveUser` component. Under v0.4.19's silent auto-promotion nobody
+saw this; under v0.4.20's honest PENDING projection users saw garbage
+bindings and had nothing to do about them.
+
+Two changes, both within the existing deterministic-retrieval moat:
+
+### Changed — caller-LLM retrieval is now the default (Lever 1)
+
+- `skills/bicameral-ingest/SKILL.md` restructured. Step 2 is now
+  *"Resolve code regions via the MCP retrieval tools"* — caller LLM is
+  instructed to use `validate_symbols` + `search_code` + `get_neighbors`
+  to build explicit `code_regions` from codebase evidence *before*
+  ingesting. Step 3 now leads with the internal format (with explicit
+  regions) as the preferred shape. Natural format remains supported
+  as the fallback for abstract decisions with no resolvable code surface.
+- No server-side code changes. The server already accepted internal-
+  format ingest payloads; this flips the skill's default guidance from
+  *"use natural format, let BM25 handle it"* to *"resolve explicitly,
+  fall back to BM25 only when necessary."*
+
+### Added — `search_hint` recall booster (Lever 2)
+
+- `IngestMapping.search_hint: str` and `IngestDecision.search_hint: str`
+  — optional caller-supplied field carrying synonyms / domain vocab /
+  likely identifier names that the decision's description wouldn't
+  contain literally. Used only when the mapping falls through to
+  server-side auto-grounding.
+- `adapters.code_locator.ground_mappings` concatenates
+  `description + " " + search_hint` as the BM25 query when the hint is
+  non-empty. Strictly additive: omitted hint = pre-v0.4.23 behavior.
+- `search_hint` is query-only metadata. It is never stored on
+  `intent.description` and never surfaces in briefs, status responses,
+  or the gap-judge context pack. Humans see the clean decision text;
+  BM25 sees the widened query.
+
+### Guarantee preserved — no server-side LLM
+
+Retrieval remains deterministic at runtime. The caller LLM does the
+expensive lookup at ingest time (when it has your full codebase
+context), writes explicit `code_regions`, and the server's BM25 fallback
+is only consulted for truly abstract decisions. This keeps the tech
+moat (*deterministic, provider-agnostic retrieval*) intact while
+fixing the quality complaint.
+
+### Upgrade notes
+
+- **Existing bindings from pre-v0.4.23 ingests are unchanged.** If you
+  have false-positive bindings from BM25 auto-grounding (e.g., dispatch
+  intents bound to `use-toast.ts`), they persist in the graph. To clean
+  them up today: `bicameral.reset` → re-ingest under the new skill
+  defaults. A targeted edge-pruning path is tracked for a future release.
+- **No schema change**, no migration, no behavior shift for running
+  callers — the skill update only changes the default path the caller
+  LLM takes when the bicameral-ingest skill is invoked.
+
 ## 0.4.22 — 2026-04-20 — hotfix: init_schema idempotent against existing persistent DB
 
 **Hotfix for v0.4.20 regression on persistent DBs.** Phase 1b made
