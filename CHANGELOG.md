@@ -3,6 +3,46 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.4.22 — 2026-04-20 — hotfix: init_schema idempotent against existing persistent DB
+
+**Hotfix for v0.4.20 regression on persistent DBs.** Phase 1b made
+`LedgerClient.execute()` raise on SurrealDB error strings instead of
+silently discarding them. That surfaced three latent bugs we fixed in
+v0.4.20 (`_migrate_v1_to_v2` field redefine, edge-helper UNIQUE
+violations, the `UPDATE $rid` SQL error) but missed `init_schema()`
+itself, which runs `DEFINE ANALYZER` / `DEFINE TABLE` / etc. on every
+MCP server connect.
+
+On `memory://` (test) DBs this never triggered because each connection
+starts fresh. On `surrealkv://` (the default persistent DB under
+`~/.bicameral/ledger.db`) the second-and-subsequent connect raised
+`LedgerError: "The analyzer 'biz_analyzer' already exists"`, which
+broke every MCP tool call after the server's first start — including
+`bicameral.reset`, the very tool users would reach for to recover.
+
+### Fixed
+
+- `init_schema()` now tolerates "already exists" rejections on every
+  DDL statement via a new `_execute_define_idempotent` helper. Other
+  error classes (malformed DDL, permission failures) still surface as
+  `LedgerError` so real bugs don't get masked. Matches the pattern
+  we already use for `_migrate_v1_to_v2` and the edge helpers.
+
+### Added
+
+- `tests/test_compliance_check_schema.py::test_init_schema_is_idempotent_against_existing_db`
+  — regression test: runs `init_schema()` three times in a row and
+  verifies schema still works. Would have caught the v0.4.20 issue
+  if it had been there.
+
+### Users upgrading from 0.4.20/0.4.21
+
+- **Recommended.** The only user-visible change is that the MCP server
+  stops crashing on startup against a persistent DB. No schema change,
+  no data migration, no behavior shift. Verification semantics
+  (PENDING-by-default, caller-LLM resolves via `bicameral.resolve_compliance`)
+  are unchanged from 0.4.21.
+
 ## 0.4.21 — 2026-04-20 — bicameral.resolve_compliance (caller-LLM verdict write-back)
 
 Closes the end-to-end verification loop v0.4.20 opened. The drift sweep
