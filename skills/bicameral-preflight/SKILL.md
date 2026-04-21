@@ -203,17 +203,66 @@ A one-line forward narration helps:
 > from idempotency.ts. I'll flag the event.id deduplication question
 > for you to answer before I commit."
 
-### 6. Honor blocking hints (guided mode only)
+### 6. Honor blocking hints (guided mode vs normal mode)
 
-If any hint has `blocking: true`, you MUST stop after the surfaced
-block and wait for user acknowledgment before doing any write
-operation (file edit, commit, PR, `bicameral_ingest`). Surface the
-hint's `message` verbatim and ask the user to either resolve it or
-explicitly tell you to proceed.
+The agent's `guided_mode` setting controls whether action hints are
+blocking or advisory. The flag has two settings chosen at `bicameral setup`
+time:
 
-In normal mode (non-guided), hints have `blocking: false` and you can
-proceed after surfacing them. The user opted into the looser
-interaction at setup time.
+- **Normal mode** (`guided: false`, default) — hints fire with `blocking: false`
+  and advisory tone ("heads up — N drifted decision(s) detected"). Mention
+  the hint to the user and **continue with the implementation**. Normal
+  mode is a heads-up, not a stop sign.
+- **Guided mode** (`guided: true`) — hints fire with `blocking: true` and
+  imperative tone ("N drifted decision(s) — review BEFORE making changes").
+  When any hint has `blocking: true`, **MUST stop after the surfaced block
+  and wait for user acknowledgment** before any write operation (file edit,
+  commit, PR, `bicameral_ingest`). Surface the hint's `message` verbatim
+  and ask the user to either resolve it or explicitly tell you to proceed.
+
+**How to enable/disable:**
+
+*Durable (setup time)*: `bicameral setup` prompts:
+```
+  Interaction intensity:
+    1. Normal  — bicameral flags discrepancies as advisory hints (default)
+    2. Guided  — bicameral stops you when it detects discrepancies
+  Choice [1/2]:
+```
+Written to `.bicameral/config.yaml` as `guided: true` or `guided: false`.
+
+*One-off override (env var)*: Set `BICAMERAL_GUIDED_MODE=1` (or `true`, `yes`,
+`on`) on the MCP server process to force guided mode for one session without
+touching the config file. Set to `0` / `false` to force normal mode.
+
+**When to use guided mode:**
+- Onboarding a new user to a repo with an existing bicameral ledger.
+- Demos where you want the audience to see bicameral doing adversarial-audit work.
+- Critical-path work — touching auth, billing, security, migrations.
+
+**When normal mode is enough:**
+- Day-to-day workflow on a codebase you know.
+- Read-only exploration flows.
+- Batch / headless ingest with no human-in-the-loop.
+
+### 7. On stop-and-ask resolution — ingest the answer
+
+When a blocking hint is resolved and the user answers an open question
+or confirms a design decision, immediately capture it into the ledger:
+
+```
+bicameral.ingest(payload={
+  "query": "<the feature topic preflight was scoped to>",
+  "source": "agent_session",
+  "title": "<short label for the decision, e.g. 'preflight-resolution-<topic>'>",
+  "date": "<today ISO date>",
+  "decisions": [{ "description": "<the user's answer as a decision statement>" }]
+}, feature_group="<same feature group as the implementation task>")
+```
+
+Use `source="agent_session"` — a source type distinct from transcript/slack/document
+that marks decisions resolved inline during an agent session. This ensures the
+decision is recorded in the ledger and not lost when the session ends.
 
 ## Stop-and-Ask Contract
 

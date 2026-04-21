@@ -44,10 +44,7 @@ def _normalize_payload(payload: dict) -> dict:
         text = d.description or d.title or d.text
         if not text:
             continue
-        # v0.5.0: source_excerpt is required for non-empty spans.
-        # If the caller provides no excerpt, skip creating an input_span
-        # row (span_text stays empty — ingest_payload will not create the span).
-        span_text = d.source_excerpt  # empty → no input_span created
+        span_text = d.source_excerpt or text
         mapping: dict = {
             "intent": text,
             "span": {
@@ -62,6 +59,8 @@ def _normalize_payload(payload: dict) -> dict:
         }
         if d.product_signoff is not None:
             mapping["product_signoff"] = d.product_signoff
+        if d.feature_group is not None:
+            mapping["feature_group"] = d.feature_group
         mappings.append(mapping)
 
     for a in validated.action_items:

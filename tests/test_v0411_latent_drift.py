@@ -418,9 +418,9 @@ async def test_multi_region_edits_emit_pending_checks_per_region(
     )
 
     # Same intent across both checks (proves the shared-intent case).
-    intent_ids = {p.intent_id for p in r2.pending_compliance_checks}
+    intent_ids = {p.decision_id for p in r2.pending_compliance_checks}
     assert len(intent_ids) == 1, (
-        f"Multi-region test: pending checks should share one intent_id, "
+        f"Multi-region test: pending checks should share one decision_id, "
         f"got {intent_ids}"
     )
 

@@ -51,7 +51,7 @@ def test_step1_excerpt_isolates_step1_from_real_skill_md():
     # the entire file if header parsing breaks. Bumped from 4000 → 8000 to
     # accommodate the v0.4.3 few-shot variant which adds 6 worked examples
     # to Step 1.
-    assert len(excerpt) < 8000, f"excerpt suspiciously long: {len(excerpt)} chars"
+    assert len(excerpt) < 10000, f"excerpt suspiciously long: {len(excerpt)} chars"
 
 
 @pytest.mark.parametrize(

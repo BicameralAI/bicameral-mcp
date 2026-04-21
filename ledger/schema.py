@@ -66,6 +66,7 @@ _TABLES = [
     "DEFINE FIELD description    ON decision TYPE string",
     "DEFINE FIELD rationale      ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD feature_hint   ON decision TYPE string DEFAULT ''",
+    "DEFINE FIELD feature_group  ON decision TYPE option<string> DEFAULT NONE",
     "DEFINE FIELD source_type    ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD source_ref     ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD meeting_date   ON decision TYPE string DEFAULT ''",

@@ -1,19 +1,15 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-17 tools:
-  bicameral.status            — surface implementation status of tracked decisions
-  bicameral.search            — pre-flight: find past decisions relevant to a query
+13 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
-  bicameral.brief             — pre-meeting one-pager generator
   bicameral.reset             — wipe ledger rows scoped to the current repo
   bicameral.preflight         — proactive context surfacing before implementation
   bicameral.judge_gaps        — caller-LLM business-requirement gap judge
-  bicameral.scan_branch       — multi-file drift audit across a branch range
   bicameral.resolve_compliance — caller-LLM compliance verdict write-back (v0.5.0 three-way)
   bicameral.ratify            — product sign-off on a decision (double-entry ledger)
-  bicameral.doctor            — auto-detecting health check (file or branch scope)
+  bicameral.history           — read-only ledger dump grouped by feature area
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   search_code                 — BM25 + graph search with RRF fusion
   get_neighbors               — 1-hop structural graph traversal around a symbol
@@ -40,10 +36,6 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
-from handlers.brief import handle_brief
-from handlers.decision_status import handle_decision_status
-from handlers.detect_drift import handle_detect_drift
-from handlers.doctor import handle_doctor
 from handlers.gap_judge import handle_judge_gaps
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
@@ -51,8 +43,7 @@ from handlers.preflight import handle_preflight
 from handlers.reset import handle_reset
 from handlers.ratify import handle_ratify
 from handlers.resolve_compliance import handle_resolve_compliance
-from handlers.scan_branch import handle_scan_branch
-from handlers.search_decisions import handle_search_decisions
+from handlers.history import handle_history
 from handlers.update import get_update_notice, handle_update
 
 SERVER_NAME = "bicameral-mcp"
@@ -62,19 +53,15 @@ try:
 except Exception:
     SERVER_VERSION = "0.1.0"
 EXPECTED_TOOL_NAMES = [
-    "bicameral.status",
-    "bicameral.search",
     "bicameral.link_commit",
     "bicameral.ingest",
     "bicameral.update",
-    "bicameral.brief",
     "bicameral.reset",
     "bicameral.preflight",
     "bicameral.judge_gaps",
-    "bicameral.scan_branch",
     "bicameral.resolve_compliance",
     "bicameral.ratify",
-    "bicameral.doctor",
+    "bicameral.history",
     "validate_symbols",
     "search_code",
     "get_neighbors",
@@ -91,63 +78,6 @@ def _notification_options() -> NotificationOptions:
 @server.list_tools()
 async def list_tools() -> list[Tool]:
     return [
-        Tool(
-            name="bicameral.status",
-            description=(
-                "Surface implementation status of all tracked decisions for the repo. "
-                "Shows which decisions are reflected in code, drifted, pending, or ungrounded. "
-                "Auto-syncs the ledger to HEAD before returning status. Slash alias: /bicameral:status"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "filter": {
-                        "type": "string",
-                        "enum": ["all", "drifted", "pending", "reflected", "ungrounded"],
-                        "default": "all",
-                        "description": "Filter decisions by status",
-                    },
-                    "since": {
-                        "type": "string",
-                        "description": "ISO date — only decisions ingested after this date",
-                    },
-                    "ref": {
-                        "type": "string",
-                        "default": "HEAD",
-                        "description": "Git ref to evaluate against",
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="bicameral.search",
-            description=(
-                "Pre-flight for implementation planning. Given a feature or task description, "
-                "surface past decisions in the same area with their implementation status. "
-                "Auto-syncs the ledger to HEAD before searching. "
-                "Use this before writing code to check for prior constraints and decisions. "
-                "Slash alias: /bicameral:search"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Natural language description — e.g. 'add retry with backoff'",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "default": 10,
-                    },
-                    "min_confidence": {
-                        "type": "number",
-                        "default": 0.5,
-                        "description": "Minimum match confidence (0–1). Lower values widen the search; higher values demand stronger relevance.",
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
         Tool(
             name="bicameral.link_commit",
             description=(
@@ -220,37 +150,6 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["action"],
-            },
-        ),
-        Tool(
-            name="bicameral.brief",
-            description=(
-                "Pre-meeting one-pager generator. Given a topic (and optional participant list), "
-                "returns relevant decisions with status, drift candidates, divergences (contradictory "
-                "decisions on the same symbol), open gaps, and 3-5 suggested meeting questions. "
-                "Use this before any 1:1, standup, or product review to depersonalize hard "
-                "conversations by letting bicameral cite prior decisions for you. "
-                "Slash alias: /bicameral:brief"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "topic": {
-                        "type": "string",
-                        "description": "Topic or feature area to brief on (e.g. 'google calendar integration')",
-                    },
-                    "participants": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of meeting participants — surfaces decisions they were involved in",
-                    },
-                    "max_decisions": {
-                        "type": "integer",
-                        "default": 10,
-                        "description": "Maximum decisions to include in the brief",
-                    },
-                },
-                "required": ["topic"],
             },
         ),
         Tool(
@@ -349,44 +248,6 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["topic"],
-            },
-        ),
-        Tool(
-            name="bicameral.scan_branch",
-            description=(
-                "Audit every decision that touches any file your branch changed between a base ref "
-                "(default: the authoritative branch, usually main) and a head ref (default: HEAD). "
-                "Deduplicates decisions across files — a decision touching three files shows up once. "
-                "This is the multi-file counterpart to bicameral.drift: use it when the user asks "
-                "'what's drifted on this branch', 'scan my PR', 'is anything broken before I merge', "
-                "or any whole-branch discrepancy check. For single-file drift against a specific "
-                "file the user named, use bicameral.drift instead. "
-                "Slash alias: /bicameral:scan-branch"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "base_ref": {
-                        "type": "string",
-                        "description": (
-                            "Git ref to diff from — branch name, tag, or SHA. Defaults to the "
-                            "BICAMERAL_AUTHORITATIVE_REF env var, falling back to 'main'."
-                        ),
-                    },
-                    "head_ref": {
-                        "type": "string",
-                        "default": "HEAD",
-                        "description": "Git ref to diff to — usually HEAD or the tip of the branch under review",
-                    },
-                    "use_working_tree": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": (
-                            "True = include uncommitted working-tree changes (pre-commit sweep). "
-                            "False (default) = compare committed refs only (PR-review posture)."
-                        ),
-                    },
-                },
             },
         ),
         Tool(
@@ -511,49 +372,32 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="bicameral.doctor",
+            name="bicameral.history",
             description=(
-                "Auto-detecting health check. Picks the right scope for the user's intent "
-                "without them needing to know which sub-tool to call. "
-                "Behavior: if a file_path is given, runs a file-scoped drift check. Otherwise "
-                "sweeps every decision touching the current branch (base_ref → HEAD), plus a "
-                "repo-wide status summary so the branch drift is contextualized against ledger "
-                "health. Fires on any 'check drift' / 'what's broken' / 'run a health check' / "
-                "'is anything wrong' phrasing; this is the default entry point for discrepancy "
-                "investigation. Never returns an LLM-generated narrative — the response is a "
-                "structured envelope the agent renders section by section. "
-                "Slash alias: /bicameral:doctor"
+                "Read-only dump of the full decision ledger in a renderable shape. "
+                "Returns decisions grouped by feature area with their sources, code grounding, "
+                "and current status. Use this to see everything tracked — 'show the decision history', "
+                "'list all decisions', 'what's in the ledger', 'show me everything tracked'. "
+                "Capped at 50 features; use feature_filter to drill in when truncated=True. "
+                "Does NOT fire on implementation, ingest, or drift-specific queries — use "
+                "bicameral.preflight or bicameral.ingest for those. "
+                "Slash alias: /bicameral:history"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "file_path": {
+                    "feature_filter": {
                         "type": "string",
-                        "description": (
-                            "Optional repo-relative path. When given, doctor runs a file-scoped "
-                            "check on that file. When omitted, doctor runs a branch-scoped sweep."
-                        ),
+                        "description": "Optional substring match on feature name (case-insensitive)",
                     },
-                    "base_ref": {
-                        "type": "string",
-                        "description": (
-                            "Optional base ref for the branch sweep (ignored when file_path is "
-                            "set). Defaults to BICAMERAL_AUTHORITATIVE_REF env var, falling "
-                            "back to 'main'."
-                        ),
-                    },
-                    "head_ref": {
-                        "type": "string",
-                        "default": "HEAD",
-                        "description": "Optional head ref for the branch sweep. Defaults to HEAD.",
-                    },
-                    "use_working_tree": {
+                    "include_superseded": {
                         "type": "boolean",
-                        "default": False,
-                        "description": (
-                            "True = include uncommitted working-tree changes. False (default) = "
-                            "compare committed refs only."
-                        ),
+                        "default": True,
+                        "description": "Include superseded decisions in the response",
+                    },
+                    "as_of": {
+                        "type": "string",
+                        "description": "Git ref to evaluate against (default: HEAD)",
                     },
                 },
             },
@@ -646,21 +490,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     ctx = BicameralContext.from_env()
 
-    if name in ("bicameral.status", "decision_status"):
-        result = await handle_decision_status(
-            ctx,
-            filter=arguments.get("filter", "all"),
-            since=arguments.get("since"),
-            ref=arguments.get("ref", "HEAD"),
-        )
-    elif name in ("bicameral.search", "search_decisions"):
-        result = await handle_search_decisions(
-            ctx,
-            query=arguments["query"],
-            max_results=arguments.get("max_results", 10),
-            min_confidence=arguments.get("min_confidence", 0.5),
-        )
-    elif name in ("bicameral.link_commit", "link_commit"):
+    if name in ("bicameral.link_commit", "link_commit"):
         result = await handle_link_commit(
             ctx,
             commit_hash=arguments.get("commit_hash", "HEAD"),
@@ -678,13 +508,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             current_version=SERVER_VERSION,
         )
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
-    elif name in ("bicameral.brief", "brief"):
-        result = await handle_brief(
-            ctx,
-            topic=arguments["topic"],
-            participants=arguments.get("participants") or None,
-            max_decisions=arguments.get("max_decisions", 10),
-        )
     elif name in ("bicameral.reset", "reset"):
         result = await handle_reset(
             ctx,
@@ -724,20 +547,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             signer=arguments["signer"],
             note=arguments.get("note", ""),
         )
-    elif name in ("bicameral.scan_branch", "scan_branch"):
-        result = await handle_scan_branch(
+    elif name in ("bicameral.history", "history"):
+        result = await handle_history(
             ctx,
-            base_ref=arguments.get("base_ref"),
-            head_ref=arguments.get("head_ref"),
-            use_working_tree=arguments.get("use_working_tree", False),
-        )
-    elif name in ("bicameral.doctor", "doctor"):
-        result = await handle_doctor(
-            ctx,
-            file_path=arguments.get("file_path"),
-            base_ref=arguments.get("base_ref"),
-            head_ref=arguments.get("head_ref"),
-            use_working_tree=arguments.get("use_working_tree", False),
+            feature_filter=arguments.get("feature_filter"),
+            include_superseded=arguments.get("include_superseded", True),
+            as_of=arguments.get("as_of"),
         )
     # ── Code locator tools ────────────────────────────────────────
     elif name == "validate_symbols":

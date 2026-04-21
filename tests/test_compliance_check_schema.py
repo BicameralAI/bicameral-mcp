@@ -1,11 +1,11 @@
-"""Schema tests for compliance_check (v3) — LLM verification cache.
+"""Schema tests for compliance_check (v4) — LLM verification cache.
 
 Validates Phase 1 of the unified compliance verification plan:
 thoughts/shared/plans/2026-04-20-ingest-time-verification.md.
 
 The compliance_check table is the cache layer that lets reads project
 REFLECTED / DRIFTED / PENDING without calling an LLM. Cache key is
-``(intent_id, region_id, content_hash)`` — the hash of the code shape
+``(decision_id, region_id, content_hash)`` — the hash of the code shape
 the caller LLM actually evaluated.
 
 These tests pin the fields, the enum constraints, the defaults, and the
@@ -34,13 +34,13 @@ async def _fresh_client() -> LedgerClient:
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_schema_version_is_3_after_migrate():
-    """v2→v3 migration bumps schema_meta to 3 (confirms the new table shipped)."""
-    assert SCHEMA_VERSION == 3, "code-level constant must be 3"
+    """v3→v4 migration bumps schema_meta to 4 (confirms the new table shipped)."""
+    assert SCHEMA_VERSION == 4, "code-level constant must be 4"
     c = await _fresh_client()
     try:
         rows = await c.query("SELECT version FROM schema_meta LIMIT 1")
         assert rows, "schema_meta row missing after migrate"
-        assert rows[0]["version"] == 3
+        assert rows[0]["version"] == 4
     finally:
         await c.close()
 
@@ -59,24 +59,24 @@ async def test_unique_cache_key_rejects_duplicate_tuple():
     c = await _fresh_client()
     try:
         await c.execute(
-            "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-            "content_hash = $h, compliant = true, confidence = 'high', "
+            "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+            "content_hash = $h, verdict = 'compliant', confidence = 'high', "
             "explanation = 'first', phase = 'ingest'",
             {"i": "intent:a", "r": "code_region:x", "h": "hash_abc"},
         )
 
         with pytest.raises(LedgerError, match="idx_cc_cache_key"):
             await c.execute(
-                "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-                "content_hash = $h, compliant = false, confidence = 'low', "
+                "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+                "content_hash = $h, verdict = 'drifted', confidence = 'low', "
                 "explanation = 'second', phase = 'drift'",
                 {"i": "intent:a", "r": "code_region:x", "h": "hash_abc"},
             )
 
-        # Defensive: the first row's compliant=true must still be what's stored.
-        rows = await c.query("SELECT compliant FROM compliance_check")
+        # Defensive: the first row's verdict='compliant' must still be stored.
+        rows = await c.query("SELECT verdict FROM compliance_check")
         assert len(rows) == 1
-        assert rows[0]["compliant"] is True
+        assert rows[0]["verdict"] == "compliant"
     finally:
         await c.close()
 
@@ -92,20 +92,20 @@ async def test_unique_cache_key_allows_different_content_hash():
     c = await _fresh_client()
     try:
         await c.execute(
-            "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-            "content_hash = $h1, compliant = true, confidence = 'high', "
+            "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+            "content_hash = $h1, verdict = 'compliant', confidence = 'high', "
             "explanation = 'ok at h1', phase = 'ingest'",
             {"i": "intent:a", "r": "code_region:x", "h1": "hash_aaa"},
         )
         await c.execute(
-            "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-            "content_hash = $h2, compliant = false, confidence = 'medium', "
+            "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+            "content_hash = $h2, verdict = 'drifted', confidence = 'medium', "
             "explanation = 'broke at h2', phase = 'drift'",
             {"i": "intent:a", "r": "code_region:x", "h2": "hash_bbb"},
         )
         rows = await c.query(
             "SELECT content_hash FROM compliance_check "
-            "WHERE intent_id = 'intent:a' AND region_id = 'code_region:x' "
+            "WHERE decision_id = 'intent:a' AND region_id = 'code_region:x' "
             "ORDER BY content_hash"
         )
         assert len(rows) == 2
@@ -125,9 +125,9 @@ async def test_confidence_enum_rejects_invalid_value():
     try:
         with pytest.raises(LedgerError, match="confidence"):
             await c.execute(
-                "CREATE compliance_check SET intent_id = 'intent:a', "
+                "CREATE compliance_check SET decision_id = 'intent:a', "
                 "region_id = 'code_region:x', content_hash = 'h', "
-                "compliant = true, confidence = 'very_high', "
+                "verdict = 'compliant', confidence = 'very_high', "
                 "explanation = '', phase = 'ingest'"
             )
         # No row should exist.
@@ -145,9 +145,9 @@ async def test_phase_enum_rejects_invalid_value():
     try:
         with pytest.raises(LedgerError, match="phase"):
             await c.execute(
-                "CREATE compliance_check SET intent_id = 'intent:a', "
+                "CREATE compliance_check SET decision_id = 'intent:a', "
                 "region_id = 'code_region:x', content_hash = 'h', "
-                "compliant = true, confidence = 'high', "
+                "verdict = 'compliant', confidence = 'high', "
                 "explanation = '', phase = 'mystery_phase'"
             )
         rows = await c.query("SELECT id FROM compliance_check")
@@ -170,8 +170,8 @@ async def test_phase_accepts_all_five_reserved_values():
             ("ingest", "drift", "regrounding", "supersession", "divergence")
         ):
             await c.execute(
-                "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-                "content_hash = $h, compliant = true, confidence = 'high', "
+                "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+                "content_hash = $h, verdict = 'compliant', confidence = 'high', "
                 "explanation = '', phase = $p",
                 {
                     "i": f"intent:{i}",
@@ -202,14 +202,14 @@ async def test_defaults_phase_drift_explanation_empty_checked_at_now():
     c = await _fresh_client()
     try:
         await c.execute(
-            "CREATE compliance_check SET intent_id = 'intent:a', "
+            "CREATE compliance_check SET decision_id = 'intent:a', "
             "region_id = 'code_region:x', content_hash = 'h', "
-            "compliant = true, confidence = 'high'"
+            "verdict = 'compliant', confidence = 'high'"
             # phase, explanation, commit_hash, checked_at omitted
         )
         rows = await c.query(
             "SELECT phase, explanation, commit_hash, checked_at "
-            "FROM compliance_check WHERE intent_id = 'intent:a'"
+            "FROM compliance_check WHERE decision_id = 'intent:a'"
         )
         assert len(rows) == 1
         row = rows[0]
@@ -236,8 +236,8 @@ async def test_secondary_indexes_support_lookup_queries():
     try:
         for i in range(3):
             await c.execute(
-                "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-                "content_hash = $h, commit_hash = $cm, compliant = true, "
+                "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+                "content_hash = $h, commit_hash = $cm, verdict = 'compliant', "
                 "confidence = 'high', explanation = '', phase = 'drift'",
                 {
                     "i": f"intent:{i}",
@@ -247,10 +247,10 @@ async def test_secondary_indexes_support_lookup_queries():
                 },
             )
         rows = await c.query(
-            "SELECT intent_id FROM compliance_check WHERE commit_hash = 'commit_xyz'"
+            "SELECT decision_id FROM compliance_check WHERE commit_hash = 'commit_xyz'"
         )
         assert len(rows) == 1
-        assert rows[0]["intent_id"] == "intent:1"
+        assert rows[0]["decision_id"] == "intent:1"
     finally:
         await c.close()
 
@@ -264,10 +264,10 @@ async def test_migrate_is_idempotent_at_v3():
     """Calling migrate() twice is a no-op (version already at target)."""
     c = await _fresh_client()
     try:
-        # Already at v3 from _fresh_client(); running migrate() again is fine.
+        # Already at v4 from _fresh_client(); running migrate() again is fine.
         await migrate(c)
         rows = await c.query("SELECT version FROM schema_meta LIMIT 1")
-        assert rows[0]["version"] == 3
+        assert rows[0]["version"] == 4
     finally:
         await c.close()
 
