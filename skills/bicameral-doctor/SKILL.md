@@ -103,8 +103,8 @@ Don't pretend the scan ran. Don't invent findings.
 
 Same contract as every other read skill. Hint kinds that can fire on doctor responses:
 
-- **`review_drift`** — at least one decision in the scan (file or branch) is drifted. Refs: drifted intent_ids + file paths (on branch scope) or the single file path (on file scope).
-- **`ground_decision`** — at least one decision has no code grounding yet. Refs: ungrounded intent_ids.
+- **`review_drift`** — at least one decision in the scan (file or branch) is drifted. Refs: drifted decision_ids + file paths (on branch scope) or the single file path (on file scope).
+- **`ground_decision`** — at least one decision has no code grounding yet. Refs: ungrounded decision_ids.
 
 In **normal mode** (`guided: false`, default), hints are advisory (`blocking: false`). Mention them in one line and continue. In **guided mode** (`guided: true`), hints are blocking. Pause before any write operation and wait for user acknowledgment.
 

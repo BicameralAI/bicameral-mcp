@@ -49,9 +49,9 @@ override:
 Kinds that can fire on search responses:
 
 - **`review_drift`** — one or more matched decisions are drifted.
-  Refs: drifted `intent_id`s + the file paths they touch.
+  Refs: drifted `decision_id`s + the file paths they touch.
 - **`ground_decision`** — one or more matched decisions have no code
-  grounding yet. Refs: the ungrounded `intent_id`s.
+  grounding yet. Refs: the ungrounded `decision_id`s.
 
 When `action_hints` is empty, none of the matches triggered any hint
 — proceed normally.

@@ -50,7 +50,7 @@ async def handle_decision_status(
         ]
 
         entries.append(DecisionStatusEntry(
-            intent_id=d["intent_id"],
+            decision_id=d["decision_id"],
             description=d["description"],
             status=status,
             source_type=d.get("source_type", ""),
@@ -62,6 +62,7 @@ async def handle_decision_status(
             source_excerpt=d.get("source_excerpt", ""),
             meeting_date=d.get("meeting_date", ""),
             speakers=d.get("speakers", []),
+            product_signoff=d.get("product_signoff"),
         ))
 
     return DecisionStatusResponse(

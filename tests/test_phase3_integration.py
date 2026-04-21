@@ -65,33 +65,34 @@ async def _dump_graph(label: str) -> dict:
     await inner._ensure_connected()
     client = inner._client
 
-    intents = await client.query("SELECT * FROM intent")
+    decisions = await client.query("SELECT * FROM decision")
     symbols = await client.query("SELECT * FROM symbol")
     regions = await client.query("SELECT * FROM code_region")
-    maps_to = await client.query("SELECT * FROM maps_to")
-    implements = await client.query("SELECT * FROM implements")
+    binds_to = await client.query("SELECT * FROM binds_to")
+    locates = await client.query("SELECT * FROM locates")
     depends_on = await client.query("SELECT * FROM depends_on")
     cursors = await client.query("SELECT * FROM source_cursor")
 
     graph = {
         "label": label,
         "nodes": {
-            "intents": intents,
+            "decisions": decisions,
             "symbols": symbols,
             "code_regions": regions,
             "source_cursors": cursors,
         },
         "edges": {
-            "maps_to": maps_to,
-            "implements": implements,
+            "binds_to": binds_to,
+            "locates": locates,
             "depends_on": depends_on,
         },
         "counts": {
-            "intents": len(intents),
+            "intents": len(decisions),  # alias for old test assertions
+            "decisions": len(decisions),
             "symbols": len(symbols),
             "code_regions": len(regions),
-            "maps_to": len(maps_to),
-            "implements": len(implements),
+            "binds_to": len(binds_to),
+            "locates": len(locates),
             "depends_on": len(depends_on),
         },
     }
@@ -360,8 +361,8 @@ async def test_decision_undocumented__status_surfaces_ungrounded(ctx):
     _dump("03_undocumented_ingest", _response_dict(ingest_result))
 
     assert ingest_result.stats.ungrounded >= 1
-    assert any("zylorphian" in u.lower() for u in ingest_result.ungrounded_intents), (
-        f"Expected 'Zylorphian' in ungrounded list, got: {ingest_result.ungrounded_intents}"
+    assert any("zylorphian" in u.lower() for u in ingest_result.ungrounded_decisions), (
+        f"Expected 'Zylorphian' in ungrounded list, got: {ingest_result.ungrounded_decisions}"
     )
 
     status = await handle_decision_status(ctx, filter="all")
@@ -565,13 +566,12 @@ async def test_full_lifecycle_graph_integrity(ctx):
     # Step 6: Full graph dump
     graph = await _dump_graph("06_lifecycle_final")
 
-    # Graph integrity
-    intent_ids = {i.get("id") for i in graph["nodes"]["intents"]}
-    symbol_ids = {s.get("id") for s in graph["nodes"]["symbols"]}
-    all_node_ids = intent_ids | symbol_ids
-    for edge in graph["edges"]["maps_to"]:
-        assert edge.get("in") in all_node_ids, f"Dangling maps_to.in: {edge.get('in')}"
-        assert edge.get("out") in all_node_ids, f"Dangling maps_to.out: {edge.get('out')}"
+    # Graph integrity (v4: decision→binds_to→code_region)
+    decision_ids = {i.get("id") for i in graph["nodes"]["decisions"]}
+    region_ids = {r.get("id") for r in graph["nodes"]["code_regions"]}
+    for edge in graph["edges"]["binds_to"]:
+        assert edge.get("in") in decision_ids, f"Dangling binds_to.in: {edge.get('in')}"
+        assert edge.get("out") in region_ids, f"Dangling binds_to.out: {edge.get('out')}"
 
     # At least one ungrounded
     statuses = {d.status for d in r_status.decisions}

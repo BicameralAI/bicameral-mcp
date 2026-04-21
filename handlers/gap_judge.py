@@ -229,24 +229,24 @@ def _build_context_decisions(
     surfaces cross-decision tension without requiring the caller
     agent to re-query.
     """
-    # (symbol, file_path) → set of intent_ids
-    symbol_to_intents: dict[tuple[str, str], set[str]] = {}
+    # (symbol, file_path) → set of decision_ids
+    symbol_to_decisions: dict[tuple[str, str], set[str]] = {}
     for m in matches:
         for region in m.code_regions:
             key = (region.symbol, region.file_path)
-            symbol_to_intents.setdefault(key, set()).add(m.intent_id)
+            symbol_to_decisions.setdefault(key, set()).add(m.decision_id)
 
     context_decisions: list[GapJudgmentContextDecision] = []
     for m in matches:
         related: set[str] = set()
         for region in m.code_regions:
             key = (region.symbol, region.file_path)
-            related.update(symbol_to_intents.get(key, set()))
-        related.discard(m.intent_id)  # a decision is not related to itself
+            related.update(symbol_to_decisions.get(key, set()))
+        related.discard(m.decision_id)
 
         context_decisions.append(
             GapJudgmentContextDecision(
-                intent_id=m.intent_id,
+                decision_id=m.decision_id,
                 description=m.description,
                 status=m.status,
                 source_excerpt=m.source_excerpt,

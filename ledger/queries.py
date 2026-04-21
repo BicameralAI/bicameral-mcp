@@ -1,4 +1,8 @@
-"""SurrealQL query functions for the decision ledger.
+"""SurrealQL query functions for the decision ledger — v4 (v0.5.0).
+
+v4 graph shape:
+  Decision tier:  input_span -yields-> decision -binds_to-> code_region
+  Retrieval tier: symbol -locates-> code_region
 
 All functions take a LedgerClient and return plain Python types.
 No SDK types (RecordID etc.) leak through — normalization happens in client.py.
@@ -16,27 +20,18 @@ logger = logging.getLogger(__name__)
 
 # ── Idempotent edge creation ──────────────────────────────────────────────
 #
-# The edge tables (maps_to, implements, yields) each have a UNIQUE(in, out)
-# index so the same logical relationship can never be created twice. Per
-# schema.py: "The UNIQUE index pushes idempotency into the DB layer so
-# application code doesn't have to remember to check."
-#
-# Team-mode event replay (events/materializer.py) re-calls ingest_payload
-# for every prior event on every connect, which re-issues every RELATE.
-# The expectation is: duplicates are rejected by the DB, and that rejection
-# is treated as a no-op success.
-#
-# Prior to v3: LedgerClient.execute() silently discarded the error string,
-# so this worked by accident. Now that execute() raises LedgerError, the
-# idempotency contract has to be explicit. This helper is where it lives.
+# Edge tables (yields, binds_to, locates, depends_on) each have a
+# UNIQUE(in, out) index so the same logical relationship is never created twice.
+# Team-mode event replay re-issues every RELATE; duplicates are rejected by the
+# DB and treated as a no-op success here.
+
 async def _execute_idempotent_edge(
     client: LedgerClient, sql: str, vars: dict | None = None
 ) -> None:
     """Run a RELATE statement that may hit a UNIQUE(in, out) violation.
 
-    A "Database index ... already contains" error is treated as success —
-    the edge already exists, which is the intended end state. Any other
-    LedgerError re-raises.
+    A "Database index ... already contains" error is treated as success.
+    Any other LedgerError re-raises.
     """
     try:
         await client.execute(sql, vars)
@@ -143,7 +138,7 @@ async def upsert_source_cursor(
     }
 
 
-# ── Intent queries ────────────────────────────────────────────────────────
+# ── Decision queries ──────────────────────────────────────────────────────
 
 
 async def get_all_decisions(
@@ -151,7 +146,7 @@ async def get_all_decisions(
     filter: str = "all",
     since: str | None = None,
 ) -> list[dict]:
-    """Forward graph traversal: intent → symbol → code_region."""
+    """Forward graph traversal: decision → binds_to → code_region."""
     where_clauses = []
     vars: dict = {}
 
@@ -167,7 +162,7 @@ async def get_all_decisions(
     rows = await client.query(
         f"""
         SELECT
-            type::string(id)  AS intent_id,
+            type::string(id)  AS decision_id,
             description,
             rationale,
             feature_hint,
@@ -176,8 +171,9 @@ async def get_all_decisions(
             meeting_date,
             speakers,
             status,
+            product_signoff,
             created_at,
-            ->maps_to->symbol->implements->code_region.{{
+            ->binds_to->code_region.{{
                 file_path,
                 symbol_name,
                 start_line,
@@ -185,27 +181,20 @@ async def get_all_decisions(
                 purpose,
                 content_hash
             }} AS code_regions,
-            <-yields<-source_span.{{text, meeting_date, speakers}} AS source_spans
-        FROM intent
+            <-yields<-input_span.{{text, meeting_date, speakers}} AS source_spans
+        FROM decision
         {where}
         ORDER BY created_at DESC
         """,
         vars or None,
     )
-    # Normalize created_at → ingested_at string
     for row in rows:
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
-    # Rename symbol_name → symbol in each region (AS alias not supported in v2 traversals)
     for row in rows:
         for region in (row.get("code_regions") or []):
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
-    # Collapse source_spans → top-level source_excerpt, and backfill
-    # meeting_date / speakers from the span when the intent row is missing
-    # them (rows ingested before the adapter fix that propagates span fields
-    # onto the intent node). Mirrors search_by_bm25's span handling: drop
-    # empty-text spans and synthetic spans written by _reground_ungrounded.
     for row in rows:
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
@@ -228,24 +217,22 @@ async def search_by_bm25(
     max_results: int = 10,
     min_confidence: float = 0.5,
 ) -> list[dict]:
-    """BM25 search on intent.description.
+    """BM25 search on decision.description.
 
-    v0.4.14: also pulls ``source_span.text`` (raw passage) + ``meeting_date``
-    via the ``yields`` reverse edge so callers can render the meeting
-    excerpt that produced the decision. The first source_span linked to
-    the intent is used; multiple spans (same decision mentioned in
-    multiple meetings) collapse to the earliest one for stability.
+    Also pulls input_span.text (raw passage) + meeting_date via the
+    yields reverse edge so callers can render the meeting excerpt.
     """
     rows = await client.query(
         """
         SELECT
-            type::string(id)  AS intent_id,
+            type::string(id)  AS decision_id,
             description,
             source_type,
             source_ref,
             status,
+            product_signoff,
             created_at,
-            ->maps_to->symbol->implements->code_region.{
+            ->binds_to->code_region.{
                 file_path,
                 symbol_name,
                 start_line,
@@ -253,8 +240,8 @@ async def search_by_bm25(
                 purpose,
                 content_hash
             } AS code_regions,
-            <-yields<-source_span.{text, meeting_date} AS source_spans
-        FROM intent
+            <-yields<-input_span.{text, meeting_date} AS source_spans
+        FROM decision
         WHERE description @0@ $query
         LIMIT $n
         """,
@@ -264,16 +251,10 @@ async def search_by_bm25(
     for i, row in enumerate(rows):
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
-        row["confidence"] = round(1.0 - (i / max(total, 1)) * 0.4, 2)  # 1.0 → 0.6
+        row["confidence"] = round(1.0 - (i / max(total, 1)) * 0.4, 2)
         for region in (row.get("code_regions") or []):
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
-        # v0.4.14: collapse source_spans → top-level source_excerpt + meeting_date.
-        # Filter out:
-        #   - empty-text spans (placeholder rows from ingests with no passage)
-        #   - synthetic spans created by _reground_ungrounded, which writes
-        #     text=description as a placeholder. Those aren't real meeting
-        #     context; the original ingest's span is.
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
         real_spans = [
@@ -297,17 +278,8 @@ async def lookup_vocab_cache(
 ) -> tuple[list[dict], str]:
     """BM25 lookup on vocab_cache for cached grounding results.
 
-    Returns a 2-tuple: ``(symbols, matched_query_text)``.
-      - ``symbols`` is the cached code_region-shaped dict list from the
-        top matching cache entry, or ``[]`` on miss.
-      - ``matched_query_text`` is the ``query_text`` that the top hit was
-        originally stored against. The caller uses this to compute a
-        similarity gate (FC-3 fix) before deciding whether to reuse the
-        cached symbols — BM25's ``@0@`` operator is too loose on its
-        own and cross-contaminates unrelated intents.
-
+    Returns a 2-tuple: (symbols, matched_query_text).
     On hit, increments hit_count and refreshes last_hit for LRU tracking.
-    On miss, returns ``([], "")``.
     """
     rows = await client.query(
         """
@@ -338,12 +310,7 @@ async def upsert_vocab_cache(
     repo: str,
     symbols: list[dict],
 ) -> None:
-    """Write or update a vocab_cache entry.
-
-    Stores code_region-shaped dicts in the symbols array for later
-    reuse. Line numbers may go stale but are validated against the
-    live SymbolDB index on every cache hit (see _validate_cached_regions).
-    """
+    """Write or update a vocab_cache entry."""
     await client.query(
         """
         UPSERT vocab_cache SET
@@ -366,12 +333,10 @@ async def get_decisions_for_file(
     client: LedgerClient,
     file_path: str,
 ) -> list[dict]:
-    """Reverse traversal: code_region → symbol → intent for a given file.
+    """Reverse traversal: code_region → binds_to (reverse) → decision for a given file.
 
-    v0.4.14: also pulls ``source_excerpt`` + ``meeting_date`` per intent
-    via a follow-up batch query against the ``yields`` reverse edge so
-    the drift handler can render the meeting passage that produced
-    each decision.
+    Also pulls source_excerpt + meeting_date per decision via the
+    yields reverse edge so the drift handler can render the meeting passage.
     """
     rows = await client.query(
         """
@@ -383,24 +348,24 @@ async def get_decisions_for_file(
             end_line,
             purpose,
             content_hash,
-            <-implements<-symbol<-maps_to<-intent.{
+            <-binds_to<-decision.{
                 id,
                 description,
                 source_type,
                 source_ref,
                 status,
+                product_signoff,
                 created_at
-            } AS intents
+            } AS decisions
         FROM code_region
         WHERE file_path = $fp
         """,
         {"fp": file_path},
     )
 
-    # Flatten: one row per (region, intent) pair
     results = []
-    seen_intent_ids: set[str] = set()
-    intent_id_set: set[str] = set()
+    seen_decision_ids: set[str] = set()
+    decision_id_set: set[str] = set()
     for region_row in rows:
         region = {
             "file_path": region_row.get("file_path", ""),
@@ -409,50 +374,45 @@ async def get_decisions_for_file(
             "purpose": region_row.get("purpose", ""),
             "content_hash": region_row.get("content_hash", ""),
         }
-        for intent in (region_row.get("intents") or []):
-            if intent is None:
+        for decision in (region_row.get("decisions") or []):
+            if decision is None:
                 continue
-            iid = str(intent.get("id", ""))
-            if iid in seen_intent_ids:
+            did = str(decision.get("id", ""))
+            if did in seen_decision_ids:
                 continue
-            seen_intent_ids.add(iid)
-            intent_id_set.add(iid)
+            seen_decision_ids.add(did)
+            decision_id_set.add(did)
             results.append({
-                "intent_id": iid,
-                "description": intent.get("description", ""),
-                "source_type": intent.get("source_type", ""),
-                "source_ref": intent.get("source_ref", ""),
+                "decision_id": did,
+                "description": decision.get("description", ""),
+                "source_type": decision.get("source_type", ""),
+                "source_ref": decision.get("source_ref", ""),
                 "source_excerpt": "",
                 "meeting_date": "",
                 "speaker": "",
-                "ingested_at": str(intent.get("created_at", "")),
-                "status": intent.get("status", "ungrounded"),
+                "ingested_at": str(decision.get("created_at", "")),
+                "status": decision.get("status", "ungrounded"),
+                "product_signoff": decision.get("product_signoff"),
                 "code_region": region,
             })
 
-    # v0.4.14: backfill source_excerpt + meeting_date via yields reverse edge.
-    # Single batched query keeps this O(1) extra DB roundtrip regardless of
-    # how many intents matched the file. Compares stringified IDs because
-    # SurrealDB's bind for record-ref IN clause is finicky in embedded mode.
-    if intent_id_set:
+    # Backfill source_excerpt + meeting_date via yields reverse edge
+    if decision_id_set:
         excerpt_rows = await client.query(
             """
             SELECT
-                type::string(id) AS intent_id,
-                <-yields<-source_span.{text, meeting_date} AS source_spans
-            FROM intent
+                type::string(id) AS decision_id,
+                <-yields<-input_span.{text, meeting_date} AS source_spans
+            FROM decision
             WHERE type::string(id) IN $ids
             """,
-            {"ids": list(intent_id_set)},
+            {"ids": list(decision_id_set)},
         )
-        excerpt_by_intent: dict[str, tuple[str, str]] = {}
-        # Build a description lookup so we can filter synthetic
-        # _reground_ungrounded spans (text == description) the same way
-        # search_by_bm25 does.
-        desc_by_intent = {e["intent_id"]: e.get("description", "") for e in results}
+        excerpt_by_decision: dict[str, tuple[str, str]] = {}
+        desc_by_decision = {e["decision_id"]: e.get("description", "") for e in results}
         for r in (excerpt_rows or []):
-            iid = str(r.get("intent_id", ""))
-            desc = desc_by_intent.get(iid, "")
+            did = str(r.get("decision_id", ""))
+            desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
             real_spans = [
                 s for s in spans
@@ -460,14 +420,14 @@ async def get_decisions_for_file(
             ]
             first = real_spans[0] if real_spans else None
             if first:
-                excerpt_by_intent[iid] = (
+                excerpt_by_decision[did] = (
                     str(first.get("text") or ""),
                     str(first.get("meeting_date") or ""),
                 )
         for entry in results:
-            iid = entry["intent_id"]
-            if iid in excerpt_by_intent:
-                excerpt, mdate = excerpt_by_intent[iid]
+            did = entry["decision_id"]
+            if did in excerpt_by_decision:
+                excerpt, mdate = excerpt_by_decision[did]
                 entry["source_excerpt"] = excerpt
                 entry["meeting_date"] = mdate
 
@@ -478,13 +438,13 @@ async def get_undocumented_symbols(
     client: LedgerClient,
     file_path: str,
 ) -> list[str]:
-    """Return symbol names in file_path with no mapped intent."""
+    """Return symbol names in file_path with no bound decision."""
     rows = await client.query(
         """
         SELECT symbol_name
         FROM code_region
         WHERE file_path = $fp
-          AND (<-implements<-symbol<-maps_to<-intent) = []
+          AND (<-binds_to<-decision) = []
         """,
         {"fp": file_path},
     )
@@ -494,7 +454,7 @@ async def get_undocumented_symbols(
 # ── Ingestion ─────────────────────────────────────────────────────────────
 
 
-async def upsert_intent(
+async def upsert_decision(
     client: LedgerClient,
     description: str,
     source_type: str,
@@ -504,89 +464,65 @@ async def upsert_intent(
     meeting_date: str = "",
     speakers: list = (),
     status: str = "ungrounded",
+    product_signoff: dict | None = None,
 ) -> str:
-    """Create or update an intent node. Returns the intent ID string.
+    """Create or update a decision node. Returns the decision ID string.
 
-    v0.4.13: dedup key is now ``canonical_id`` (UUIDv5 derived from
-    canonicalized description + canonicalized source_ref via JCS). Two
-    team members ingesting the same source produce the same
-    canonical_id regardless of formatting variance, and the UNIQUE
-    index on intent.canonical_id rejects the second insert at the DB
-    level. Falls back to existing description-based query if the
-    canonical_id lookup misses (handles legacy rows pre-v0.4.13).
+    Dedup key is canonical_id (UUIDv5 derived from canonicalized description +
+    canonicalized source_ref). Falls back to description-based query for
+    legacy rows pre-v0.4.13 (now kept for safety across re-ingests).
     """
-    from .canonical import canonical_intent_id
+    from .canonical import canonical_decision_id
 
-    cid = canonical_intent_id(description, source_type, source_ref)
+    cid = canonical_decision_id(description, source_type, source_ref)
 
-    # First try lookup by canonical_id — fastest path, dedup-safe even
-    # across formatting drift (whitespace, casing, source_ref format).
     existing = await client.query(
-        "SELECT id FROM intent WHERE canonical_id = $cid LIMIT 1",
+        "SELECT id FROM decision WHERE canonical_id = $cid LIMIT 1",
         {"cid": cid},
     )
     if existing:
-        # Update the existing row's mutable fields without touching
-        # canonical_id. Status is the most-mutated field — surface it
-        # explicitly so the writeback semantics stay the same as before.
-        await client.query(
-            f"UPDATE {existing[0]['id']} SET "
-            "rationale = $rationale, feature_hint = $feature_hint, "
-            "meeting_date = $meeting_date, speakers = $speakers, "
-            "status = $status",
-            {
-                "rationale": rationale,
-                "feature_hint": feature_hint,
-                "meeting_date": meeting_date,
-                "speakers": list(speakers),
-                "status": status,
-            },
-        )
-        return str(existing[0]["id"])
-
-    # No canonical match → check legacy rows by (description, source_ref)
-    # to avoid creating duplicates of pre-v0.4.13 ingests on next ingest.
-    legacy = await client.query(
-        "SELECT id FROM intent WHERE description = $d AND source_ref = $sr "
-        "AND (canonical_id = '' OR canonical_id = NONE) LIMIT 1",
-        {"d": description, "sr": source_ref},
-    )
-    if legacy:
-        # Backfill canonical_id on the legacy row + update mutable fields.
-        await client.query(
-            f"UPDATE {legacy[0]['id']} SET "
-            "canonical_id = $cid, rationale = $rationale, "
-            "feature_hint = $feature_hint, meeting_date = $meeting_date, "
-            "speakers = $speakers, status = $status",
-            {
-                "cid": cid,
-                "rationale": rationale,
-                "feature_hint": feature_hint,
-                "meeting_date": meeting_date,
-                "speakers": list(speakers),
-                "status": status,
-            },
-        )
-        return str(legacy[0]["id"])
-
-    # Truly new — CREATE with canonical_id stamped.
-    rows = await client.query(
-        "CREATE intent SET description=$d, source_type=$st, source_ref=$sr, "
-        "status=$s, canonical_id=$cid, rationale=$rationale, "
-        "feature_hint=$feature_hint, meeting_date=$meeting_date, "
-        "speakers=$speakers",
-        {
-            "d": description,
-            "st": source_type,
-            "sr": source_ref,
-            "s": status,
-            "cid": cid,
+        update_params: dict = {
             "rationale": rationale,
             "feature_hint": feature_hint,
             "meeting_date": meeting_date,
             "speakers": list(speakers),
-        },
+            "status": status,
+        }
+        set_clause = (
+            "rationale = $rationale, feature_hint = $feature_hint, "
+            "meeting_date = $meeting_date, speakers = $speakers, status = $status"
+        )
+        if product_signoff is not None:
+            set_clause += ", product_signoff = $product_signoff"
+            update_params["product_signoff"] = product_signoff
+        await client.query(
+            f"UPDATE {existing[0]['id']} SET {set_clause}",
+            update_params,
+        )
+        return str(existing[0]["id"])
+
+    # Truly new — CREATE with canonical_id stamped
+    create_params: dict = {
+        "d": description,
+        "st": source_type,
+        "sr": source_ref,
+        "s": status,
+        "cid": cid,
+        "rationale": rationale,
+        "feature_hint": feature_hint,
+        "meeting_date": meeting_date,
+        "speakers": list(speakers),
+    }
+    create_clause = (
+        "CREATE decision SET description=$d, source_type=$st, source_ref=$sr, "
+        "status=$s, canonical_id=$cid, rationale=$rationale, "
+        "feature_hint=$feature_hint, meeting_date=$meeting_date, "
+        "speakers=$speakers"
     )
+    if product_signoff is not None:
+        create_clause += ", product_signoff=$product_signoff"
+        create_params["product_signoff"] = product_signoff
+    rows = await client.query(create_clause, create_params)
     return str(rows[0].get("id", "")) if rows else ""
 
 
@@ -658,39 +594,36 @@ async def upsert_code_region(
 
 async def upsert_compliance_check(
     client: LedgerClient,
-    intent_id: str,
+    decision_id: str,
     region_id: str,
     content_hash: str,
-    compliant: bool,
+    verdict: str,
     confidence: str,
     explanation: str,
     phase: str,
     commit_hash: str = "",
+    pruned: bool = False,
 ) -> bool:
-    """Write a compliance_check row keyed on (intent_id, region_id, content_hash).
+    """Write a compliance_check row keyed on (decision_id, region_id, content_hash).
 
-    Returns ``True`` when the row was written, ``False`` when a row for
-    the exact tuple already existed (idempotent replay path). Treats the
-    UNIQUE-violation rejection as success — first-write-wins semantics
-    for caller verdicts. If the caller wants to overwrite a verdict they
-    must delete the existing row first.
-
-    Plan: 2026-04-20-ingest-time-verification.md (Phase 3).
+    Returns True when written, False when the row already existed (first-write-wins).
+    verdict must be one of: 'compliant', 'drifted', 'not_relevant'.
     """
     try:
         await client.execute(
-            "CREATE compliance_check SET intent_id = $i, region_id = $r, "
-            "content_hash = $h, compliant = $c, confidence = $cf, "
-            "explanation = $e, phase = $p, commit_hash = $cm",
+            "CREATE compliance_check SET decision_id = $d, region_id = $r, "
+            "content_hash = $h, verdict = $v, confidence = $cf, "
+            "explanation = $e, phase = $p, commit_hash = $cm, pruned = $pr",
             {
-                "i": intent_id,
+                "d": decision_id,
                 "r": region_id,
                 "h": content_hash,
-                "c": compliant,
+                "v": verdict,
                 "cf": confidence,
                 "e": explanation,
                 "p": phase,
                 "cm": commit_hash,
+                "pr": pruned,
             },
         )
         return True
@@ -700,78 +633,78 @@ async def upsert_compliance_check(
         return False
 
 
-async def intent_exists(client: LedgerClient, intent_id: str) -> bool:
-    """Return True iff an intent row exists with the given record id."""
-    rows = await client.query(
-        f"SELECT id FROM {intent_id} LIMIT 1",
-    )
+async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
+    """Return True iff a decision row exists with the given record id."""
+    rows = await client.query(f"SELECT id FROM {decision_id} LIMIT 1")
     return bool(rows)
 
 
 async def region_exists(client: LedgerClient, region_id: str) -> bool:
     """Return True iff a code_region row exists with the given record id."""
-    rows = await client.query(
-        f"SELECT id FROM {region_id} LIMIT 1",
-    )
+    rows = await client.query(f"SELECT id FROM {region_id} LIMIT 1")
     return bool(rows)
 
 
 async def get_compliance_verdict(
     client: LedgerClient,
-    intent_id: str,
+    decision_id: str,
     region_id: str,
     content_hash: str,
 ) -> dict | None:
-    """Return the cached LLM verdict for this exact code shape, or None.
-
-    The cache key is ``(intent_id, region_id, content_hash)``. When a
-    verdict exists, ``derive_status`` can project REFLECTED or DRIFTED
-    without a new LLM call. When it doesn't, the drift sweep emits a
-    pending_compliance_check for the caller LLM to resolve.
-
-    Plan: 2026-04-20-ingest-time-verification.md (Phase 2).
-    """
+    """Return the cached LLM verdict for this exact code shape, or None."""
     rows = await client.query(
-        "SELECT compliant, confidence, explanation, phase, checked_at "
+        "SELECT verdict, pruned, confidence, explanation, phase, checked_at "
         "FROM compliance_check "
-        "WHERE intent_id = $i AND region_id = $r AND content_hash = $h "
+        "WHERE decision_id = $d AND region_id = $r AND content_hash = $h "
         "LIMIT 1",
-        {"i": intent_id, "r": region_id, "h": content_hash},
+        {"d": decision_id, "r": region_id, "h": content_hash},
     )
     return rows[0] if rows else None
 
 
-async def relate_maps_to(
+async def relate_yields(
     client: LedgerClient,
-    intent_id: str,
-    symbol_id: str,
+    span_id: str,
+    decision_id: str,
+) -> None:
+    """Create input_span → yields → decision edge. Idempotent via UNIQUE(in, out)."""
+    await _execute_idempotent_edge(
+        client,
+        f"RELATE {span_id}->yields->{decision_id} SET created_at=time::now()",
+    )
+
+
+async def relate_binds_to(
+    client: LedgerClient,
+    decision_id: str,
+    region_id: str,
     confidence: float = 0.8,
     provenance: dict | None = None,
 ) -> None:
-    """Create intent → maps_to → symbol edge. Idempotent via UNIQUE(in, out)."""
+    """Create decision → binds_to → code_region edge. Idempotent via UNIQUE(in, out)."""
     prov = provenance or {}
     await _execute_idempotent_edge(
         client,
-        f"RELATE {intent_id}->maps_to->{symbol_id} SET confidence=$c, provenance=$p, created_at=time::now()",
+        f"RELATE {decision_id}->binds_to->{region_id} SET confidence=$c, provenance=$p, created_at=time::now()",
         {"c": confidence, "p": prov},
     )
 
 
-async def relate_implements(
+async def relate_locates(
     client: LedgerClient,
     symbol_id: str,
     region_id: str,
     confidence: float = 0.8,
 ) -> None:
-    """Create symbol → implements → code_region edge. Idempotent via UNIQUE(in, out)."""
+    """Create symbol → locates → code_region edge. Idempotent via UNIQUE(in, out)."""
     await _execute_idempotent_edge(
         client,
-        f"RELATE {symbol_id}->implements->{region_id} SET confidence=$c, created_at=time::now()",
+        f"RELATE {symbol_id}->locates->{region_id} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 
 
-async def upsert_source_span(
+async def upsert_input_span(
     client: LedgerClient,
     text: str,
     source_type: str,
@@ -779,14 +712,16 @@ async def upsert_source_span(
     speakers: list = (),
     meeting_date: str = "",
 ) -> str:
-    """Create or update a source_span node. Returns the source_span ID string.
+    """Create or update an input_span node. Returns the input_span ID string.
 
-    Deduplicates on (source_type, source_ref, text) — same excerpt from the
-    same source is the same span.
+    Deduplicates on (source_type, source_ref, text). text must be non-empty
+    (enforced by the schema ASSERT constraint).
     """
+    if not text:
+        return ""
     rows = await client.query(
         """
-        UPSERT source_span SET
+        UPSERT input_span SET
             text         = $text,
             source_type  = $source_type,
             source_ref   = $source_ref,
@@ -806,32 +741,20 @@ async def upsert_source_span(
     if rows:
         return str(rows[0].get("id", ""))
     rows = await client.query(
-        "CREATE source_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
+        "CREATE input_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
         {"t": text, "st": source_type, "sr": source_ref, "sp": list(speakers), "md": meeting_date},
     )
     return str(rows[0].get("id", "")) if rows else ""
 
 
-async def relate_yields(
+async def update_decision_status(
     client: LedgerClient,
-    span_id: str,
-    intent_id: str,
-) -> None:
-    """Create source_span → yields → intent edge. Idempotent via UNIQUE(in, out)."""
-    await _execute_idempotent_edge(
-        client,
-        f"RELATE {span_id}->yields->{intent_id} SET created_at=time::now()",
-    )
-
-
-async def update_intent_status(
-    client: LedgerClient,
-    intent_id: str,
+    decision_id: str,
     status: str,
 ) -> None:
-    """Update the cached status on an intent node."""
+    """Update the cached status on a decision node."""
     await client.execute(
-        f"UPDATE {intent_id} SET status = $s",
+        f"UPDATE {decision_id} SET status = $s",
         {"s": status},
     )
 
@@ -853,7 +776,10 @@ async def get_regions_for_files(
     client: LedgerClient,
     file_paths: list[str],
 ) -> list[dict]:
-    """Return all code_region records for a list of file paths."""
+    """Return all code_region records for a list of file paths.
+
+    Uses binds_to reverse traversal to find linked decisions.
+    """
     if not file_paths:
         return []
     rows = await client.query(
@@ -861,7 +787,7 @@ async def get_regions_for_files(
         SELECT
             type::string(id) AS region_id,
             file_path, symbol_name, start_line, end_line, content_hash,
-            <-implements<-symbol<-maps_to<-intent.{id, status, description} AS intents
+            <-binds_to<-decision.{id, status, description} AS decisions
         FROM code_region
         WHERE file_path IN $fps
         """,
@@ -874,22 +800,13 @@ async def get_regions_without_hash(
     client: LedgerClient,
     repo: str = "",
 ) -> list[dict]:
-    """Return regions whose content_hash has never been stamped.
-
-    Used by the backfill sweep in ingest_commit to self-heal legacy regions
-    from pre-v0.4.5 ledgers where ingest skipped hash computation. Filters
-    in Python rather than SurrealQL to avoid v2-vs-v3 NONE/NULL syntax drift.
-
-    When ``repo`` is provided, only regions belonging to that repo are
-    returned — prevents backfill noise from unrelated ledgers in the same
-    SurrealDB database (common during multi-fixture test runs).
-    """
+    """Return regions whose content_hash has never been stamped."""
     rows = await client.query(
         """
         SELECT
             type::string(id) AS region_id,
             file_path, symbol_name, start_line, end_line, content_hash, repo,
-            <-implements<-symbol<-maps_to<-intent.{id, status, description} AS intents
+            <-binds_to<-decision.{id, status, description} AS decisions
         FROM code_region
         """,
     )
@@ -897,6 +814,92 @@ async def get_regions_without_hash(
     if repo:
         filtered = [r for r in filtered if str(r.get("repo", "")) == repo]
     return filtered
+
+
+async def delete_binds_to_edge(
+    client: LedgerClient,
+    decision_id: str,
+    region_id: str,
+) -> None:
+    """Delete a binds_to edge between a decision and a code_region.
+
+    Used when a caller returns a not_relevant verdict — retrieval made a
+    mistake and the binding should not be kept.
+    """
+    try:
+        await client.execute(
+            f"DELETE FROM binds_to WHERE in = {decision_id} AND out = {region_id}",
+        )
+    except Exception as exc:
+        logger.warning("[delete_binds_to] %s → %s failed: %s", decision_id, region_id, exc)
+
+
+async def project_decision_status(
+    client: LedgerClient,
+    decision_id: str,
+) -> str:
+    """Derive decision.status from product_signoff + compliance verdict aggregation.
+
+    Double-entry 2×2 + strict aggregation:
+    - No binds_to AND product_signoff None → 'ungrounded'
+    - No binds_to AND product_signoff set → 'pending'
+    - Any bound region with drifted verdict → 'drifted'
+    - Any bound region with no verdict for current hash → 'pending'
+    - All bound regions compliant + product_signoff set → 'reflected'
+    - All bound regions compliant + product_signoff None → 'pending' (hero case)
+
+    DRIFTED always wins over signoff state — broken code is broken code.
+    """
+    dec_rows = await client.query(
+        f"SELECT product_signoff FROM {decision_id} LIMIT 1",
+    )
+    if not dec_rows:
+        return "ungrounded"
+    product_signoff = dec_rows[0].get("product_signoff")
+
+    # Get all non-pruned bound regions + their current content_hash
+    binding_rows = await client.query(
+        f"""
+        SELECT type::string(out) AS region_id, out.content_hash AS content_hash
+        FROM binds_to
+        WHERE in = {decision_id}
+        """,
+    )
+
+    if not binding_rows:
+        return "pending" if product_signoff else "ungrounded"
+
+    all_compliant = True
+    any_drifted = False
+    any_pending = False
+
+    for binding in binding_rows:
+        region_id = binding.get("region_id", "")
+        content_hash = binding.get("content_hash", "")
+
+        if not region_id or not content_hash:
+            any_pending = True
+            all_compliant = False
+            continue
+
+        verdict = await get_compliance_verdict(client, decision_id, region_id, content_hash)
+        if verdict is None:
+            any_pending = True
+            all_compliant = False
+        elif verdict.get("pruned", False):
+            # Pruned regions are not_relevant — invisible to aggregation
+            continue
+        elif verdict.get("verdict") != "compliant":
+            any_drifted = True
+            all_compliant = False
+
+    if any_drifted:
+        return "drifted"
+    if any_pending:
+        return "pending"
+    if all_compliant:
+        return "reflected" if product_signoff else "pending"
+    return "pending"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -907,13 +910,7 @@ async def get_grounding_breakdown(
     source_type: str | None = None,
     source_scope: str | None = None,
 ) -> list[dict]:
-    """Per-source_ref grounded/ungrounded/total/pct breakdown.
-
-    Used by the M1 decision-relevance eval. Returns one row per distinct
-    source_ref in the intent table. An intent is "grounded" when its status
-    is anything other than "ungrounded" (pending/reflected/drifted all mean
-    the intent is linked to at least one code region).
-    """
+    """Per-source_ref grounded/ungrounded/total/pct breakdown."""
     where_clauses: list[str] = []
     vars: dict = {}
     if source_type:
@@ -927,7 +924,7 @@ async def get_grounding_breakdown(
     rows = await client.query(
         f"""
         SELECT source_ref, status
-        FROM intent
+        FROM decision
         {where}
         """,
         vars or None,
@@ -963,11 +960,9 @@ def _normalize_decisions(rows: list[dict]) -> list[dict]:
         for r in regions:
             if r is None:
                 continue
-            # Ensure 'lines' tuple for handler compatibility
             r["lines"] = (r.pop("start_line", 0), r.pop("end_line", 0))
             normalized.append(r)
         row["code_regions"] = normalized
-        # Ensure speaker field exists
         if "speaker" not in row:
             speakers = row.get("speakers") or []
             row["speaker"] = speakers[0] if speakers else ""

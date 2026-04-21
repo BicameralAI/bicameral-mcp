@@ -218,15 +218,29 @@ def canonical_intent_id(
 ) -> str:
     """Derive a stable UUIDv5 from an intent's semantic content.
 
+    Kept for backward-compatibility with pre-v0.5.0 code paths.
+    New code should call ``canonical_decision_id`` which produces the
+    same value (the underlying derivation is identical).
+    """
+    return canonical_decision_id(description, source_type, source_ref)
+
+
+def canonical_decision_id(
+    description: str,
+    source_type: str,
+    source_ref: str,
+) -> str:
+    """Derive a stable UUIDv5 from a decision's semantic content.
+
     Two writers calling this with the same logical decision (same
     text after normalization, same source after canonicalization)
     produce the same UUID regardless of formatting variance.
 
     Returns the UUID as a string (e.g. "3f7a9b2c-...-..."). Use as
-    the primary dedup key in ``upsert_intent``.
+    the primary dedup key in ``upsert_decision``.
     """
     payload = {
-        "type": "intent",
+        "type": "decision",
         "description": canonicalize_text(description),
         "source_ref": canonicalize_source_ref(source_type, source_ref),
     }
@@ -239,13 +253,22 @@ def canonical_source_span_id(
     source_type: str,
     source_ref: str,
 ) -> str:
-    """Derive a stable UUIDv5 from a source span's semantic content.
+    """Kept for backward-compatibility. New code should call canonical_input_span_id."""
+    return canonical_input_span_id(text, source_type, source_ref)
 
-    Same canonicalization rules as ``canonical_intent_id``. Two writers
+
+def canonical_input_span_id(
+    text: str,
+    source_type: str,
+    source_ref: str,
+) -> str:
+    """Derive a stable UUIDv5 from an input_span's semantic content.
+
+    Same canonicalization rules as ``canonical_decision_id``. Two writers
     capturing the same source produce the same span ID.
     """
     payload = {
-        "type": "source_span",
+        "type": "input_span",
         "text": canonicalize_text(text),
         "source_ref": canonicalize_source_ref(source_type, source_ref),
     }

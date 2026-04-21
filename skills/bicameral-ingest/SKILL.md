@@ -199,6 +199,38 @@ doesn't exist yet. For the pending case, ingest it with empty `code_regions`
 but include a `search_hint` (see Step 3) so the server's future re-grounding
 sweeps have something to work with.
 
+### 2.5 Premise gate — supersession detection (stop-and-ask v1)
+
+After calling `bicameral.ingest`, read `IngestResponse.supersession_candidates`.
+Each entry is a prior decision whose text overlaps with one of the newly
+ingested decisions (BM25, top 3 per new decision). Classify each candidate:
+
+- **mechanical** (parallel scope) — the prior decision covers a
+  different code area, team, or lifecycle phase than the new one.
+  Auto-record both silently. No question needed.
+- **ask** (true supersession) — the prior decision appears to make a
+  contradictory or superseded claim about the same behavior. Emit
+  ONE question per ask-candidate, capped at **3 questions per ingest**.
+
+If the queue of ask-candidates exceeds 3, emit the first 3 as
+individual questions, then present a batched final approval gate for
+the remainder:
+
+```
+Bicameral flagged N more potential supersessions that I didn't ask
+individually. Options:
+  A. Proceed — record all as parallel decisions (treat as non-superseding)
+  B. Review them now — list them all and you pick for each
+  C. Cancel this ingest — let me refine the payload first
+RECOMMENDATION: Choose A if these are decisions from different product
+areas; B if any appear to change a commitment the team has already
+shipped against.
+```
+
+**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, present
+supersession candidates as informational notes only; do not gate
+the ingest.
+
 ### 3. Ingest the filtered set
 
 Call `bicameral.ingest` using the **internal format** (preferred from

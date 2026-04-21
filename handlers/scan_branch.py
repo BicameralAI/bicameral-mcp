@@ -117,11 +117,11 @@ async def handle_scan_branch(
             else:
                 changed_files = list(range_files)
 
-    # Fan out per-file decision queries. Dedup by intent_id across the
+    # Fan out per-file decision queries. Dedup by decision_id across the
     # full set — a decision touching N files shows up once in the
     # output, not N times. Track the first DriftEntry seen for each
-    # intent so the dedup is stable.
-    seen_intents: dict[str, DriftEntry] = {}
+    # decision so the dedup is stable.
+    seen_decisions: dict[str, DriftEntry] = {}
     combined_counts = {"drifted": 0, "pending": 0, "ungrounded": 0, "reflected": 0}
     undocumented_union: set[str] = set()
 
@@ -137,8 +137,8 @@ async def handle_scan_branch(
 
         entries, _file_counts = raw_decisions_to_drift_entries(raw_decisions)
         for entry in entries:
-            if entry.intent_id not in seen_intents:
-                seen_intents[entry.intent_id] = entry
+            if entry.decision_id not in seen_decisions:
+                seen_decisions[entry.decision_id] = entry
                 combined_counts[entry.status] = combined_counts.get(entry.status, 0) + 1
 
         # Union undocumented symbols across files. Use the same
@@ -160,7 +160,7 @@ async def handle_scan_branch(
         sweep_scope=sweep_scope,  # type: ignore[arg-type]
         range_size=len(changed_files),
         source=source,  # type: ignore[arg-type]
-        decisions=list(seen_intents.values()),
+        decisions=list(seen_decisions.values()),
         files_changed=changed_files,
         drifted_count=combined_counts["drifted"],
         pending_count=combined_counts["pending"],

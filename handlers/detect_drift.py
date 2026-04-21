@@ -45,7 +45,7 @@ def raw_decisions_to_drift_entries(
             counts["ungrounded"] += 1
 
         entries.append(DriftEntry(
-            intent_id=d["intent_id"],
+            decision_id=d["decision_id"],
             description=d["description"],
             status=status,
             symbol=region.get("symbol", ""),

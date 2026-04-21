@@ -1,12 +1,10 @@
-"""SurrealDBLedgerAdapter — real implementation replacing MockLedgerAdapter.
+"""SurrealDBLedgerAdapter — v4 (v0.5.0 decision-tier refactor).
 
-Implements the same interface as MockLedgerAdapter (see mocks/decision_ledger.py)
-plus ingest_payload() for loading CodeLocatorPayload data into the graph.
+Graph shape:
+  Decision tier:  input_span -yields-> decision -binds_to-> code_region
+  Retrieval tier: symbol -locates-> code_region
 
-Uses embedded SurrealDB via Python SDK (surrealdb>=1.0.0):
-  - surrealkv://~/.bicameral/ledger.db  (persistent, default)
-  - memory://                            (tests, no persistence)
-  - ws://host:port                       (standalone server, optional)
+Uses embedded SurrealDB via Python SDK (surrealdb>=1.0.0).
 """
 
 from __future__ import annotations
@@ -17,6 +15,8 @@ from pathlib import Path
 
 from .client import LedgerClient
 from .queries import (
+    decision_exists,
+    delete_binds_to_edge,
     get_all_decisions,
     get_compliance_verdict,
     get_decisions_for_file,
@@ -25,20 +25,22 @@ from .queries import (
     get_source_cursor,
     get_sync_state,
     get_undocumented_symbols,
-    relate_implements,
-    relate_maps_to,
-    relate_yields,
     lookup_vocab_cache,
+    project_decision_status,
+    region_exists,
+    relate_binds_to,
+    relate_locates,
+    relate_yields,
     search_by_bm25,
-    update_intent_status,
+    update_decision_status,
     update_region_hash,
-    upsert_source_cursor,
-    upsert_vocab_cache,
     upsert_code_region,
-    upsert_intent,
-    upsert_source_span,
+    upsert_decision,
+    upsert_input_span,
+    upsert_source_cursor,
     upsert_symbol,
     upsert_sync_state,
+    upsert_vocab_cache,
 )
 from .schema import init_schema, migrate
 from .status import (
@@ -61,12 +63,6 @@ def _extract_code_body(
     repo_path: str,
     ref: str,
 ) -> str:
-    """Return the symbol's source lines at ``ref``, capped at 200 lines.
-
-    Used to build ``PendingComplianceCheck.code_body`` so the caller LLM
-    has the actual code to evaluate the intent against. Truncation marker
-    is inline so the LLM knows it didn't get the full body.
-    """
     content = get_git_content(file_path, start_line, end_line, repo_path, ref=ref)
     if content is None:
         return ""
@@ -80,34 +76,24 @@ def _extract_code_body(
     return "\n".join(body)
 
 
-# v0.4.11: cap for range sweep. If the diff between last_synced and HEAD
-# spans more files than this, we sweep the first MAX_SWEEP_FILES and report
-# `sweep_scope="range_truncated"` so the caller knows the sweep was partial.
-# The next link_commit will pick up the remainder.
 _MAX_SWEEP_FILES = 200
 
 logger = logging.getLogger(__name__)
 
 
 def _default_db_url() -> str:
-    """Persistent SurrealDB URL under ~/.bicameral/."""
     db_path = Path.home() / ".bicameral" / "ledger.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
     return f"surrealkv://{db_path}"
 
 
-# Priority is "loudest wins" — any region drifting flags the whole intent as
-# drifted so users see the alarm, even if other regions still reflect.
 _STATUS_PRIORITY = {"drifted": 3, "reflected": 2, "pending": 1, "ungrounded": 0}
 
 
-def _aggregate_intent_status(region_statuses: list[str]) -> str:
-    """Collapse per-region statuses to a single intent status.
+def _aggregate_decision_status(region_statuses: list[str]) -> str:
+    """Collapse per-region statuses to a single decision status.
 
-    drifted > reflected > pending > ungrounded. A multi-region intent is
-    drifted if any of its regions drifted; reflected if all surviving
-    regions reflect; pending if any region is waiting on code that doesn't
-    exist yet; else ungrounded.
+    drifted > reflected > pending > ungrounded.
     """
     if not region_statuses:
         return "ungrounded"
@@ -115,14 +101,7 @@ def _aggregate_intent_status(region_statuses: list[str]) -> str:
 
 
 class SurrealDBLedgerAdapter:
-    """Real SurrealDB-backed ledger adapter.
-
-    Drop-in replacement for MockLedgerAdapter. Wire it in adapters/ledger.py
-    and set USE_REAL_LEDGER=1.
-
-    The adapter lazy-connects on first use. Call connect() explicitly
-    for setup or when you need schema init.
-    """
+    """Real SurrealDB-backed ledger adapter — v4 graph shape."""
 
     def __init__(
         self,
@@ -147,10 +126,9 @@ class SurrealDBLedgerAdapter:
         if not self._connected:
             await self.connect()
 
-    # ── Core adapter interface (mirrors MockLedgerAdapter) ────────────────
+    # ── Core adapter interface ────────────────────────────────────────────
 
     async def get_all_decisions(self, filter: str = "all") -> list[dict]:
-        """Return all tracked decisions, optionally filtered by status."""
         await self._ensure_connected()
         return await get_all_decisions(self._client, filter=filter)
 
@@ -160,7 +138,6 @@ class SurrealDBLedgerAdapter:
         max_results: int = 10,
         min_confidence: float = 0.5,
     ) -> list[dict]:
-        """BM25 search on intent descriptions."""
         await self._ensure_connected()
         return await search_by_bm25(self._client, query, max_results, min_confidence)
 
@@ -169,12 +146,6 @@ class SurrealDBLedgerAdapter:
         query_text: str,
         repo: str,
     ) -> tuple[list[dict], str]:
-        """Check vocab_cache for cached grounding results.
-
-        Returns ``(symbols, matched_query_text)``. The matched query text
-        is needed by callers to run the FC-3 similarity gate before
-        deciding whether to reuse the cached symbols.
-        """
         await self._ensure_connected()
         return await lookup_vocab_cache(self._client, query_text, repo)
 
@@ -184,17 +155,14 @@ class SurrealDBLedgerAdapter:
         repo: str,
         symbols: list[dict],
     ) -> None:
-        """Cache grounded code_regions for a query in vocab_cache."""
         await self._ensure_connected()
         await upsert_vocab_cache(self._client, query_text, repo, symbols)
 
     async def get_decisions_for_file(self, file_path: str) -> list[dict]:
-        """Reverse traversal: all decisions touching symbols in file_path."""
         await self._ensure_connected()
         return await get_decisions_for_file(self._client, file_path)
 
     async def get_undocumented_symbols(self, file_path: str) -> list[str]:
-        """Symbols in file_path with no mapped intent."""
         await self._ensure_connected()
         return await get_undocumented_symbols(self._client, file_path)
 
@@ -207,42 +175,20 @@ class SurrealDBLedgerAdapter:
     ) -> dict:
         """Heartbeat: sync a commit into the ledger, recompute affected statuses.
 
-        Idempotent via ledger_sync cursor.
-        Resolves 'HEAD' to the actual SHA before processing.
-
-        Args:
-            drift_analyzer: DriftAnalyzerPort implementation. If None, uses
-                HashDriftAnalyzer (Layer 1 hash-only). Pass a different
-                implementation for L2 (AST) or L3 (semantic) drift detection.
-            authoritative_ref: Name of the authoritative branch (usually
-                "main"). When provided AND the repo's current branch does
-                not match, the sync runs in READ-ONLY mode — drift is
-                computed for reporting but baseline hashes are NOT
-                persisted. This closes the Bug 1 silent pollution path
-                where link_commit HEAD on a feature branch would adopt
-                branch state as the baseline.
-
-                Branch-name comparison (not SHA comparison) is used so
-                normal commits that advance the authoritative branch
-                still write as expected.
+        Idempotent via ledger_sync cursor. Resolves 'HEAD' to actual SHA.
+        Uses project_decision_status for holistic aggregation (v0.5.0).
         """
         await self._ensure_connected()
 
-        # Default to HashDriftAnalyzer (Layer 1) if no analyzer provided
         if drift_analyzer is None:
             from .drift import HashDriftAnalyzer
             drift_analyzer = HashDriftAnalyzer()
 
-        # Resolve HEAD to actual SHA
         if commit_hash == "HEAD":
             resolved = resolve_head(repo_path)
             if resolved:
                 commit_hash = resolved
 
-        # Pollution guard: refuse baseline writes unless the repo's current
-        # branch matches the authoritative ref. Branch-name comparison is
-        # stable across normal commits (main advances, still "main") but
-        # catches feature-branch work.
         is_authoritative = True
         if authoritative_ref:
             import subprocess
@@ -265,7 +211,6 @@ class SurrealDBLedgerAdapter:
                     current_branch, authoritative_ref,
                 )
 
-        # Fast-path: already synced
         state = await get_sync_state(self._client, repo_path)
         if state and state.get("last_synced_commit") == commit_hash:
             return {
@@ -280,27 +225,15 @@ class SurrealDBLedgerAdapter:
                 "range_size": 0,
             }
 
-        # v0.4.11: determine sweep scope. The pre-v0.4.11 behavior was always
-        # head-only (`git show HEAD --name-only`), which missed every file
-        # drifted between last_synced and HEAD. Now the default is range_diff
-        # — sweep every file touched since the cursor — falling back to
-        # head_only when there's no cursor or the range is unreachable.
         last_synced = (state or {}).get("last_synced_commit", "") or ""
         sweep_scope: str = "head_only"
         changed_files: list[str] = []
 
         if last_synced and last_synced != commit_hash:
-            range_files = get_changed_files_in_range(
-                last_synced, commit_hash, repo_path,
-            )
+            range_files = get_changed_files_in_range(last_synced, commit_hash, repo_path)
             if range_files is None:
-                # Range unreachable (force-push, shallow clone, rebase
-                # discarded the base). Fall back to head-only — partial
-                # but better than crashing. The next sync after a real
-                # commit will recover.
                 logger.warning(
-                    "[link_commit] range %s..%s unreachable, falling "
-                    "back to head-only sweep",
+                    "[link_commit] range %s..%s unreachable, falling back to head-only sweep",
                     last_synced[:8], commit_hash[:8],
                 )
                 changed_files = get_changed_files(commit_hash, repo_path)
@@ -310,23 +243,18 @@ class SurrealDBLedgerAdapter:
                 sweep_scope = "range_diff"
                 if len(changed_files) > _MAX_SWEEP_FILES:
                     logger.warning(
-                        "[link_commit] range sweep capped at %d files "
-                        "(would have swept %d). Remainder will catch up "
-                        "on next sync.",
+                        "[link_commit] range sweep capped at %d files (would have swept %d).",
                         _MAX_SWEEP_FILES, len(changed_files),
                     )
                     changed_files = changed_files[:_MAX_SWEEP_FILES]
                     sweep_scope = "range_truncated"
         else:
-            # First-ever sync (no cursor) OR same SHA as cursor.
-            # Head-only is the right scope here.
             changed_files = get_changed_files(commit_hash, repo_path)
             sweep_scope = "head_only"
 
         range_size = len(changed_files)
 
         if not changed_files:
-            # Only advance the sync cursor on authoritative refs — pollution guard
             if is_authoritative:
                 await upsert_sync_state(self._client, repo_path, commit_hash)
             return {
@@ -341,20 +269,12 @@ class SurrealDBLedgerAdapter:
                 "range_size": 0,
             }
 
-        # Find all code_regions for changed files
         regions = await get_regions_for_files(self._client, changed_files)
 
         regions_updated = 0
-        # v0.4.11: track distinct intent_ids that flipped, not (region, intent)
-        # pairs. A decision with N regions all flipping in the same sweep
-        # used to inflate the counter N times — now it's counted once. Matches
-        # what users expect from "how many decisions just changed status."
         flipped_to_reflected: set[str] = set()
         flipped_to_drifted: set[str] = set()
         undocumented_symbols: list[str] = []
-        # v3 schema (plan 2026-04-20): per-sweep batch of verification jobs
-        # for the caller LLM. One entry per (intent, region, content_hash)
-        # tuple with no cached verdict. Handed up to LinkCommitResponse.
         pending_checks: list[dict] = []
 
         for region in regions:
@@ -365,19 +285,13 @@ class SurrealDBLedgerAdapter:
             end_line = region.get("end_line", 0)
             stored_hash = region.get("content_hash", "")
 
-            # Collect source context from linked intents for L3 drift analysis.
-            # L1 (hash) ignores this; L3 (semantic) will use it to evaluate compliance.
-            intent_descriptions = [
+            decision_descriptions = [
                 i.get("description", "")
-                for i in (region.get("intents") or [])
+                for i in (region.get("decisions") or [])
                 if i and i.get("description")
             ]
-            source_context = " | ".join(intent_descriptions)
+            source_context = " | ".join(decision_descriptions)
 
-            # Delegate hash computation to the port implementation. The
-            # ``status`` field on the result is advisory only under v3 —
-            # final status is re-derived below with compliance_check cache
-            # awareness. Only ``content_hash`` is load-bearing here.
             drift_result = await drift_analyzer.analyze_region(
                 file_path=file_path,
                 symbol_name=symbol_name,
@@ -391,108 +305,68 @@ class SurrealDBLedgerAdapter:
 
             actual_hash = drift_result.content_hash
 
-            # Pollution guard: only persist baseline writes when the
-            # caller's ref matches the authoritative ref. Non-authoritative
-            # refs produce drift reports (accumulated in the counters below)
-            # but do NOT touch stored hashes or intent statuses.
             if is_authoritative:
-                # Update the region's content_hash + pinned_commit
                 await update_region_hash(self._client, region_id, actual_hash, commit_hash)
-                # If the analyzer resolved new line numbers (via symbol resolution),
-                # detect and update them by re-resolving here for the ledger update.
                 from .status import resolve_symbol_lines
                 resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
                 if resolved and (resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line")):
-                    # Inline the record id — SurrealDB v2 can't bind a RecordID
-                    # through a string parameter. Previously ``UPDATE $rid SET ...``
-                    # with ``{"rid": "code_region:xyz"}`` returned an error
-                    # string that the silent-swallow client discarded, so
-                    # line-number updates here never actually persisted.
-                    # Matches the ``RELATE {intent_id}->...`` pattern used
-                    # by the edge helpers.
                     await self._client.query(
                         f"UPDATE {region_id} SET start_line = $sl, end_line = $el",
                         {"sl": resolved[0], "el": resolved[1]},
                     )
             regions_updated += 1
 
-            # Lazy code-body extraction — only pay the tree-sitter / git show
-            # cost if we actually need to emit a pending check for this region.
-            # Cached across intents linked to the same region.
             region_code_body: str | None = None
-
-            # v3 schema: phase classifies the emission. A region with no prior
-            # baseline hash is an ingest-phase verification (first time seeing
-            # this code); a region with a different prior hash is a drift-phase
-            # re-verification (code changed and the cache doesn't cover the
-            # new shape yet).
             phase = "ingest" if not stored_hash else "drift"
 
-            # Update all intents mapped to this region (also pollution-guarded)
-            for intent in (region.get("intents") or []):
-                if intent is None:
+            # v0.5.0: decisions are accessed via binds_to (renamed from intents via maps_to)
+            for decision in (region.get("decisions") or []):
+                if decision is None:
                     continue
-                intent_id = str(intent.get("id", ""))
-                if not intent_id:
+                decision_id = str(decision.get("id", ""))
+                if not decision_id:
                     continue
-                old_status = intent.get("status", "ungrounded")
+                old_status = decision.get("status", "ungrounded")
 
-                # v3: look up the compliance_check cache for this exact
-                # (intent, region, current-code-shape) tuple. A hit lets us
-                # project REFLECTED / DRIFTED with no LLM round-trip. A
-                # miss means we need the caller LLM to evaluate.
                 verdict: dict | None = None
                 if actual_hash:
                     verdict = await get_compliance_verdict(
-                        self._client, intent_id, region_id, actual_hash,
+                        self._client, decision_id, region_id, actual_hash,
                     )
 
-                new_status = derive_status(
-                    stored_hash, actual_hash, cached_verdict=verdict,
-                )
+                new_status = derive_status(stored_hash, actual_hash, cached_verdict=verdict)
 
                 if is_authoritative:
-                    await update_intent_status(self._client, intent_id, new_status)
+                    # v0.5.0: use project_decision_status for holistic aggregation
+                    projected = await project_decision_status(self._client, decision_id)
+                    await update_decision_status(self._client, decision_id, projected)
+                    new_status = projected
 
-                # v0.4.11: dedupe by intent_id. A decision with multiple
-                # regions all flipping in the same sweep is one flipped
-                # decision, not N. Sets collapse the duplicates.
                 if new_status == "reflected" and old_status != "reflected":
-                    flipped_to_reflected.add(intent_id)
+                    flipped_to_reflected.add(decision_id)
                 elif new_status == "drifted" and old_status != "drifted":
-                    flipped_to_drifted.add(intent_id)
+                    flipped_to_drifted.add(decision_id)
 
-                # v3: emit a pending_compliance_check when code exists
-                # but we have no verdict for this shape. Idempotent by
-                # the UNIQUE(intent_id, region_id, content_hash) index on
-                # compliance_check — the caller's resolve_compliance
-                # write is keyed on the same tuple, so repeat sweeps
-                # before resolve don't produce duplicate cache rows.
                 if actual_hash and verdict is None:
                     if region_code_body is None:
                         region_code_body = _extract_code_body(
-                            file_path, start_line, end_line,
-                            repo_path, ref=commit_hash,
+                            file_path, start_line, end_line, repo_path, ref=commit_hash,
                         )
                     pending_checks.append({
                         "phase": phase,
-                        "intent_id": intent_id,
+                        "decision_id": decision_id,
                         "region_id": region_id,
-                        "intent_description": str(intent.get("description", "")),
+                        "decision_description": str(decision.get("description", "")),
                         "file_path": file_path,
                         "symbol": symbol_name,
                         "content_hash": actual_hash,
                         "code_body": region_code_body,
                     })
 
-            # Flag as undocumented if no intents mapped
-            intents = [i for i in (region.get("intents") or []) if i is not None]
-            if not intents and symbol_name:
+            decisions = [i for i in (region.get("decisions") or []) if i is not None]
+            if not decisions and symbol_name:
                 undocumented_symbols.append(symbol_name)
 
-        # Only persist sync state on authoritative refs — otherwise the
-        # cursor would advance to a branch SHA and the next authoritative
-        # sync would be incorrectly skipped by the fast-path.
         if is_authoritative:
             await upsert_sync_state(self._client, repo_path, commit_hash)
 
@@ -514,17 +388,7 @@ class SurrealDBLedgerAdapter:
         repo_path: str,
         drift_analyzer=None,
     ) -> dict:
-        """Self-heal pre-v0.4.5 regions that were persisted with an empty
-        content_hash. Walks every code_region for ``repo_path`` that has no
-        stored hash, runs the configured drift analyzer (which, for
-        HashDriftAnalyzer, adopts the current source as the baseline and
-        returns reflected), and updates the region + its linked intents.
-
-        Idempotent and scoped: regions already carrying a hash are ignored,
-        and regions belonging to other repos are left alone. Safe to call
-        on every link_commit — once every region is stamped, the query
-        returns an empty set and the sweep is a no-op.
-        """
+        """Self-heal regions with no content_hash."""
         await self._ensure_connected()
 
         if drift_analyzer is None:
@@ -537,8 +401,6 @@ class SurrealDBLedgerAdapter:
 
         healed = 0
         failed = 0
-        # Use HEAD as the backfill ref — that's "what the code looks like now,"
-        # which is the only meaningful baseline when no prior hash exists.
         ref = resolve_head(repo_path) or "HEAD"
 
         for region in legacy:
@@ -562,58 +424,40 @@ class SurrealDBLedgerAdapter:
                 source_context="",
             )
 
-            # Only persist heals that produced a real baseline. If compute
-            # failed (file/range missing at ref), we leave the region alone
-            # so a future code move can still find it.
             if not drift_result.content_hash:
                 failed += 1
                 continue
 
             await update_region_hash(self._client, region_id, drift_result.content_hash, ref)
             new_status = drift_result.status
-            for intent in (region.get("intents") or []):
-                if intent is None:
+            for decision in (region.get("decisions") or []):
+                if decision is None:
                     continue
-                intent_id = str(intent.get("id", ""))
-                if intent_id:
-                    await update_intent_status(self._client, intent_id, new_status)
+                decision_id = str(decision.get("id", ""))
+                if decision_id:
+                    await update_decision_status(self._client, decision_id, new_status)
             healed += 1
 
         if healed or failed:
-            logger.info(
-                "[backfill] repo=%s healed=%d failed=%d",
-                repo_path, healed, failed,
-            )
+            logger.info("[backfill] repo=%s healed=%d failed=%d", repo_path, healed, failed)
         return {"healed": healed, "failed": failed}
 
     # ── Extended: ingestion of CodeLocatorPayload ─────────────────────────
 
     async def ingest_payload(self, payload: dict, ctx=None) -> dict:
-        """Ingest a CodeLocatorPayload dict into the graph.
+        """Ingest a CodeLocatorPayload dict into the v4 graph.
 
-        Creates intent, symbol, code_region nodes and maps_to / implements edges.
-        Used by integration tests and the future /ingest MCP tool.
-
-        Args:
-            payload: The CodeLocatorPayload dict.
-            ctx: Optional BicameralContext. When provided, the ingest
-                stamps baseline hashes against ``ctx.authoritative_sha``
-                rather than the current HEAD. Closes Bug 3 — ingesting
-                from a feature branch no longer pollutes the ledger with
-                branch-local baselines. See v0.4.6 release plan.
+        Creates input_span, decision, code_region, symbol nodes and
+        yields / binds_to / locates edges. The v0.4.x maps_to + implements
+        chain is replaced by direct decision → binds_to → code_region.
         """
         await self._ensure_connected()
 
         repo = payload.get("repo", "")
         commit_hash = payload.get("commit_hash", "")
-        # Pollution guard (v0.4.6, Bug 3 fix):
-        # Prefer the authoritative ref from ctx over HEAD. This keeps the
-        # ledger branch-independent — fresh ingests from a feature branch
-        # stamp baseline hashes against main, so switching back to main
-        # doesn't make every new decision look drifted.
         authoritative_sha = getattr(ctx, "authoritative_sha", "") if ctx is not None else ""
         effective_ref = commit_hash or authoritative_sha or resolve_head(repo) or "HEAD"
-        intents_created = 0
+        decisions_created = 0
         symbols_mapped = 0
         regions_linked = 0
         ungrounded = []
@@ -624,23 +468,28 @@ class SurrealDBLedgerAdapter:
             description = mapping.get("intent", span.get("text", ""))
             source_ref = span.get("source_ref", payload.get("query", ""))
             source_type = span.get("source_type", "manual")
-            span_text = span.get("text", description)
+            span_text = span.get("text", "")
+            product_signoff = mapping.get("product_signoff", None)
 
             code_regions = mapping.get("code_regions", [])
             initial_status = "ungrounded" if not code_regions else "pending"
 
-            # Create source_span node (raw text from meeting/PRD/Slack)
-            span_id = await upsert_source_span(
-                self._client,
-                text=span_text,
-                source_type=source_type,
-                source_ref=source_ref,
-                speakers=span.get("speakers", []),
-                meeting_date=span.get("meeting_date", ""),
-            )
+            # Create input_span node only when verbatim text is available.
+            # Per v0.5.0 contract: span.text must be non-empty; the schema
+            # ASSERT constraint enforces this at the DB level too.
+            span_id = ""
+            if span_text:
+                span_id = await upsert_input_span(
+                    self._client,
+                    text=span_text,
+                    source_type=source_type,
+                    source_ref=source_ref,
+                    speakers=span.get("speakers", []),
+                    meeting_date=span.get("meeting_date", ""),
+                )
 
-            # Create intent node
-            intent_id = await upsert_intent(
+            # Create decision node
+            decision_id = await upsert_decision(
                 self._client,
                 description=description,
                 source_type=source_type,
@@ -648,22 +497,22 @@ class SurrealDBLedgerAdapter:
                 status=initial_status,
                 meeting_date=span.get("meeting_date", ""),
                 speakers=span.get("speakers", []),
+                product_signoff=product_signoff,
             )
-            intents_created += 1
+            decisions_created += 1
 
-            if not intent_id:
-                logger.warning("[ingest] failed to create intent for: %s", description[:60])
+            if not decision_id:
+                logger.warning("[ingest] failed to create decision for: %s", description[:60])
                 continue
 
-            # Link source_span → yields → intent
-            if span_id and intent_id:
-                await relate_yields(self._client, span_id, intent_id)
+            # Link input_span → yields → decision
+            if span_id and decision_id:
+                await relate_yields(self._client, span_id, decision_id)
 
             if not code_regions:
                 ungrounded.append(description)
                 continue
 
-            # Track per-region derived status so we can aggregate up to the intent.
             region_statuses: list[str] = []
 
             for region_data in code_regions:
@@ -673,9 +522,6 @@ class SurrealDBLedgerAdapter:
                 if not symbol_name or not file_path:
                     continue
 
-                # Compute content hash at the effective ref. Always — no gate.
-                # When repo is unset or the file/range isn't in git, this
-                # returns None and the region stays pending via derive_status.
                 start_line = region_data.get("start_line", 0)
                 end_line = region_data.get("end_line", 0)
                 content_hash = ""
@@ -684,18 +530,15 @@ class SurrealDBLedgerAdapter:
                         file_path, start_line, end_line, repo, ref=effective_ref
                     ) or ""
 
-                # Create / update symbol node
+                # Create / update symbol node (retrieval tier)
                 symbol_id = await upsert_symbol(
                     self._client,
                     name=symbol_name,
                     file_path=file_path,
                     sym_type=region_data.get("type", "function"),
                 )
-                if not symbol_id:
-                    continue
-                symbols_mapped += 1
 
-                # Create / update code_region node
+                # Create / update code_region node (shared between tiers)
                 region_id = await upsert_code_region(
                     self._client,
                     file_path=file_path,
@@ -711,42 +554,41 @@ class SurrealDBLedgerAdapter:
                 regions_linked += 1
                 region_ids.append(region_id)
 
-                # Baseline == actual at ingest time, so derive_status returns
-                # "reflected" when the hash was computable, "ungrounded" when
-                # the file/range isn't in git yet.
                 region_statuses.append(
                     derive_status(content_hash, content_hash if content_hash else None)
                 )
 
-                # intent → symbol → code_region edges
-                provenance = {}
+                # Decision tier: decision → binds_to → code_region (direct)
+                provenance: dict = {}
                 grounding_tier = region_data.get("grounding_tier")
                 if grounding_tier is not None:
                     provenance["grounding_tier"] = grounding_tier
                     provenance["method"] = "auto_ground"
-                await relate_maps_to(
-                    self._client, intent_id, symbol_id, provenance=provenance,
+                await relate_binds_to(
+                    self._client, decision_id, region_id,
+                    confidence=region_data.get("confidence", 0.8),
+                    provenance=provenance,
                 )
-                await relate_implements(self._client, symbol_id, region_id)
 
-            # Aggregate region statuses up to the intent. An intent is
-            # drifted if any region drifted; else reflected if any reflect;
-            # else pending if any pending; else ungrounded (all regions
-            # failed to link or no region could be hashed against HEAD).
-            if intent_id:
-                aggregated = _aggregate_intent_status(region_statuses)
-                await update_intent_status(self._client, intent_id, aggregated)
+                # Retrieval tier: symbol → locates → code_region
+                if symbol_id:
+                    symbols_mapped += 1
+                    await relate_locates(self._client, symbol_id, region_id)
+
+            if decision_id:
+                aggregated = _aggregate_decision_status(region_statuses)
+                await update_decision_status(self._client, decision_id, aggregated)
 
         return {
             "ingested": True,
             "repo": repo,
             "stats": {
-                "intents_created": intents_created,
+                "intents_created": decisions_created,  # keep key for compat with callers
                 "symbols_mapped": symbols_mapped,
                 "regions_linked": regions_linked,
                 "ungrounded": len(ungrounded),
             },
-            "ungrounded_intents": ungrounded,
+            "ungrounded_decisions": ungrounded,
             "region_ids": region_ids,
         }
 
@@ -782,12 +624,6 @@ class SurrealDBLedgerAdapter:
         )
 
     async def get_all_source_cursors(self, repo: str) -> list[dict]:
-        """Return every source_cursor row scoped to ``repo``.
-
-        Used by ``bicameral_reset`` to build a replay plan before wiping
-        the ledger. Multi-repo SurrealDB instances stay isolated because
-        the filter is on the ``repo`` column.
-        """
         await self._ensure_connected()
         rows = await self._client.query(
             "SELECT * FROM source_cursor WHERE repo = $repo",
@@ -795,7 +631,6 @@ class SurrealDBLedgerAdapter:
         )
         if not rows:
             return []
-        # Normalize the synced_at datetime the same way get_source_cursor does
         out: list[dict] = []
         for row in rows:
             row["synced_at"] = str(row.get("synced_at", ""))
@@ -803,58 +638,39 @@ class SurrealDBLedgerAdapter:
         return out
 
     async def wipe_all_rows(self, repo: str) -> None:
-        """Delete every row belonging to ``repo`` across every bicameral
-        table, while leaving other repos in the same SurrealDB instance
-        untouched.
+        """Delete every row belonging to repo across every bicameral table.
 
-        Scoping strategy:
-          - Tables with a ``repo`` field (code_region, source_cursor,
-            vocab_cache, ledger_sync) — filter by the column directly.
-          - Tables without a ``repo`` field (intent, source_span) — find
-            their IDs via graph traversal from code_region, then delete
-            by id. An intent "belongs to" a repo if any of its maps_to
-            symbols implement a code_region in that repo. A source_span
-            belongs to a repo if it yields an intent in that repo.
-          - Edge tables (maps_to, implements, yields) — left alone. Once
-            their endpoints are gone, the edges are orphaned and harmless.
-          - ``symbol`` — left alone. Symbols are shared across repos.
-
-        Used by the ``bicameral_reset`` fail-safe valve.
+        v0.5.0 update: traversals use binds_to (decision tier) instead of
+        maps_to + implements. Scoping strategy unchanged from v0.4.x.
         """
         await self._ensure_connected()
 
-        # 1. Gather intent IDs belonging to this repo. Two independent
-        # strategies, merged — each catches intents the other misses:
-        #   a) Graph traversal via code_region.repo → symbol → intent
-        #      (catches grounded intents with at least one code region)
-        #   b) source_ref matching via source_cursor audit log
-        #      (catches ungrounded intents that never got a code_region)
-        intent_ids: set[str] = set()
+        decision_ids: set[str] = set()
 
         # (a) Graph traversal from code_regions belonging to this repo.
         try:
             rows = await self._client.query(
                 """
-                SELECT <-implements<-symbol<-maps_to<-intent AS intents
+                SELECT <-binds_to<-decision AS decisions
                 FROM code_region
                 WHERE repo = $repo
                 """,
                 {"repo": repo},
             )
             for row in rows or []:
-                intents_field = row.get("intents") or []
-                if isinstance(intents_field, list):
-                    for nested in intents_field:
+                decisions_field = row.get("decisions") or []
+                if isinstance(decisions_field, list):
+                    for nested in decisions_field:
                         if isinstance(nested, list):
                             for item in nested:
                                 if item:
-                                    intent_ids.add(str(item))
+                                    decision_ids.add(str(item))
                         elif nested:
-                            intent_ids.add(str(nested))
+                            decision_ids.add(str(nested))
         except Exception as exc:
-            logger.warning("[wipe_all_rows] code_region → intent traversal failed: %s", exc)
+            logger.warning("[wipe_all_rows] code_region → decision traversal failed: %s", exc)
 
-        # (b) source_cursor audit-log matching for ungrounded intents.
+        # (b) source_cursor audit-log matching for ungrounded decisions.
         try:
             cursor_rows = await self._client.query(
                 "SELECT source_type, source_scope, last_source_ref FROM source_cursor WHERE repo = $repo",
@@ -866,35 +682,28 @@ class SurrealDBLedgerAdapter:
                 if not src_ref or not src_type:
                     continue
                 matching = await self._client.query(
-                    "SELECT type::string(id) AS id FROM intent WHERE source_ref = $r AND source_type = $t",
+                    "SELECT type::string(id) AS id FROM decision WHERE source_ref = $r AND source_type = $t",
                     {"r": src_ref, "t": src_type},
                 )
                 for m in matching or []:
                     if m.get("id"):
-                        intent_ids.add(str(m["id"]))
+                        decision_ids.add(str(m["id"]))
         except Exception as exc:
-            logger.warning("[wipe_all_rows] source_cursor → intent matching failed: %s", exc)
+            logger.warning("[wipe_all_rows] source_cursor → decision matching failed: %s", exc)
 
-        # 2. Gather source_span IDs yielding those intents.
-        source_span_ids: set[str] = set()
-        if intent_ids:
+        # Gather input_span IDs yielding those decisions.
+        input_span_ids: set[str] = set()
+        if decision_ids:
             try:
-                # For each intent, find source_spans pointing at it via yields
-                rows = await self._client.query(
-                    "SELECT type::string(in) AS in FROM yields",
-                )
-                # Collect all yields edges, filter to those whose target is
-                # in our intent set. Couldn't get a CONTAINS filter working
-                # cleanly against a string-of-record-id field, so filter in
-                # Python — the yields table is small per repo.
+                rows = await self._client.query("SELECT type::string(in) AS in FROM yields")
                 for row in rows or []:
                     _in = row.get("in")
                     if _in:
-                        source_span_ids.add(str(_in))
+                        input_span_ids.add(str(_in))
             except Exception as exc:
-                logger.debug("[wipe_all_rows] source_span traversal failed: %s", exc)
+                logger.debug("[wipe_all_rows] input_span traversal failed: %s", exc)
 
-        # 3. Delete scoped-by-column tables.
+        # Delete scoped-by-column tables.
         for table in ("code_region", "source_cursor", "vocab_cache"):
             try:
                 await self._client.execute(
@@ -904,22 +713,21 @@ class SurrealDBLedgerAdapter:
             except Exception as exc:
                 logger.warning("[wipe_all_rows] %s scoped delete failed: %s", table, exc)
 
-        # 4. Delete the enumerated intents by id.
-        for intent_id in intent_ids:
+        # Delete enumerated decisions by id.
+        for decision_id in decision_ids:
             try:
-                await self._client.execute(f"DELETE {intent_id}")
+                await self._client.execute(f"DELETE {decision_id}")
             except Exception as exc:
-                logger.debug("[wipe_all_rows] intent %s delete failed: %s", intent_id, exc)
+                logger.debug("[wipe_all_rows] decision %s delete failed: %s", decision_id, exc)
 
-        # 5. Delete the enumerated source_spans by id. (Best-effort — the
-        # yields traversal is approximate.)
-        for span_id in source_span_ids:
+        # Delete enumerated input_spans by id.
+        for span_id in input_span_ids:
             try:
                 await self._client.execute(f"DELETE {span_id}")
             except Exception as exc:
-                logger.debug("[wipe_all_rows] source_span %s delete failed: %s", span_id, exc)
+                logger.debug("[wipe_all_rows] input_span %s delete failed: %s", span_id, exc)
 
-        # 6. ledger_sync is per-repo — wipe this repo's rows.
+        # ledger_sync is per-repo.
         try:
             await self._client.execute(
                 "DELETE FROM ledger_sync WHERE repo = $repo",

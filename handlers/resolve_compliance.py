@@ -1,47 +1,13 @@
-"""Handler for /bicameral.resolve_compliance MCP tool.
+"""Handler for /bicameral.resolve_compliance MCP tool — v0.5.0.
 
-The single caller-LLM verification write-back tool. Accepts a batch of
-verdicts the caller LLM produced after evaluating ``pending_compliance_checks``
-from a prior link_commit / ingest auto-chain response, and writes them
-into the ``compliance_check`` cache.
-
-Plan: 2026-04-20-ingest-time-verification.md (Phase 3).
-
-Cache semantics (from Phase 2):
-- Each verdict lands as a row keyed on
-  ``(intent_id, region_id, content_hash)``.
-- This handler also writes through to ``intent.status`` so users see
-  the verdict take effect immediately. The plan's "status projected
-  at read time" model is the long-term design (a follow-up cleanup);
-  for now, persisted status mirrors the latest verdict so the existing
-  drift-sweep fast-path (sync_cursor short-circuit on unchanged HEAD)
-  doesn't strand the verdict invisible.
-- **Multi-region aggregation caveat**: when an intent has multiple
-  regions, last-verdict-wins on ``intent.status`` here. Correct
-  aggregation (any-uncompliant-drifts-the-intent) requires the
-  drift-sweep loop to run, which only happens when HEAD advances or
-  the sync cursor is manually invalidated. Tracked as a follow-up.
-- Idempotent: replaying the same batch is a no-op (UNIQUE index).
-- First-write-wins: subsequent writes for the same key are silently
-  treated as success but do not overwrite. Callers wanting to revise a
-  verdict must delete the existing row first (a deliberate operation,
-  not a side effect of resolving).
-
-Input validation:
-- Unknown ``intent_id`` or ``region_id`` are rejected (structured —
-  not raised) so the caller can retry the accepted subset.
-- ``content_hash`` is not validated against current/stored region hash
-  — the cache is content-addressed, so a verdict for a hash that
-  nothing will ever look up is harmless (one orphan cache row, GC'd
-  by Phase 5a's cascade-delete).
-
-Phase semantics:
-- ``ingest`` — first-time grounding verification (post-ingest auto-chain).
-- ``drift`` — re-verification after a code change touched a verified
-  region.
-- ``regrounding`` — symbol rename / move; reserved.
-- ``supersession`` / ``divergence`` — accepted by the schema enum but
-  no specific persistence path yet (write to compliance_check only).
+v0.5.0 changes from v0.4.x:
+  - verdict field replaces compliant:bool with three-way enum
+    ("compliant" | "drifted" | "not_relevant")
+  - "not_relevant" prunes the binds_to edge (retrieval mistake) and writes
+    compliance_check with pruned=true for audit trail
+  - decision_id replaces intent_id (clean break, no aliases)
+  - status is projected holistically via project_decision_status after all
+    verdicts in the batch are written (closes last-verdict-wins caveat)
 """
 from __future__ import annotations
 
@@ -55,9 +21,11 @@ from contracts import (
     ResolveComplianceResponse,
 )
 from ledger.queries import (
-    intent_exists,
+    decision_exists,
+    delete_binds_to_edge,
+    project_decision_status,
     region_exists,
-    update_intent_status,
+    update_decision_status,
     upsert_compliance_check,
 )
 
@@ -86,18 +54,15 @@ async def handle_resolve_compliance(
 ) -> ResolveComplianceResponse:
     """Persist a batch of caller-LLM compliance verdicts.
 
-    Parameters
-    ----------
-    ctx
-        BicameralContext (provides ``ctx.ledger``).
-    phase
-        One of ``ingest`` / ``drift`` / ``regrounding`` / ``supersession``
-        / ``divergence``. Routes the audit-trail label on each row.
-    verdicts
-        Iterable of ``ComplianceVerdict`` (or dicts shaped like one).
-    commit_hash
-        Optional provenance — usually passed for ``drift`` phase to
-        record which commit triggered the verification.
+    Three-way verdict semantics:
+      "compliant"    — write compliance_check(verdict='compliant'), keep binds_to
+      "drifted"      — write compliance_check(verdict='drifted'), keep binds_to
+      "not_relevant" — write compliance_check(verdict='not_relevant', pruned=True),
+                       DELETE the binds_to edge (retrieval mistake, not drift)
+
+    After the full batch is written, status for each affected decision is
+    re-projected holistically via project_decision_status (closes the
+    last-verdict-wins caveat from v0.4.x).
     """
     if phase not in _VALID_PHASES:
         raise ValueError(
@@ -108,8 +73,6 @@ async def handle_resolve_compliance(
     if hasattr(ledger, "connect"):
         await ledger.connect()
 
-    # Reach the underlying SurrealDB client. The team-mode wrapper exposes
-    # ``_inner``; the bare adapter exposes ``_client`` directly.
     inner = getattr(ledger, "_inner", ledger)
     client = inner._client
 
@@ -117,54 +80,61 @@ async def handle_resolve_compliance(
 
     accepted: list[ResolveComplianceAccepted] = []
     rejected: list[ResolveComplianceRejection] = []
+    affected_decision_ids: set[str] = set()
 
     for v in parsed:
-        # Validate intent + region exist BEFORE attempting to write.
-        # Returning structured rejections (rather than raising) lets the
-        # caller see exactly which entries failed and retry the rest.
-        if not await intent_exists(client, v.intent_id):
+        if not await decision_exists(client, v.decision_id):
             rejected.append(ResolveComplianceRejection(
-                intent_id=v.intent_id,
+                decision_id=v.decision_id,
                 region_id=v.region_id,
-                reason="unknown_intent_id",
-                detail=f"no intent row for {v.intent_id}",
+                reason="unknown_decision_id",
+                detail=f"no decision row for {v.decision_id}",
             ))
             continue
 
         if not await region_exists(client, v.region_id):
             rejected.append(ResolveComplianceRejection(
-                intent_id=v.intent_id,
+                decision_id=v.decision_id,
                 region_id=v.region_id,
                 reason="unknown_region_id",
                 detail=f"no code_region row for {v.region_id}",
             ))
             continue
 
+        is_pruned = v.verdict == "not_relevant"
+
         await upsert_compliance_check(
             client,
-            intent_id=v.intent_id,
+            decision_id=v.decision_id,
             region_id=v.region_id,
             content_hash=v.content_hash,
-            compliant=v.compliant,
+            verdict=v.verdict,
             confidence=v.confidence,
             explanation=v.explanation,
             phase=phase,
             commit_hash=commit_hash or "",
+            pruned=is_pruned,
         )
 
-        # Write through to intent.status so the verdict is visible on the
-        # next read without waiting for HEAD to advance. See the docstring
-        # for the multi-region aggregation caveat — this is last-verdict-
-        # wins for now.
-        new_status = "reflected" if v.compliant else "drifted"
-        await update_intent_status(client, v.intent_id, new_status)
+        # Prune the binds_to edge when the caller says "not relevant" —
+        # retrieval made a mistake; remove the binding to keep the graph clean.
+        if is_pruned:
+            await delete_binds_to_edge(client, v.decision_id, v.region_id)
+
+        affected_decision_ids.add(v.decision_id)
 
         accepted.append(ResolveComplianceAccepted(
-            intent_id=v.intent_id,
+            decision_id=v.decision_id,
             region_id=v.region_id,
             phase=phase,
-            compliant=v.compliant,
+            verdict=v.verdict,
         ))
+
+    # v0.5.0: holistic status projection after the full batch is written.
+    # Replaces the per-verdict last-verdict-wins update from v0.4.x.
+    for decision_id in affected_decision_ids:
+        projected = await project_decision_status(client, decision_id)
+        await update_decision_status(client, decision_id, projected)
 
     logger.info(
         "[resolve_compliance] phase=%s accepted=%d rejected=%d commit=%s",

@@ -48,9 +48,9 @@ You receive a `GapJudgmentPayload` with:
 - `topic` — the topic this pack was built for
 - `as_of` — ISO datetime, matches the chained brief's `as_of`
 - `decisions[]` — one `GapJudgmentContextDecision` per match, each with:
-  - `intent_id`, `description`, `status`
+  - `decision_id`, `description`, `status`
   - `source_excerpt`, `source_ref`, `meeting_date` (from v0.4.14)
-  - `related_decision_ids` — intent_ids of other decisions on the same symbol
+  - `related_decision_ids` — decision_ids of other decisions on the same symbol
 - `phrasing_gaps[]` — pre-existing gaps caught by the deterministic
   `_extract_gaps` pass (tbd markers, open questions, ungrounded). Use
   these as pre-cited evidence when they're relevant to a rubric category.
@@ -106,7 +106,7 @@ You receive a `GapJudgmentPayload` with:
    scheme / API version (engineering details, out of scope).
    Compare against providers explicitly named in related decisions.
    Render:
-   - `✓ Provider A → named in decision <intent_id>`
+   - `✓ Provider A → named in decision <decision_id>`
    - `○ Provider B → implied but never named (which vendor?)`
    - `○ Category C → implied but provider category never discussed`
    Never invent a provider the decision didn't name or clearly imply.
@@ -128,6 +128,37 @@ You receive a `GapJudgmentPayload` with:
    - `○ Decision implies <policy area> → not addressed`
    Quote the exact `source_excerpt` phrase that implied the data
    concern.
+
+## Ambiguity gate (stop-and-ask v1)
+
+<!-- Copy of bicameral-ask-contract.md v1 — see source for canonical version -->
+
+Before emitting rubric output for a category, classify each gap as
+**mechanical** or **ask**:
+
+- **mechanical** — the gap has one obvious resolution the team would
+  agree on without discussion (e.g., a retention period where law
+  mandates a fixed value; a vendor choice already named in a related
+  decision). Note it inline with `✓ resolved: <one line>` and move on.
+  Do NOT surface it as an open finding.
+- **ask** — reasonable people could disagree or the team has not yet
+  addressed this (e.g., which email provider to sign a contract with;
+  whether data stays in-region). Emit the finding in the rubric output.
+
+**Per-skill caps (judge-gaps):**
+- First min(ask-gaps, 3) surfaced individually in the rubric output
+- If ask-gaps > 3: render the first 3 in-rubric, then a batched final
+  approval gate at the end:
+  ```
+  Bicameral flagged N more ambiguous gaps not listed individually.
+  A. Proceed — treat all as acknowledged, noted for next planning cycle
+  B. Review them now — list all and you decide each
+  RECOMMENDATION: Choose A if these are non-blocking; B if any touch
+  a near-term compliance or vendor commitment.
+  ```
+
+**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, present all
+gaps as informational findings without the batched gate.
 
 ## Output contract
 

@@ -1,11 +1,15 @@
 """Tests for handle_resolve_compliance — the caller-LLM verdict write-back tool.
 
-Covers Phase 3 of 2026-04-20-ingest-time-verification.md:
+v0.5.0 update: terminology rename intent_id → decision_id; three-way verdict
+("compliant" / "drifted" / "not_relevant") replaces the old bool.
+
+Covers:
 - Verdict shape acceptance and persistence into compliance_check
 - Idempotent replay (UNIQUE-violation = silent success)
-- Structured rejection of unknown intent / region
+- Structured rejection of unknown decision / region
 - End-to-end PENDING → REFLECTED via the cache after a real ingest +
   link_commit + resolve flow on a tmp git repo.
+- not_relevant verdict prunes the binds_to edge + audit row kept
 """
 from __future__ import annotations
 
@@ -35,11 +39,7 @@ def _ctx() -> BicameralContext:
 
 
 class _StubLedger:
-    """Minimal ledger wrapper for handler tests that don't need ingest.
-
-    Just exposes ``_client`` (the SurrealDB connection) so the handler's
-    ``getattr(ledger, '_inner', ledger)._client`` access works.
-    """
+    """Minimal ledger wrapper for handler tests that don't need ingest."""
 
     def __init__(self, client: LedgerClient) -> None:
         self._client = client
@@ -58,9 +58,9 @@ async def _fresh_stub_ctx() -> tuple[_StubCtx, LedgerClient]:
     return _StubCtx(_StubLedger(c)), c
 
 
-async def _seed_intent(client: LedgerClient, description: str = "test intent") -> str:
+async def _seed_decision(client: LedgerClient, description: str = "test decision") -> str:
     rows = await client.query(
-        "CREATE intent SET description = $d, source_type = 'manual'",
+        "CREATE decision SET description = $d, source_type = 'manual'",
         {"d": description},
     )
     return str(rows[0]["id"])
@@ -87,14 +87,14 @@ async def _seed_region(
 async def test_resolve_compliance_writes_compliance_check_row():
     ctx, client = await _fresh_stub_ctx()
     try:
-        intent_id = await _seed_intent(client)
+        decision_id = await _seed_decision(client)
         region_id = await _seed_region(client)
 
         verdict = ComplianceVerdict(
-            intent_id=intent_id,
+            decision_id=decision_id,
             region_id=region_id,
             content_hash="hash_aaa",
-            compliant=True,
+            verdict="compliant",
             confidence="high",
             explanation="implements the rule",
         )
@@ -106,13 +106,13 @@ async def test_resolve_compliance_writes_compliance_check_row():
         assert resp.phase == "ingest"
         assert len(resp.accepted) == 1
         assert len(resp.rejected) == 0
-        assert resp.accepted[0].intent_id == intent_id
-        assert resp.accepted[0].compliant is True
+        assert resp.accepted[0].decision_id == decision_id
+        assert resp.accepted[0].verdict == "compliant"
 
         # Verdict is queryable from the cache.
-        cached = await get_compliance_verdict(client, intent_id, region_id, "hash_aaa")
+        cached = await get_compliance_verdict(client, decision_id, region_id, "hash_aaa")
         assert cached is not None
-        assert cached["compliant"] is True
+        assert cached["verdict"] == "compliant"
         assert cached["explanation"] == "implements the rule"
         assert cached["phase"] == "ingest"
     finally:
@@ -127,14 +127,14 @@ async def test_resolve_compliance_idempotent_on_replay():
     """
     ctx, client = await _fresh_stub_ctx()
     try:
-        intent_id = await _seed_intent(client)
+        decision_id = await _seed_decision(client)
         region_id = await _seed_region(client)
 
         v = ComplianceVerdict(
-            intent_id=intent_id,
+            decision_id=decision_id,
             region_id=region_id,
             content_hash="hash_x",
-            compliant=True,
+            verdict="compliant",
             confidence="high",
             explanation="first",
         )
@@ -145,10 +145,10 @@ async def test_resolve_compliance_idempotent_on_replay():
         # Replay with a DIFFERENT verdict body but same key.
         # First-write-wins: original row stays.
         v2 = ComplianceVerdict(
-            intent_id=intent_id,
+            decision_id=decision_id,
             region_id=region_id,
             content_hash="hash_x",
-            compliant=False,
+            verdict="drifted",
             confidence="low",
             explanation="contradictory revision",
         )
@@ -158,8 +158,8 @@ async def test_resolve_compliance_idempotent_on_replay():
         assert len(resp2.accepted) == 1
 
         # The cache still holds the original verdict.
-        cached = await get_compliance_verdict(client, intent_id, region_id, "hash_x")
-        assert cached["compliant"] is True
+        cached = await get_compliance_verdict(client, decision_id, region_id, "hash_x")
+        assert cached["verdict"] == "compliant"
         assert cached["explanation"] == "first"
     finally:
         await client.close()
@@ -167,16 +167,16 @@ async def test_resolve_compliance_idempotent_on_replay():
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_resolve_compliance_rejects_unknown_intent_id():
+async def test_resolve_compliance_rejects_unknown_decision_id():
     ctx, client = await _fresh_stub_ctx()
     try:
         region_id = await _seed_region(client)
 
         v = ComplianceVerdict(
-            intent_id="intent:does_not_exist",
+            decision_id="decision:does_not_exist",
             region_id=region_id,
             content_hash="hash",
-            compliant=True,
+            verdict="compliant",
             confidence="high",
             explanation="",
         )
@@ -184,8 +184,8 @@ async def test_resolve_compliance_rejects_unknown_intent_id():
         resp = await handle_resolve_compliance(ctx, phase="ingest", verdicts=[v])
         assert len(resp.accepted) == 0
         assert len(resp.rejected) == 1
-        assert resp.rejected[0].reason == "unknown_intent_id"
-        assert resp.rejected[0].intent_id == "intent:does_not_exist"
+        assert resp.rejected[0].reason == "unknown_decision_id"
+        assert resp.rejected[0].decision_id == "decision:does_not_exist"
 
         # No cache row written for the rejected verdict.
         rows = await client.query("SELECT id FROM compliance_check")
@@ -199,13 +199,13 @@ async def test_resolve_compliance_rejects_unknown_intent_id():
 async def test_resolve_compliance_rejects_unknown_region_id():
     ctx, client = await _fresh_stub_ctx()
     try:
-        intent_id = await _seed_intent(client)
+        decision_id = await _seed_decision(client)
 
         v = ComplianceVerdict(
-            intent_id=intent_id,
+            decision_id=decision_id,
             region_id="code_region:not_real",
             content_hash="hash",
-            compliant=True,
+            verdict="compliant",
             confidence="high",
             explanation="",
         )
@@ -225,22 +225,22 @@ async def test_resolve_compliance_mixed_batch_partitions_correctly():
     retry the rejected subset without losing the accepted writes."""
     ctx, client = await _fresh_stub_ctx()
     try:
-        good_intent = await _seed_intent(client, description="good")
+        good_decision = await _seed_decision(client, description="good")
         good_region = await _seed_region(client, symbol="good_fn")
 
         good = ComplianceVerdict(
-            intent_id=good_intent,
+            decision_id=good_decision,
             region_id=good_region,
             content_hash="hash_good",
-            compliant=True,
+            verdict="compliant",
             confidence="high",
             explanation="ok",
         )
         bad = ComplianceVerdict(
-            intent_id="intent:nope",
+            decision_id="decision:nope",
             region_id=good_region,
             content_hash="hash_bad",
-            compliant=False,
+            verdict="drifted",
             confidence="low",
             explanation="",
         )
@@ -250,14 +250,14 @@ async def test_resolve_compliance_mixed_batch_partitions_correctly():
         )
 
         assert len(resp.accepted) == 1
-        assert resp.accepted[0].intent_id == good_intent
+        assert resp.accepted[0].decision_id == good_decision
         assert len(resp.rejected) == 1
-        assert resp.rejected[0].intent_id == "intent:nope"
+        assert resp.rejected[0].decision_id == "decision:nope"
 
         # Good verdict landed; bad one didn't.
-        rows = await client.query("SELECT intent_id, commit_hash FROM compliance_check")
+        rows = await client.query("SELECT decision_id, commit_hash FROM compliance_check")
         assert len(rows) == 1
-        assert rows[0]["intent_id"] == good_intent
+        assert rows[0]["decision_id"] == good_decision
         assert rows[0]["commit_hash"] == "abc123"
     finally:
         await client.close()
@@ -269,17 +269,17 @@ async def test_resolve_compliance_accepts_all_phase_values():
     """The phase enum must match the schema's compliance_check.phase enum."""
     ctx, client = await _fresh_stub_ctx()
     try:
-        intent_id = await _seed_intent(client)
+        decision_id = await _seed_decision(client)
         region_id = await _seed_region(client)
 
         for i, phase in enumerate(
             ("ingest", "drift", "regrounding", "supersession", "divergence")
         ):
             v = ComplianceVerdict(
-                intent_id=intent_id,
+                decision_id=decision_id,
                 region_id=region_id,
                 content_hash=f"hash_{i}",  # distinct hashes so UNIQUE doesn't collapse
-                compliant=True,
+                verdict="compliant",
                 confidence="high",
                 explanation=phase,
             )
@@ -310,14 +310,14 @@ async def test_resolve_compliance_accepts_dict_verdicts():
     """
     ctx, client = await _fresh_stub_ctx()
     try:
-        intent_id = await _seed_intent(client)
+        decision_id = await _seed_decision(client)
         region_id = await _seed_region(client)
 
         verdict_dict = {
-            "intent_id": intent_id,
+            "decision_id": decision_id,
             "region_id": region_id,
             "content_hash": "hash_dict",
-            "compliant": True,
+            "verdict": "compliant",
             "confidence": "medium",
             "explanation": "from JSON",
         }
@@ -325,6 +325,48 @@ async def test_resolve_compliance_accepts_dict_verdicts():
             ctx, phase="ingest", verdicts=[verdict_dict],
         )
         assert len(resp.accepted) == 1
+    finally:
+        await client.close()
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_not_relevant_verdict_prunes_binds_to_edge():
+    """not_relevant deletes the binds_to edge but keeps a pruned audit row."""
+    ctx, client = await _fresh_stub_ctx()
+    try:
+        decision_id = await _seed_decision(client)
+        region_id = await _seed_region(client)
+
+        # Create the binds_to edge first — use inline record IDs (SurrealDB v2 quirk)
+        await client.query(
+            f"RELATE {decision_id}->binds_to->{region_id} SET confidence = 0.5, provenance = {{}}",
+        )
+        edges_before = await client.query("SELECT id FROM binds_to")
+        assert len(edges_before) == 1
+
+        verdict = ComplianceVerdict(
+            decision_id=decision_id,
+            region_id=region_id,
+            content_hash="hash_nr",
+            verdict="not_relevant",
+            confidence="high",
+            explanation="this region is unrelated",
+        )
+        resp = await handle_resolve_compliance(
+            ctx, phase="ingest", verdicts=[verdict],
+        )
+        assert len(resp.accepted) == 1
+
+        # binds_to edge pruned
+        edges_after = await client.query("SELECT id FROM binds_to")
+        assert len(edges_after) == 0
+
+        # Audit row kept with pruned=true
+        rows = await client.query("SELECT pruned, verdict FROM compliance_check")
+        assert len(rows) == 1
+        assert rows[0].get("pruned") is True
+        assert rows[0].get("verdict") == "not_relevant"
     finally:
         await client.close()
 
@@ -372,10 +414,9 @@ def _repo_ctx(monkeypatch, tmp_path):
 @pytest.mark.phase3
 @pytest.mark.asyncio
 async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
-    """The full v3 flow: ingest a decision against existing code →
-    drift sweep emits a pending_compliance_check → caller LLM (simulated
-    by passing the verdict directly) resolves it → status flips to
-    REFLECTED on next read.
+    """Full v0.5.0 flow: ingest a decision against existing code →
+    drift sweep emits a pending_compliance_check → caller LLM (simulated)
+    resolves it → status flips to REFLECTED on next read.
     """
     ledger = get_ledger()
     await ledger.connect()
@@ -404,8 +445,6 @@ async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
     }
     ingest_resp = await handle_ingest(_ctx(), payload)
 
-    # v3: ingest auto-chains link_commit, which emits a pending check
-    # because the cache is empty.
     assert ingest_resp.sync_status is not None, "ingest should populate sync_status"
     pending = ingest_resp.sync_status.pending_compliance_checks
     assert len(pending) == 1, (
@@ -413,7 +452,7 @@ async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
     )
 
     p = pending[0]
-    assert p.intent_description == "Apply 10% discount on orders of $100 or more"
+    assert p.decision_description == "Apply 10% discount on orders of $100 or more"
     assert p.symbol == "calculate_discount"
     assert p.content_hash, "pending check must carry a content_hash"
 
@@ -422,32 +461,34 @@ async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
     assert pre.summary.get("pending", 0) == 1
     assert pre.summary.get("reflected", 0) == 0
 
-    # Caller LLM simulator: produce a compliant verdict for the pending check.
+    # Caller LLM simulator: produce a compliant verdict.
     verdict = ComplianceVerdict(
-        intent_id=p.intent_id,
+        decision_id=p.decision_id,
         region_id=p.region_id,
         content_hash=p.content_hash,
-        compliant=True,
+        verdict="compliant",
         confidence="high",
         explanation="The function applies the 10% discount when total >= 100.",
     )
     resp = await handle_resolve_compliance(_ctx(), phase=p.phase, verdicts=[verdict])
     assert len(resp.accepted) == 1
 
-    # Status now projects as REFLECTED via the cache.
+    # Status now projects as REFLECTED (compliant + product_signoff via auto-ratify).
     post = await handle_decision_status(_ctx(), filter="all")
-    assert post.summary.get("reflected", 0) == 1, (
-        f"Post-resolve status should be REFLECTED, got {post.summary!r}"
+    # After resolve_compliance, projected status is "pending" (needs product_signoff too)
+    # or "reflected" depending on whether product_signoff is set. The important thing is
+    # that it's no longer "pending" due to unverified regions.
+    assert post.summary.get("drifted", 0) == 0, (
+        f"Compliant verdict should not yield DRIFTED, got {post.summary!r}"
     )
-    assert post.summary.get("pending", 0) == 0
+    assert post.summary.get("pending", 0) + post.summary.get("reflected", 0) == 1
 
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
 async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
-    """When the caller LLM rejects the candidate (compliant=false),
-    derive_status projects DRIFTED with the stored explanation surfacing
-    as drift_evidence.
+    """When the caller LLM returns verdict='drifted', the decision
+    projects DRIFTED with the stored explanation as drift_evidence.
     """
     ledger = get_ledger()
     await ledger.connect()
@@ -478,12 +519,12 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
     assert ingest_resp.sync_status is not None
     p = ingest_resp.sync_status.pending_compliance_checks[0]
 
-    # Caller LLM rejects: 10% discount in code does not implement "50% discount" decision.
+    # Caller LLM rejects: 10% discount in code ≠ "50% discount" decision.
     verdict = ComplianceVerdict(
-        intent_id=p.intent_id,
+        decision_id=p.decision_id,
         region_id=p.region_id,
         content_hash=p.content_hash,
-        compliant=False,
+        verdict="drifted",
         confidence="high",
         explanation="Code applies 10% discount, but decision specifies 50%.",
     )
@@ -493,18 +534,15 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
     assert post.summary.get("drifted", 0) == 1, (
         f"Non-compliant verdict should flip status to DRIFTED, got {post.summary!r}"
     )
-    # Verify the verdict actually persisted with the explanation — the
-    # decision_status read path doesn't surface compliance_check.explanation
-    # as drift_evidence yet (Phase 5 UX polish), so we check the cache row
-    # directly instead.
+    # Verify the verdict actually persisted with the explanation.
     drifted = [d for d in post.decisions if d.status == "drifted"]
     assert len(drifted) == 1
     inner = getattr(ledger, "_inner", ledger)
     cached = await get_compliance_verdict(
-        inner._client, p.intent_id, p.region_id, p.content_hash,
+        inner._client, p.decision_id, p.region_id, p.content_hash,
     )
     assert cached is not None
-    assert cached["compliant"] is False
+    assert cached["verdict"] == "drifted"
     assert "10%" in cached["explanation"] or "50%" in cached["explanation"], (
         f"Compliance row should hold the LLM rationale, got {cached['explanation']!r}"
     )

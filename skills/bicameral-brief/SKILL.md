@@ -157,7 +157,7 @@ Kinds that can fire on brief responses:
   each other on the same symbol. Highest-stakes signal. Refs:
   `symbol (file_path)` strings.
 - **`review_drift`** — one or more decisions in scope have drifted.
-  Refs: drifted `intent_id`s.
+  Refs: drifted `decision_id`s.
 - **`answer_open_questions`** — gap extraction found open-question
   shaped gaps in scope. Refs: truncated gap descriptions.
 

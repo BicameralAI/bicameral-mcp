@@ -183,7 +183,7 @@ def derive_status(
     - ``actual_hash`` is ``None``      → ``pending`` (symbol absent at ref)
     - ``cached_verdict`` is ``None``   → ``pending`` (code exists, no verified
                                          judgment for this content shape)
-    - ``cached_verdict['compliant']``  → ``reflected``
+    - ``cached_verdict['verdict'] == 'compliant'``  → ``reflected``
     - otherwise                        → ``drifted`` (verdict says code does
                                          not implement the decision)
 
@@ -200,7 +200,7 @@ def derive_status(
         return "pending"
     if cached_verdict is None:
         return "pending"
-    if cached_verdict.get("compliant"):
+    if cached_verdict.get("verdict") == "compliant":
         return "reflected"
     return "drifted"
 

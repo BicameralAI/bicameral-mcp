@@ -168,7 +168,7 @@ async def _ingest_one(
         "ungrounded": stats.ungrounded,
         "grounded_pct": round(stats.grounded_pct, 4),
         "grounding_deferred": stats.grounding_deferred,
-        "ungrounded_intents": list(result.ungrounded_intents),
+        "ungrounded_decisions": list(result.ungrounded_decisions),
         "m2_fixture_size": m2_fixture_size,
         "extraction_metrics": extraction_metrics,
     }

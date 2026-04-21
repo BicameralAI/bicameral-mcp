@@ -135,7 +135,7 @@ def generate_hints_for_search(
             kind="review_drift",
             message=_drift_message(len(drifted), guided_mode),
             blocking=guided_mode,
-            refs=[m.intent_id for m in drifted] + files,
+            refs=[m.decision_id for m in drifted] + files,
         ))
 
     ungrounded = [m for m in response.matches if m.status == "ungrounded"]
@@ -144,7 +144,7 @@ def generate_hints_for_search(
             kind="ground_decision",
             message=_ground_message(len(ungrounded), guided_mode),
             blocking=guided_mode,
-            refs=[m.intent_id for m in ungrounded],
+            refs=[m.decision_id for m in ungrounded],
         ))
 
     return hints
@@ -175,7 +175,7 @@ def generate_hints_for_scan_branch(
             kind="review_drift",
             message=_drift_message(len(drifted), guided_mode),
             blocking=guided_mode,
-            refs=[d.intent_id for d in drifted] + response.files_changed,
+            refs=[d.decision_id for d in drifted] + response.files_changed,
         ))
 
     ungrounded = [d for d in response.decisions if d.status == "ungrounded"]
@@ -184,7 +184,7 @@ def generate_hints_for_scan_branch(
             kind="ground_decision",
             message=_ground_message(len(ungrounded), guided_mode),
             blocking=guided_mode,
-            refs=[d.intent_id for d in ungrounded],
+            refs=[d.decision_id for d in ungrounded],
         ))
 
     return hints
@@ -223,7 +223,7 @@ def generate_hints_for_brief(
             kind="review_drift",
             message=_drift_message(len(response.drift_candidates), guided_mode),
             blocking=guided_mode,
-            refs=[d.intent_id for d in response.drift_candidates],
+            refs=[d.decision_id for d in response.drift_candidates],
         ))
 
     open_q_gaps = [

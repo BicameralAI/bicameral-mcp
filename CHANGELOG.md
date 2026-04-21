@@ -3,6 +3,81 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.5.0 — 2026-04-20 — decision tier refactor + stop-and-ask primitives
+
+**BREAKING — atomic clean-break migration.** Schema v3 → v4. Legacy tables
+(`intent`, `source_span`, `maps_to`, `implements`) are dropped on upgrade.
+Re-ingest from sources via `bicameral.ingest`; run `bicameral.reset` to
+see the source_cursor replay plan. Pre-release has zero external
+integrators; dev-DB content is replayable from source transcripts.
+
+### Changed — decision tier rename (intent → decision)
+
+Every caller-facing `intent` / `intent_id` is renamed to `decision` /
+`decision_id`. Field names, handler parameters, Pydantic contracts,
+SKILL.md prose, and tool docstrings all use "decision" consistently.
+No translation cost for new readers.
+
+- `intent` table → `decision` (with new `product_signoff` field)
+- `source_span` table → `input_span` (verbatim text required, no DEFAULT)
+- `maps_to` + `implements` edges removed
+- New edges: `yields (input_span → decision)`, `binds_to (decision → code_region)`,
+  `locates (symbol → code_region)` — retrieval tier
+- `compliance_check.intent_id` → `decision_id`; `compliant: bool` →
+  `verdict: string` (three-way enum), plus new `pruned` flag
+
+### Changed — three-way compliance verdicts + holistic status projection
+
+`ComplianceVerdict.compliant: bool` is replaced by
+`verdict: Literal["compliant", "drifted", "not_relevant"]`.
+
+- `compliant` — keep `binds_to` edge, write cache row
+- `drifted` — keep `binds_to` edge, write cache row (persistent drift signal)
+- `not_relevant` — DELETE the `binds_to` edge (retrieval mistake, not drift);
+  write cache row with `pruned=true` for audit trail
+
+Decision status is now projected holistically via
+`project_decision_status(decision_id)` after every batch — aggregates
+verdicts across all bound regions. DRIFTED always wins; REFLECTED requires
+every relevant region to be `compliant`. Closes the v0.4.x last-verdict-wins
+caveat.
+
+### Added — `bicameral.ratify` tool (double-entry ledger)
+
+New one-shot idempotent MCP tool: `bicameral.ratify(decision_id, signer, note)`.
+Sets `decision.product_signoff = {signer, timestamp, source_commit_ref, note}`.
+Supports the double-entry model: `product_signoff` is stored (PM axis);
+`eng_reflected` is derived from `compliance_check` aggregation (engineering
+axis). Rescinding signoff requires a new decision that supersedes the
+previous one — keeps the audit trail clean.
+
+### Added — stop-and-ask primitives (skill-side)
+
+Three skills now classify findings as `mechanical` (auto-resolve silently)
+or `ask` (emit one question). Per-skill caps keep the user from being
+buried:
+
+- **bicameral-preflight** — sequential per-category (drift → divergence →
+  open questions → ungrounded), max 1 question per category, hard cap 4
+- **bicameral-ingest** — premise gate on `IngestResponse.supersession_candidates`
+  (new field surfaced by server BM25 overlap against existing decisions);
+  max 3 questions, remainder → batched final approval gate
+- **bicameral-judge-gaps** — ambiguity gate, max 3 questions, remainder →
+  batched final approval gate
+
+Advisory-mode override: with `BICAMERAL_GUIDED_MODE=0`, questions render
+as informational notes (non-blocking).
+
+### Migration notes
+
+- Run `init_schema` (idempotent). The `_migrate_v3_to_v4` step drops legacy
+  v3 tables, drops `compliance_check` (had `intent_id`), and recreates v4
+  tables with `decision_id` + `verdict` + `pruned`.
+- `source_cursor` rows survive the cutover — users can re-run their
+  original ingests against the new schema.
+- Any external caller code referencing `intent_id`, `ungrounded_intents`,
+  or `ComplianceVerdict.compliant: bool` must be updated.
+
 ## 0.4.23 — 2026-04-21 — caller-LLM-driven retrieval + search_hint recall booster
 
 Addresses the BM25 vocab-mismatch problem that surfaced after v0.4.20

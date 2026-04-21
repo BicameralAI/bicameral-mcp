@@ -35,14 +35,8 @@ async def handle_search_decisions(
             for r in m.get("code_regions", [])
         ]
 
-        # v0.4.9: trust the intent-level ``status`` that ``search_by_bm25``
-        # selects off the intent node. Previously this handler looked for
-        # ``status`` on raw_regions[0] — but code_region rows don't carry
-        # status (it's an intent property), so the lookup silently returned
-        # the ``"pending"`` default for every match regardless of real
-        # state. That masked drifted decisions from callers and (Phase 2)
-        # broke the ``review_drift`` action_hint generator.
-        intent_status = str(m.get("status") or "").strip()
+        decision_status = str(m.get("status") or "").strip()
+        intent_status = decision_status  # compat alias used below
         if intent_status in ("reflected", "drifted", "pending", "ungrounded"):
             status = intent_status
         elif not regions:
@@ -51,10 +45,10 @@ async def handle_search_decisions(
             status = "pending"
 
         if status in ("drifted", "pending"):
-            suggested_review.append(m["intent_id"])
+            suggested_review.append(m["decision_id"])
 
         matches.append(DecisionMatch(
-            intent_id=m["intent_id"],
+            decision_id=m["decision_id"],
             description=m["description"],
             status=status,
             confidence=m.get("confidence", 0.5),
@@ -64,6 +58,7 @@ async def handle_search_decisions(
             related_constraints=m.get("related_constraints", []),
             source_excerpt=m.get("source_excerpt", ""),
             meeting_date=m.get("meeting_date", ""),
+            product_signoff=m.get("product_signoff"),
         ))
 
     ungrounded_count = sum(1 for m in matches if m.status == "ungrounded")

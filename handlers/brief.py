@@ -246,10 +246,10 @@ def _generate_questions(
 
 def _to_brief_decision(m: DecisionMatch) -> BriefDecision:
     return BriefDecision(
-        intent_id=m.intent_id,
+        decision_id=m.decision_id,
         description=m.description,
         status=m.status,
-        source_type="",  # DecisionMatch doesn't carry source_type; leave blank
+        source_type="",
         source_ref=m.source_ref,
         code_regions=[
             CodeRegionSummary(
@@ -260,11 +260,11 @@ def _to_brief_decision(m: DecisionMatch) -> BriefDecision:
             )
             for r in m.code_regions
         ],
-        severity_tier=1,  # v0.4.6: no severity config, all decisions default L1
+        severity_tier=1,
         drift_evidence=m.drift_evidence,
-        # v0.4.14: forward meeting context from the matched DecisionMatch
         source_excerpt=m.source_excerpt,
         meeting_date=m.meeting_date,
+        product_signoff=m.product_signoff,
     )
 
 

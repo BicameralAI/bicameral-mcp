@@ -102,10 +102,22 @@ Look at `response.fired`:
 - **`fired == true`** → render the surfaced block (next step) BEFORE
   doing any code work.
 
-### 4. Render the surfaced block
+### 4. Classify findings before surfacing
 
-When `fired=true`, surface the response using this exact format. Lead
-with the `(bicameral surfaced)` attribution line.
+Before rendering anything, classify each finding as **mechanical** or
+**ask** (see Stop-and-Ask Contract below). Auto-resolve mechanical
+findings silently. For ask-findings, emit at most **one question per
+category**, in this order: drift → divergence → open questions →
+ungrounded. Hard cap: ≤ 4 questions total per preflight call.
+
+Categories with no ask-findings are silently skipped. If every
+finding in every category is mechanical, produce NO output (same as
+`fired=false` — silent).
+
+### 5. Render the surfaced block
+
+When at least one ask-finding exists, surface the response using this
+format. Lead with the `(bicameral surfaced)` attribution line.
 
 ```
 (bicameral surfaced — checking <topic> context before implementing)
@@ -140,7 +152,7 @@ A one-line forward narration helps:
 > from idempotency.ts. I'll flag the event.id deduplication question
 > for you to answer before I commit."
 
-### 5. Honor blocking hints (guided mode only)
+### 6. Honor blocking hints (guided mode only)
 
 If any hint has `blocking: true`, you MUST stop after the surfaced
 block and wait for user acknowledgment before doing any write
@@ -151,6 +163,37 @@ explicitly tell you to proceed.
 In normal mode (non-guided), hints have `blocking: false` and you can
 proceed after surfacing them. The user opted into the looser
 interaction at setup time.
+
+## Stop-and-Ask Contract
+
+<!-- Copy of bicameral-ask-contract.md v1 — see source for canonical version -->
+
+For every finding this skill surfaces, classify first:
+
+- **mechanical** — one obvious correct answer (e.g., renamed symbol
+  with identical signature; a decision whose code moved but semantics
+  are intact). Auto-apply the resolution silently. Do NOT ask the
+  user.
+- **ask** — reasonable people could disagree (e.g., drifted behavior
+  where the old decision may still be valid; divergent decisions where
+  no clear winner exists). Emit ONE question per finding, using the
+  format below.
+
+**Question format** — always:
+1. **Re-ground:** repo + branch + one-sentence current task
+2. **Simplify:** plain English, no raw symbol names
+3. **Recommend:** `RECOMMENDATION: Choose X because Y` + Completeness
+   X/10 per option
+4. **Options:** A / B / C — one sentence each, pickable in < 5s
+
+**Per-skill caps (preflight):**
+- Max 1 question per category (drift / divergence / open questions /
+  ungrounded)
+- 4 categories max → hard cap 4 questions
+
+**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, emit
+questions as informational notes (non-blocking); do not gate
+downstream tool calls.
 
 ## Examples
 

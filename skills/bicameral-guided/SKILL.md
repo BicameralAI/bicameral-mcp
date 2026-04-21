@@ -63,9 +63,9 @@ and the message tone differ.
 
 - **`review_drift`** — at least one matched decision has status
   `drifted`. The recorded intent no longer matches the current code.
-  Refs: drifted intent_ids + the file paths their regions touch.
+  Refs: drifted decision_ids + the file paths their regions touch.
 - **`ground_decision`** — at least one matched decision has no code
-  grounding yet. Refs: the ungrounded intent_ids.
+  grounding yet. Refs: the ungrounded decision_ids.
 
 ### On `bicameral.brief` responses:
 
@@ -73,7 +73,7 @@ and the message tone differ.
   on the same symbol. Highest-stakes signal. Refs:
   `symbol (file_path)` strings.
 - **`review_drift`** — at least one decision in scope is drifted.
-  Refs: drifted intent_ids.
+  Refs: drifted decision_ids.
 - **`answer_open_questions`** — gap extraction found
   open-question-shaped decisions in scope. Refs: truncated gap
   descriptions.
@@ -82,7 +82,7 @@ Each hint has:
 - `kind` — one of the four above
 - `message` — human-readable directive (tone varies by mode)
 - `blocking: bool` — `true` in guided mode, `false` in normal
-- `refs: list[str]` — intent_ids, file paths, or descriptions
+- `refs: list[str]` — decision_ids, file paths, or descriptions
 
 **Never paraphrase the `message` field** — surface it verbatim so the
 user can observe exactly what the server signaled.

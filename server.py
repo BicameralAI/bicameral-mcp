@@ -1,15 +1,23 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-9 tools:
-  bicameral.status       — surface implementation status of tracked decisions
-  bicameral.search       — pre-flight: find past decisions relevant to a query
-  bicameral.drift        — code review: surface decisions touched by a file
-  bicameral.link_commit  — heartbeat: sync a commit into the decision ledger
-  bicameral.ingest       — ingest normalized decision/code evidence and advance source cursors
-  validate_symbols       — fuzzy-match candidate symbol names against the code index
-  search_code            — BM25 + graph search with RRF fusion
-  get_neighbors          — 1-hop structural graph traversal around a symbol
-  extract_symbols        — tree-sitter symbol extraction from a source file
+17 tools:
+  bicameral.status            — surface implementation status of tracked decisions
+  bicameral.search            — pre-flight: find past decisions relevant to a query
+  bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
+  bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
+  bicameral.update            — check for or apply a recommended bicameral-mcp update
+  bicameral.brief             — pre-meeting one-pager generator
+  bicameral.reset             — wipe ledger rows scoped to the current repo
+  bicameral.preflight         — proactive context surfacing before implementation
+  bicameral.judge_gaps        — caller-LLM business-requirement gap judge
+  bicameral.scan_branch       — multi-file drift audit across a branch range
+  bicameral.resolve_compliance — caller-LLM compliance verdict write-back (v0.5.0 three-way)
+  bicameral.ratify            — product sign-off on a decision (double-entry ledger)
+  bicameral.doctor            — auto-detecting health check (file or branch scope)
+  validate_symbols            — fuzzy-match candidate symbol names against the code index
+  search_code                 — BM25 + graph search with RRF fusion
+  get_neighbors               — 1-hop structural graph traversal around a symbol
+  extract_symbols             — tree-sitter symbol extraction from a source file
 
 Run with: bicameral-mcp (or python server.py) for stdio transport.
 
@@ -41,6 +49,7 @@ from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
 from handlers.reset import handle_reset
+from handlers.ratify import handle_ratify
 from handlers.resolve_compliance import handle_resolve_compliance
 from handlers.scan_branch import handle_scan_branch
 from handlers.search_decisions import handle_search_decisions
@@ -55,10 +64,17 @@ except Exception:
 EXPECTED_TOOL_NAMES = [
     "bicameral.status",
     "bicameral.search",
-    "bicameral.drift",
     "bicameral.link_commit",
     "bicameral.ingest",
     "bicameral.update",
+    "bicameral.brief",
+    "bicameral.reset",
+    "bicameral.preflight",
+    "bicameral.judge_gaps",
+    "bicameral.scan_branch",
+    "bicameral.resolve_compliance",
+    "bicameral.ratify",
+    "bicameral.doctor",
     "validate_symbols",
     "search_code",
     "get_neighbors",
@@ -376,16 +392,18 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="bicameral.resolve_compliance",
             description=(
-                "Caller-LLM verification write-back (v0.4.21+). Single tool for every "
+                "Caller-LLM verification write-back (v0.5.0+). Single tool for every "
                 "compliance verdict the caller LLM produces — ingest-time grounding, "
                 "drift detection, re-grounding after rename, supersession, divergence. "
                 "Receives a batch of verdicts the caller LLM evaluated against the "
                 "pending_compliance_checks payload from a prior link_commit / ingest "
                 "auto-chain response, and persists them in the compliance_check cache "
-                "keyed on (intent_id, region_id, content_hash). Status of affected "
-                "intents is NOT written here — it's projected at next read from the "
-                "cache. Idempotent: replaying the same batch is a no-op. Unknown "
-                "intent/region IDs are returned as structured rejections (not "
+                "keyed on (decision_id, region_id, content_hash). Status of affected "
+                "decisions is projected holistically at next read from the cache. "
+                "Three-way verdict: 'compliant' = code matches decision; 'drifted' = "
+                "mismatch; 'not_relevant' = region not related (prunes the binds_to "
+                "edge). Idempotent: replaying the same batch is a no-op. Unknown "
+                "decision/region IDs are returned as structured rejections (not "
                 "exceptions) so the caller can retry the accepted subset. The server "
                 "never calls an LLM — every semantic judgment lives in the caller's "
                 "session. Slash alias: /bicameral:resolve_compliance"
@@ -408,7 +426,7 @@ async def list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "intent_id": {"type": "string"},
+                                "decision_id": {"type": "string"},
                                 "region_id": {"type": "string"},
                                 "content_hash": {
                                     "type": "string",
@@ -418,7 +436,16 @@ async def list_tools() -> list[Tool]:
                                         "cache key the verdict will be stored under."
                                     ),
                                 },
-                                "compliant": {"type": "boolean"},
+                                "verdict": {
+                                    "type": "string",
+                                    "enum": ["compliant", "drifted", "not_relevant"],
+                                    "description": (
+                                        "'compliant' = code satisfies the decision; "
+                                        "'drifted' = code diverges from the decision; "
+                                        "'not_relevant' = this region is unrelated to "
+                                        "the decision (prunes the binds_to edge)."
+                                    ),
+                                },
                                 "confidence": {
                                     "type": "string",
                                     "enum": ["high", "medium", "low"],
@@ -429,10 +456,10 @@ async def list_tools() -> list[Tool]:
                                 },
                             },
                             "required": [
-                                "intent_id",
+                                "decision_id",
                                 "region_id",
                                 "content_hash",
-                                "compliant",
+                                "verdict",
                                 "confidence",
                                 "explanation",
                             ],
@@ -447,6 +474,40 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["phase", "verdicts"],
+            },
+        ),
+        Tool(
+            name="bicameral.ratify",
+            description=(
+                "Product sign-off for a decision (v0.5.0+). One-shot, idempotent. "
+                "Sets product_signoff on the decision record — the second entry in the "
+                "double-entry ledger (first: code grounding via compliance_check; "
+                "second: product owner sign-off via ratify). A decision is only "
+                "'reflected' when both entries are present and all bound regions are "
+                "compliant. Calling ratify on an already-ratified decision is a no-op "
+                "(returns was_new=false) — there is no unratify. The signer field "
+                "identifies the human or agent setting the sign-off; the optional note "
+                "captures the rationale for audit. "
+                "Slash alias: /bicameral:ratify"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "The decision to ratify (UUIDv5 decision ID from the ledger)",
+                    },
+                    "signer": {
+                        "type": "string",
+                        "description": "Identity of the product owner or agent setting the sign-off",
+                    },
+                    "note": {
+                        "type": "string",
+                        "default": "",
+                        "description": "Optional rationale or context for the sign-off (for audit)",
+                    },
+                },
+                "required": ["decision_id", "signer"],
             },
         ),
         Tool(
@@ -655,6 +716,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             phase=arguments["phase"],
             verdicts=arguments["verdicts"],
             commit_hash=arguments.get("commit_hash"),
+        )
+    elif name in ("bicameral.ratify", "ratify"):
+        result = await handle_ratify(
+            ctx,
+            decision_id=arguments["decision_id"],
+            signer=arguments["signer"],
+            note=arguments.get("note", ""),
         )
     elif name in ("bicameral.scan_branch", "scan_branch"):
         result = await handle_scan_branch(

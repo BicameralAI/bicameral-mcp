@@ -86,8 +86,8 @@ Same contract as `bicameral-search`, `bicameral-brief`, and `bicameral-drift`. T
 
 Kinds that can fire on scan_branch responses:
 
-- **`review_drift`** — at least one scanned decision is drifted. Refs: drifted `intent_id`s + the files that were changed in the sweep.
-- **`ground_decision`** — at least one scanned decision has no code grounding yet. Refs: ungrounded `intent_id`s.
+- **`review_drift`** — at least one scanned decision is drifted. Refs: drifted `decision_id`s + the files that were changed in the sweep.
+- **`ground_decision`** — at least one scanned decision has no code grounding yet. Refs: ungrounded `decision_id`s.
 
 **Never paraphrase a hint's `message` field** — surface it verbatim. The phrasing intentionally varies between normal and guided mode so the user can tell at a glance whether the agent is being advised or required to pause.
 

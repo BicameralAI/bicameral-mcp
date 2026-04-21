@@ -8,7 +8,13 @@ from __future__ import annotations
 
 import logging
 
-from contracts import IngestPayload, IngestResponse, IngestStats, SourceCursorSummary
+from contracts import (
+    IngestPayload,
+    IngestResponse,
+    IngestStats,
+    SourceCursorSummary,
+    SupersessionCandidate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +41,14 @@ def _normalize_payload(payload: dict) -> dict:
     }
 
     for d in validated.decisions:
-        # v0.4.16: accept ``text`` as a synonym for ``description`` / ``title``.
-        # The natural-format example in skills/bicameral-ingest/SKILL.md
-        # documents ``{text: "..."}`` — without this fallback, Pydantic
-        # silently drops the unknown field and the decision evaporates.
         text = d.description or d.title or d.text
         if not text:
             continue
-        # Prefer the explicit raw passage when the caller provides one.
-        # Fall back to the decision text only as a placeholder — downstream
-        # yields-JOIN filters drop text==description spans as synthetic.
-        span_text = d.source_excerpt or text
-        mappings.append({
+        # v0.5.0: source_excerpt is required for non-empty spans.
+        # If the caller provides no excerpt, skip creating an input_span
+        # row (span_text stays empty — ingest_payload will not create the span).
+        span_text = d.source_excerpt  # empty → no input_span created
+        mapping: dict = {
             "intent": text,
             "span": {
                 **source_meta,
@@ -56,9 +58,11 @@ def _normalize_payload(payload: dict) -> dict:
             },
             "symbols": [],
             "code_regions": [],
-            # v0.4.23: propagate search_hint from natural format → internal.
             "search_hint": d.search_hint,
-        })
+        }
+        if d.product_signoff is not None:
+            mapping["product_signoff"] = d.product_signoff
+        mappings.append(mapping)
 
     for a in validated.action_items:
         # v0.4.16: accept ``text`` as a synonym for ``action``. Without this
@@ -280,6 +284,49 @@ def _derive_brief_topic(payload: dict) -> str:
     return ""
 
 
+async def _find_overlap_candidates(
+    description: str,
+    ledger,
+    top_k: int = 3,
+) -> list[SupersessionCandidate]:
+    """Query existing decisions via BM25 to surface supersession candidates.
+
+    Returns up to ``top_k`` decisions whose description overlaps with
+    ``description``, excluding exact matches. Pure retrieval — no LLM.
+    The caller-LLM skill classifies whether each candidate is a true
+    supersession (ask) or a parallel decision (auto-record silently).
+
+    Returns [] on any failure so a BM25 error never breaks ingest.
+    """
+    try:
+        rows = await ledger.search_by_query(
+            query=description,
+            max_results=top_k + 1,  # +1 to account for potential self-match
+            min_confidence=0.1,
+        )
+    except Exception as exc:
+        logger.debug("[ingest] supersession BM25 query failed: %s", exc)
+        return []
+
+    candidates: list[SupersessionCandidate] = []
+    desc_lower = description.lower().strip()
+    for row in rows:
+        # Skip self-match (exact description equality, case-insensitive)
+        if (row.get("description") or "").lower().strip() == desc_lower:
+            continue
+        candidates.append(SupersessionCandidate(
+            decision_id=row.get("decision_id") or row.get("id") or "",
+            description=row.get("description") or "",
+            overlap_score=float(row.get("score") or row.get("confidence") or 0.0),
+            product_signoff=row.get("product_signoff"),
+            projected_status=row.get("status") or "ungrounded",
+        ))
+        if len(candidates) >= top_k:
+            break
+
+    return candidates
+
+
 async def handle_ingest(
     ctx,
     payload: dict,
@@ -293,6 +340,23 @@ async def handle_ingest(
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
     payload = ctx.code_graph.resolve_symbols(payload)
+
+    # Stop-and-ask v1: supersession candidate detection.
+    # For each incoming decision, BM25-query existing decisions and surface
+    # top-3 overlap candidates. Pure retrieval — the caller-LLM skill
+    # classifies whether each candidate is a true supersession (ask) or a
+    # parallel decision (auto-record silently). Failures are swallowed so
+    # this never blocks the ingest itself.
+    supersession_candidates_all: list[SupersessionCandidate] = []
+    for mapping in payload.get("mappings") or []:
+        description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
+        if not description:
+            continue
+        try:
+            candidates = await _find_overlap_candidates(description, ledger, top_k=3)
+            supersession_candidates_all.extend(candidates)
+        except Exception as exc:
+            logger.debug("[ingest] supersession scan failed for '%s': %s", description[:60], exc)
 
     # Vocab cache reuse: check if similar queries were already grounded.
     # Runs before ground_mappings — a hit skips the full BM25 pipeline.
@@ -494,7 +558,10 @@ async def handle_ingest(
             grounding_deferred=grounding_deferred,
             cache_hits=cache_hits,
         ),
-        ungrounded_intents=list(result.get("ungrounded_intents", [])),
+        ungrounded_decisions=list(
+            result.get("ungrounded_decisions", result.get("ungrounded_intents", []))
+        ),
+        supersession_candidates=supersession_candidates_all,
         source_cursor=cursor_summary,
         brief=brief_response,
         judgment_payload=judgment_payload,
