@@ -158,6 +158,52 @@ Keep the business driver attached to each decision's description so the gap judg
 
 → **Extract: 1 decision** — "Add PII redaction to the audit log (driver: GDPR self-assessment data-minimization check, next month deadline)." The key-rotation line is security hygiene with no business driver named — reject it. A PM reviewing the ledger can act on the GDPR item; they can't act on key rotation.
 
+### 1.5 Assign a feature group (stop-and-ask v0)
+
+After extracting candidate decisions and before resolving code regions,
+assign a **feature group** to each decision. A feature group is a short,
+canonical noun phrase (2–4 words, title-case, no verbs): e.g.
+`"Google Calendar"`, `"Checkout Flow"`, `"Auth Middleware"`.
+
+**Procedure:**
+
+1. **Propose a group for each decision** using the decision text and any
+   surrounding context.
+
+2. **Prefer existing group names.** If `bicameral.history` was called
+   earlier in this session and its result is in context, match against
+   existing `HistoryFeature.name` values. Reuse verbatim if an existing
+   name shares ≥ 2 significant content words with the decision.
+
+3. **Stop-and-ask on ambiguity.** If any decision has no confident group
+   assignment — the decision text is ambiguous or spans multiple unrelated
+   features — surface it explicitly before calling `bicameral.ingest`:
+
+   ```
+   ⚠ I'm not sure how to categorize this decision:
+     "<decision text>"
+
+   Options:
+     a) "<existing group A>"  (existing)
+     b) "<existing group B>"  (existing)
+     c) "<proposed new group>" (new)
+     d) Enter a different group name
+
+   Which feature does this belong to?
+   ```
+
+   Wait for the user's response. Do not proceed with the ingest call
+   until every decision has a confirmed group.
+
+4. **Pass `feature_group`** on each decision in the ingest payload.
+   For the internal format, add `feature_group` at the mapping level.
+   For the natural format, add it on each decision object:
+   ```
+   decisions: [
+     { "description": "...", "feature_group": "Checkout Flow", ... }
+   ]
+   ```
+
 ### 2. Resolve code regions via the MCP retrieval tools (v0.4.23+ default)
 
 **This is where grounding quality is won or lost.** Server-side BM25 is a fallback
@@ -320,32 +366,49 @@ Show the user:
 ### 5. Present the auto-fired brief (v0.4.8+)
 
 `bicameral.ingest` auto-fires `bicameral.brief` on a topic derived from the
-payload and returns the brief inside ``IngestResponse.brief``. **When
-``brief`` is non-null, present it immediately after the ingest summary
-using the bicameral-brief presentation rules.** In particular:
+payload and returns the brief inside `IngestResponse.brief`. When `brief`
+is non-null, present it immediately after the ingest summary using the
+presentation contract below.
 
-- **Lead with divergences** (`brief.divergences`) whenever non-empty. The
-  fresh ingest may have just introduced a decision that contradicts an
-  existing one on the same symbol — that's the single highest-stakes
-  signal bicameral can carry, and the whole reason the brief auto-fires
-  after ingest. Surface each divergence as a bold warning with the
-  symbol, file path, and summary line.
-- Then `brief.drift_candidates`, then `brief.decisions` (grouped by status,
-  skipping duplicates that already appear in drift_candidates), then
-  `brief.gaps`, then `brief.suggested_questions` **verbatim**.
-- Skip any bucket that's empty. If every bucket is empty, say so plainly —
-  it means the fresh ingest didn't touch any prior decisions and no
-  divergences exist. That itself is useful information.
-- **Never** paraphrase `suggested_questions`. They're templated to be
-  neutral-voice; paraphrasing reintroduces the "me vs you" framing the
-  tool exists to remove.
+**Presentation order** — always strict, skip empty buckets silently:
 
-The full presentation contract lives in `skills/bicameral-brief/SKILL.md`
-and is the canonical reference — this step just cross-links it.
+1. **`divergences` — ALWAYS FIRST if non-empty.** Two contradictory
+   decisions on the same symbol is the highest-stakes signal the brief
+   can carry. The meeting's first agenda item should be picking which one
+   wins. Surface each divergence as a bold warning with the symbol, file,
+   and summary line.
+2. **`drift_candidates`** — decisions whose code diverged from recorded
+   intent. Present each with status badge (`⚠ DRIFTED`), file:line, and
+   drift evidence.
+3. **`decisions`** — the full set of in-scope decisions, grouped by status.
+   Skip any that already appear in `drift_candidates` to avoid duplication.
+4. **`gaps`** — open questions and ungrounded decisions. Present as a
+   bulleted list.
+5. **`suggested_questions`** — **Surface these VERBATIM**, never paraphrase.
+   They're templated to be neutral-voice; paraphrasing reintroduces the
+   "me vs you" framing the tool exists to remove.
 
-When `brief` is `null` (e.g. the payload had no derivable topic or the
-chained brief call failed), skip this step silently. The ingest summary
-from step 4 is sufficient on its own.
+**Action hints** — the brief response includes `action_hints`. Two intensities,
+controlled by `guided: bool` in `.bicameral/config.yaml` or the
+`BICAMERAL_GUIDED_MODE=1` env override:
+
+- **Normal mode** (`guided: false`, default) — hints fire with `blocking: false`
+  and advisory tone. Mention the hint in one line and continue.
+- **Guided mode** (`guided: true`) — hints fire with `blocking: true` and
+  imperative tone. **Address each blocking hint before any write operation**
+  (file edit, commit, PR, `bicameral_ingest`).
+
+Hint kinds that can fire on brief responses:
+- **`resolve_divergence`** — two non-superseded decisions contradict on the
+  same symbol. Highest-stakes signal.
+- **`review_drift`** — one or more decisions in scope have drifted.
+- **`answer_open_questions`** — gap extraction found open-question-shaped gaps.
+
+**Never paraphrase a hint's `message` field** — surface it verbatim.
+
+When `brief` is `null` (the payload had no derivable topic or the chained
+brief call failed), skip this step silently. The ingest summary from step 4
+is sufficient on its own.
 
 ### 6. Apply the gap-judge rubric (v0.4.16+)
 

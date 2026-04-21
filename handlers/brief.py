@@ -1,4 +1,4 @@
-"""Handler for /bicameral_brief MCP tool.
+"""Internal module — not registered as an MCP tool. Called by handle_ingest and handle_preflight.
 
 Pre-meeting one-pager generator. Accepts a topic (and optional participant
 list) and returns a structured response with decisions-in-scope, drift

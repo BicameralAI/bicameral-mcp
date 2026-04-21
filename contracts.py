@@ -265,7 +265,7 @@ class DoctorResponse(BaseModel):
 class IngestSpan(BaseModel):
     """Source excerpt from a meeting, document, or manual input."""
     text: str = ""
-    source_type: str = "manual"       # transcript | notion | document | manual | implementation_choice
+    source_type: str = "manual"       # transcript | notion | document | manual | agent_session | implementation_choice
     source_ref: str = ""
     speakers: list[str] = []
     meeting_date: str = ""
@@ -289,6 +289,7 @@ class IngestMapping(BaseModel):
     code_regions: list[IngestCodeRegion] = []
     search_hint: str = ""
     product_signoff: dict | None = None
+    feature_group: str | None = None
 
 
 class IngestDecision(BaseModel):
@@ -312,6 +313,7 @@ class IngestDecision(BaseModel):
     source_excerpt: str = ""
     search_hint: str = ""
     product_signoff: dict | None = None
+    feature_group: str | None = None
 
 
 class IngestActionItem(BaseModel):
@@ -327,7 +329,7 @@ class IngestPayload(BaseModel):
     commit_hash: str = ""
     query: str = ""
     mappings: list[IngestMapping] = []
-    source: str = "manual"
+    source: str = "manual"       # transcript | notion | slack | document | manual | agent_session | implementation_choice
     title: str = ""
     date: str = ""
     participants: list[str] = []
@@ -533,6 +535,55 @@ class SupersessionCandidate(BaseModel):
     overlap_score: float
     product_signoff: dict | None = None
     projected_status: Literal["reflected", "drifted", "pending", "ungrounded"] = "ungrounded"
+
+
+# ── Tool: bicameral.history ──────────────────────────────────────────────────
+
+
+class HistorySource(BaseModel):
+    """One input span that originated or updated a decision."""
+    source_ref: str               # e.g. "sprint-14-planning"
+    source_type: Literal["transcript", "slack", "document", "agent_session", "manual"]
+    date: str                     # ISO date
+    speaker: str | None = None
+    quote: str                    # verbatim excerpt from source_span.text
+
+
+class HistoryFulfillment(BaseModel):
+    """Code grounding for a decision."""
+    file_path: str
+    symbol: str | None = None
+    start_line: int
+    end_line: int
+    git_url: str | None = None
+    grounded_at_ref: str = ""     # git ref when first grounded
+    baseline_hash: str | None = None
+    current_hash: str | None = None
+
+
+class HistoryDecision(BaseModel):
+    """Balance-sheet view of one decision: commitment + fulfillment + balance."""
+    id: str                       # decision_id
+    summary: str                  # canonical decision text
+    featureId: str
+    status: Literal["reflected", "drifted", "ungrounded", "superseded", "discovered"]
+    sources: list[HistorySource]          # 1+ input spans; empty for discovered
+    fulfillment: HistoryFulfillment | None = None  # None when ungrounded or discovered without grounding
+    drift_evidence: str | None = None    # human-readable delta when drifted
+
+
+class HistoryFeature(BaseModel):
+    """A feature group containing related decisions."""
+    id: str                       # feature group id (slugified name)
+    name: str                     # canonical feature_group noun phrase
+    decisions: list[HistoryDecision]
+
+
+class HistoryResponse(BaseModel):
+    features: list[HistoryFeature]
+    truncated: bool = False
+    total_features: int = 0
+    as_of: str = ""               # git ref evaluated against
 
 
 # Forward references

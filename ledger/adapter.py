@@ -473,6 +473,7 @@ class SurrealDBLedgerAdapter:
 
             code_regions = mapping.get("code_regions", [])
             initial_status = "ungrounded" if not code_regions else "pending"
+            feature_group = mapping.get("feature_group") or None
 
             # Create input_span node only when verbatim text is available.
             # Per v0.5.0 contract: span.text must be non-empty; the schema
@@ -498,6 +499,7 @@ class SurrealDBLedgerAdapter:
                 meeting_date=span.get("meeting_date", ""),
                 speakers=span.get("speakers", []),
                 product_signoff=product_signoff,
+                feature_group=feature_group,
             )
             decisions_created += 1
 

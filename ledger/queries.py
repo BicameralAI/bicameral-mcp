@@ -461,6 +461,7 @@ async def upsert_decision(
     source_ref: str = "",
     rationale: str = "",
     feature_hint: str = "",
+    feature_group: str | None = None,
     meeting_date: str = "",
     speakers: list = (),
     status: str = "ungrounded",
@@ -495,6 +496,9 @@ async def upsert_decision(
         if product_signoff is not None:
             set_clause += ", product_signoff = $product_signoff"
             update_params["product_signoff"] = product_signoff
+        if feature_group is not None:
+            set_clause += ", feature_group = $feature_group"
+            update_params["feature_group"] = feature_group
         await client.query(
             f"UPDATE {existing[0]['id']} SET {set_clause}",
             update_params,
@@ -522,6 +526,9 @@ async def upsert_decision(
     if product_signoff is not None:
         create_clause += ", product_signoff=$product_signoff"
         create_params["product_signoff"] = product_signoff
+    if feature_group is not None:
+        create_clause += ", feature_group=$feature_group"
+        create_params["feature_group"] = feature_group
     rows = await client.query(create_clause, create_params)
     return str(rows[0].get("id", "")) if rows else ""
 

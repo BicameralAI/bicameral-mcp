@@ -318,9 +318,9 @@ async def test_backfill_restores_hash_but_stays_pending_without_verdict(_isolate
     inner = getattr(ledger, "_inner", ledger)
     client = inner._client
     await client.query("UPDATE code_region SET content_hash = ''")
-    await client.query("UPDATE intent SET status = 'pending'")
+    await client.query("UPDATE decision SET status = 'pending'")
 
-    pre = await client.query("SELECT status FROM intent")
+    pre = await client.query("SELECT status FROM decision")
     assert any(r.get("status") == "pending" for r in pre), (
         "Precondition: the intent should be pending before backfill runs"
     )
