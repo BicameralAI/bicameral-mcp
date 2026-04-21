@@ -278,6 +278,54 @@ payload: {
 - **Natural format + `search_hint`, fallback.** The decision is abstract ("ship by Q3," "SOC2-compliant session storage") or points at code that doesn't exist yet. Server BM25 tries with the widened query; if it produces zero hits the intent stays ungrounded (honest). If BM25 produces a false-positive binding, you'll catch it at the first `bicameral.doctor` or via a pending_compliance_check verdict.
 - **Natural format WITHOUT `search_hint`, legacy.** Works, but this is how the 2026-04-20 Accountable dispatcher ingest ended up with "all dispatch functions" bound to `use-toast.ts:dispatch`. You almost always want at least the hint.
 
+### 3b. Verify grounding candidates (v0.4.21+)
+
+When the ingest response contains `sync_status.pending_compliance_checks`
+(a non-empty list), the server is asking you to verify whether each
+candidate code region actually implements its decision. **This is how
+decisions earn REFLECTED status — without your verdict, they stay PENDING.**
+
+For each `PendingComplianceCheck` in the list:
+
+1. **Read the code** at `file_path` lines `start_line`–`end_line` (the
+   `code_body` field contains a preview, but read the actual file for
+   full context if the snippet is truncated).
+
+2. **Compare** the code against `intent_description`. Ask yourself:
+   does this code **functionally implement** the decision, or does it
+   just share keywords? A `PaymentProviderService` class that handles
+   payment authorization IS a match for "add timeout to payment provider
+   authorize calls". A `Payment` model that merely defines a data type
+   is NOT.
+
+3. **Write your verdict** by calling `bicameral.resolve_compliance`:
+   ```
+   bicameral.resolve_compliance({
+     phase: "<from the pending check>",
+     verdicts: [
+       {
+         intent_id: "<from check>",
+         region_id: "<from check>",
+         content_hash: "<from check — MUST echo this back>",
+         compliant: true/false,
+         confidence: "high"/"medium"/"low",
+         explanation: "<1 sentence: why this code does/doesn't implement the decision>"
+       }
+     ]
+   })
+   ```
+
+**Batch all verdicts into one `resolve_compliance` call** — the tool
+accepts an array. This is a single round-trip, not N calls.
+
+**The `content_hash` is a compare-and-set guard**: you MUST echo back
+the exact `content_hash` from the pending check. If the file changed
+between the ingest and your read, the server will reject the verdict
+and the region stays PENDING until the next drift sweep.
+
+**Skip this step** when `pending_compliance_checks` is empty (all
+regions had cached verdicts from prior runs).
+
 ### 4. Report results
 
 Show the user:

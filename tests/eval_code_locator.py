@@ -144,6 +144,20 @@ def evaluate(
         # Grounding tier (from coverage loop)
         grounding_tier = top_regions[0].get("grounding_tier") if top_regions else None
 
+        # recall@all: fraction of expected symbols found across ALL regions
+        # (not just top-K). This is the retrieval ceiling — what the caller
+        # LLM has to work with when evaluating candidates.
+        all_found_symbols = set()
+        for r in all_regions:
+            sym = r.get("symbol", "")
+            if sym:
+                all_found_symbols.add(sym)
+                for part in sym.split("."):
+                    if part:
+                        all_found_symbols.add(part)
+        all_found_lower = {s.lower() for s in all_found_symbols}
+        recall_at_all = len(expected_lower & all_found_lower) / len(expected_symbols) if expected_symbols else 0
+
         # recall@files: fraction of expected_file_patterns covered by any
         # region in code_regions (not just top-K — grounding stores all).
         all_region_files = {r.get("file_path", "") for r in all_regions}
@@ -166,6 +180,7 @@ def evaluate(
             "query": query,
             "precision": round(precision, 2),
             "recall": round(recall, 2),
+            "recall_at_all": round(recall_at_all, 2),
             "mrr": round(mrr, 2),
             "recall_at_files": round(recall_at_files, 2),
             "file_cardinality": file_cardinality,
@@ -220,6 +235,7 @@ def evaluate(
 
     avg_precision = sum(r.get("precision", 0) for r in results) / n
     avg_recall = sum(r.get("recall", 0) for r in results) / n
+    avg_recall_at_all = sum(r.get("recall_at_all", 0) for r in results) / n
     avg_mrr = sum(r.get("mrr", 0) for r in results) / n
     hit_rate = sum(1 for r in results if r.get("mrr", 0) > 0) / n
     grounding_rate = sum(1 for r in results if r.get("grounded")) / n
@@ -259,6 +275,7 @@ def evaluate(
         "total_decisions": n,
         "avg_precision_at_k": round(avg_precision, 3),
         "avg_recall": round(avg_recall, 3),
+        "avg_recall_at_all": round(avg_recall_at_all, 3),
         "mrr_at_k": round(avg_mrr, 3),
         "hit_rate": round(hit_rate, 3),
         "grounding_rate": round(grounding_rate, 3),
@@ -339,6 +356,7 @@ def main():
         print(f"  [{repo_name}] (query mode: {query_mode})")
         print(f"  Precision@{args.top_k}:  {report['avg_precision_at_k']:.1%}")
         print(f"  Recall:        {report['avg_recall']:.1%}")
+        print(f"  Recall@All:    {report['avg_recall_at_all']:.1%} (retrieval ceiling for caller LLM)")
         print(f"  MRR@{args.top_k}:        {report['mrr_at_k']:.3f}")
         print(f"  Hit Rate:      {report['hit_rate']:.1%}")
         print(f"  Grounding:     {report['grounding_rate']:.1%}")
@@ -353,12 +371,14 @@ def main():
     # Aggregate across repos
     mrr_values = [r["mrr_at_k"] for r in all_reports.values()]
     recall_values = [r["avg_recall"] for r in all_reports.values()]
+    recall_all_values = [r["avg_recall_at_all"] for r in all_reports.values()]
     avg_mrr = sum(mrr_values) / len(mrr_values) if mrr_values else 0
     avg_recall = sum(recall_values) / len(recall_values) if recall_values else 0
+    avg_recall_all = sum(recall_all_values) / len(recall_all_values) if recall_all_values else 0
 
     if len(all_reports) > 1:
         variance = max(mrr_values) - min(mrr_values) if len(mrr_values) > 1 else 0
-        print(f"  Aggregate MRR@{args.top_k}: {avg_mrr:.3f}  Recall: {avg_recall:.3f}  (variance: {variance:.3f})")
+        print(f"  Aggregate MRR@{args.top_k}: {avg_mrr:.3f}  Recall@{args.top_k}: {avg_recall:.3f}  Recall@All: {avg_recall_all:.3f}  (variance: {variance:.3f})")
     else:
         variance = 0
 
