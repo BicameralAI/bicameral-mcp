@@ -1,6 +1,6 @@
 ---
 name: bicameral-preflight
-description: Pre-flight context check BEFORE implementing code. Auto-fires on implementation requests using verbs like "add", "build", "create", "implement", "modify", "refactor", "update", "fix", or any prompt asking Claude to write or change source code. Surfaces prior decisions, drifted regions, divergences, and open questions linked to the feature area BEFORE Claude starts writing. Silent if no relevant context exists. SKIP FOR — read-only questions, debugging without code changes, documentation-only edits, simple typo fixes, dependency updates.
+description: Pre-flight context check BEFORE implementing code. AUTO-FIRES on ANY prompt that involves writing, changing, or touching source code — including: "add", "build", "create", "implement", "modify", "refactor", "update", "fix", "change", "write", "edit", "move", "rename", "remove", "delete", "extract", "convert", "integrate", "deploy", "ship", "configure", "connect", "extend", "migrate", "wire up", "hook up", "set up", "complete", "finish", "continue". Also fires when user asks HOW to implement something (they are about to implement it). Surfaces prior decisions, drifted regions, divergences, and open questions BEFORE Claude writes any code. SKIP ONLY FOR — purely read-only questions with zero code intent, documentation-only typo fixes, dependency version bumps with no semantic change.
 ---
 
 # Bicameral Preflight
@@ -22,8 +22,9 @@ The empty path is silent.
 
 ## When to fire
 
-Auto-fire on prompts that ask Claude to write, modify, or refactor
-code:
+Auto-fire on ANY prompt that involves writing, changing, or touching
+source code. When in doubt, fire — a silent miss is worse than a
+redundant check. Examples:
 
 - *"add a Stripe webhook handler for payment_intent.succeeded"*
 - *"refactor the rate limiting middleware to use sliding window"*
@@ -33,19 +34,28 @@ code:
 - *"create a migration to add the audit_log table"*
 - *"continue what we started yesterday on the email queue"* (use
   conversation context to extract the topic)
+- *"how should I implement the retry logic?"* (asking HOW = about to implement)
+- *"wire up the new endpoint to the frontend"*
+- *"finish the auth middleware work"*
+- *"migrate the payment flow to the new provider"*
+- *"rename the function to snake_case"*
+- *"remove the deprecated API call"*
+- *"set up the webhook integration"*
 
 ## When NOT to fire
 
-The "SKIP FOR" list in the description is load-bearing. Do NOT fire on:
+**Only skip for these narrow cases** — when there is ZERO intent to write code:
 
-- *"how does the rate limiter work?"* (read-only question)
-- *"why is this test failing?"* (debugging, no code change yet)
-- *"fix the typo in the README"* (doc-only edit)
-- *"bump lodash to 4.17.21"* (dependency update, no semantic change)
-- *"what does this function do?"* (explanation, not implementation)
+- *"how does the rate limiter work?"* (purely read-only — but if they say "how should I build it", FIRE)
+- *"fix the typo in the README"* (doc-only, no code change)
+- *"bump lodash to 4.17.21"* (dependency version bump only, no semantic change)
 
-If the user is asking you to SHOW or EXPLAIN, not BUILD or CHANGE,
-preflight does not fire.
+**Do NOT use "why is this test failing?" as a skip trigger** — debugging
+a test often precedes writing a fix. If the user asks to fix it, fire.
+
+If uncertain whether the user will write code, **fire anyway** — the
+handler is gated on actionable signal and will stay silent if nothing
+relevant is found. The cost of a false fire is one silent no-op.
 
 ## Steps
 
@@ -102,10 +112,68 @@ Look at `response.fired`:
 - **`fired == true`** → render the surfaced block (next step) BEFORE
   doing any code work.
 
-### 4. Render the surfaced block
+### 3.5 Scan recent user turns for uningested corrections
 
-When `fired=true`, surface the response using this exact format. Lead
-with the `(bicameral surfaced)` attribution line.
+Before classifying server-returned findings, scan the last ~10 user
+messages in the current conversation for **uningested corrections** —
+load-bearing design, scope, or constraint decisions the user stated
+that are NOT yet in the decision ledger. This closes the 80% gap where
+the user corrects Claude mid-session and the correction shapes the
+code but never reaches bicameral.
+
+**Step A — cheap pre-filter (regex, zero LLM cost):**
+Retain only messages that contain at least one of these markers (case-
+insensitive): `"actually"`, `"shouldn't"`, `"should not"`, `"don't use"`,
+`"do not use"`, `"wait,"`, `"no wait"`, `"nope"`, `"not X"` (generic
+negation + referent), `"instead of"`, `"rather than"`, `"let's not"`.
+If zero messages match, skip the rest of this step.
+
+**Step B — classify remaining candidates:**
+For each candidate, classify against this rubric:
+
+- **correction (ask)** — load-bearing design / scope / product decision
+  that contradicts, redirects, or constrains the in-flight work.
+  Example: *"abandoned checkout shouldn't use account_status — that
+  conflates signed-up-never-paid with churned"*.
+- **correction (mechanical)** — pure symbol/name clarification with no
+  design impact. Example: *"s/account_status/stripe_status/"*.
+- **not-a-correction** — clarifying question, reaction, off-topic,
+  minor copy-edit. Skip.
+
+Only `user` messages qualify — Claude's responses are downstream of
+corrections, not evidence of them.
+
+**Step C — ledger check for each correction:**
+For each classified correction, call
+`bicameral.search(query=<one-line paraphrase>, top_k=3)`. If any hit
+has cosine similarity ≥ 0.75 → treat as already ingested, skip. All
+others → queue as `uningested_corrections` findings.
+
+**Step D — merge into the classification pass below.**
+Mechanical corrections auto-ingest silently via
+`bicameral.ingest(source="conversation", decisions=[...])` with no
+user question (zero-friction capture).
+Ask corrections go into the stop-and-ask queue as the new 5th
+category.
+
+### 4. Classify findings before surfacing
+
+Before rendering anything, classify each finding as **mechanical** or
+**ask** (see Stop-and-Ask Contract below). Auto-resolve mechanical
+findings silently. For ask-findings, emit at most **one question per
+category**, in this priority order: drift → divergence →
+uningested_corrections → open questions → ungrounded.
+Hard cap: ≤ 4 questions total per preflight call (if all 5 categories
+have ask-findings, drop `ungrounded` — least urgent for correctness).
+
+Categories with no ask-findings are silently skipped. If every
+finding in every category is mechanical, produce NO output (same as
+`fired=false` — silent).
+
+### 5. Render the surfaced block
+
+When at least one ask-finding exists, surface the response using this
+format. Lead with the `(bicameral surfaced)` attribution line.
 
 ```
 (bicameral surfaced — checking <topic> context before implementing)
@@ -125,6 +193,11 @@ with the `(bicameral surfaced)` attribution line.
 ⚠ N divergent decision pair(s) — pick a winner before continuing:
   • <symbol> (<file_path>): <summary>
 
+⚠ N uningested correction(s) from this session:
+  • "<user's correction, quoted or one-line paraphrase>"
+    Proposed capture: <decision description>
+    [Ingest now? Y/n]
+
 ⚠ N unresolved open question(s):
   • <description>
     Source: <source_ref>
@@ -140,17 +213,99 @@ A one-line forward narration helps:
 > from idempotency.ts. I'll flag the event.id deduplication question
 > for you to answer before I commit."
 
-### 5. Honor blocking hints (guided mode only)
+### 6. Honor blocking hints (guided mode vs normal mode)
 
-If any hint has `blocking: true`, you MUST stop after the surfaced
-block and wait for user acknowledgment before doing any write
-operation (file edit, commit, PR, `bicameral_ingest`). Surface the
-hint's `message` verbatim and ask the user to either resolve it or
-explicitly tell you to proceed.
+The agent's `guided_mode` setting controls whether action hints are
+blocking or advisory. The flag has two settings chosen at `bicameral setup`
+time:
 
-In normal mode (non-guided), hints have `blocking: false` and you can
-proceed after surfacing them. The user opted into the looser
-interaction at setup time.
+- **Normal mode** (`guided: false`, default) — hints fire with `blocking: false`
+  and advisory tone ("heads up — N drifted decision(s) detected"). Mention
+  the hint to the user and **continue with the implementation**. Normal
+  mode is a heads-up, not a stop sign.
+- **Guided mode** (`guided: true`) — hints fire with `blocking: true` and
+  imperative tone ("N drifted decision(s) — review BEFORE making changes").
+  When any hint has `blocking: true`, **MUST stop after the surfaced block
+  and wait for user acknowledgment** before any write operation (file edit,
+  commit, PR, `bicameral_ingest`). Surface the hint's `message` verbatim
+  and ask the user to either resolve it or explicitly tell you to proceed.
+
+**How to enable/disable:**
+
+*Durable (setup time)*: `bicameral setup` prompts:
+```
+  Interaction intensity:
+    1. Normal  — bicameral flags discrepancies as advisory hints (default)
+    2. Guided  — bicameral stops you when it detects discrepancies
+  Choice [1/2]:
+```
+Written to `.bicameral/config.yaml` as `guided: true` or `guided: false`.
+
+*One-off override (env var)*: Set `BICAMERAL_GUIDED_MODE=1` (or `true`, `yes`,
+`on`) on the MCP server process to force guided mode for one session without
+touching the config file. Set to `0` / `false` to force normal mode.
+
+**When to use guided mode:**
+- Onboarding a new user to a repo with an existing bicameral ledger.
+- Demos where you want the audience to see bicameral doing adversarial-audit work.
+- Critical-path work — touching auth, billing, security, migrations.
+
+**When normal mode is enough:**
+- Day-to-day workflow on a codebase you know.
+- Read-only exploration flows.
+- Batch / headless ingest with no human-in-the-loop.
+
+### 7. On stop-and-ask resolution — ingest the answer
+
+When a blocking hint is resolved and the user answers an open question
+or confirms a design decision, immediately capture it into the ledger:
+
+```
+bicameral.ingest(payload={
+  "query": "<the feature topic preflight was scoped to>",
+  "source": "agent_session",
+  "title": "<short label for the decision, e.g. 'preflight-resolution-<topic>'>",
+  "date": "<today ISO date>",
+  "decisions": [{ "description": "<the user's answer as a decision statement>" }]
+}, feature_group="<same feature group as the implementation task>")
+```
+
+Use `source="agent_session"` — a source type distinct from transcript/slack/document
+that marks decisions resolved inline during an agent session. This ensures the
+decision is recorded in the ledger and not lost when the session ends.
+
+## Stop-and-Ask Contract
+
+<!-- Copy of bicameral-ask-contract.md v1 — see source for canonical version -->
+
+For every finding this skill surfaces, classify first:
+
+- **mechanical** — one obvious correct answer (e.g., renamed symbol
+  with identical signature; a decision whose code moved but semantics
+  are intact). Auto-apply the resolution silently. Do NOT ask the
+  user.
+- **ask** — reasonable people could disagree (e.g., drifted behavior
+  where the old decision may still be valid; divergent decisions where
+  no clear winner exists). Emit ONE question per finding, using the
+  format below.
+
+**Question format** — always:
+1. **Re-ground:** repo + branch + one-sentence current task
+2. **Simplify:** plain English, no raw symbol names
+3. **Recommend:** `RECOMMENDATION: Choose X because Y` + Completeness
+   X/10 per option
+4. **Options:** A / B / C — one sentence each, pickable in < 5s
+
+**Per-skill caps (preflight):**
+- Max 1 question per category (drift / divergence /
+  uningested_corrections / open questions / ungrounded)
+- Hard cap 4 questions per preflight call
+- If all 5 categories have ask-findings, drop `ungrounded` (least
+  urgent for correctness) questions
+
+**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, emit
+questions as informational notes (non-blocking); do not gate
+downstream tool calls.
 
 ## Examples
 

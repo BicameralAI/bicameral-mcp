@@ -207,16 +207,18 @@ def _build_config(
     else:
         local_dir = data_root
 
-    return {
-        "command": command,
-        "args": args,
-        "env": {
-            "REPO_PATH": str(repo_path),
-            "SURREAL_URL": f"surrealkv://{local_dir / 'ledger.db'}",
-            "CODE_LOCATOR_SQLITE_DB": str(local_dir / "code-graph.db"),
-            "BICAMERAL_TELEMETRY": "1" if telemetry else "0",
-        },
+    env: dict[str, str] = {
+        "REPO_PATH": str(repo_path),
+        "SURREAL_URL": f"surrealkv://{local_dir / 'ledger.db'}",
+        "CODE_LOCATOR_SQLITE_DB": str(local_dir / "code-graph.db"),
+        "BICAMERAL_TELEMETRY": "1" if telemetry else "0",
     }
+    if data_path is not None and data_path.resolve() != repo_path.resolve():
+        # History lives in a separate private repo — tell the adapter where
+        # to read/write events and config.
+        env["BICAMERAL_DATA_PATH"] = str(data_path)
+
+    return {"command": command, "args": args, "env": env}
 
 
 def _write_json_config(

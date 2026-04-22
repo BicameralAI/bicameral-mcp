@@ -23,8 +23,13 @@ _real_ledger_instance = None
 
 
 def _read_collaboration_mode(repo_path: str) -> str:
-    """Read mode from .bicameral/config.yaml (returns 'solo' or 'team')."""
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    """Read mode from .bicameral/config.yaml (returns 'solo' or 'team').
+
+    Checks BICAMERAL_DATA_PATH first so history stored in a private parent
+    repo is discovered even when REPO_PATH points to a public submodule.
+    """
+    data_path = os.getenv("BICAMERAL_DATA_PATH", repo_path)
+    config_path = Path(data_path) / ".bicameral" / "config.yaml"
     if not config_path.exists():
         return "solo"
     try:
@@ -65,7 +70,11 @@ def get_ledger():
             from events.materializer import EventMaterializer
             from events.team_adapter import TeamWriteAdapter
 
-            bicameral_dir = Path(repo_path) / ".bicameral"
+            # BICAMERAL_DATA_PATH redirects all history (events + local state)
+            # to a separate directory — typically a private parent repo when
+            # REPO_PATH points to a public submodule.
+            data_path = os.getenv("BICAMERAL_DATA_PATH", repo_path)
+            bicameral_dir = Path(data_path) / ".bicameral"
             events_dir = bicameral_dir / "events"
             local_dir = bicameral_dir / "local"
 

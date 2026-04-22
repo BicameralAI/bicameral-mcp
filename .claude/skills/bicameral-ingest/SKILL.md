@@ -1,6 +1,6 @@
 ---
 name: bicameral-ingest
-description: Ingest a meeting transcript or PRD into the decision ledger. Use when the user pastes a transcript, shares meeting notes, or wants to track decisions from a document.
+description: Ingest decisions into the decision ledger. AUTO-TRIGGER on ANY of these: (1) user pastes or mentions a transcript, meeting notes, Slack thread, PRD, spec, or design doc; (2) user says "we decided", "we agreed", "the plan is", "the requirement is", "track this", "log this", "remember this decision", or describes an outcome from a meeting/conversation; (3) user shares notes even informally — e.g. "in our sync yesterday we decided X"; (4) user answers a gap or open question that was previously surfaced by bicameral. When in doubt, ingest — a false trigger that captures zero decisions is cheaper than missing a real decision.
 ---
 
 # Bicameral Ingest
@@ -9,9 +9,11 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 ## When to use
 
-- User pastes or references a meeting transcript
-- User shares a PRD, design doc, or Slack thread
-- User says "track these decisions" or "ingest this"
+- User pastes or references a meeting transcript, PRD, design doc, spec, or Slack thread
+- User describes the outcome of a meeting or conversation, even informally
+- User says "track this", "log this", "we decided X", "we agreed on Y", "the requirement is Z"
+- User answers an open question / gap surfaced by bicameral preflight or history
+- User shares notes or describes a product decision, even without a structured document
 
 ## Steps
 
@@ -158,21 +160,189 @@ Keep the business driver attached to each decision's description so the gap judg
 
 → **Extract: 1 decision** — "Add PII redaction to the audit log (driver: GDPR self-assessment data-minimization check, next month deadline)." The key-rotation line is security hygiene with no business driver named — reject it. A PM reviewing the ledger can act on the GDPR item; they can't act on key rotation.
 
-### 2. Validate relevance against the codebase
+### 1.5 Assign a feature group (stop-and-ask v0)
 
-For each candidate decision, use the code locator tools to check whether it touches real code:
+After extracting candidate decisions and before resolving code regions,
+assign a **feature group** to each decision. A feature group is a short,
+canonical noun phrase (2–4 words, title-case, no verbs): e.g.
+`"Google Calendar"`, `"Checkout Flow"`, `"Auth Middleware"`.
 
-- Call `search_code` with a query derived from the decision text. If results come back with relevant hits, the decision is groundable.
-- If the decision mentions specific symbols (functions, classes, modules), call `validate_symbols` with those names to confirm they exist.
-- If a decision returns **zero relevant code hits** and names **no valid symbols**, it is likely strategic — drop it unless it describes something that *should* be built but doesn't exist yet (a genuine "pending" decision).
+**Default rule — same source, same group.** When all decisions in this
+ingest come from a single source about a single coherent topic, assign
+the **same `feature_group` to every decision**. This is the common case:
+a Slack thread about "account status SSOT" produces 4 decisions that all
+belong to `"Account Status"`, not one group per decision. Only split into
+multiple groups when decisions clearly cover distinct, unrelated features.
 
-This step is a lightweight filter, not an exhaustive audit. Spend ~1 search per candidate decision.
+**Procedure:**
+
+1. **Name the feature group first** from the source title, query, or
+   dominant topic. Derive one candidate group name before examining
+   individual decisions. A short noun phrase (2–4 words, title-case):
+   `"Account Status"`, `"Email Dispatch"`, `"Checkout Flow"`.
+
+2. **Assign that group to every decision by default.** Only diverge for
+   a specific decision if it's clearly about a different, unrelated
+   feature — in which case go to step 4.
+
+3. **Prefer existing group names.** If `bicameral.history` was called
+   earlier in this session and its result is in context, match against
+   existing `HistoryFeature.name` values. Reuse verbatim if an existing
+   name shares ≥ 2 significant content words with the proposed group.
+
+4. **Stop-and-ask ONLY for cross-feature decisions.** If a specific
+   decision clearly spans or belongs to a different feature than the
+   dominant group, surface it before calling `bicameral.ingest`:
+
+   ```
+   ⚠ I'm not sure how to categorize this decision:
+     "<decision text>"
+
+   Proposed group for the rest: "<dominant group>"
+
+   Options:
+     a) Use "<dominant group>" anyway
+     b) "<existing group B>" (existing)
+     c) "<proposed different group>" (new)
+     d) Enter a different group name
+
+   Which feature does this belong to?
+   ```
+
+   Wait for the user's response. Do not ask for every decision — only
+   the ones that genuinely don't fit the dominant group.
+
+5. **Pass `feature_group`** on each decision in the ingest payload.
+   For the internal format, add `feature_group` at the mapping level.
+   For the natural format, add it on each decision object:
+   ```
+   decisions: [
+     { "description": "...", "feature_group": "Account Status", ... }
+   ]
+   ```
+   For the internal format:
+   ```
+   mappings: [
+     { "intent": "...", "feature_group": "Account Status", ... }
+   ]
+   ```
+
+   **Never omit `feature_group`.** An unset `feature_group` causes the
+   decision to fall back to `source_ref` grouping — every decision ends
+   up in its own feature row in the dashboard. This is the primary cause
+   of the "5 decisions, 5 features" problem.
+
+### 2. Resolve code regions via the MCP retrieval tools (v0.4.23+ default)
+
+**This is where grounding quality is won or lost.** Server-side BM25 is a fallback
+for *abstract* decisions with no identifiable code anchor. For every decision
+that touches concrete code, **you** (the caller LLM) should resolve explicit
+`code_regions` using the MCP retrieval tools before ingesting. You have full
+codebase context; BM25 has a bag of tokens. Use your advantage.
+
+**Procedure per decision**:
+
+1. **Generate symbol hypotheses** from the decision text. If a decision says
+   *"all email dispatch functions filter via a single source-of-truth check,"*
+   your hypotheses are `dispatchReminders`, `dispatchInterventions`,
+   `dispatchNudge`, `resolveMemberStatus`, `isActiveSubscriber` — not just
+   the literal word "dispatch."
+2. **Call `validate_symbols`** with the hypotheses. Keep symbols that actually
+   exist in the index; drop the rest.
+3. **Call `search_code`** with the validated symbol_ids (not the raw decision
+   text — seeded graph traversal is strictly better than keyword BM25 for
+   finding the real regions). Take the top hits that look relevant.
+4. **Call `get_neighbors`** on the top hit if you're unsure of scope — surfaces
+   callers/callees so you can tell whether the decision is local to one
+   function or spans a call tree.
+5. **Build explicit `code_regions`** — `{file_path, symbol, start_line, end_line, type}` —
+   from the validated tool output. Prefer function-level pins over file-level;
+   bind to the tightest region that still covers the decision's surface area.
+
+**Grounding quality: filter out false positives before ingesting**. If
+`search_code` returns a hit that keyword-matches but doesn't actually implement
+anything related to the decision, drop it. Example: a decision about email
+dispatch should NOT bind to a React `dispatch` reducer just because the word
+appears. Ingesting garbage bindings means every edit to that unrelated file
+triggers a drift alarm later — noise that drowns out real signal.
+
+**Skip decisions that don't bind to real code**. If after this procedure the
+decision has zero concrete regions AND names no valid symbols, it's either
+(a) strategic (drop it) or (b) a genuine "pending" decision for code that
+doesn't exist yet. For the pending case, ingest it with empty `code_regions`
+but include a `search_hint` (see Step 3) so the server's future re-grounding
+sweeps have something to work with.
+
+### 2.5 Premise gate — supersession detection (stop-and-ask v1)
+
+After calling `bicameral.ingest`, read `IngestResponse.supersession_candidates`.
+Each entry is a prior decision whose text overlaps with one of the newly
+ingested decisions (BM25, top 3 per new decision). Classify each candidate:
+
+- **mechanical** (parallel scope) — the prior decision covers a
+  different code area, team, or lifecycle phase than the new one.
+  Auto-record both silently. No question needed.
+- **ask** (true supersession) — the prior decision appears to make a
+  contradictory or superseded claim about the same behavior. Emit
+  ONE question per ask-candidate, capped at **3 questions per ingest**.
+
+If the queue of ask-candidates exceeds 3, emit the first 3 as
+individual questions, then present a batched final approval gate for
+the remainder:
+
+```
+Bicameral flagged N more potential supersessions that I didn't ask
+individually. Options:
+  A. Proceed — record all as parallel decisions (treat as non-superseding)
+  B. Review them now — list them all and you pick for each
+  C. Cancel this ingest — let me refine the payload first
+RECOMMENDATION: Choose A if these are decisions from different product
+areas; B if any appear to change a commitment the team has already
+shipped against.
+```
+
+**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, present
+supersession candidates as informational notes only; do not gate
+the ingest.
 
 ### 3. Ingest the filtered set
 
-Call `bicameral.ingest` with a `payload` using the **natural format** (preferred). Only include decisions that passed the relevance filter from step 2.
+Call `bicameral.ingest` using the **internal format** (preferred from
+v0.4.23+ onward) with the `code_regions` you resolved in step 2. Natural
+format remains supported as a fallback for truly abstract decisions with
+no resolvable code surface.
 
-**Natural format** — canonical fields (use this shape):
+**Internal format** (preferred v0.4.23+) — use this when you resolved
+`code_regions` in Step 2:
+
+```
+payload: {
+  query: "<topic / feature area — drives the auto-brief>",
+  mappings: [
+    {
+      intent: "Cache user sessions in Redis for horizontal scaling",
+      span: {
+        text: "<source excerpt>",
+        source_type: "transcript",
+        source_ref: "sprint-14-planning",
+        meeting_date: "2026-04-15",
+        speakers: ["Ian", "Brian"]
+      },
+      symbols: ["SessionCache", "RedisClient"],
+      code_regions: [
+        { file_path: "src/lib/session.ts", symbol: "SessionCache",
+          start_line: 42, end_line: 89, type: "class" },
+        { file_path: "src/lib/redis.ts", symbol: "RedisClient",
+          start_line: 1, end_line: 34, type: "class" }
+      ],
+      search_hint: "SessionCache RedisClient session-cache horizontal scaling"
+    }
+  ]
+}
+```
+
+**Natural format** (fallback) — use when a decision is truly abstract
+and has no resolvable code surface:
 
 ```
 payload: {
@@ -184,10 +354,12 @@ payload: {
   decisions: [
     {
       description: "Cache user sessions in Redis for horizontal scaling",
-      id: "sprint-14-planning#session-cache"  # optional stable id
+      id: "sprint-14-planning#session-cache",  # optional stable id
+      search_hint: "SessionCache RedisClient session cache horizontal scaling"
     },
     {
-      description: "Apply 10% discount on orders ≥ $100"
+      description: "Apply 10% discount on orders ≥ $100",
+      search_hint: "calculateDiscount order_total applyDiscount PricingService"
     }
   ],
   action_items: [
@@ -198,37 +370,19 @@ payload: {
 
 **Field rules** — get these right or decisions evaporate:
 
+- **`mappings[].code_regions`** is the whole game from v0.4.23+. When you pass explicit regions, server BM25 does not run for that mapping — grounding is exactly what you resolved. No false positives from vocab mismatch.
+- **`search_hint`** is the fallback recall booster. When server BM25 *does* run (you didn't resolve `code_regions`), the server concatenates `intent.description + search_hint` as the BM25 query. Put 3-5 likely identifier names or domain synonyms here — exactly the kind of vocabulary your codebase uses that the decision's natural-language description wouldn't contain literally. Example: a decision about "subscription status source-of-truth" won't mention `resolveMemberStatus` or `isActiveSubscriber` but BM25 needs those tokens to find the right dispatch functions. `search_hint` is query-only — it's never stored as part of the intent's description and never appears in briefs.
 - **`decisions[].description`** is the canonical text field. `title` is accepted as a synonym for back-compat; `text` is tolerated as an alias (v0.4.16+). At least one of the three must be non-empty or the decision is silently dropped.
 - **`action_items[].action`** is the canonical text field. `text` is tolerated as an alias (v0.4.16+). `owner` defaults to `"unassigned"`. `due` is an optional ISO date.
 - **`query`** is load-bearing: it's the topic the post-ingest auto-brief and gap-judge chain fire on. If you omit it, the handler falls through to the longest decision description as a topic guess — usable but less focused. **When fanning out from the boundary-detection flow (step 0), always pass each segment's title as `query`.**
-- **`participants`** on the payload populates `span.speakers` for every decision. Put the meeting attendees here, not on individual decisions.
+- **`participants`** (natural format) or **`span.speakers`** (internal format) records the meeting attendees.
 - Do NOT include `open_questions` unless they have direct implementation implications — they're accepted as `list[str]` but clutter the ledger with non-code entries.
 
-**Internal format** — only if you already have pre-resolved code regions from `search_code` / `validate_symbols`:
+**When to choose which format**:
 
-```
-payload: {
-  query: "...",
-  mappings: [
-    {
-      intent: "Cache user sessions in Redis",
-      span: {
-        text: "<source excerpt>",
-        source_type: "transcript",
-        source_ref: "sprint-14-planning",
-        meeting_date: "2026-04-15"
-      },
-      symbols: ["SessionCache"],
-      code_regions: [
-        { file_path: "src/lib/session.ts", symbol: "SessionCache",
-          start_line: 42, end_line: 89, type: "class" }
-      ]
-    }
-  ]
-}
-```
-
-Use the natural format in the common case. Fall through to internal format only when you already have verified file/line pins — otherwise you'll bypass auto-grounding and the server can't map decisions to code on its own.
+- **Internal format, v0.4.23+ default.** You resolved `code_regions` via Step 2. Ingest with explicit pins. The ledger is a trustworthy drift anchor — editing those pinned files fires real drift alarms; editing unrelated files fires nothing. This is the posture we want for real branches.
+- **Natural format + `search_hint`, fallback.** The decision is abstract ("ship by Q3," "SOC2-compliant session storage") or points at code that doesn't exist yet. Server BM25 tries with the widened query; if it produces zero hits the intent stays ungrounded (honest). If BM25 produces a false-positive binding, you'll catch it at the first `bicameral.doctor` or via a pending_compliance_check verdict.
+- **Natural format WITHOUT `search_hint`, legacy.** Works, but this is how the 2026-04-20 Accountable dispatcher ingest ended up with "all dispatch functions" bound to `use-toast.ts:dispatch`. You almost always want at least the hint.
 
 ### 3b. Verify grounding candidates (v0.4.21+)
 
@@ -239,9 +393,9 @@ decisions earn REFLECTED status — without your verdict, they stay PENDING.**
 
 For each `PendingComplianceCheck` in the list:
 
-1. **Read the code** using the `code_body` field (tree-sitter extracted
-   snippet). If the snippet looks truncated, read the full file at
-   `file_path` and locate the `symbol` for additional context.
+1. **Read the code** at `file_path` lines `start_line`–`end_line` (the
+   `code_body` field contains a preview, but read the actual file for
+   full context if the snippet is truncated).
 
 2. **Compare** the code against `intent_description`. Ask yourself:
    does this code **functionally implement** the decision, or does it
@@ -251,7 +405,7 @@ For each `PendingComplianceCheck` in the list:
    is NOT.
 
 3. **Write your verdict** by calling `bicameral.resolve_compliance`:
-   ```json
+   ```
    bicameral.resolve_compliance({
      phase: "<from the pending check>",
      verdicts: [
@@ -288,32 +442,49 @@ Show the user:
 ### 5. Present the auto-fired brief (v0.4.8+)
 
 `bicameral.ingest` auto-fires `bicameral.brief` on a topic derived from the
-payload and returns the brief inside ``IngestResponse.brief``. **When
-``brief`` is non-null, present it immediately after the ingest summary
-using the bicameral-brief presentation rules.** In particular:
+payload and returns the brief inside `IngestResponse.brief`. When `brief`
+is non-null, present it immediately after the ingest summary using the
+presentation contract below.
 
-- **Lead with divergences** (`brief.divergences`) whenever non-empty. The
-  fresh ingest may have just introduced a decision that contradicts an
-  existing one on the same symbol — that's the single highest-stakes
-  signal bicameral can carry, and the whole reason the brief auto-fires
-  after ingest. Surface each divergence as a bold warning with the
-  symbol, file path, and summary line.
-- Then `brief.drift_candidates`, then `brief.decisions` (grouped by status,
-  skipping duplicates that already appear in drift_candidates), then
-  `brief.gaps`, then `brief.suggested_questions` **verbatim**.
-- Skip any bucket that's empty. If every bucket is empty, say so plainly —
-  it means the fresh ingest didn't touch any prior decisions and no
-  divergences exist. That itself is useful information.
-- **Never** paraphrase `suggested_questions`. They're templated to be
-  neutral-voice; paraphrasing reintroduces the "me vs you" framing the
-  tool exists to remove.
+**Presentation order** — always strict, skip empty buckets silently:
 
-The full presentation contract lives in `skills/bicameral-brief/SKILL.md`
-and is the canonical reference — this step just cross-links it.
+1. **`divergences` — ALWAYS FIRST if non-empty.** Two contradictory
+   decisions on the same symbol is the highest-stakes signal the brief
+   can carry. The meeting's first agenda item should be picking which one
+   wins. Surface each divergence as a bold warning with the symbol, file,
+   and summary line.
+2. **`drift_candidates`** — decisions whose code diverged from recorded
+   intent. Present each with status badge (`⚠ DRIFTED`), file:line, and
+   drift evidence.
+3. **`decisions`** — the full set of in-scope decisions, grouped by status.
+   Skip any that already appear in `drift_candidates` to avoid duplication.
+4. **`gaps`** — open questions and ungrounded decisions. Present as a
+   bulleted list.
+5. **`suggested_questions`** — **Surface these VERBATIM**, never paraphrase.
+   They're templated to be neutral-voice; paraphrasing reintroduces the
+   "me vs you" framing the tool exists to remove.
 
-When `brief` is `null` (e.g. the payload had no derivable topic or the
-chained brief call failed), skip this step silently. The ingest summary
-from step 4 is sufficient on its own.
+**Action hints** — the brief response includes `action_hints`. Two intensities,
+controlled by `guided: bool` in `.bicameral/config.yaml` or the
+`BICAMERAL_GUIDED_MODE=1` env override:
+
+- **Normal mode** (`guided: false`, default) — hints fire with `blocking: false`
+  and advisory tone. Mention the hint in one line and continue.
+- **Guided mode** (`guided: true`) — hints fire with `blocking: true` and
+  imperative tone. **Address each blocking hint before any write operation**
+  (file edit, commit, PR, `bicameral_ingest`).
+
+Hint kinds that can fire on brief responses:
+- **`resolve_divergence`** — two non-superseded decisions contradict on the
+  same symbol. Highest-stakes signal.
+- **`review_drift`** — one or more decisions in scope have drifted.
+- **`answer_open_questions`** — gap extraction found open-question-shaped gaps.
+
+**Never paraphrase a hint's `message` field** — surface it verbatim.
+
+When `brief` is `null` (the payload had no derivable topic or the chained
+brief call failed), skip this step silently. The ingest summary from step 4
+is sufficient on its own.
 
 ### 6. Apply the gap-judge rubric (v0.4.16+)
 
