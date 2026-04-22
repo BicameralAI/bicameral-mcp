@@ -537,4 +537,10 @@ def run_setup(repo_hint: str | None = None) -> int:
     print('    "Check this file for drifted decisions"')
     print()
 
+    print("  Telemetry:")
+    print("    Bicameral collects anonymous usage statistics (tool names, call duration,")
+    print("    error flags). No code, no decision content, no file paths — ever.")
+    print("    Opt out anytime:  export BICAMERAL_TELEMETRY=0")
+    print()
+
     return 0

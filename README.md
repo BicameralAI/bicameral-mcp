@@ -271,6 +271,33 @@ Tests use real adapters with `SURREAL_URL=memory://` — no external services re
 
 ---
 
+## Telemetry
+
+Bicameral collects anonymous usage statistics to improve reliability and prioritize development. No code, decision content, file paths, or personally identifiable information is ever collected.
+
+**What is collected:**
+- Tool name (e.g. `bicameral.ingest`)
+- Server version
+- Call duration (milliseconds)
+- Error flag (boolean)
+- Aggregate counts (e.g. number of decisions grounded per ingest call — integers only)
+
+**What is never collected:** decision descriptions, transcript content, search queries, file paths, repo names, or any user-supplied text.
+
+**Opt out at any time:**
+
+```bash
+export BICAMERAL_TELEMETRY=0
+```
+
+or add `BICAMERAL_TELEMETRY=0` to the `env` block in your `.mcp.json`.
+
+### Collaborator access
+
+Telemetry data is stored in a private PostHog project. If you are a design partner, contributor, or researcher who needs access to the usage dashboard, reach out directly at **jin@bicameral-ai.com**.
+
+---
+
 ## Contributing
 
 Contributions welcome. Please open an issue before submitting large changes.

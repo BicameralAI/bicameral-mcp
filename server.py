@@ -514,147 +514,166 @@ async def list_tools() -> list[Tool]:
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     import json
+    import time
+
+    from telemetry import record_event
 
     ctx = BicameralContext.from_env()
+    _t0 = time.monotonic()
+    _errored = False
+    _diagnostic: dict | None = None
 
-    if name in ("bicameral.link_commit", "link_commit"):
-        result = await handle_link_commit(
-            ctx,
-            commit_hash=arguments.get("commit_hash", "HEAD"),
-        )
-    elif name in ("bicameral.ingest", "ingest"):
-        result = await handle_ingest(
-            ctx,
-            payload=arguments["payload"],
-            source_scope=arguments.get("source_scope", "default"),
-            cursor=arguments.get("cursor", ""),
-        )
-    elif name == "bicameral.update":
-        data = await handle_update(
-            action=arguments["action"],
-            current_version=SERVER_VERSION,
-            repo_path=str(ctx.repo_path),
-        )
-        return [TextContent(type="text", text=json.dumps(data, indent=2))]
-    elif name in ("bicameral.reset", "reset"):
-        result = await handle_reset(
-            ctx,
-            confirm=arguments.get("confirm", False),
-            replay=arguments.get("replay", True),
-        )
-    elif name in ("bicameral.preflight", "preflight"):
-        result = await handle_preflight(
-            ctx,
-            topic=arguments["topic"],
-            participants=arguments.get("participants") or None,
-        )
-    elif name in ("bicameral.judge_gaps", "judge_gaps"):
-        result = await handle_judge_gaps(
-            ctx,
-            topic=arguments["topic"],
-            max_decisions=arguments.get("max_decisions", 10),
-        )
-        # Honest empty path — handler returns None when no matches.
-        # Emit an empty envelope the agent can detect and skip on.
-        if result is None:
-            return [TextContent(
-                type="text",
-                text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
-            )]
-    elif name in ("bicameral.resolve_compliance", "resolve_compliance"):
-        result = await handle_resolve_compliance(
-            ctx,
-            phase=arguments["phase"],
-            verdicts=arguments["verdicts"],
-            commit_hash=arguments.get("commit_hash"),
-        )
-    elif name in ("bicameral.ratify", "ratify"):
-        result = await handle_ratify(
-            ctx,
-            decision_id=arguments["decision_id"],
-            signer=arguments["signer"],
-            note=arguments.get("note", ""),
-        )
-    elif name in ("bicameral.history", "history"):
-        result = await handle_history(
-            ctx,
-            feature_filter=arguments.get("feature_filter"),
-            include_superseded=arguments.get("include_superseded", True),
-            as_of=arguments.get("as_of"),
-        )
-        # Inject empty-ledger guidance so the caller-LLM doesn't bypass ingest.
-        if result.total_features == 0:
-            payload = result.model_dump()
-            payload["_guidance"] = (
-                "The decision ledger is empty — no decisions have been ingested yet. "
-                "STOP: do not read the codebase or make code changes yet. "
-                "Instead: (1) call bicameral.ingest with the meeting transcript, "
-                "Slack thread, or document that contains the relevant decisions; "
-                "(2) review the extracted decisions in the ingest response; "
-                "(3) only then use those decisions to guide the implementation."
+    try:
+        if name in ("bicameral.link_commit", "link_commit"):
+            result = await handle_link_commit(
+                ctx,
+                commit_hash=arguments.get("commit_hash", "HEAD"),
             )
+        elif name in ("bicameral.ingest", "ingest"):
+            result = await handle_ingest(
+                ctx,
+                payload=arguments["payload"],
+                source_scope=arguments.get("source_scope", "default"),
+                cursor=arguments.get("cursor", ""),
+            )
+        elif name == "bicameral.update":
+            data = await handle_update(
+                action=arguments["action"],
+                current_version=SERVER_VERSION,
+                repo_path=str(ctx.repo_path),
+            )
+            return [TextContent(type="text", text=json.dumps(data, indent=2))]
+        elif name in ("bicameral.reset", "reset"):
+            result = await handle_reset(
+                ctx,
+                confirm=arguments.get("confirm", False),
+                replay=arguments.get("replay", True),
+            )
+        elif name in ("bicameral.preflight", "preflight"):
+            result = await handle_preflight(
+                ctx,
+                topic=arguments["topic"],
+                participants=arguments.get("participants") or None,
+            )
+        elif name in ("bicameral.judge_gaps", "judge_gaps"):
+            result = await handle_judge_gaps(
+                ctx,
+                topic=arguments["topic"],
+                max_decisions=arguments.get("max_decisions", 10),
+            )
+            # Honest empty path — handler returns None when no matches.
+            # Emit an empty envelope the agent can detect and skip on.
+            if result is None:
+                return [TextContent(
+                    type="text",
+                    text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
+                )]
+        elif name in ("bicameral.resolve_compliance", "resolve_compliance"):
+            result = await handle_resolve_compliance(
+                ctx,
+                phase=arguments["phase"],
+                verdicts=arguments["verdicts"],
+                commit_hash=arguments.get("commit_hash"),
+            )
+        elif name in ("bicameral.ratify", "ratify"):
+            result = await handle_ratify(
+                ctx,
+                decision_id=arguments["decision_id"],
+                signer=arguments["signer"],
+                note=arguments.get("note", ""),
+            )
+        elif name in ("bicameral.history", "history"):
+            result = await handle_history(
+                ctx,
+                feature_filter=arguments.get("feature_filter"),
+                include_superseded=arguments.get("include_superseded", True),
+                as_of=arguments.get("as_of"),
+            )
+            # Inject empty-ledger guidance so the caller-LLM doesn't bypass ingest.
+            if result.total_features == 0:
+                payload = result.model_dump()
+                payload["_guidance"] = (
+                    "The decision ledger is empty — no decisions have been ingested yet. "
+                    "STOP: do not read the codebase or make code changes yet. "
+                    "Instead: (1) call bicameral.ingest with the meeting transcript, "
+                    "Slack thread, or document that contains the relevant decisions; "
+                    "(2) review the extracted decisions in the ingest response; "
+                    "(3) only then use those decisions to guide the implementation."
+                )
+                update_notice = get_update_notice(SERVER_VERSION)
+                if update_notice:
+                    payload["_update"] = update_notice
+                return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        elif name in ("bicameral.dashboard", "dashboard"):
+            from contracts import DashboardResponse
+            srv = get_dashboard_server()
+            if not srv.running:
+                await srv.start(ctx_factory=BicameralContext.from_env)
+                status = "started"
+            else:
+                status = "already_running"
+            result = DashboardResponse(url=srv.url, status=status, port=srv.port)
+            payload = result.model_dump()
             update_notice = get_update_notice(SERVER_VERSION)
             if update_notice:
                 payload["_update"] = update_notice
             return [TextContent(type="text", text=json.dumps(payload, indent=2))]
-    elif name in ("bicameral.dashboard", "dashboard"):
-        from contracts import DashboardResponse
-        srv = get_dashboard_server()
-        if not srv.running:
-            await srv.start(ctx_factory=BicameralContext.from_env)
-            status = "started"
+        # ── Code locator tools ────────────────────────────────────────
+        elif name == "validate_symbols":
+            data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
+            return [TextContent(type="text", text=json.dumps(data, indent=2))]
+        elif name == "search_code":
+            data = await asyncio.to_thread(
+                ctx.code_graph.search_code,
+                arguments["query"],
+                arguments.get("symbol_ids"),
+            )
+            return [TextContent(type="text", text=json.dumps(data, indent=2))]
+        elif name == "get_neighbors":
+            data = await asyncio.to_thread(ctx.code_graph.get_neighbors, arguments["symbol_id"])
+            return [TextContent(type="text", text=json.dumps(data, indent=2))]
+        elif name == "extract_symbols":
+            data = await ctx.code_graph.extract_symbols(arguments["file_path"])
+            return [TextContent(type="text", text=json.dumps(data, indent=2))]
         else:
-            status = "already_running"
-        result = DashboardResponse(url=srv.url, status=status, port=srv.port)
+            raise ValueError(f"Unknown tool: {name}")
+
+        # Inject update notice into all bicameral ledger tool responses
         payload = result.model_dump()
         update_notice = get_update_notice(SERVER_VERSION)
         if update_notice:
             payload["_update"] = update_notice
+
+        # After a successful ingest that extracted decisions, remind the caller-LLM
+        # to review those decisions before touching any code.
+        if name in ("bicameral.ingest", "ingest"):
+            stats = payload.get("stats") or {}
+            created = stats.get("intents_created", 0)
+            if created > 0:
+                grounded = stats.get("grounded", 0)
+                ungrounded = stats.get("ungrounded", 0)
+                _diagnostic = {
+                    "grounded_count": grounded,
+                    "ungrounded_count": ungrounded,
+                    "decisions_created": created,
+                }
+                payload["_guidance"] = (
+                    f"Ingest complete: {created} decision(s) extracted "
+                    f"({grounded} grounded to code, {ungrounded} ungrounded). "
+                    "STOP: review the 'brief' and 'ungrounded_decisions' fields above "
+                    "before making any code changes. Use those decisions — not your own "
+                    "analysis — as the implementation spec. "
+                    "Call bicameral.history to see the full ledger at any time."
+                )
+
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
-    # ── Code locator tools ────────────────────────────────────────
-    elif name == "validate_symbols":
-        data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
-        return [TextContent(type="text", text=json.dumps(data, indent=2))]
-    elif name == "search_code":
-        data = await asyncio.to_thread(
-            ctx.code_graph.search_code,
-            arguments["query"],
-            arguments.get("symbol_ids"),
-        )
-        return [TextContent(type="text", text=json.dumps(data, indent=2))]
-    elif name == "get_neighbors":
-        data = await asyncio.to_thread(ctx.code_graph.get_neighbors, arguments["symbol_id"])
-        return [TextContent(type="text", text=json.dumps(data, indent=2))]
-    elif name == "extract_symbols":
-        data = await ctx.code_graph.extract_symbols(arguments["file_path"])
-        return [TextContent(type="text", text=json.dumps(data, indent=2))]
-    else:
-        raise ValueError(f"Unknown tool: {name}")
 
-    # Inject update notice into all bicameral ledger tool responses
-    payload = result.model_dump()
-    update_notice = get_update_notice(SERVER_VERSION)
-    if update_notice:
-        payload["_update"] = update_notice
-
-    # After a successful ingest that extracted decisions, remind the caller-LLM
-    # to review those decisions before touching any code.
-    if name in ("bicameral.ingest", "ingest"):
-        stats = payload.get("stats") or {}
-        created = stats.get("intents_created", 0)
-        if created > 0:
-            grounded = stats.get("grounded", 0)
-            ungrounded = stats.get("ungrounded", 0)
-            payload["_guidance"] = (
-                f"Ingest complete: {created} decision(s) extracted "
-                f"({grounded} grounded to code, {ungrounded} ungrounded). "
-                "STOP: review the 'brief' and 'ungrounded_decisions' fields above "
-                "before making any code changes. Use those decisions — not your own "
-                "analysis — as the implementation spec. "
-                "Call bicameral.history to see the full ledger at any time."
-            )
-
-    return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+    except Exception:
+        _errored = True
+        raise
+    finally:
+        _duration_ms = int((time.monotonic() - _t0) * 1000)
+        record_event(name, _duration_ms, _errored, SERVER_VERSION, _diagnostic)
 
 
 async def run_smoke_test() -> dict[str, object]:
