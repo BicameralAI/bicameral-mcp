@@ -39,12 +39,12 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_RELAY_URL = "https://telemetry.bicameral-ai.com/event"
+_RELAY_URL = "https://bicameral-telemetry-relay.bicameral-ai.workers.dev/event"
 _TELEMETRY_OFF = frozenset({"0", "false", "no", "off"})
 
 
 def _is_enabled() -> bool:
-    val = os.getenv("BICAMERAL_TELEMETRY", "1").strip().lower()
+    val = os.getenv("BICAMERAL_TELEMETRY", "0").strip().lower()
     return val not in _TELEMETRY_OFF
 
 

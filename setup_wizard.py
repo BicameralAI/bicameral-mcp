@@ -151,7 +151,7 @@ def _detect_runner() -> tuple[str, list[str]]:
     return (python, ["-m", "bicameral_mcp"])
 
 
-def _build_config(repo_path: Path, mode: str = "solo") -> dict:
+def _build_config(repo_path: Path, mode: str = "solo", telemetry: bool = False) -> dict:
     """Build the MCP server config object.
 
     In team mode, local DBs go under .bicameral/local/ (gitignored)
@@ -174,13 +174,14 @@ def _build_config(repo_path: Path, mode: str = "solo") -> dict:
             "REPO_PATH": str(repo_path),
             "SURREAL_URL": f"surrealkv://{local_dir / 'ledger.db'}",
             "CODE_LOCATOR_SQLITE_DB": str(local_dir / "code-graph.db"),
+            "BICAMERAL_TELEMETRY": "1" if telemetry else "0",
         },
     }
 
 
-def _write_json_config(repo_path: Path, config_path: Path, mode: str = "solo") -> None:
+def _write_json_config(repo_path: Path, config_path: Path, mode: str = "solo", telemetry: bool = False) -> None:
     """Write MCP server config to a JSON file (Claude Code / Cursor)."""
-    config = _build_config(repo_path, mode=mode)
+    config = _build_config(repo_path, mode=mode, telemetry=telemetry)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = {}
@@ -194,9 +195,9 @@ def _write_json_config(repo_path: Path, config_path: Path, mode: str = "solo") -
     config_path.write_text(json.dumps(existing, indent=2) + "\n")
 
 
-def _write_toml_config(repo_path: Path, config_path: Path, mode: str = "solo") -> None:
+def _write_toml_config(repo_path: Path, config_path: Path, mode: str = "solo", telemetry: bool = False) -> None:
     """Write MCP server config to a TOML file (Codex)."""
-    config = _build_config(repo_path, mode=mode)
+    config = _build_config(repo_path, mode=mode, telemetry=telemetry)
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the [mcp_servers.bicameral] TOML section
@@ -234,14 +235,14 @@ def _write_toml_config(repo_path: Path, config_path: Path, mode: str = "solo") -
     config_path.write_text("\n".join(lines) + "\n")
 
 
-def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo") -> bool:
+def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo", telemetry: bool = False) -> bool:
     """Install MCP config for a specific coding agent."""
     agent = AGENTS[agent_key]
     config_path = agent["config_path"](repo_path)
 
     # For Claude Code, try CLI first
     if agent_key == "claude" and shutil.which("claude"):
-        config = _build_config(repo_path, mode=mode)
+        config = _build_config(repo_path, mode=mode, telemetry=telemetry)
         config_json = json.dumps(config)
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
@@ -257,7 +258,7 @@ def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo") -> b
 
     # For Codex, try CLI first
     if agent_key == "codex" and shutil.which("codex"):
-        config = _build_config(repo_path, mode=mode)
+        config = _build_config(repo_path, mode=mode, telemetry=telemetry)
         env_args = []
         for k, v in config["env"].items():
             env_args.extend(["--env", f"{k}={v}"])
@@ -271,9 +272,9 @@ def _install_for_agent(agent_key: str, repo_path: Path, mode: str = "solo") -> b
 
     # Fallback: write config file directly
     if agent.get("config_format") == "toml":
-        _write_toml_config(repo_path, config_path, mode=mode)
+        _write_toml_config(repo_path, config_path, mode=mode, telemetry=telemetry)
     else:
-        _write_json_config(repo_path, config_path, mode=mode)
+        _write_json_config(repo_path, config_path, mode=mode, telemetry=telemetry)
 
     print(f"  {agent['name']}: wrote {config_path}")
     return True
@@ -396,24 +397,57 @@ def _select_guided_mode() -> bool:
     return choice == "2"
 
 
+def _select_telemetry() -> bool:
+    """Prompt user for anonymous telemetry consent.
+
+    Shows the exact event schema so the user knows precisely what would be
+    sent before deciding. Defaults to No (opt-out).
+    """
+    print("\n  Anonymous telemetry:")
+    print("    Bicameral can share anonymous usage statistics to help improve")
+    print("    reliability and prioritise development. Every event is sanitised")
+    print("    on your machine before it leaves — here is the exact payload shape:")
+    print()
+    print('    {')
+    print('      "tool":        "bicameral.ingest",    ← tool name only')
+    print('      "version":     "0.5.3",               ← package version')
+    print('      "duration_ms": 412,                   ← integer ms')
+    print('      "errored":     false,                 ← boolean')
+    print('      "diagnostic":  {"grounded_count": 3}  ← integer counts only')
+    print('    }')
+    print()
+    print("    No code. No decision text. No file paths. No personal data. Ever.")
+    print("    Change anytime: set BICAMERAL_TELEMETRY=0 in your environment.")
+    print()
+    print("    1. No   — keep telemetry off  (default)")
+    print("    2. Yes  — enable anonymous telemetry")
+
+    if not _is_interactive():
+        return False
+
+    choice = input("  Choice [1/2]: ").strip()
+    return choice == "2"
+
+
 def _write_collaboration_config(
     repo_path: Path,
     mode: str,
     guided: bool = False,
+    telemetry: bool = False,
 ) -> None:
-    """Write .bicameral/config.yaml with the collaboration mode and
-    guided-mode flag.
-    """
+    """Write .bicameral/config.yaml with collaboration mode, guided-mode, and telemetry flags."""
     config_path = repo_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         "# Bicameral configuration\n"
         f"mode: {mode}\n"
-        f"guided: {'true' if guided else 'false'}\n",
+        f"guided: {'true' if guided else 'false'}\n"
+        f"telemetry: {'true' if telemetry else 'false'}\n",
         encoding="utf-8",
     )
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
+    print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
 
 
 def _ensure_gitignore(repo_path: Path, mode: str = "solo") -> None:
@@ -494,10 +528,11 @@ def run_setup(repo_hint: str | None = None) -> int:
         print(f"\n  Note: using '{command} -m bicameral_mcp' as runner.")
         print("  Install a package runner for zero-install: pip install pipx")
 
-    # Step 4: Collaboration mode + guided intensity + gitignore
+    # Step 4: Collaboration mode + guided intensity + telemetry + gitignore
     collab_mode = _select_collaboration_mode()
     guided = _select_guided_mode()
-    _write_collaboration_config(repo_path, collab_mode, guided=guided)
+    telemetry = _select_telemetry()
+    _write_collaboration_config(repo_path, collab_mode, guided=guided, telemetry=telemetry)
     _ensure_gitignore(repo_path, mode=collab_mode)
 
     if collab_mode == "team":
@@ -507,7 +542,7 @@ def run_setup(repo_hint: str | None = None) -> int:
     # Step 5: Install MCP config for each agent
     print()
     for agent_key in agents:
-        _install_for_agent(agent_key, repo_path, mode=collab_mode)
+        _install_for_agent(agent_key, repo_path, mode=collab_mode, telemetry=telemetry)
 
     # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
@@ -535,12 +570,6 @@ def run_setup(repo_hint: str | None = None) -> int:
     print("  Or just ask naturally:")
     print('    "What decisions have been made about authentication?"')
     print('    "Check this file for drifted decisions"')
-    print()
-
-    print("  Telemetry:")
-    print("    Bicameral collects anonymous usage statistics (tool names, call duration,")
-    print("    error flags). No code, no decision content, no file paths — ever.")
-    print("    Opt out anytime:  export BICAMERAL_TELEMETRY=0")
     print()
 
     return 0
