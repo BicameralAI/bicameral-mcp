@@ -365,18 +365,18 @@ def _select_collaboration_mode() -> str:
     import questionary
 
     if not _is_interactive():
-        return "solo"
+        return "team"
 
     result = questionary.select(
         "Collaboration mode:",
         choices=[
-            questionary.Choice("Solo  — decisions stored locally", value="solo"),
             questionary.Choice("Team  — decisions shared via git (append-only event files)", value="team"),
+            questionary.Choice("Solo  — decisions stored locally", value="solo"),
         ],
-        default="solo",
+        default="team",
     ).ask()
 
-    return result if result is not None else "solo"
+    return result if result is not None else "team"
 
 
 def _select_guided_mode() -> bool:
@@ -384,18 +384,18 @@ def _select_guided_mode() -> bool:
     import questionary
 
     if not _is_interactive():
-        return False
+        return True
 
     result = questionary.select(
         "Interaction intensity:",
         choices=[
-            questionary.Choice("Normal  — bicameral flags discrepancies as advisory hints", value=False),
             questionary.Choice("Guided  — bicameral stops you when it detects discrepancies", value=True),
+            questionary.Choice("Normal  — bicameral flags discrepancies as advisory hints", value=False),
         ],
-        default=False,
+        default=True,
     ).ask()
 
-    return result if result is not None else False
+    return result if result is not None else True
 
 
 def _select_telemetry() -> bool:
