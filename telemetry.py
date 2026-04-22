@@ -44,7 +44,7 @@ _TELEMETRY_OFF = frozenset({"0", "false", "no", "off"})
 
 
 def _is_enabled() -> bool:
-    val = os.getenv("BICAMERAL_TELEMETRY", "0").strip().lower()
+    val = os.getenv("BICAMERAL_TELEMETRY", "1").strip().lower()
     return val not in _TELEMETRY_OFF
 
 

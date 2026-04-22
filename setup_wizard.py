@@ -103,6 +103,8 @@ def _is_interactive() -> bool:
 
 def _select_agents() -> list[str]:
     """Prompt user to select coding agents."""
+    import questionary
+
     detected = _detect_agents()
 
     # Non-interactive: auto-install for all detected (or claude as default)
@@ -113,29 +115,24 @@ def _select_agents() -> list[str]:
             return detected
         return ["claude"]
 
-    if detected:
-        names = ", ".join(AGENTS[a]["name"] for a in detected)
-        print(f"  Detected: {names}")
-        answer = input("  Install for all detected? [Y/n] ").strip().lower()
-        if answer in ("", "y", "yes"):
-            return detected
-
     all_keys = list(AGENTS.keys())
-    print("\n  Select coding agents to configure:")
-    for i, key in enumerate(all_keys, 1):
-        print(f"    {i}. {AGENTS[key]['name']}")
-    print(f"    {len(all_keys) + 1}. All")
-    choice = input(f"  Choice [1-{len(all_keys) + 1}]: ").strip()
+    choices = [
+        questionary.Choice(
+            title=f"{AGENTS[k]['name']}{' (detected)' if k in detected else ''}",
+            value=k,
+            checked=k in detected or (not detected and k == "claude"),
+        )
+        for k in all_keys
+    ]
 
-    try:
-        idx = int(choice) - 1
-        if idx == len(all_keys):
-            return all_keys
-        if 0 <= idx < len(all_keys):
-            return [all_keys[idx]]
-    except ValueError:
-        pass
-    return ["claude"]
+    selected = questionary.checkbox(
+        "Select coding agents to configure:",
+        choices=choices,
+    ).ask()
+
+    if not selected:
+        return detected or ["claude"]
+    return selected
 
 
 def _detect_runner() -> tuple[str, list[str]]:
@@ -365,68 +362,73 @@ def _install_skills(repo_path: Path) -> int:
 
 def _select_collaboration_mode() -> str:
     """Prompt user for solo or team collaboration mode."""
+    import questionary
+
     if not _is_interactive():
         return "solo"
 
-    print("\n  Collaboration mode:")
-    print("    1. Solo  — decisions stored locally (default)")
-    print("    2. Team  — decisions shared via git (append-only event files)")
-    choice = input("  Choice [1/2]: ").strip()
+    result = questionary.select(
+        "Collaboration mode:",
+        choices=[
+            questionary.Choice("Solo  — decisions stored locally", value="solo"),
+            questionary.Choice("Team  — decisions shared via git (append-only event files)", value="team"),
+        ],
+        default="solo",
+    ).ask()
 
-    if choice == "2":
-        return "team"
-    return "solo"
+    return result if result is not None else "solo"
 
 
 def _select_guided_mode() -> bool:
-    """Prompt user for guided-mode intensity.
+    """Prompt user for guided-mode intensity."""
+    import questionary
 
-    Guided mode makes bicameral stop the agent when it detects
-    discrepancies (drifted decisions, divergences, open questions).
-    Normal mode still surfaces those as advisory hints, but doesn't
-    block writes.
-    """
     if not _is_interactive():
         return False
 
-    print("\n  Interaction intensity:")
-    print("    1. Normal  — bicameral flags discrepancies as advisory hints (default)")
-    print("    2. Guided  — bicameral stops you when it detects discrepancies")
-    choice = input("  Choice [1/2]: ").strip()
+    result = questionary.select(
+        "Interaction intensity:",
+        choices=[
+            questionary.Choice("Normal  — bicameral flags discrepancies as advisory hints", value=False),
+            questionary.Choice("Guided  — bicameral stops you when it detects discrepancies", value=True),
+        ],
+        default=False,
+    ).ask()
 
-    return choice == "2"
+    return result if result is not None else False
 
 
 def _select_telemetry() -> bool:
     """Prompt user for anonymous telemetry consent.
 
-    Shows the exact event schema so the user knows precisely what would be
-    sent before deciding. Defaults to No (opt-out).
+    Shows the exact event schema before asking. Defaults to Yes (opt-in).
     """
-    print("\n  Anonymous telemetry:")
-    print("    Bicameral can share anonymous usage statistics to help improve")
-    print("    reliability and prioritise development. Every event is sanitised")
-    print("    on your machine before it leaves — here is the exact payload shape:")
+    import questionary
+
     print()
-    print('    {')
-    print('      "tool":        "bicameral.ingest",    ← tool name only')
-    print('      "version":     "0.5.3",               ← package version')
-    print('      "duration_ms": 412,                   ← integer ms')
-    print('      "errored":     false,                 ← boolean')
-    print('      "diagnostic":  {"grounded_count": 3}  ← integer counts only')
-    print('    }')
+    print("  Anonymous telemetry — exact payload that would be sent:")
     print()
-    print("    No code. No decision text. No file paths. No personal data. Ever.")
-    print("    Change anytime: set BICAMERAL_TELEMETRY=0 in your environment.")
+    print('    {"tool": "bicameral.ingest", "version": "0.5.3",')
+    print('     "duration_ms": 412, "errored": false,')
+    print('     "diagnostic": {"grounded_count": 3, "ungrounded_count": 1}}')
     print()
-    print("    1. No   — keep telemetry off  (default)")
-    print("    2. Yes  — enable anonymous telemetry")
+    print("    No code. No decision text. No file paths. No personal data.")
+    print("    Change anytime: BICAMERAL_TELEMETRY=0")
+    print()
 
     if not _is_interactive():
-        return False
+        return True
 
-    choice = input("  Choice [1/2]: ").strip()
-    return choice == "2"
+    result = questionary.select(
+        "Enable anonymous telemetry?",
+        choices=[
+            questionary.Choice("Yes  — share anonymous usage stats to improve Bicameral", value=True),
+            questionary.Choice("No   — keep telemetry off", value=False),
+        ],
+        default=True,
+    ).ask()
+
+    return result if result is not None else True
 
 
 def _write_collaboration_config(
