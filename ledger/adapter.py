@@ -223,6 +223,25 @@ class SurrealDBLedgerAdapter:
         await self._ensure_connected()
         return await get_undocumented_symbols(self._client, file_path)
 
+    async def get_decisions_by_status(self, statuses: list[str]) -> list[dict]:
+        """Return all decisions whose current status is in ``statuses``.
+
+        Used by the session-start banner to surface drifted items at the
+        beginning of each MCP server session. Statuses are internal enum
+        values ("reflected", "drifted", "pending", "ungrounded") — safe
+        to interpolate directly into the query.
+        """
+        if not statuses:
+            return []
+        await self._ensure_connected()
+        conditions = " OR ".join(f"status = '{s}'" for s in statuses)
+        query = (
+            f"SELECT decision_id, description, status, source_ref, meeting_date "
+            f"FROM decision WHERE {conditions} LIMIT 50"
+        )
+        result = await self._client.query(query)
+        return result[0] if result else []
+
     async def ingest_commit(
         self,
         commit_hash: str,

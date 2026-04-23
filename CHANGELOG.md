@@ -3,6 +3,48 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.1 — 2026-04-23 — session-start drift banner + ledger catch-up middleware
+
+**Reliability fix**: two persistent desync gaps (G1 — hook unreliability, G3 — cross-session surfacing) are closed.
+
+### Added — `handlers/sync_middleware.py`
+
+New middleware module with two entry points:
+
+- `ensure_ledger_synced(ctx)` — called by `preflight` and `history`. Compares live HEAD SHA against `_sync_state.last_sync_sha`; if diverged, runs `link_commit(HEAD)` before returning the session-start banner. Guarantees ledger is caught up on every call regardless of whether the PostToolUse hook fired.
+
+- `get_session_start_banner(ctx)` — called by `search_decisions` (which already runs `link_commit` itself). Queries all drifted decisions once per MCP server session and returns a `SessionStartBanner`. Fires exactly once: the first MCP call of each session. Subsequent calls return `None` without touching the DB.
+
+Both functions swallow all exceptions (fail-open: bicameral is never the reason a tool call fails).
+
+### Added — `SessionStartBanner` contract
+
+New Pydantic model in `contracts.py`:
+```python
+class SessionStartBanner(BaseModel):
+    drifted_count: int
+    items: list[dict]   # {decision_id, description, source_ref}
+    message: str
+```
+
+Added as `session_start_banner: SessionStartBanner | None = None` to `SearchDecisionsResponse`, `PreflightResponse`, and `HistoryResponse`.
+
+### Added — `ledger/adapter.py`: `get_decisions_by_status`
+
+New adapter method that queries all decisions matching a list of status values. Used by the session-start banner to surface drifted decisions at session open.
+
+### Changed — preflight sync path simplified
+
+Replaced inline try/except HEAD catch-up block in `preflight.py` with a single `ensure_ledger_synced(ctx)` call. Identical behavior, shared with `history.py`.
+
+### Changed — skill rendering (`bicameral-preflight/SKILL.md`)
+
+Section 2.5 added: when `response.session_start_banner` is non-null, render the drifted-decision list unconditionally — even when `fired=false`. The session-start banner is not gated by the preflight topic gate.
+
+### Tests
+
+9 new unit tests in `tests/test_sync_middleware.py` covering banner once-per-session semantics, exception swallowing, dedup, and ledger catch-up logic.
+
 ## 0.6.0 — 2026-04-23 — caller-LLM binding flow (`bicameral_bind`)
 
 **Architecture shift**: server-side BM25 auto-grounding is removed. The

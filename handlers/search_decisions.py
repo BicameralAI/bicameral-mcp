@@ -9,6 +9,7 @@ from __future__ import annotations
 from contracts import CodeRegionSummary, DecisionMatch, LinkCommitResponse, SearchDecisionsResponse
 from handlers.action_hints import generate_hints_for_search
 from handlers.link_commit import handle_link_commit
+from handlers.sync_middleware import get_session_start_banner
 
 
 async def handle_search_decisions(
@@ -18,6 +19,7 @@ async def handle_search_decisions(
     min_confidence: float = 0.5,
 ) -> SearchDecisionsResponse:
     sync_status: LinkCommitResponse = await handle_link_commit(ctx, "HEAD")
+    banner = await get_session_start_banner(ctx)
 
     raw_matches = await ctx.ledger.search_by_query(query, max_results=max_results, min_confidence=min_confidence)
 
@@ -69,6 +71,7 @@ async def handle_search_decisions(
         matches=matches,
         ungrounded_count=ungrounded_count,
         suggested_review=suggested_review,
+        session_start_banner=banner,
     )
     response.action_hints = generate_hints_for_search(
         response, guided_mode=getattr(ctx, "guided_mode", False),

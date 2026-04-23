@@ -22,6 +22,17 @@ from pydantic import BaseModel
 # ── Shared sub-types ─────────────────────────────────────────────────
 
 
+class SessionStartBanner(BaseModel):
+    """One-per-session banner surfaced on the first MCP call that finds drifted decisions.
+
+    Populated by sync_middleware.get_session_start_banner and attached to
+    PreflightResponse, SearchDecisionsResponse, and HistoryResponse.
+    """
+    drifted_count: int
+    items: list[dict]   # [{decision_id, description, source_ref}]
+    message: str
+
+
 class CodeRegionSummary(BaseModel):
     """Lean code region for MCP responses — no pipeline metadata."""
     file_path: str
@@ -191,6 +202,7 @@ class SearchDecisionsResponse(BaseModel):
     ungrounded_count: int
     suggested_review: list[str]      # decision_ids of drifted/pending to review first
     action_hints: list[ActionHint] = []
+    session_start_banner: SessionStartBanner | None = None
 
 
 # ── Tool 3: /detect_drift ────────────────────────────────────────────
@@ -456,6 +468,7 @@ class PreflightResponse(BaseModel):
     open_questions: list[BriefGap] = []
     action_hints: list[ActionHint] = []
     sources_chained: list[str] = []
+    session_start_banner: SessionStartBanner | None = None
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────
@@ -585,6 +598,7 @@ class HistoryResponse(BaseModel):
     truncated: bool = False
     total_features: int = 0
     as_of: str = ""               # git ref evaluated against
+    session_start_banner: SessionStartBanner | None = None
 
 
 # ── Tool 13: bicameral.dashboard ─────────────────────────────────────

@@ -94,6 +94,21 @@ The handler runs `bicameral.search` internally, gates on the user's
 `guided_mode` setting, conditionally chains to `bicameral.brief`, and
 returns a `PreflightResponse` with a `fired: bool` field.
 
+### 2.5 Render session-start banner if present
+
+Before evaluating `response.fired`, check `response.session_start_banner`.
+If non-null, render it immediately — regardless of `fired` value:
+
+```
+⚠ SESSION START — N drifted decision(s) from previous session:
+  • <description> (Source: <source_ref>)
+  ...
+Review before implementing in affected areas.
+```
+
+The banner fires at most once per MCP server session (server-side dedup).
+Render it verbatim — never suppress it, even when `fired=false`.
+
 ### 3. Decide whether to render
 
 Look at `response.fired`:
