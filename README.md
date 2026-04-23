@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/test-mcp-regression.yml?branch=main&label=tests)](https://github.com/BicameralAI/bicameral-mcp/actions)
 
-**Close the gap between what your team decided and what your AI actually builds.**
+Bicameral eliminates redundant rework in the software development lifecycle (SDLC) by building the *compliance layer* between product decisions and code output.
 
 Bicameral is a local-first [MCP server](https://spec.modelcontextprotocol.io/) that ingests your meeting transcripts, PRDs, and Slack threads, maps every decision to the code that implements it, and automatically surfaces alignment gaps — before they become bugs.
 
