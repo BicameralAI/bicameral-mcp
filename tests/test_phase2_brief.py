@@ -34,7 +34,7 @@ from handlers.brief import (
 def _match(
     description: str,
     *,
-    intent_id: str = "intent:1",
+    intent_id: str = "decision:1",
     status: str = "reflected",
     symbol: str = "SessionCache",
     file_path: str = "src/lib/session.ts",
@@ -42,7 +42,7 @@ def _match(
     drift_evidence: str = "",
 ) -> DecisionMatch:
     return DecisionMatch(
-        intent_id=intent_id,
+        decision_id=intent_id,
         description=description,
         status=status,
         confidence=0.9,
@@ -112,11 +112,11 @@ def test_detect_divergences_flags_contradiction_on_shared_symbol():
     matches = [
         _match(
             "Cache user sessions in Redis for horizontal scaling",
-            intent_id="intent:1",
+            intent_id="decision:1",
         ),
         _match(
             "Store session state in local memory for latency",
-            intent_id="intent:2",
+            intent_id="decision:2",
         ),
     ]
     divs = _detect_divergences(matches)
@@ -128,8 +128,8 @@ def test_detect_divergences_flags_contradiction_on_shared_symbol():
 
 def test_detect_divergences_ignores_single_decision_per_symbol():
     matches = [
-        _match("Cache user sessions in Redis", intent_id="intent:1", symbol="A"),
-        _match("Store session state in local memory", intent_id="intent:2", symbol="B"),
+        _match("Cache user sessions in Redis", intent_id="decision:1", symbol="A"),
+        _match("Store session state in local memory", intent_id="decision:2", symbol="B"),
     ]
     # Different symbols → not compared — no divergence
     assert _detect_divergences(matches) == []
@@ -139,11 +139,11 @@ def test_detect_divergences_ignores_agreeing_duplicates():
     matches = [
         _match(
             "Cache user sessions in Redis with 30min TTL",
-            intent_id="intent:1",
+            intent_id="decision:1",
         ),
         _match(
             "Cache sessions in Redis, expire after 30 minutes",
-            intent_id="intent:2",
+            intent_id="decision:2",
         ),
     ]
     assert _detect_divergences(matches) == []
@@ -160,7 +160,7 @@ def test_gaps_flag_open_question_phrasing():
     matches = [
         _match(
             "Should we use Redis or Memcached for the session cache?",
-            intent_id="intent:1",
+            intent_id="decision:1",
             status="reflected",
         ),
     ]
@@ -173,7 +173,7 @@ def test_gaps_flag_ungrounded_decisions():
     matches = [
         _match(
             "Rate-limit checkout to 100 req/min per user",
-            intent_id="intent:1",
+            intent_id="decision:1",
             status="ungrounded",
         ),
     ]
@@ -186,7 +186,7 @@ def test_gaps_skip_healthy_reflected_decisions():
     matches = [
         _match(
             "Cache sessions in Redis with 30-minute TTL",
-            intent_id="intent:1",
+            intent_id="decision:1",
             status="reflected",
         ),
     ]
@@ -198,7 +198,7 @@ def test_gaps_skip_healthy_reflected_decisions():
 
 def test_questions_lead_with_divergences():
     matches = [
-        _match("A", intent_id="intent:1", status="reflected"),
+        _match("A", intent_id="decision:1", status="reflected"),
     ]
     from contracts import BriefDivergence, BriefGap
     divergences = [

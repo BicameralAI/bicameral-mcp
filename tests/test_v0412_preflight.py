@@ -194,13 +194,13 @@ def _search_response_with(matches: list[DecisionMatch]) -> SearchDecisionsRespon
         ),
         matches=matches,
         ungrounded_count=sum(1 for m in matches if m.status == "ungrounded"),
-        suggested_review=[m.intent_id for m in matches if m.status in ("drifted", "pending")],
+        suggested_review=[m.decision_id for m in matches if m.status in ("drifted", "pending")],
     )
 
 
 def _match(intent_id: str, status: str = "reflected", file_path: str = "src/foo.ts") -> DecisionMatch:
     return DecisionMatch(
-        intent_id=intent_id,
+        decision_id=intent_id,
         description=f"decision {intent_id}",
         status=status,  # type: ignore[arg-type]
         confidence=0.9,

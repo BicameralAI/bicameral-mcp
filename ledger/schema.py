@@ -363,8 +363,8 @@ async def _migrate_v4_to_v5(client: LedgerClient) -> None:
     try:
         stale = await client.query(
             "SELECT id FROM yields "
-            "WHERE type::string(in) STARTS WITH 'source_span:' "
-            "   OR type::string(out) STARTS WITH 'intent:'"
+            "WHERE string::starts_with(type::string(in), 'source_span:') "
+            "   OR string::starts_with(type::string(out), 'intent:')"
         )
         for row in (stale or []):
             try:

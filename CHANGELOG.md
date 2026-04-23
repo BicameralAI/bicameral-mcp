@@ -3,6 +3,48 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.0 — 2026-04-23 — caller-LLM binding flow (`bicameral_bind`)
+
+**Architecture shift**: server-side BM25 auto-grounding is removed. The
+caller LLM now discovers code regions and writes bindings explicitly via
+the new `bicameral_bind` tool. This eliminates the hallucinated-grounding
+problem: every `binds_to` edge is authored by the same LLM that verified
+semantic fit, not by a keyword search.
+
+### Added — `bicameral_bind` tool
+
+New MCP tool: `bicameral_bind(bindings: list[{decision_id, file_path, symbol_name, start_line?, end_line?, purpose?}])`.
+
+- Resolves symbol line range via tree-sitter when `start_line`/`end_line` not supplied
+- Upserts `code_region` + `binds_to` edge in the ledger
+- Transitions decision status `ungrounded → pending`
+- Returns `BindResponse` with per-binding results (region_id, content_hash, error)
+- Idempotent: re-binding the same (decision, symbol) is a no-op
+
+### Removed — server-side auto-grounding pipeline
+
+`ground_mappings()` and the vocab-cache layer (~375 LOC) are deleted.
+Removed tests: `test_coverage_loop`, `test_vocab_cache`,
+`test_fc1_bm25_degeneracy`, `test_fc3_vocab_cache_similarity`,
+`test_v0423_search_hint`, `test_fc2_multi_region_grounding`.
+
+Net diff: –2317 LOC (197 added, 2514 removed).
+
+### Changed — `IngestResponse` and `LinkCommitResponse`
+
+- `IngestResponse.ungrounded_decisions: list[str]` →
+  `pending_grounding_decisions: list[dict]` (each entry: `{decision_id, description}`)
+- `LinkCommitResponse` now carries `pending_grounding_checks: list[dict]`
+  (ungrounded decisions + regions where symbol disappeared at current ref)
+- `ingest_commit()` no longer calls `_reground_ungrounded()` — grounding
+  is the caller's responsibility via `bicameral_bind`
+
+### Changed — schema v4 → v5 (migration)
+
+Migration v4→v5 cleans up stale `source_span`/`intent` edges from the
+`yields` table and applies `UNIQUE(in, out)` index. Fixes a startup error
+on DBs that went through v3→v4 with residual edges.
+
 ## 0.5.0 — 2026-04-20 — decision tier refactor + stop-and-ask primitives
 
 **BREAKING — atomic clean-break migration.** Schema v3 → v4. Legacy tables

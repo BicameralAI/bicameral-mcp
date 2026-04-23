@@ -107,75 +107,37 @@ class TeamWriteAdapter:
             error=error,
         )
 
-    async def lookup_vocab_cache(
-        self, query_text: str, repo: str,
-    ) -> tuple[list[dict], str]:
-        """Vocab cache is local bookkeeping — no event emitted.
-
-        Returns ``(symbols, matched_query_text)``. The second element is
-        the ``query_text`` that the top cache hit was originally stored
-        against — the caller uses it for FC-3 similarity gating.
-        """
-        await self._ensure_ready()
-        return await self._inner.lookup_vocab_cache(query_text, repo)
-
-    async def upsert_vocab_cache(
-        self, query_text: str, repo: str, symbols: list[dict],
-    ) -> None:
-        """Vocab cache is local bookkeeping — no event emitted."""
-        await self._ensure_ready()
-        await self._inner.upsert_vocab_cache(query_text, repo, symbols)
-
-    # ── Read methods (pass-through) ──────────────────────────────────────
-
-    async def get_all_decisions(self, filter: str = "all") -> list[dict]:
-        await self._ensure_ready()
-        return await self._inner.get_all_decisions(filter=filter)
-
-    async def search_by_query(
-        self, query: str, max_results: int = 10, min_confidence: float = 0.5,
-    ) -> list[dict]:
-        await self._ensure_ready()
-        return await self._inner.search_by_query(query, max_results, min_confidence)
-
-    async def get_decisions_for_file(self, file_path: str) -> list[dict]:
-        await self._ensure_ready()
-        return await self._inner.get_decisions_for_file(file_path)
-
-    async def get_undocumented_symbols(self, file_path: str) -> list[str]:
-        await self._ensure_ready()
-        return await self._inner.get_undocumented_symbols(file_path)
-
-    async def get_source_cursor(
-        self, repo: str, source_type: str, source_scope: str = "default",
-    ) -> dict | None:
-        await self._ensure_ready()
-        return await self._inner.get_source_cursor(repo, source_type, source_scope)
-
-    # v0.4.12.1: pass-throughs for adapter methods added since v0.4.5 that
-    # the team wrapper never gained. handle_link_commit / handle_reset call
-    # these and silently degraded (or crashed) in team mode pre-v0.4.12.1.
-
-    async def backfill_empty_hashes(
-        self, repo_path: str, drift_analyzer=None,
+    async def bind_decision(
+        self,
+        decision_id: str,
+        file_path: str,
+        symbol_name: str,
+        start_line: int,
+        end_line: int,
+        repo: str = "",
+        ref: str = "HEAD",
+        purpose: str = "",
     ) -> dict:
-        """Self-heal regions with empty content_hash from pre-v0.4.5
-        ingests. Pure local read+update — no event emitted."""
+        """Emit bind event, then delegate to inner adapter."""
         await self._ensure_ready()
-        return await self._inner.backfill_empty_hashes(
-            repo_path, drift_analyzer=drift_analyzer,
+        self._writer.write("bind_decision.completed", {
+            "decision_id": decision_id,
+            "file_path": file_path,
+            "symbol_name": symbol_name,
+            "start_line": start_line,
+            "end_line": end_line,
+        })
+        return await self._inner.bind_decision(
+            decision_id=decision_id,
+            file_path=file_path,
+            symbol_name=symbol_name,
+            start_line=start_line,
+            end_line=end_line,
+            repo=repo,
+            ref=ref,
+            purpose=purpose,
         )
 
-    async def get_all_source_cursors(self, repo: str) -> list[dict]:
-        """List every source_cursor row for a repo. Used by handle_reset's
-        dry-run summary. Pure local read."""
-        await self._ensure_ready()
-        return await self._inner.get_all_source_cursors(repo)
-
-    async def wipe_all_rows(self, repo: str) -> None:
-        """Wipe every bicameral row scoped to ``repo``. Used by
-        handle_reset(confirm=True). Destructive, no event emitted —
-        the reset itself is the event from the team's perspective.
-        """
-        await self._ensure_ready()
-        await self._inner.wipe_all_rows(repo)
+    def __getattr__(self, name: str):
+        """Passthrough to inner adapter for any method not explicitly overridden."""
+        return getattr(self._inner, name)

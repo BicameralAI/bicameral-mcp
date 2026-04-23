@@ -89,9 +89,12 @@ def test_no_backend_jargon_in_skill_files():
     mechanism to the calling agent (not end-user UI copy).
     """
     # Skills that are LLM-facing technical documentation — allowed to use
-    # retrieval internals terminology.
+    # retrieval internals terminology (both canonical and .claude/ mirror).
     RETRIEVAL_TERMS = {"BM25", "tree-sitter", "treesitter", "RRF"}
-    RETRIEVAL_SKILL_EXCEPTIONS = {"skills/bicameral-ingest/SKILL.md"}
+    RETRIEVAL_SKILL_EXCEPTIONS = {
+        "skills/bicameral-ingest/SKILL.md",
+        ".claude/skills/bicameral-ingest/SKILL.md",
+    }
 
     patterns = _compile_patterns()
     offenders: list[str] = []

@@ -167,6 +167,7 @@ class LinkCommitResponse(BaseModel):
     ] = "head_only"
     range_size: int = 0
     pending_compliance_checks: list[PendingComplianceCheck] = []
+    pending_grounding_checks: list[dict] = []
     verification_instruction: str = ""
 
 
@@ -358,7 +359,7 @@ class IngestResponse(BaseModel):
     query: str
     source_refs: list[str]
     stats: IngestStats
-    ungrounded_decisions: list[str]
+    pending_grounding_decisions: list[dict] = []
     supersession_candidates: "list[SupersessionCandidate]" = []
     source_cursor: SourceCursorSummary | None = None
     brief: "BriefResponse | None" = None
@@ -594,6 +595,23 @@ class DashboardResponse(BaseModel):
     url: str                       # http://localhost:{port}
     status: Literal["started", "already_running"]
     port: int
+
+
+# ── Tool: bicameral.bind ─────────────────────────────────────────────
+
+
+class BindResult(BaseModel):
+    """Result for one binding in a bicameral.bind call."""
+    decision_id: str
+    region_id: str
+    content_hash: str
+    pending_compliance_check: PendingComplianceCheck | None = None
+    error: str | None = None
+
+
+class BindResponse(BaseModel):
+    """Response envelope for bicameral.bind."""
+    bindings: list[BindResult]
 
 
 # Forward references

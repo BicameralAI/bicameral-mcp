@@ -47,14 +47,14 @@ from handlers.action_hints import (
 
 def _match(
     *,
-    intent_id: str = "intent:1",
+    intent_id: str = "decision:1",
     description: str = "test decision",
     status: str = "reflected",
     file_path: str = "src/foo.ts",
     symbol: str = "foo",
 ) -> DecisionMatch:
     return DecisionMatch(
-        intent_id=intent_id,
+        decision_id=intent_id,
         description=description,
         status=status,  # type: ignore[arg-type]
         confidence=0.9,
@@ -84,17 +84,17 @@ def _search_response(matches: list[DecisionMatch]) -> SearchDecisionsResponse:
         ),
         matches=matches,
         ungrounded_count=sum(1 for m in matches if m.status == "ungrounded"),
-        suggested_review=[m.intent_id for m in matches if m.status in ("drifted", "pending")],
+        suggested_review=[m.decision_id for m in matches if m.status in ("drifted", "pending")],
     )
 
 
 def _brief_decision(
-    intent_id: str = "intent:1",
+    intent_id: str = "decision:1",
     description: str = "test",
     status: str = "reflected",
 ) -> BriefDecision:
     return BriefDecision(
-        intent_id=intent_id,
+        decision_id=intent_id,
         description=description,
         status=status,  # type: ignore[arg-type]
         source_ref="test-ref",
@@ -140,7 +140,7 @@ def test_search_empty_matches_no_hints_in_either_mode():
 def test_search_drifted_match_fires_in_normal_mode_as_advisory():
     """v0.4.10: hints fire even in normal mode, just non-blocking."""
     response = _search_response([
-        _match(intent_id="intent:1", status="drifted", file_path="src/a.ts"),
+        _match(intent_id="decision:1", status="drifted", file_path="src/a.ts"),
     ])
     hints = generate_hints_for_search(response, guided_mode=False)
     assert len(hints) == 1
@@ -149,14 +149,14 @@ def test_search_drifted_match_fires_in_normal_mode_as_advisory():
     assert h.blocking is False
     # Advisory tone — soft language
     assert "Heads up" in h.message or "look drifted" in h.message
-    assert "intent:1" in h.refs
+    assert "decision:1" in h.refs
     assert "src/a.ts" in h.refs
 
 
 def test_search_drifted_match_fires_in_guided_mode_as_blocking():
     response = _search_response([
-        _match(intent_id="intent:1", status="drifted", file_path="src/a.ts"),
-        _match(intent_id="intent:2", status="drifted", file_path="src/b.ts"),
+        _match(intent_id="decision:1", status="drifted", file_path="src/a.ts"),
+        _match(intent_id="decision:2", status="drifted", file_path="src/b.ts"),
     ])
     hints = generate_hints_for_search(response, guided_mode=True)
     review = [h for h in hints if h.kind == "review_drift"]
@@ -166,15 +166,15 @@ def test_search_drifted_match_fires_in_guided_mode_as_blocking():
     # Imperative tone — strict language
     assert "BEFORE" in h.message
     assert "2 matched decision(s) have drifted" in h.message
-    assert "intent:1" in h.refs
-    assert "intent:2" in h.refs
+    assert "decision:1" in h.refs
+    assert "decision:2" in h.refs
     assert "src/a.ts" in h.refs
     assert "src/b.ts" in h.refs
 
 
 def test_search_ungrounded_fires_in_both_modes():
     response = _search_response([
-        _match(intent_id="intent:1", status="ungrounded"),
+        _match(intent_id="decision:1", status="ungrounded"),
     ])
     response.matches[0].code_regions = []
 
@@ -201,9 +201,9 @@ def test_search_message_tone_differs_between_modes():
 
 def test_search_fires_both_review_and_ground_when_mixed():
     response = _search_response([
-        _match(intent_id="intent:1", status="drifted"),
-        _match(intent_id="intent:2", status="ungrounded"),
-        _match(intent_id="intent:3", status="reflected"),
+        _match(intent_id="decision:1", status="drifted"),
+        _match(intent_id="decision:2", status="ungrounded"),
+        _match(intent_id="decision:3", status="reflected"),
     ])
     for guided in (False, True):
         hints = generate_hints_for_search(response, guided_mode=guided)

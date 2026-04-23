@@ -17,67 +17,13 @@ _VERIFICATION_INSTRUCTION = (
     "bicameral.resolve_compliance with phase=<group phase> and a batch of "
     "verdicts: [{intent_id, region_id, content_hash, compliant, confidence, "
     "explanation}]. Group by phase if the batch mixes phases. One tool call "
-    "resolves the whole batch."
+    "resolves the whole batch. "
+    "For pending_grounding_checks: use search_code / extract_symbols to find "
+    "the correct code region, then call bicameral.bind with decision_id, "
+    "file_path, symbol_name, and optionally start_line/end_line."
 )
 
 logger = logging.getLogger(__name__)
-
-
-async def _reground_ungrounded(ctx) -> int:
-    """Attempt to ground any ungrounded intents now that the index may be ready.
-
-    Returns the count of newly grounded intents.
-    """
-    try:
-        ungrounded = await ctx.ledger.get_all_decisions(filter="ungrounded")
-    except Exception as exc:
-        logger.warning("[link_commit] could not query ungrounded intents: %s", exc)
-        return 0
-
-    if not ungrounded:
-        return 0
-
-    # Build synthetic mappings (no code_regions — that's what grounding will fill)
-    mappings = [
-        {
-            "span": {
-                "text": d["description"],
-                "source_type": d.get("source_type", "manual"),
-                "source_ref": d.get("source_ref", ""),
-            },
-            "intent": d["description"],
-            "symbols": [],
-            "code_regions": [],
-        }
-        for d in ungrounded
-    ]
-
-    resolved, deferred = ctx.code_graph.ground_mappings(mappings)
-    if deferred:
-        return 0
-
-    newly_grounded = [m for m in resolved if m.get("code_regions")]
-    if not newly_grounded:
-        return 0
-
-    payload = {
-        "repo": ctx.repo_path,
-        "commit_hash": "HEAD",
-        "mappings": newly_grounded,
-    }
-    try:
-        # Thread ctx through so the pollution guard in ingest_payload uses
-        # the authoritative_sha instead of HEAD for baseline stamping.
-        await ctx.ledger.ingest_payload(payload, ctx=ctx)
-        logger.info(
-            "[link_commit] lazy re-grounding: %d/%d ungrounded intents now grounded",
-            len(newly_grounded), len(ungrounded),
-        )
-    except Exception as exc:
-        logger.warning("[link_commit] lazy re-grounding ingest failed: %s", exc)
-        return 0
-
-    return len(newly_grounded)
 
 
 def _read_current_head_sha(repo_path: str) -> str:
@@ -231,10 +177,12 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         authoritative_ref=authoritative_ref,
     )
 
-    await _reground_ungrounded(ctx)
-
     pending_raw = result.get("pending_compliance_checks", []) or []
     pending = [PendingComplianceCheck(**p) for p in pending_raw]
+
+    pending_grounding_raw = result.get("pending_grounding_checks", []) or []
+
+    has_action_items = bool(pending) or bool(pending_grounding_raw)
 
     response = LinkCommitResponse(
         commit_hash=result["commit_hash"],
@@ -247,7 +195,8 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         sweep_scope=result.get("sweep_scope", "head_only"),
         range_size=result.get("range_size", 0),
         pending_compliance_checks=pending,
-        verification_instruction=_VERIFICATION_INSTRUCTION if pending else "",
+        pending_grounding_checks=pending_grounding_raw,
+        verification_instruction=_VERIFICATION_INSTRUCTION if has_action_items else "",
     )
     _store_sync_cache(ctx, commit_hash, response)
 

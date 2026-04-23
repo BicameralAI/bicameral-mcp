@@ -138,7 +138,7 @@ def test_build_context_decisions_groups_related_by_symbol():
     from contracts import CodeRegionSummary, DecisionMatch
 
     m1 = DecisionMatch(
-        intent_id="i1",
+        decision_id="i1",
         description="use token bucket",
         status="pending",
         confidence=0.9,
@@ -154,7 +154,7 @@ def test_build_context_decisions_groups_related_by_symbol():
         meeting_date="2026-04-01",
     )
     m2 = DecisionMatch(
-        intent_id="i2",
+        decision_id="i2",
         description="actually use leaky bucket",
         status="pending",
         confidence=0.9,
@@ -170,7 +170,7 @@ def test_build_context_decisions_groups_related_by_symbol():
         meeting_date="2026-04-02",
     )
     m3 = DecisionMatch(
-        intent_id="i3",
+        decision_id="i3",
         description="unrelated — different symbol",
         status="pending",
         confidence=0.9,
@@ -187,7 +187,7 @@ def test_build_context_decisions_groups_related_by_symbol():
     )
 
     ctx_decisions = _build_context_decisions([m1, m2, m3])
-    by_id = {d.intent_id: d for d in ctx_decisions}
+    by_id = {d.decision_id: d for d in ctx_decisions}
 
     # i1 and i2 share (Limiter, src/limit.py) → related to each other
     assert by_id["i1"].related_decision_ids == ["i2"]

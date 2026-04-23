@@ -142,6 +142,58 @@ class SurrealDBLedgerAdapter:
         await self._ensure_connected()
         return await search_by_bm25(self._client, query, max_results, min_confidence)
 
+    async def decision_exists(self, decision_id: str) -> bool:
+        await self._ensure_connected()
+        from .queries import decision_exists
+        return await decision_exists(self._client, decision_id)
+
+    async def get_decision_description(self, decision_id: str) -> str:
+        await self._ensure_connected()
+        rows = await self._client.query(f"SELECT description FROM {decision_id} LIMIT 1")
+        return str((rows or [{}])[0].get("description", "")) if rows else ""
+
+    async def bind_decision(
+        self,
+        decision_id: str,
+        file_path: str,
+        symbol_name: str,
+        start_line: int,
+        end_line: int,
+        repo: str = "",
+        ref: str = "HEAD",
+        purpose: str = "",
+    ) -> dict:
+        """Upsert code_region + binds_to edge for a caller-LLM-supplied binding.
+
+        Returns {"region_id": str, "content_hash": str}.
+        Transitions decision status ungrounded → pending.
+        Uses authoritative ref (not raw HEAD) to avoid branch-pollution.
+        """
+        await self._ensure_connected()
+        content_hash = compute_content_hash(file_path, start_line, end_line, repo, ref=ref) or ""
+
+        region_id = await upsert_code_region(
+            self._client,
+            file_path=file_path,
+            symbol_name=symbol_name,
+            start_line=start_line,
+            end_line=end_line,
+            purpose=purpose,
+            repo=repo,
+            content_hash=content_hash,
+        )
+        if not region_id:
+            raise ValueError(f"upsert_code_region returned empty id for {file_path}:{symbol_name}")
+
+        await relate_binds_to(
+            self._client, decision_id, region_id,
+            confidence=0.95,
+            provenance={"method": "caller_llm"},
+        )
+        await update_decision_status(self._client, decision_id, "pending")
+
+        return {"region_id": region_id, "content_hash": content_hash}
+
     async def lookup_vocab_cache(
         self,
         query_text: str,
@@ -281,6 +333,7 @@ class SurrealDBLedgerAdapter:
         flipped_to_drifted: set[str] = set()
         undocumented_symbols: list[str] = []
         pending_checks: list[dict] = []
+        pending_grounding_checks: list[dict] = []
 
         for region in regions:
             region_id = region.get("region_id", "")
@@ -310,11 +363,15 @@ class SurrealDBLedgerAdapter:
 
             actual_hash = drift_result.content_hash
 
+            # Check if symbol has disappeared from the new commit.
+            symbol_disappeared = False
             if is_authoritative:
                 await update_region_hash(self._client, region_id, actual_hash, commit_hash)
                 from .status import resolve_symbol_lines
                 resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
-                if resolved and (resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line")):
+                if resolved is None:
+                    symbol_disappeared = True
+                elif resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line"):
                     await self._client.query(
                         f"UPDATE {region_id} SET start_line = $sl, end_line = $el",
                         {"sl": resolved[0], "el": resolved[1]},
@@ -332,6 +389,17 @@ class SurrealDBLedgerAdapter:
                 if not decision_id:
                     continue
                 old_status = decision.get("status", "ungrounded")
+
+                # If symbol disappeared, emit a grounding check instead of compliance check.
+                if symbol_disappeared:
+                    pending_grounding_checks.append({
+                        "decision_id": decision_id,
+                        "description": str(decision.get("description", "")),
+                        "reason": "symbol_disappeared",
+                        "file_path": file_path,
+                        "symbol": symbol_name,
+                    })
+                    continue
 
                 verdict: dict | None = None
                 if actual_hash:
@@ -372,6 +440,18 @@ class SurrealDBLedgerAdapter:
             if not decisions and symbol_name:
                 undocumented_symbols.append(symbol_name)
 
+        # Surface any ungrounded decisions so the caller can bind them.
+        try:
+            ungrounded_decisions = await get_all_decisions(self._client, filter="ungrounded")
+            for d in ungrounded_decisions:
+                pending_grounding_checks.append({
+                    "decision_id": str(d.get("id", "")),
+                    "description": str(d.get("description", "")),
+                    "reason": "ungrounded",
+                })
+        except Exception as exc:
+            logger.warning("[link_commit] could not query ungrounded decisions: %s", exc)
+
         if is_authoritative:
             await upsert_sync_state(self._client, repo_path, commit_hash)
 
@@ -386,6 +466,7 @@ class SurrealDBLedgerAdapter:
             "sweep_scope": sweep_scope,
             "range_size": range_size,
             "pending_compliance_checks": pending_checks,
+            "pending_grounding_checks": pending_grounding_checks,
         }
 
     async def backfill_empty_hashes(
@@ -517,7 +598,7 @@ class SurrealDBLedgerAdapter:
                 await relate_yields(self._client, span_id, decision_id)
 
             if not code_regions:
-                ungrounded.append(description)
+                ungrounded.append({"decision_id": decision_id, "description": description})
                 continue
 
             region_statuses: list[str] = []

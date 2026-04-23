@@ -37,6 +37,7 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
+from handlers.bind import handle_bind
 from handlers.gap_judge import handle_judge_gaps
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
@@ -82,6 +83,7 @@ SERVER_VERSION = _resolve_server_version()
 EXPECTED_TOOL_NAMES = [
     "bicameral.link_commit",
     "bicameral.ingest",
+    "bicameral.bind",
     "bicameral.update",
     "bicameral.reset",
     "bicameral.preflight",
@@ -159,6 +161,42 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["payload"],
+            },
+        ),
+        Tool(
+            name="bicameral.bind",
+            description=(
+                "Write a decision→code_region binding that the caller LLM discovered. "
+                "Use this after you've found the correct file, symbol, and line range for "
+                "a decision that is pending grounding. The server upserts the code_region, "
+                "creates the binds_to edge, transitions the decision from ungrounded→pending, "
+                "and returns a PendingComplianceCheck ready for bicameral.resolve_compliance. "
+                "Pass start_line/end_line when you have exact lines (e.g. from a Read call) — "
+                "omit them to let the server resolve the exact line range automatically. Binding the same "
+                "(decision, region) pair twice is idempotent. "
+                "Slash alias: /bicameral:bind"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "bindings": {
+                        "type": "array",
+                        "description": "List of decision→code bindings to write",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "decision_id": {"type": "string", "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)"},
+                                "file_path": {"type": "string", "description": "Repo-relative path to the file"},
+                                "symbol_name": {"type": "string", "description": "Function/class/method name"},
+                                "start_line": {"type": "integer", "description": "1-indexed start line (optional — omit to auto-resolve automatically)"},
+                                "end_line": {"type": "integer", "description": "1-indexed end line (optional)"},
+                                "purpose": {"type": "string", "description": "Optional one-line description for display"},
+                            },
+                            "required": ["decision_id", "file_path", "symbol_name"],
+                        },
+                    },
+                },
+                "required": ["bindings"],
             },
         ),
         Tool(
@@ -606,6 +644,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 decision_id=arguments["decision_id"],
                 signer=arguments["signer"],
                 note=arguments.get("note", ""),
+            )
+        elif name in ("bicameral.bind", "bind"):
+            result = await handle_bind(
+                ctx,
+                bindings=arguments.get("bindings", []),
             )
         elif name in ("bicameral.history", "history"):
             result = await handle_history(

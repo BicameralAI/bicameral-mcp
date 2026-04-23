@@ -48,10 +48,9 @@ def test_step1_excerpt_isolates_step1_from_real_skill_md():
     # Step 2 header or its body should not be present
     assert "Validate relevance" not in excerpt
     # Hard size ceiling so a future SKILL.md rewrite can't silently include
-    # the entire file if header parsing breaks. Bumped from 4000 → 8000 to
-    # accommodate the v0.4.3 few-shot variant which adds 6 worked examples
-    # to Step 1.
-    assert len(excerpt) < 10000, f"excerpt suspiciously long: {len(excerpt)} chars"
+    # the entire file if header parsing breaks. Bumped from 4000 → 8000 → 10000 → 15000
+    # to accommodate the v0.4.3+ few-shot variants which add worked examples to Step 1.
+    assert len(excerpt) < 15000, f"excerpt suspiciously long: {len(excerpt)} chars"
 
 
 @pytest.mark.parametrize(

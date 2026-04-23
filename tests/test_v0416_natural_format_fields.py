@@ -91,49 +91,35 @@ def test_decision_with_all_text_fields_empty_is_dropped():
     assert mappings[0]["intent"] == "real decision"
 
 
-def test_canonical_action_survives():
-    """`action_items[].action` is the canonical field."""
+def test_action_items_not_written_to_ledger():
+    """action_items are accepted in payload for backwards compat but NOT
+    written to the ledger (not converted to mappings). They belong in a
+    ticket tracker, not the decision ledger."""
     out = _normalize_payload({
         "action_items": [{"action": "Write retry tests", "owner": "Ian"}],
     })
     mappings = out.get("mappings", [])
-    assert len(mappings) == 1
-    assert mappings[0]["intent"] == "[Action: Ian] Write retry tests"
+    assert len(mappings) == 0
 
 
-def test_text_alias_for_action_items():
-    """v0.4.16 alias: `text` on an action item should flow through as
-    the action body. This was the exact shape the old SKILL.md documented."""
+def test_action_items_mixed_with_decisions():
+    """When payload has both decisions and action_items, only decisions
+    become mappings — action_items are silently ignored."""
     out = _normalize_payload({
-        "action_items": [{"text": "Write retry tests", "owner": "Ian"}],
+        "decisions": [{"description": "Use Redis for session cache"}],
+        "action_items": [{"action": "Write retry tests", "owner": "Ian"}],
     })
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
-    assert mappings[0]["intent"] == "[Action: Ian] Write retry tests"
-
-
-def test_action_with_all_text_fields_empty_is_dropped():
-    """Critical regression: action_items with an owner but no body must
-    NOT produce a phantom '[Action: <owner>] ' prefix. Previously this
-    shape BM25-matched any unrelated symbol containing 'Action' in its
-    name (witnessed: use-toast.ts Action enum during dogfood)."""
-    out = _normalize_payload({
-        "action_items": [
-            {"action": "real action", "owner": "Ian"},
-            {"owner": "Brian"},  # no action/text — must be dropped
-            {"owner": "Kevin", "action": "", "text": ""},  # all empty
-        ],
-    })
-    mappings = out.get("mappings", [])
-    assert len(mappings) == 1
-    assert mappings[0]["intent"] == "[Action: Ian] real action"
+    assert mappings[0]["intent"] == "Use Redis for session cache"
 
 
 def test_the_exact_dogfood_payload():
     """Replay the exact payload shape from the original dogfood failure
     (ingest of the demo gallery). Before the fix: 0 decisions surfaced,
     1 phantom '[Action: Ian] ' mapping, grounded to unrelated symbols.
-    After the fix: all 3 surface with real content."""
+    After the fix: only real decisions surface; action_items are accepted
+    for backwards compat but not written to the ledger."""
     out = _normalize_payload({
         "source": "transcript",
         "title": "demo-gallery",
@@ -149,8 +135,9 @@ def test_the_exact_dogfood_payload():
     intents = [m["intent"] for m in mappings]
     assert "Cache user sessions in Redis for horizontal scaling" in intents
     assert "Apply 10% discount on orders over $100" in intents
-    assert "[Action: Ian] Write tests for retry policy" in intents
-    assert len(mappings) == 3
+    # action_items are not written to the ledger
+    assert "[Action: Ian] Write tests for retry policy" not in intents
+    assert len(mappings) == 2
 
 
 def test_mixed_canonical_and_alias_in_same_payload():
@@ -170,26 +157,14 @@ def test_mixed_canonical_and_alias_in_same_payload():
     assert mappings[2]["intent"] == "Third decision via text alias"
 
 
-def test_action_fallback_priority():
-    """`action` is preferred over `text` when both are present on an
-    action item."""
+def test_action_items_always_produce_zero_mappings():
+    """action_items are never written to the ledger regardless of their fields.
+    This guards against the '[Action: <owner>] ' phantom-mapping regression."""
     out = _normalize_payload({
-        "action_items": [{
-            "action": "canonical action wins",
-            "text": "alias should lose",
-            "owner": "Ian",
-        }],
+        "action_items": [
+            {"action": "real action", "owner": "Ian"},
+            {"action": "another action"},
+        ],
     })
     mappings = out.get("mappings", [])
-    assert len(mappings) == 1
-    assert mappings[0]["intent"] == "[Action: Ian] canonical action wins"
-
-
-def test_default_owner_unassigned():
-    """Action items without an owner default to 'unassigned'."""
-    out = _normalize_payload({
-        "action_items": [{"action": "Something needs doing"}],
-    })
-    mappings = out.get("mappings", [])
-    assert len(mappings) == 1
-    assert mappings[0]["intent"] == "[Action: unassigned] Something needs doing"
+    assert len(mappings) == 0

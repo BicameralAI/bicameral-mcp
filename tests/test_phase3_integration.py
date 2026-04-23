@@ -361,8 +361,11 @@ async def test_decision_undocumented__status_surfaces_ungrounded(ctx):
     _dump("03_undocumented_ingest", _response_dict(ingest_result))
 
     assert ingest_result.stats.ungrounded >= 1
-    assert any("zylorphian" in u.lower() for u in ingest_result.ungrounded_decisions), (
-        f"Expected 'Zylorphian' in ungrounded list, got: {ingest_result.ungrounded_decisions}"
+    assert any(
+        "zylorphian" in (u.get("description", "") or u.get("decision_id", "")).lower()
+        for u in ingest_result.pending_grounding_decisions
+    ), (
+        f"Expected 'Zylorphian' in pending_grounding_decisions, got: {ingest_result.pending_grounding_decisions}"
     )
 
     status = await handle_decision_status(ctx, filter="all")
