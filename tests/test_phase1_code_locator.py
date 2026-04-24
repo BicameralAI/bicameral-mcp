@@ -1,11 +1,11 @@
 """Phase 1 regression tests — MCP-native code locator tools.
 
-Tests the 4 code locator tool methods (validate_symbols, search_code,
-get_neighbors, extract_symbols) against the real indexed repo.
+Tests the 3 code locator tool methods (validate_symbols, get_neighbors,
+extract_symbols) against the real indexed repo.
 
 Run: pytest tests/ -v  (needs REPO_PATH set to an indexed repo)
 
-Contract: code_locator/models.py (ValidatedSymbol, RetrievalResult, NeighborInfo)
+Contract: code_locator/models.py (ValidatedSymbol, NeighborInfo)
 """
 
 from __future__ import annotations
@@ -41,42 +41,6 @@ def test_validate_symbols_returns_matches(monkeypatch, repo_path):
         assert r["matched_symbol"], "matched_symbol must be non-empty"
         assert 0 <= r["match_score"] <= 100
         assert isinstance(r["symbol_id"], int)
-
-
-@pytest.mark.phase1
-def test_search_code_returns_valid_paths(monkeypatch, repo_path):
-    """search_code must return file paths that exist on disk."""
-    monkeypatch.setenv("USE_REAL_CODE_LOCATOR", "1")
-    monkeypatch.setenv("REPO_PATH", repo_path)
-
-    adapter = get_code_locator()
-    results = adapter.search_code("symbol database sqlite store")
-    assert len(results) >= 1, "Expected at least one search result"
-
-    repo = Path(repo_path)
-    for r in results:
-        assert r["file_path"], "file_path must be non-empty"
-        assert (repo / r["file_path"]).exists(), (
-            f"file_path={r['file_path']!r} does not exist under {repo_path}"
-        )
-        assert r["score"] >= 0
-
-
-@pytest.mark.phase1
-def test_search_code_with_symbol_ids(monkeypatch, repo_path):
-    """search_code with symbol_ids should activate graph retrieval."""
-    monkeypatch.setenv("USE_REAL_CODE_LOCATOR", "1")
-    monkeypatch.setenv("REPO_PATH", repo_path)
-
-    adapter = get_code_locator()
-    # First get a symbol_id
-    validated = adapter.validate_symbols(["SymbolDB"])
-    if not validated:
-        pytest.skip("No symbols matched — index may be empty")
-
-    symbol_ids = [v["symbol_id"] for v in validated[:1]]
-    results = adapter.search_code("database", symbol_ids=symbol_ids)
-    assert isinstance(results, list)
 
 
 @pytest.mark.phase1

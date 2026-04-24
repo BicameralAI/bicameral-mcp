@@ -1,10 +1,10 @@
 """CocoIndex-based indexing pipeline (Option A+).
 
-Single-DB architecture: writes both embeddings and symbols into config.sqlite_db.
-CocoIndex handles incrementality via fingerprinting; symbols are synced to the
-legacy ``symbols`` table via a lightweight in-DB copy.
+Single-DB architecture: writes symbols into config.sqlite_db.
+CocoIndex handles incrementality via fingerprinting; symbols are synced to
+the legacy ``symbols`` table via a lightweight in-DB copy.
 
-Requires: pip install cocoindex sqlite-vec sentence-transformers
+Requires: pip install cocoindex sentence-transformers
 
 Uses cocoindex v0.3+ flow API:
   - @cocoindex.flow_def for pipeline definition

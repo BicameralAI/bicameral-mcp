@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -16,24 +16,9 @@ class CodeLocatorConfig:
     # Storage
     sqlite_db: str = "~/.bicameral/code-graph.db"
 
-    # BM25
-    bm25_backend: str = "bm25s"  # "bm25s" for MVP, "zoekt" post-MVP
-    bm25_k1: float = 1.5
-    bm25_b: float = 0.75
-
-    # RRF
-    rrf_k: int = 40
-    max_retrieval_results: int = 20
-    channel_weights: dict[str, float] = field(
-        default_factory=lambda: {"bm25": 1.0, "graph": 1.2, "vector": 0.6}
-    )
-
-    # Vector search (legacy fallback — cocoindex-code daemon, use indexing_backend="cocoindex" instead)
-    vector_enabled: bool = False
-    vector_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-
-    # CocoIndex backend (Option A+) — writes to sqlite_db (single DB)
-    indexing_backend: str = "legacy"  # "legacy" | "cocoindex"
+    # Indexing backend — "legacy" (tree-sitter + sqlite) or "cocoindex"
+    # (tree-sitter via cocoindex pipeline, writes to same sqlite_db).
+    indexing_backend: str = "legacy"
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     chunk_size: int = 512
     chunk_overlap: int = 50
@@ -42,7 +27,7 @@ class CodeLocatorConfig:
     graph_hop_depth: int = 1
     max_neighbors_per_result: int = 10
 
-    # Vocabulary bridge
+    # Vocabulary bridge (validate_symbols fuzzy matching)
     fuzzy_threshold: int = 80
     fuzzy_scorer: str = "WRatio"
     fuzzy_max_matches_per_candidate: int = 3

@@ -232,13 +232,12 @@ multiple groups when decisions clearly cover distinct, unrelated features.
    up in its own feature row in the dashboard. This is the primary cause
    of the "5 decisions, 5 features" problem.
 
-### 2. Resolve code regions via the MCP retrieval tools (v0.4.23+ default)
+### 2. Resolve code regions yourself, then hand explicit pins to the server
 
-**This is where grounding quality is won or lost.** Server-side BM25 is a fallback
-for *abstract* decisions with no identifiable code anchor. For every decision
-that touches concrete code, **you** (the caller LLM) should resolve explicit
-`code_regions` using the MCP retrieval tools before ingesting. You have full
-codebase context; BM25 has a bag of tokens. Use your advantage.
+**This is where grounding quality is won or lost.** The server performs no
+code search — you (the caller LLM) resolve explicit `code_regions` before
+ingesting. You have full codebase context and real retrieval tools (Grep,
+Read, Glob); the server only has the decision text. Use your advantage.
 
 **Procedure per decision**:
 
@@ -247,37 +246,38 @@ codebase context; BM25 has a bag of tokens. Use your advantage.
    your hypotheses are `dispatchReminders`, `dispatchInterventions`,
    `dispatchNudge`, `resolveMemberStatus`, `isActiveSubscriber` — not just
    the literal word "dispatch."
-2. **Call `validate_symbols`** with the hypotheses. Keep symbols that actually
-   exist in the index; drop the rest.
-3. **Call `search_code`** with the validated symbol_ids (not the raw decision
-   text — seeded graph traversal is strictly better than keyword BM25 for
-   finding the real regions). Take the top hits that look relevant.
-4. **Call `get_neighbors`** on the top hit if you're unsure of scope — surfaces
-   callers/callees so you can tell whether the decision is local to one
-   function or spans a call tree.
+2. **Use Grep / Read / Glob** (or equivalent native search) to find candidate
+   files and symbols in the repo. Open the real source to confirm what each
+   candidate actually does.
+3. **Call `validate_symbols`** with your resolved candidates to confirm each
+   exists in the server's symbol index and get back file/line spans.
+4. **Call `get_neighbors`** on a candidate's symbol_id if you need to
+   understand scope — surfaces callers/callees so you can tell whether the
+   decision is local to one function or spans a call tree.
 5. **Build explicit `code_regions`** — `{file_path, symbol, start_line, end_line, type}` —
-   from the validated tool output. Prefer function-level pins over file-level;
+   from confirmed candidates. Prefer function-level pins over file-level;
    bind to the tightest region that still covers the decision's surface area.
 
-**Grounding quality: filter out false positives before ingesting**. If
-`search_code` returns a hit that keyword-matches but doesn't actually implement
-anything related to the decision, drop it. Example: a decision about email
-dispatch should NOT bind to a React `dispatch` reducer just because the word
-appears. Ingesting garbage bindings means every edit to that unrelated file
+**Grounding quality: filter out false positives before ingesting**. If a
+candidate keyword-matches but doesn't actually implement anything related
+to the decision, drop it. Example: a decision about email dispatch should
+NOT bind to a React `dispatch` reducer just because the word appears.
+Ingesting garbage bindings means every edit to that unrelated file
 triggers a drift alarm later — noise that drowns out real signal.
 
 **Skip decisions that don't bind to real code**. If after this procedure the
 decision has zero concrete regions AND names no valid symbols, it's either
 (a) strategic (drop it) or (b) a genuine "pending" decision for code that
 doesn't exist yet. For the pending case, ingest it with empty `code_regions`
-but include a `search_hint` (see Step 3) so the server's future re-grounding
-sweeps have something to work with.
+— it stays ungrounded until a future ingest or `bicameral.bind` call pins
+it to real code.
 
 ### 2.5 Premise gate — supersession detection (stop-and-ask v1)
 
 After calling `bicameral.ingest`, read `IngestResponse.supersession_candidates`.
 Each entry is a prior decision whose text overlaps with one of the newly
-ingested decisions (BM25, top 3 per new decision). Classify each candidate:
+ingested decisions (top 3 per new decision via ledger keyword search).
+Classify each candidate:
 
 - **mechanical** (parallel scope) — the prior decision covers a
   different code area, team, or lifecycle phase than the new one.
@@ -307,12 +307,12 @@ the ingest.
 
 ### 3. Ingest the filtered set
 
-Call `bicameral.ingest` using the **internal format** (preferred from
-v0.4.23+ onward) with the `code_regions` you resolved in step 2. Natural
-format remains supported as a fallback for truly abstract decisions with
-no resolvable code surface.
+Call `bicameral.ingest` using the **internal format** with the `code_regions`
+you resolved in step 2. Natural format remains supported for truly abstract
+decisions with no resolvable code surface — those stay ungrounded until a
+future `bicameral.bind` call pins them.
 
-**Internal format** (preferred v0.4.23+) — use this when you resolved
+**Internal format** (the default) — use this when you resolved
 `code_regions` in Step 2:
 
 ```
@@ -334,15 +334,14 @@ payload: {
           start_line: 42, end_line: 89, type: "class" },
         { file_path: "src/lib/redis.ts", symbol: "RedisClient",
           start_line: 1, end_line: 34, type: "class" }
-      ],
-      search_hint: "SessionCache RedisClient session-cache horizontal scaling"
+      ]
     }
   ]
 }
 ```
 
-**Natural format** (fallback) — use when a decision is truly abstract
-and has no resolvable code surface:
+**Natural format** (for genuinely abstract decisions) — use when a
+decision has no resolvable code surface:
 
 ```
 payload: {
@@ -354,12 +353,10 @@ payload: {
   decisions: [
     {
       description: "Cache user sessions in Redis for horizontal scaling",
-      id: "sprint-14-planning#session-cache",  # optional stable id
-      search_hint: "SessionCache RedisClient session cache horizontal scaling"
+      id: "sprint-14-planning#session-cache"  # optional stable id
     },
     {
-      description: "Apply 10% discount on orders ≥ $100",
-      search_hint: "calculateDiscount order_total applyDiscount PricingService"
+      description: "Ship SOC2-compliant session storage by Q3"
     }
   ],
   action_items: [
@@ -370,8 +367,7 @@ payload: {
 
 **Field rules** — get these right or decisions evaporate:
 
-- **`mappings[].code_regions`** is the whole game from v0.4.23+. When you pass explicit regions, server BM25 does not run for that mapping — grounding is exactly what you resolved. No false positives from vocab mismatch.
-- **`search_hint`** is the fallback recall booster. When server BM25 *does* run (you didn't resolve `code_regions`), the server concatenates `intent.description + search_hint` as the BM25 query. Put 3-5 likely identifier names or domain synonyms here — exactly the kind of vocabulary your codebase uses that the decision's natural-language description wouldn't contain literally. Example: a decision about "subscription status source-of-truth" won't mention `resolveMemberStatus` or `isActiveSubscriber` but BM25 needs those tokens to find the right dispatch functions. `search_hint` is query-only — it's never stored as part of the intent's description and never appears in briefs.
+- **`mappings[].code_regions`** is the whole game. When you pass explicit regions, the decision is bound exactly where you said. No server-side guessing, no false positives from vocab mismatch.
 - **`decisions[].description`** is the canonical text field. `title` is accepted as a synonym for back-compat; `text` is tolerated as an alias (v0.4.16+). At least one of the three must be non-empty or the decision is silently dropped.
 - **`action_items[].action`** is the canonical text field. `text` is tolerated as an alias (v0.4.16+). `owner` defaults to `"unassigned"`. `due` is an optional ISO date.
 - **`query`** is load-bearing: it's the topic the post-ingest auto-brief and gap-judge chain fire on. If you omit it, the handler falls through to the longest decision description as a topic guess — usable but less focused. **When fanning out from the boundary-detection flow (step 0), always pass each segment's title as `query`.**
@@ -380,9 +376,8 @@ payload: {
 
 **When to choose which format**:
 
-- **Internal format, v0.4.23+ default.** You resolved `code_regions` via Step 2. Ingest with explicit pins. The ledger is a trustworthy drift anchor — editing those pinned files fires real drift alarms; editing unrelated files fires nothing. This is the posture we want for real branches.
-- **Natural format + `search_hint`, fallback.** The decision is abstract ("ship by Q3," "SOC2-compliant session storage") or points at code that doesn't exist yet. Server BM25 tries with the widened query; if it produces zero hits the intent stays ungrounded (honest). If BM25 produces a false-positive binding, you'll catch it at the first `bicameral.doctor` or via a pending_compliance_check verdict.
-- **Natural format WITHOUT `search_hint`, legacy.** Works, but this is how the 2026-04-20 Accountable dispatcher ingest ended up with "all dispatch functions" bound to `use-toast.ts:dispatch`. You almost always want at least the hint.
+- **Internal format, always preferred.** You resolved `code_regions` via Step 2. Ingest with explicit pins. The ledger is a trustworthy drift anchor — editing those pinned files fires real drift alarms; editing unrelated files fires nothing. This is the posture we want for real branches.
+- **Natural format, for abstract decisions only.** The decision is genuinely abstract ("ship by Q3," "SOC2-compliant session storage") or points at code that doesn't exist yet. It stays ungrounded in the ledger until a future `bicameral.bind` pins it. Honest empty state beats a false binding.
 
 ### 3b. Verify grounding candidates (v0.4.21+)
 
@@ -533,6 +528,6 @@ $ARGUMENTS — the transcript text, file path, or description of what to ingest
 
 User: "Ingest our sprint planning notes from today"
 -> Extract 8 candidate decisions from the transcript
--> search_code for each to validate relevance — 5 touch real code, 3 are strategic
--> Call `bicameral.ingest` with 5 filtered decisions in natural format
+-> Use Grep + Read + validate_symbols to resolve code regions — 5 touch real code, 3 are strategic
+-> Call `bicameral.ingest` with 5 filtered decisions (internal format with explicit code_regions for the 3 grounded ones)
 -> Report: "8 decisions found, 3 dropped (strategic/market), 5 ingested: 3 mapped to code, 2 ungrounded (rate limiting + webhook retry — not yet implemented)"

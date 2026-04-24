@@ -18,7 +18,7 @@ pilot/mcp/
 ├── CLAUDE.md          ← you are here
 ├── PLAN.md            ← phased implementation plan (tick as you go)
 ├── TODO.md            ← hackathon task tracking + engineering progress
-├── server.py          ← MCP server entrypoint (9 tools: 5 ledger + 4 code locator)
+├── server.py          ← MCP server entrypoint (13 tools: 10 ledger + 3 code locator primitives)
 ├── contracts.py       ← MCP response types (Pydantic)
 ├── code_locator_runtime.py ← index lifecycle management
 ├── adapters/          ← thin adapter layer
@@ -36,13 +36,12 @@ pilot/mcp/
 │   ├── queries.py
 │   ├── schema.py      ← canonical source for all table/index definitions
 │   └── status.py
-├── code_locator/      ← real code locator implementation
+├── code_locator/      ← symbol index + deterministic primitives
 │   ├── config.py
 │   ├── models.py
-│   ├── fusion/        ← RRF fusion
-│   ├── indexing/       ← symbol extraction, graph building, BM25/sqlite indexing
-│   ├── retrieval/      ← BM25, sqlite-vec clients
-│   └── tools/          ← validate_symbols, search_code, get_neighbors
+│   ├── indexing/      ← tree-sitter symbol extraction, graph building, sqlite store
+│   └── tools/         ← validate_symbols, get_neighbors (no code search —
+│                         callers use Grep/Read for retrieval)
 ├── mocks/             ← retired (README.md tracks history)
 │   └── README.md
 └── tests/

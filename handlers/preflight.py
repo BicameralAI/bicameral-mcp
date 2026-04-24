@@ -1,4 +1,4 @@
-"""Handler for /bicameral_preflight MCP tool (v0.4.12).
+"""Handler for /bicameral_preflight MCP tool.
 
 Proactive context surfacing: agents call this BEFORE implementing
 code to get a gated context block. The handler:
@@ -7,16 +7,21 @@ code to get a gated context block. The handler:
      not a generic catch-all). Failed validation → fired=False.
   2. Checks per-session dedup — if the same topic was preflight-checked
      within the last 5 minutes, fired=False.
-  3. Calls ``handle_search_decisions(topic)`` internally.
-  4. Empty matches → fired=False with reason=no_matches.
-  5. **Gating**:
+  3. Region-anchored lookup: if the caller passed ``file_paths``, looks
+     up decisions pinned to those files in the ledger. The caller LLM
+     owns file-scoping; the server owns the ledger pin lookup.
+  4. Ledger keyword search: calls ``handle_search_decisions(topic)``
+     for decisions whose descriptions/keywords overlap with the topic.
+  5. Merges region-anchored (higher precision) with keyword matches.
+  6. Empty matches → fired=False with reason=no_matches.
+  7. **Gating**:
      - guided_mode=False (normal): fired=True only when matches contain
        drift, ungrounded decisions, or (after brief chain) divergences /
        open questions. "Less intense" — silent on plain matches.
      - guided_mode=True (standard): fired=True on any matches.
-  6. Conditionally chains to ``handle_brief(topic)`` when matches contain
+  8. Conditionally chains to ``handle_brief(topic)`` when matches contain
      drift or ungrounded status — that's where divergences and gaps live.
-  7. Returns a ``PreflightResponse`` with everything composed.
+  9. Returns a ``PreflightResponse`` with everything composed.
 
 The gate logic lives in Python (here), not in the skill markdown, so
 it's enforced regardless of agent compliance. The skill is a thin
@@ -85,8 +90,8 @@ def _content_tokens(text: str) -> set[str]:
 
 
 def _validate_topic(topic: str) -> bool:
-    """Deterministic guard: topic must be non-trivial enough that BM25
-    has a chance of finding meaningful matches.
+    """Deterministic guard: topic must be non-trivial enough that ledger
+    keyword search has a chance of finding meaningful matches.
 
     Returns False when:
     - Topic is empty or shorter than 4 chars
@@ -163,41 +168,33 @@ def _extract_open_questions(brief_response) -> list[BriefGap]:
     ]
 
 
-async def _region_anchored_search(
+async def _region_anchored_preflight(
     ctx,
-    topic: str,
-    max_files: int = 5,
+    file_paths: list[str],
 ) -> list[DecisionMatch]:
-    """topic → code_locator.search_code → file_paths → decisions pinned to those regions.
+    """file_paths (caller-supplied) → decisions pinned to those regions.
 
-    Returns DecisionMatch objects with confidence=0.9 (direct pin, not keyword match).
-    Falls back to empty list if the code locator is unavailable or the index is empty.
+    The caller LLM is responsible for resolving which files a proposed change
+    will touch — preflight then looks up decisions pinned to those files in
+    the ledger. Returns DecisionMatch objects with confidence=0.9 (direct
+    pin, not keyword match).
     """
-    code_locator = getattr(ctx, "code_locator", None)
-    if code_locator is None:
-        return []
-
-    try:
-        hits = code_locator.search_code(topic)
-    except Exception as exc:
-        logger.debug("[preflight:region] code locator search failed: %s", exc)
-        return []
-
-    seen: set[str] = set()
-    file_paths: list[str] = []
-    for h in hits:
-        fp = h.get("file_path", "")
-        if fp and fp not in seen:
-            seen.add(fp)
-            file_paths.append(fp)
-        if len(file_paths) >= max_files:
-            break
-
     if not file_paths:
         return []
 
+    # Dedup + normalize while preserving caller-supplied order.
+    seen_paths: set[str] = set()
+    ordered: list[str] = []
+    for fp in file_paths:
+        fp = (fp or "").strip()
+        if fp and fp not in seen_paths:
+            seen_paths.add(fp)
+            ordered.append(fp)
+    if not ordered:
+        return []
+
     try:
-        raw = await ctx.ledger.get_decisions_for_files(file_paths)
+        raw = await ctx.ledger.get_decisions_for_files(ordered)
     except Exception as exc:
         logger.debug("[preflight:region] ledger region lookup failed: %s", exc)
         return []
@@ -242,12 +239,13 @@ async def _region_anchored_search(
 
 def _merge_decision_matches(
     region: list[DecisionMatch],
-    bm25: list[DecisionMatch],
+    keyword: list[DecisionMatch],
 ) -> list[DecisionMatch]:
-    """Union of region-anchored and BM25 matches, deduplicated by decision_id.
+    """Union of region-anchored and ledger-keyword matches, deduplicated by decision_id.
 
-    Region-anchored results come first (higher precision). BM25 results fill in
-    decisions that exist in the ledger but aren't yet pinned to code regions.
+    Region-anchored results come first (direct pin = higher precision). Keyword
+    results fill in decisions that exist in the ledger but aren't yet pinned to
+    code regions.
     """
     seen: set[str] = set()
     merged: list[DecisionMatch] = []
@@ -255,7 +253,7 @@ def _merge_decision_matches(
         if m.decision_id not in seen:
             seen.add(m.decision_id)
             merged.append(m)
-    for m in bm25:
+    for m in keyword:
         if m.decision_id not in seen:
             seen.add(m.decision_id)
             merged.append(m)
@@ -265,6 +263,7 @@ def _merge_decision_matches(
 async def handle_preflight(
     ctx,
     topic: str,
+    file_paths: list[str] | None = None,
     participants: list[str] | None = None,
 ) -> PreflightResponse:
     """Pre-flight context check. Gates output by ``ctx.guided_mode``."""
@@ -308,18 +307,20 @@ async def handle_preflight(
 
     sources_chained: list[str] = []
 
-    # Step 1a — region-anchored search: topic → code locator → pinned decisions.
-    # This is the primary retrieval path: it finds decisions by which code regions
-    # the proposed change would touch, not by keyword overlap on decision text.
+    # Step 1a — region-anchored lookup: caller-supplied file_paths → pinned decisions.
+    # The caller LLM (Claude Code etc.) has already scoped which files the proposed
+    # change will touch; preflight uses that directly. High-precision pin, not a
+    # keyword-overlap guess. Empty file_paths skips this arm silently.
     region_matches: list[DecisionMatch] = []
-    try:
-        region_matches = await _region_anchored_search(ctx, topic)
-        if region_matches:
-            sources_chained.append("region")
-    except Exception as exc:
-        logger.debug("[preflight] region search failed: %s", exc)
+    if file_paths:
+        try:
+            region_matches = await _region_anchored_preflight(ctx, file_paths)
+            if region_matches:
+                sources_chained.append("region")
+        except Exception as exc:
+            logger.debug("[preflight] region lookup failed: %s", exc)
 
-    # Step 1b — BM25 text search on decision descriptions (fallback / supplement).
+    # Step 1b — ledger keyword search on decision descriptions.
     # Catches decisions not yet pinned to code regions (ungrounded), and decisions
     # whose text happens to overlap with the topic vocabulary.
     try:

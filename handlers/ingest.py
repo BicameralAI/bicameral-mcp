@@ -55,7 +55,6 @@ def _normalize_payload(payload: dict) -> dict:
             },
             "symbols": [],
             "code_regions": [],
-            "search_hint": d.search_hint,
         }
         if d.product_signoff is not None:
             mapping["product_signoff"] = d.product_signoff

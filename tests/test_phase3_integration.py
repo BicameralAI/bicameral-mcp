@@ -107,14 +107,42 @@ def _response_dict(response) -> dict:
 
 # ── Real code locator helpers ────────────────────────────────────────
 
-def _locate_real_symbols(adapter, queries: list[str]) -> list[dict]:
-    """Use the real code locator to find actual symbols for each query."""
-    results = []
-    for q in queries:
-        hits = adapter.search_code(q)
-        for hit in hits[:2]:  # top 2 per query
-            results.append(hit)
-    return results
+def _locate_hits(adapter, query_str: str, limit: int = 2) -> list[dict]:
+    """Resolve a bag-of-words query to {file_path, symbol_name, line_number}
+    hits for test payload construction.
+
+    Tokenizes the query, fuzzy-validates each token against the symbol index,
+    and looks up the matched symbol rows in SymbolDB. Replaces the legacy
+    search_code helper — no BM25/RRF needed.
+    """
+    tokens = [t for t in query_str.split() if len(t) >= 2]
+    if not tokens:
+        return []
+
+    validated = adapter.validate_symbols(tokens)
+    if not validated:
+        return []
+
+    adapter._ensure_initialized()
+    db = adapter._db
+
+    hits: list[dict] = []
+    for v in validated:
+        sid = v.get("symbol_id")
+        if sid is None:
+            continue
+        row = db.lookup_by_id(sid)
+        if row is None:
+            continue
+        hits.append({
+            "file_path": row["file_path"],
+            "symbol_name": row["name"],
+            "line_number": row["start_line"],
+            "score": v.get("match_score", 0) / 100.0,
+        })
+        if len(hits) >= limit:
+            break
+    return hits
 
 
 def _build_payload_from_real_code(
@@ -132,7 +160,7 @@ def _build_payload_from_real_code(
     Each intent in `intents` has:
       - text: the spoken/written decision
       - intent: the extracted intent string
-      - search: code search query to find relevant code (or None for ungrounded)
+      - search: symbol-ish query to resolve to a real code region (or None for ungrounded)
       - speaker: who said it
     """
     mappings = []
@@ -141,8 +169,8 @@ def _build_payload_from_real_code(
         symbols = []
 
         if item.get("search"):
-            hits = adapter.search_code(item["search"])
-            for hit in hits[:2]:
+            hits = _locate_hits(adapter, item["search"], limit=2)
+            for hit in hits:
                 fp = hit.get("file_path", "")
                 sym = hit.get("symbol_name", "")
                 line = hit.get("line_number", 1)
@@ -153,7 +181,7 @@ def _build_payload_from_real_code(
                         "type": "function",
                         "start_line": line,
                         "end_line": line + 20,
-                        "purpose": f"Found by search_code({item['search']!r})",
+                        "purpose": f"Located from search terms: {item['search']!r}",
                     })
                     if sym:
                         symbols.append(sym)
@@ -279,13 +307,13 @@ async def test_context_scattered__ingest_unifies_sources(ctx):
     # Source 2: PRD about code locator requirements
     prd_payload = _build_payload_from_real_code(
         adapter,
-        query="Code locator PRD — search requirements",
-        search_queries=["search_code BM25"],
+        query="Code locator PRD — symbol index requirements",
+        search_queries=["validate_symbols symbol"],
         intents=[
             {
-                "text": "Code search must use BM25 + graph traversal with RRF fusion — no embeddings in MVP",
-                "intent": "BM25 + graph + RRF fusion for code search",
-                "search": "bm25 search retrieval",
+                "text": "Symbol resolution must be deterministic — tree-sitter extraction with fuzzy validation, no LLM in the indexing path",
+                "intent": "Deterministic symbol resolution via tree-sitter + fuzzy validation",
+                "search": "validate_symbols symbol index",
                 "speaker": "",
             },
             {
@@ -452,7 +480,7 @@ async def test_tribal_knowledge__drift_surfaces_decisions_for_file(ctx):
     adapter = get_code_locator()
 
     # Find a real file that the code locator knows about
-    hits = adapter.search_code("contracts response pydantic")
+    hits = _locate_hits(adapter, "contracts response pydantic", limit=10)
     target_file = None
     for hit in hits:
         fp = hit.get("file_path", "")

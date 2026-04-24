@@ -52,7 +52,7 @@ _Replica of [Notion Task Tracking](https://www.notion.so/3232a51619c480e680eada5
 
 - [x] SurrealDB schema defined and initialized (Jin)
 - [x] Payload ingestion: `CodeLocatorPayload` → graph (Jin)
-- [x] Ledger search (BM25 on intents) (Jin)
+- [x] Ledger search (SurrealDB FTS on decision descriptions) (Jin)
 - [x] Symbol-decision lookup (reverse traversal) (Jin)
 - [x] Wire real ledger into MCP adapter (Jin — Phase 2)
 
@@ -93,9 +93,10 @@ _Tracks actual implementation status in `pilot/mcp/`. Updated by Claude as work 
 ### Phase 1.5: MCP-native retrieval surface — DONE
 
 - [x] Expose `validate_symbols` as an MCP tool
-- [x] Expose `search_code` as an MCP tool
 - [x] Expose `get_neighbors` as an MCP tool
+- [x] Expose `extract_symbols` as an MCP tool
 - [x] Retire the nested litellm loop — removed entirely
+- [x] v0.6.4: retired `search_code` — caller LLM owns code retrieval via Grep/Read
 
 ### Phase 2: Real Decision Ledger — DONE
 

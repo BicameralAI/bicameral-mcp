@@ -107,12 +107,12 @@ async def test_single_source_reflected(ctx):
     ledger = get_ledger()
     await _ingest(ledger, _payload([
         _mapping(
-            description="Use BM25 for code search",
+            description="Use tree-sitter for symbol extraction",
             source_type="transcript",
             source_ref="sprint-1",
             code_regions=[{
                 "file_path": "server.py",
-                "symbol": "search_code",
+                "symbol": "validate_symbols",
                 "type": "function",
                 "start_line": 10,
                 "end_line": 30,
@@ -127,19 +127,19 @@ async def test_single_source_reflected(ctx):
 
     # Find the feature containing our decision
     feature = next(
-        (f for f in response.features if any("BM25" in d.summary for d in f.decisions)),
+        (f for f in response.features if any("tree-sitter" in d.summary for d in f.decisions)),
         None,
     )
-    assert feature is not None, "Expected to find a feature with the BM25 decision"
+    assert feature is not None, "Expected to find a feature with the tree-sitter decision"
     assert len(feature.decisions) >= 1
 
-    dec = next(d for d in feature.decisions if "BM25" in d.summary)
+    dec = next(d for d in feature.decisions if "tree-sitter" in d.summary)
     # Status should be ungrounded (no real file) or reflected if hash matched
     assert dec.status in ("reflected", "ungrounded", "discovered")
     # fulfillment populated since we passed code_regions
     assert dec.fulfillment is not None
     assert dec.fulfillment.file_path == "server.py"
-    assert dec.fulfillment.symbol == "search_code"
+    assert dec.fulfillment.symbol == "validate_symbols"
 
 
 @pytest.mark.phase2

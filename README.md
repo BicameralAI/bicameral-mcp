@@ -245,10 +245,13 @@ The agent also fires these automatically — `preflight` before any code change,
 
 ### Code Locator
 
+The server exposes deterministic primitives only. Callers use their own
+tools (Grep/Read/Glob) for code search and pass resolved file paths /
+symbol names back to the server.
+
 | Tool | Purpose |
 |---|---|
 | `validate_symbols` | Fuzzy-match symbol name hypotheses against the code index |
-| `search_code` | BM25 + graph traversal with RRF fusion |
 | `get_neighbors` | 1-hop structural graph traversal (callers, callees, imports) |
 | `extract_symbols` | Tree-sitter symbol extraction from a source file |
 

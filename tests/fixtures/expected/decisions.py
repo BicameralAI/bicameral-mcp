@@ -397,19 +397,19 @@ VENDURE_SEARCH = [
 # recall@files measures whether the grounder finds the full spread.
 BICAMERAL_MULTI_REGION = [
     {
-        "description": "Auto-grounding pipeline: ingest transcript, extract intents, search code via BM25 and graph fusion, ground to code regions, store in ledger",
+        "description": "Caller-LLM-driven ingest pipeline: ingest decisions with explicit code_regions from the caller, persist maps_to edges in the ledger, return pending compliance checks for verification",
         "source_ref": "bicameral-mcp-multi-region",
-        "keywords": ["auto-grounding", "ground_mappings", "ingest pipeline", "coverage loop"],
+        "keywords": ["ingest pipeline", "caller-LLM binding", "maps_to edges", "bicameral.bind"],
         "expected_symbols": [
             "handle_ingest",
+            "handle_bind",
             "RealCodeLocatorAdapter",
-            "SearchCodeTool",
             "SurrealDBLedgerAdapter",
         ],
         "expected_file_patterns": [
             "handlers/ingest",
+            "handlers/bind",
             "adapters/code_locator",
-            "code_locator/tools/search_code",
             "ledger/adapter",
         ],
         "prd_failure_mode": "CONTEXT_SCATTERED",
@@ -417,18 +417,18 @@ BICAMERAL_MULTI_REGION = [
         "multi_region": True,
     },
     {
-        "description": "Multi-channel code retrieval: BM25 text search, structural graph traversal from symbol seeds, and RRF rank fusion to produce a unified file ranking",
+        "description": "Deterministic symbol resolution: tree-sitter extraction builds the SQLite symbol index; rapidfuzz fuzzy validation confirms caller symbol candidates; no LLM in the indexing path",
         "source_ref": "bicameral-mcp-multi-region",
-        "keywords": ["BM25", "graph traversal", "RRF fusion", "search_code", "multi-channel retrieval"],
+        "keywords": ["symbol index", "tree-sitter", "validate_symbols", "fuzzy validation"],
         "expected_symbols": [
-            "SearchCodeTool",
-            "Bm25sClient",
-            "rrf_fuse",
+            "ValidateSymbolsTool",
+            "SymbolDB",
+            "extract_symbols_from_content",
         ],
         "expected_file_patterns": [
-            "code_locator/tools/search_code",
-            "code_locator/retrieval/bm25s_client",
-            "code_locator/fusion/rrf",
+            "code_locator/tools/validate_symbols",
+            "code_locator/indexing/sqlite_store",
+            "code_locator/indexing/symbol_extractor",
         ],
         "prd_failure_mode": "CONTEXT_SCATTERED",
         "status_at_ingest": "reflected",
@@ -469,21 +469,6 @@ BICAMERAL_MULTI_REGION = [
             "events/materializer",
         ],
         "prd_failure_mode": "CONTEXT_SCATTERED",
-        "status_at_ingest": "reflected",
-        "multi_region": True,
-    },
-    {
-        "description": "Coverage loop tier broadening: strict threshold first, then relaxed, then broad — each tier adjusts BM25 score threshold, fuzzy match threshold, and max symbols to progressively widen grounding search",
-        "source_ref": "bicameral-mcp-multi-region",
-        "keywords": ["coverage loop", "tier broadening", "_ground_single", "fuzzy threshold", "COVERAGE_TIERS"],
-        "expected_symbols": [
-            "RealCodeLocatorAdapter",
-        ],
-        "expected_file_patterns": [
-            "adapters/code_locator",
-            "code_locator/tools/search_code",
-        ],
-        "prd_failure_mode": "TRIBAL_KNOWLEDGE",
         "status_at_ingest": "reflected",
         "multi_region": True,
     },

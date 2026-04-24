@@ -37,21 +37,23 @@
 
 ### Architecture Decision: Host Model Orchestrates, MCP Retrieves
 
-The MCP server calls no nested LLM. `pilot/mcp` owns the deterministic retrieval runtime in `code_locator/`:
+The MCP server calls no nested LLM and performs no code search. `pilot/mcp` owns deterministic primitives in `code_locator/`:
 
 - `validate_symbols(candidates)` — rapidfuzz + SQLite-backed symbol validation
-- `search_code(query, symbol_ids?)` — BM25 + graph + optional vector retrieval
 - `get_neighbors(symbol_id)` — structural expansion from the local index
 - `extract_symbols(file_path)` — tree-sitter symbol extraction (no index needed)
+
+Code search is caller-owned: Claude Code / Cursor / etc. use their native Grep/Read/Glob tools and hand file paths + symbols to the server via `bicameral.bind` and the `file_paths` field on `bicameral.preflight`.
 
 ### Changes
 - [x] `adapters/code_locator.py` — `RealCodeLocatorAdapter` with lazy init
 - [x] Extract deterministic tool implementations into `pilot/mcp/code_locator/`
-- [x] MCP tool handlers for `validate_symbols`, `search_code`, `get_neighbors`, `extract_symbols`
+- [x] MCP tool handlers for `validate_symbols`, `get_neighbors`, `extract_symbols`
 - [x] Removed litellm entirely — no LLM dependency in MCP server
+- [x] v0.6.4: removed `search_code` tool + BM25/RRF/vector retrieval stack
 
 ### Verification
-- [x] Running `search_code`/`validate_symbols`/`get_neighbors` requires no provider credentials
+- [x] Running `validate_symbols`/`get_neighbors` requires no provider credentials
 - [x] No litellm import or dependency anywhere in `pilot/mcp/`
 - [x] Anti-hallucination guarantees: every returned file/symbol comes from indexed repo state
 
@@ -64,7 +66,7 @@ The MCP server calls no nested LLM. `pilot/mcp` owns the deterministic retrieval
 ### Changes
 - [x] `adapters/ledger.py` — `SurrealDBLedgerAdapter` singleton (wraps `ledger/adapter.py`)
 - [x] `handlers/decision_status.py` — queries real graph
-- [x] `handlers/search_decisions.py` — BM25 search on real `intent` table + graph walk
+- [x] `handlers/search_decisions.py` — SurrealDB FTS over decision descriptions + graph walk
 - [x] `handlers/detect_drift.py` — reverse traversal via `touches` edge + content-hash comparison
 - [x] `handlers/link_commit.py` — real idempotent commit ingestion
 - [x] `handlers/ingest.py` — payload ingestion with source cursor tracking

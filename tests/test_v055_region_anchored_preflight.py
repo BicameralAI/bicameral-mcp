@@ -1,14 +1,15 @@
-"""v0.5.5 — region-anchored preflight retrieval tests.
+"""Region-anchored preflight retrieval tests.
 
-Verifies that preflight surfaces decisions by REGION OVERLAP (code locator →
+Verifies that preflight surfaces decisions by REGION OVERLAP (caller-supplied
 file_paths → pinned decisions) rather than solely by keyword match on decision
 description text.
 
 The core scenario: a decision is stored with description "High recall: no false
-negatives on drift/grounding", pinned to search_code.py. The preflight topic is
-"improve retrieval quality for code locator" — zero keyword overlap with the
-description, so BM25 returns nothing. Region-anchored search finds the file
-via the code locator, looks up the pinned decision, and surfaces it.
+negatives on drift/grounding", pinned to some_module.py. The preflight topic is
+"improve retrieval quality for the locator" — zero keyword overlap with the
+description, so ledger keyword search returns nothing. The caller passes
+file_paths=["some_module.py"]; the region-anchored arm looks up the pinned
+decision and surfaces it.
 """
 
 from __future__ import annotations
@@ -19,14 +20,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from contracts import (
-    CodeRegionSummary,
     DecisionMatch,
     LinkCommitResponse,
     SearchDecisionsResponse,
 )
 from handlers.preflight import (
     _merge_decision_matches,
-    _region_anchored_search,
+    _region_anchored_preflight,
     handle_preflight,
 )
 
@@ -46,8 +46,8 @@ def _make_region_decision(
     decision_id: str = "decision:r1",
     description: str = "High recall: no false negatives on drift/grounding",
     status: str = "reflected",
-    file_path: str = "code_locator/tools/search_code.py",
-    symbol: str = "SearchCodeTool",
+    file_path: str = "pilot/mcp/some_module.py",
+    symbol: str = "SomeSymbol",
 ) -> dict:
     """Raw dict as returned by get_decisions_for_files."""
     return {
@@ -71,17 +71,16 @@ def _make_region_decision(
 
 
 def _make_ctx(
-    code_locator_hits: list[dict] | None = None,
     region_decisions: list[dict] | None = None,
-    bm25_matches: list[DecisionMatch] | None = None,
+    keyword_matches: list[DecisionMatch] | None = None,
     guided_mode: bool = True,
 ) -> SimpleNamespace:
-    """Build a minimal fake BicameralContext."""
-    # Code locator mock
-    code_locator = MagicMock()
-    code_locator.search_code = MagicMock(return_value=code_locator_hits or [])
+    """Build a minimal fake BicameralContext.
 
-    # Ledger mock
+    No code_locator is required in the new flow — the caller passes file_paths
+    directly. The ledger returns region_decisions for whatever paths were
+    queried.
+    """
     ledger = MagicMock()
     ledger.ingest_commit = AsyncMock(return_value={
         "commit_hash": "abc123",
@@ -92,11 +91,11 @@ def _make_ctx(
     ledger.get_decisions_for_files = AsyncMock(return_value=region_decisions or [])
     ledger.search_by_query = AsyncMock(return_value=[])
 
-    bm25 = bm25_matches or []
+    matches = keyword_matches or []
     search_resp = SearchDecisionsResponse(
         query="",
         sync_status=_make_link_commit_response(),
-        matches=bm25,
+        matches=matches,
         ungrounded_count=0,
         suggested_review=[],
     )
@@ -105,85 +104,71 @@ def _make_ctx(
     ctx = SimpleNamespace(
         repo_path=".",
         ledger=ledger,
-        code_locator=code_locator,
         guided_mode=guided_mode,
         _sync_state={},
     )
     return ctx, search_resp
 
 
-# ── Unit: _region_anchored_search ───────────────────────────────────────────
+# ── Unit: _region_anchored_preflight ────────────────────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_region_anchored_returns_pinned_decisions():
-    """Code locator finds a file → ledger returns a pinned decision."""
-    ctx, _ = _make_ctx(
-        code_locator_hits=[
-            {"file_path": "code_locator/tools/search_code.py", "score": 1.2, "symbol_name": "SearchCodeTool"},
-        ],
-        region_decisions=[_make_region_decision()],
-    )
+    """Caller-supplied file_path → ledger returns a pinned decision."""
+    ctx, _ = _make_ctx(region_decisions=[_make_region_decision()])
 
-    matches = await _region_anchored_search(ctx, "improve retrieval quality for code locator")
+    matches = await _region_anchored_preflight(ctx, ["pilot/mcp/some_module.py"])
 
     assert len(matches) == 1
     assert matches[0].decision_id == "decision:r1"
     assert matches[0].confidence == 0.9
-    assert matches[0].code_regions[0].file_path == "code_locator/tools/search_code.py"
+    assert matches[0].code_regions[0].file_path == "pilot/mcp/some_module.py"
 
 
 @pytest.mark.asyncio
 async def test_region_anchored_deduplicates_same_decision_across_files():
     """Same decision pinned to two files → appears only once."""
     ctx, _ = _make_ctx(
-        code_locator_hits=[
-            {"file_path": "file_a.py", "score": 1.0},
-            {"file_path": "file_b.py", "score": 0.8},
-        ],
         region_decisions=[
             _make_region_decision(decision_id="decision:d1", file_path="file_a.py"),
             _make_region_decision(decision_id="decision:d1", file_path="file_b.py"),
         ],
     )
 
-    matches = await _region_anchored_search(ctx, "some topic")
+    matches = await _region_anchored_preflight(ctx, ["file_a.py", "file_b.py"])
     assert len(matches) == 1
 
 
 @pytest.mark.asyncio
-async def test_region_anchored_returns_empty_when_no_code_locator():
-    """Missing code_locator on ctx → graceful empty result."""
-    ctx = SimpleNamespace(repo_path=".", ledger=MagicMock(), guided_mode=True, _sync_state={})
+async def test_region_anchored_returns_empty_when_file_paths_empty():
+    """Empty or missing file_paths → graceful empty result."""
+    ctx, _ = _make_ctx()
 
-    matches = await _region_anchored_search(ctx, "some topic")
-    assert matches == []
-
-
-@pytest.mark.asyncio
-async def test_region_anchored_returns_empty_when_code_locator_raises():
-    """Code locator error → fail-open, empty result."""
-    code_locator = MagicMock()
-    code_locator.search_code = MagicMock(side_effect=RuntimeError("index not built"))
-    ctx = SimpleNamespace(
-        repo_path=".", ledger=MagicMock(), code_locator=code_locator,
-        guided_mode=True, _sync_state={},
-    )
-
-    matches = await _region_anchored_search(ctx, "some topic")
-    assert matches == []
+    assert await _region_anchored_preflight(ctx, []) == []
+    assert await _region_anchored_preflight(ctx, [""]) == []
+    assert await _region_anchored_preflight(ctx, ["  "]) == []
 
 
 @pytest.mark.asyncio
-async def test_region_anchored_caps_at_max_files():
-    """Only the first max_files unique file paths are queried."""
-    hits = [{"file_path": f"file_{i}.py", "score": 1.0} for i in range(20)]
-    ctx, _ = _make_ctx(code_locator_hits=hits, region_decisions=[])
+async def test_region_anchored_dedups_input_paths():
+    """Duplicate paths from caller → ledger called with deduped list."""
+    ctx, _ = _make_ctx(region_decisions=[])
 
-    await _region_anchored_search(ctx, "topic", max_files=5)
+    await _region_anchored_preflight(ctx, ["a.py", "b.py", "a.py"])
 
     called_paths = ctx.ledger.get_decisions_for_files.call_args[0][0]
-    assert len(called_paths) == 5
+    assert called_paths == ["a.py", "b.py"]
+
+
+@pytest.mark.asyncio
+async def test_region_anchored_returns_empty_when_ledger_raises():
+    """Ledger error → fail-open, empty result."""
+    ctx, _ = _make_ctx()
+    ctx.ledger.get_decisions_for_files = AsyncMock(side_effect=RuntimeError("db down"))
+
+    matches = await _region_anchored_preflight(ctx, ["some_file.py"])
+    assert matches == []
 
 
 # ── Unit: _merge_decision_matches ───────────────────────────────────────────
@@ -201,39 +186,37 @@ def _dm(decision_id: str, status: str = "reflected") -> DecisionMatch:
 
 
 def test_merge_region_first():
-    """Region matches come before BM25 matches in output."""
+    """Region matches come before keyword matches in output."""
     region = [_dm("d:region")]
-    bm25 = [_dm("d:bm25")]
-    merged = _merge_decision_matches(region, bm25)
-    assert [m.decision_id for m in merged] == ["d:region", "d:bm25"]
+    keyword = [_dm("d:keyword")]
+    merged = _merge_decision_matches(region, keyword)
+    assert [m.decision_id for m in merged] == ["d:region", "d:keyword"]
 
 
 def test_merge_deduplicates_by_decision_id():
     """Same decision_id in both → only region version kept (first seen)."""
     region = [_dm("d:shared")]
-    bm25 = [_dm("d:shared"), _dm("d:bm25only")]
-    merged = _merge_decision_matches(region, bm25)
+    keyword = [_dm("d:shared"), _dm("d:keywordonly")]
+    merged = _merge_decision_matches(region, keyword)
     assert len(merged) == 2
     assert merged[0].decision_id == "d:shared"
-    assert merged[1].decision_id == "d:bm25only"
+    assert merged[1].decision_id == "d:keywordonly"
 
 
-# ── Integration: handle_preflight fires on region hit with zero BM25 overlap ─
+# ── Integration: handle_preflight fires on region hit with zero keyword overlap ─
 
 
 @pytest.mark.asyncio
-async def test_preflight_fires_on_region_hit_no_bm25():
-    """Core regression: preflight surfaces a decision even when BM25 returns
-    nothing because the topic has zero keyword overlap with the description.
+async def test_preflight_fires_on_region_hit_no_keyword():
+    """Core regression: preflight surfaces a decision even when the ledger
+    keyword search returns nothing because the topic has zero keyword overlap
+    with the description.
 
-    Region-anchored path: topic → code locator → file_path → pinned decision.
+    Region-anchored path: caller passes file_paths → pinned decisions.
     """
     ctx, search_resp = _make_ctx(
-        code_locator_hits=[
-            {"file_path": "code_locator/tools/search_code.py", "score": 1.5},
-        ],
         region_decisions=[_make_region_decision(status="reflected")],
-        bm25_matches=[],  # BM25 finds nothing
+        keyword_matches=[],
         guided_mode=True,
     )
 
@@ -242,7 +225,11 @@ async def test_preflight_fires_on_region_hit_no_bm25():
         patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
         patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
     ):
-        resp = await handle_preflight(ctx, topic="improve retrieval quality for code locator")
+        resp = await handle_preflight(
+            ctx,
+            topic="improve retrieval quality for the locator",
+            file_paths=["pilot/mcp/some_module.py"],
+        )
 
     assert resp.fired is True
     assert "region" in resp.sources_chained
@@ -252,11 +239,11 @@ async def test_preflight_fires_on_region_hit_no_bm25():
 
 @pytest.mark.asyncio
 async def test_preflight_region_in_sources_chained():
-    """sources_chained includes 'region' when region search yields results."""
+    """sources_chained includes 'region' when caller passes file_paths and
+    the ledger returns pinned decisions."""
     ctx, search_resp = _make_ctx(
-        code_locator_hits=[{"file_path": "some/file.py", "score": 1.0}],
         region_decisions=[_make_region_decision(status="drifted")],
-        bm25_matches=[],
+        keyword_matches=[],
         guided_mode=False,  # normal mode — needs actionable signal
     )
 
@@ -265,25 +252,33 @@ async def test_preflight_region_in_sources_chained():
         patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
         patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
     ):
-        resp = await handle_preflight(ctx, topic="improve something in code locator search")
+        resp = await handle_preflight(
+            ctx,
+            topic="improve something in the locator logic",
+            file_paths=["some/file.py"],
+        )
 
     assert "region" in resp.sources_chained
 
 
 @pytest.mark.asyncio
-async def test_preflight_bm25_only_still_works_when_no_code_locator():
-    """No code_locator on ctx → preflight falls back to BM25 correctly."""
-    bm25_match = _dm("d:bm25", status="drifted")
+async def test_preflight_topic_only_no_file_paths_still_works():
+    """Caller omits file_paths → preflight falls back to ledger keyword search only.
+
+    Regression: the v0.6.3 default path (topic only, no file_paths) must still
+    surface keyword-matching decisions. This is the test-user trust contract —
+    existing skills that only pass topic keep working.
+    """
+    keyword_match = _dm("d:keyword", status="drifted")
     search_resp = SearchDecisionsResponse(
         query="",
         sync_status=_make_link_commit_response(),
-        matches=[bm25_match],
+        matches=[keyword_match],
         ungrounded_count=0,
         suggested_review=[],
     )
     search_resp.action_hints = []
 
-    # No code_locator attribute
     ctx = SimpleNamespace(
         repo_path=".",
         ledger=MagicMock(),

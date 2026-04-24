@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.6.3"
+version = "0.6.4"
 description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -31,7 +31,6 @@ dependencies = [
   "tree-sitter-rust>=0.23",
   "tree-sitter-c-sharp>=0.23",
   "rapidfuzz>=3.6.0",
-  "bm25s>=0.2.0",
   "pydantic>=2.0.0",
   "pyyaml>=6.0",
   "python-dotenv",
@@ -42,7 +41,6 @@ dependencies = [
 [project.optional-dependencies]
 cocoindex = [
   "cocoindex>=1.0.0a38,<2.0.0",
-  "sqlite-vec>=0.1.0",
   "sentence-transformers>=2.6.0",
   "cocoindex-code>=0.1.0",
 ]

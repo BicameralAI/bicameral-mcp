@@ -189,12 +189,16 @@ def _clear_legacy_index_tables(db_path: str) -> None:
 
 
 def rebuild_index(repo_path: str, config, force: bool = False) -> None:
-    """Rebuild the underlying code locator index and persist git metadata."""
+    """Rebuild the underlying code locator index and persist git metadata.
+
+    Builds the symbol table + structural graph only — no text search index.
+    Callers use their own tools (Grep/Read) for code search; the server uses
+    the symbol index for validate_symbols, get_neighbors, and bind line
+    resolution.
+    """
     from code_locator.indexing.sqlite_store import SymbolDB
-    from code_locator.retrieval.bm25s_client import Bm25sClient
 
     repo = str(Path(repo_path).resolve())
-    index_dir = str(Path(config.sqlite_db).parent)
 
     if config.indexing_backend == "cocoindex":
         from code_locator.indexing.cocoindex_pipeline import run_pipeline, sync_symbols_in_db
@@ -218,16 +222,6 @@ def rebuild_index(repo_path: str, config, force: bool = False) -> None:
             _clear_legacy_index_tables(config.sqlite_db)
         build_index(repo, config.sqlite_db)
 
-    from code_locator.indexing.sqlite_store import SymbolDB as _SymDB
-    _sdb = _SymDB(config.sqlite_db)
-    bm25 = Bm25sClient()
-    bm25.index(repo, index_dir, symbol_db=_sdb, k1=config.bm25_k1, b=config.bm25_b)
-    try:
-        bm25.index_symbols(index_dir, symbol_db=_sdb, k1=config.bm25_k1, b=config.bm25_b)
-    except Exception as exc:
-        import logging
-        logging.getLogger(__name__).warning("Symbol index build failed (non-fatal): %s", exc)
-    _sdb.close()
     record_index_state(config.sqlite_db, repo)
 
     count = _symbol_count(config.sqlite_db)

@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-14 tools:
+13 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -12,7 +12,6 @@
   bicameral.history           — read-only ledger dump grouped by feature area
   bicameral.dashboard         — launch live decision dashboard with SSE push updates
   validate_symbols            — fuzzy-match candidate symbol names against the code index
-  search_code                 — BM25 + graph search with RRF fusion
   get_neighbors               — 1-hop structural graph traversal around a symbol
   extract_symbols             — tree-sitter symbol extraction from a source file
 
@@ -93,7 +92,6 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.history",
     "bicameral.dashboard",
     "validate_symbols",
-    "search_code",
     "get_neighbors",
     "extract_symbols",
 ]
@@ -254,6 +252,8 @@ async def list_tools() -> list[Tool]:
                 "questions linked to the topic, gated by the user's guided_mode setting. "
                 "In normal mode, fires only when there's actionable signal (drift, ungrounded, "
                 "divergence, open question). In guided mode, fires on any matches. "
+                "Pass file_paths with the files you've already scoped for the task — the server "
+                "looks up decisions pinned to those files (region-anchored, high precision). "
                 "When fired=false, the agent MUST produce no output and proceed silently — "
                 "that's the trust contract. When fired=true, render the surfaced context with "
                 "a '(bicameral surfaced)' attribution before continuing with the implementation. "
@@ -270,6 +270,17 @@ async def list_tools() -> list[Tool]:
                             "payment_intent succeeded' or 'rate limiting middleware sliding window'. "
                             "Must be ≥4 chars and contain ≥2 non-stopword content tokens, otherwise "
                             "the handler returns fired=false."
+                        ),
+                    },
+                    "file_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Repo-relative paths of the files the caller LLM has already "
+                            "identified as in-scope for the proposed change (from Grep/Read "
+                            "or equivalent scoping). The server returns decisions pinned to "
+                            "those files. Omit or leave empty to skip region-anchored lookup "
+                            "and rely on topic-keyword matches only."
                         ),
                     },
                     "participants": {
@@ -513,30 +524,6 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
-            name="search_code",
-            description=(
-                "Search the codebase using text search and structural graph traversal. "
-                "Returns ranked code locations with file paths, line numbers, and scores. "
-                "Optionally provide symbol_ids from validate_symbols to activate "
-                "graph-based retrieval for better results."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Text search query (e.g. 'checkout rate limit middleware')",
-                    },
-                    "symbol_ids": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                        "description": "Symbol IDs from validate_symbols to use as graph traversal seeds",
-                    },
-                },
-                "required": ["query"],
-            },
-        ),
-        Tool(
             name="get_neighbors",
             description=(
                 "Explore structural neighbors of a symbol via 1-hop graph traversal. "
@@ -616,6 +603,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await handle_preflight(
                 ctx,
                 topic=arguments["topic"],
+                file_paths=arguments.get("file_paths") or None,
                 participants=arguments.get("participants") or None,
             )
         elif name in ("bicameral.judge_gaps", "judge_gaps"):
@@ -696,13 +684,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         # ── Code locator tools ────────────────────────────────────────
         elif name == "validate_symbols":
             data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
-            return [TextContent(type="text", text=json.dumps(data, indent=2))]
-        elif name == "search_code":
-            data = await asyncio.to_thread(
-                ctx.code_graph.search_code,
-                arguments["query"],
-                arguments.get("symbol_ids"),
-            )
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         elif name == "get_neighbors":
             data = await asyncio.to_thread(ctx.code_graph.get_neighbors, arguments["symbol_id"])

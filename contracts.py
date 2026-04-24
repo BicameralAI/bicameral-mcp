@@ -304,7 +304,6 @@ class IngestMapping(BaseModel):
     span: IngestSpan = IngestSpan()
     symbols: list[str] = []
     code_regions: list[IngestCodeRegion] = []
-    search_hint: str = ""
     product_signoff: dict | None = None
     feature_group: str | None = None
 
@@ -328,7 +327,6 @@ class IngestDecision(BaseModel):
     status: str = ""
     participants: list[str] = []
     source_excerpt: str = ""
-    search_hint: str = ""
     product_signoff: dict | None = None
     feature_group: str | None = None
 

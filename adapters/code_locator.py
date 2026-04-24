@@ -1,7 +1,9 @@
 """Code locator adapter — MCP-native code locator backed by real index.
 
-Exposes validate_symbols, search_code, get_neighbors, extract_symbols,
-and resolve_symbols as direct methods.
+Exposes validate_symbols, get_neighbors, extract_symbols, and resolve_symbols
+as direct methods. The server no longer performs keyword or vector code
+search — callers resolve code regions themselves and hand paths/symbols
+to the server via bind and preflight.
 """
 
 from __future__ import annotations
@@ -25,32 +27,29 @@ def get_code_locator():
 
 
 class RealCodeLocatorAdapter:
-    """MCP-native code locator — exposes raw tools without an LLM agent loop.
+    """MCP-native code locator — exposes deterministic primitives only.
 
     validate_symbols() → fuzzy-match candidates against symbol index
-    search_code()      → BM25 + graph + vector retrieval with RRF fusion
     get_neighbors()    → 1-hop structural graph traversal
     extract_symbols()  → tree-sitter symbol extraction (no index needed)
+    resolve_symbols()  → symbol name → code region lookup for ingest
     """
 
     def __init__(self, repo_path: str = ".") -> None:
         self._repo_path = str(Path(repo_path).resolve())
         self._initialized = False
         self._validate_tool = None
-        self._search_tool = None
         self._neighbors_tool = None
 
     def _ensure_initialized(self) -> None:
-        """Lazy init of SymbolDB, BM25, config, and tool instances."""
+        """Lazy init of SymbolDB, config, and tool instances."""
         if self._initialized:
             return
 
         ensure_runtime_env()
         from code_locator.config import load_config
         from code_locator.indexing.sqlite_store import SymbolDB
-        from code_locator.retrieval.bm25s_client import Bm25sClient
         from code_locator.tools.get_neighbors import GetNeighborsTool
-        from code_locator.tools.search_code import SearchCodeTool
         from code_locator.tools.validate_symbols import ValidateSymbolsTool
 
         config = load_config()
@@ -63,24 +62,8 @@ class RealCodeLocatorAdapter:
                 "Code locator index is empty. Run: python -m code_locator index <repo_path>"
             )
 
-        index_dir = str(Path(config.sqlite_db).parent)
-        bm25 = Bm25sClient()
-        try:
-            bm25.load(index_dir)
-        except FileNotFoundError:
-            db.close()
-            raise RuntimeError(
-                "BM25 index not found. Run: python -m code_locator index <repo_path>"
-            )
-
-        vector_client = None
-        if config.indexing_backend == "cocoindex":
-            from code_locator.retrieval.sqlite_vec_client import SqliteVecClient
-            vector_client = SqliteVecClient(config.sqlite_db, config.embedding_model)
-
         self._db = db
         self._validate_tool = ValidateSymbolsTool(db, config)
-        self._search_tool = SearchCodeTool(bm25, db, config, vector_client=vector_client)
         self._neighbors_tool = GetNeighborsTool(db, config)
         self._initialized = True
 
@@ -88,15 +71,6 @@ class RealCodeLocatorAdapter:
         """Fuzzy-match candidate symbol names against the codebase index."""
         self._ensure_initialized()
         results = self._validate_tool.execute({"candidates": candidates})
-        return [r.model_dump() for r in results]
-
-    def search_code(self, query: str, symbol_ids: list[int] | None = None) -> list[dict]:
-        """BM25 + graph + vector search with RRF fusion."""
-        self._ensure_initialized()
-        args = {"query": query}
-        if symbol_ids is not None:
-            args["symbol_ids"] = symbol_ids
-        results = self._search_tool.execute(args)
         return [r.model_dump() for r in results]
 
     def _validate_with_threshold(self, candidates: list[str], threshold: int) -> list[dict]:

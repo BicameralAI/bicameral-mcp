@@ -18,9 +18,10 @@ _VERIFICATION_INSTRUCTION = (
     "verdicts: [{intent_id, region_id, content_hash, compliant, confidence, "
     "explanation}]. Group by phase if the batch mixes phases. One tool call "
     "resolves the whole batch. "
-    "For pending_grounding_checks: use search_code / extract_symbols to find "
-    "the correct code region, then call bicameral.bind with decision_id, "
-    "file_path, symbol_name, and optionally start_line/end_line."
+    "For pending_grounding_checks: use your own code search (Grep/Read), then "
+    "validate_symbols / extract_symbols to confirm the target, then call "
+    "bicameral.bind with decision_id, file_path, symbol_name, and optionally "
+    "start_line/end_line."
 )
 
 logger = logging.getLogger(__name__)

@@ -84,26 +84,16 @@ def test_no_backend_jargon_in_skill_files():
     ``.claude/skills/`` local Claude Code mirror so a fix to one
     isn't a regression on the other.
 
-    bicameral-ingest is excluded from BM25/retrieval terms because it is
-    LLM-facing documentation that legitimately explains the retrieval
-    mechanism to the calling agent (not end-user UI copy).
+    v0.6.4: bicameral-ingest no longer needs a BM25/RRF exception — all
+    retrieval jargon was removed when the server stopped performing
+    BM25/RRF code search. Callers now own retrieval end-to-end.
     """
-    # Skills that are LLM-facing technical documentation — allowed to use
-    # retrieval internals terminology (both canonical and .claude/ mirror).
-    RETRIEVAL_TERMS = {"BM25", "tree-sitter", "treesitter", "RRF"}
-    RETRIEVAL_SKILL_EXCEPTIONS = {
-        "skills/bicameral-ingest/SKILL.md",
-        ".claude/skills/bicameral-ingest/SKILL.md",
-    }
-
     patterns = _compile_patterns()
     offenders: list[str] = []
     for path in _all_skill_files():
         rel = str(path.relative_to(_MCP_ROOT))
         body = path.read_text()
         for term, pattern in patterns:
-            if term in RETRIEVAL_TERMS and rel in RETRIEVAL_SKILL_EXCEPTIONS:
-                continue
             for match in pattern.finditer(body):
                 # Find the line number for a useful error message
                 line_no = body.count("\n", 0, match.start()) + 1

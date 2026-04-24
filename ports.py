@@ -79,16 +79,13 @@ class DriftAnalyzerPort(Protocol):
 
 @runtime_checkable
 class CodeIntelligencePort(Protocol):
-    """Port for code search and symbol resolution — what auto-grounding needs.
+    """Port for symbol resolution and structural graph traversal.
 
-    Implementations:
-      RealCodeLocatorAdapter — BM25 + tree-sitter + sqlite-vec (current)
-      CodeGenomeAdapter      — 9-overlay fused graph, BLAKE3 identity (future)
+    The server no longer performs BM25/vector code search — callers resolve
+    code regions themselves (Grep/Read) and hand file paths to the server.
+    This port exposes only deterministic primitives: symbol lookup, symbol
+    extraction, and 1-hop graph traversal.
     """
-
-    def search_code(
-        self, query: str, symbol_ids: list[int] | None = None
-    ) -> list[dict]: ...
 
     def validate_symbols(self, candidates: list[str]) -> list[dict]: ...
 

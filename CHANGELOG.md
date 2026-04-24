@@ -3,6 +3,83 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 0.6.4 — 2026-04-23 — nuke `search_code`, caller-LLM owns all code retrieval
+
+**Architecture shift**: the MCP server no longer performs any code search.
+The `search_code` tool and its BM25 + vector + RRF fusion stack are deleted.
+Callers (Claude Code, Cursor, any MCP client) resolve code regions using
+their native tools (Grep, Read, Glob) and hand file paths or symbols back
+to the server via `bicameral.bind` and the new `file_paths` arg on
+`bicameral.preflight`.
+
+Division of labor, made legible:
+- **Server owns**: ledger, graph, drift math, gating. Deterministic facts only.
+- **Caller owns**: deciding what files matter for a task. Probabilistic scoping.
+
+### Removed
+
+- `search_code` MCP tool + handler dispatch in `server.py`.
+- `code_locator/tools/search_code.py`, `code_locator/fusion/rrf.py`
+  and the `fusion/` package.
+- `code_locator/retrieval/bm25_protocol.py`, `bm25s_client.py`,
+  `sqlite_vec_client.py`, and the `retrieval/` package.
+- BM25 index build step in `code_locator_runtime.rebuild_index` — startup
+  is faster and the `.bicameral/` footprint smaller.
+- `bm25s` and `sqlite-vec` runtime/extra deps from `pyproject.toml`.
+- Config knobs: `bm25_backend`, `bm25_k1`, `bm25_b`, `rrf_k`,
+  `max_retrieval_results`, `channel_weights`, `vector_enabled`, `vector_model`.
+- `search_hint` field on `IngestMapping` + `IngestDecision` — it only existed
+  to widen BM25 queries; with BM25 gone it's dead weight.
+- `tests/eval_code_locator.py` — the eval harness was exclusively for
+  `search_code` recall.
+
+### Changed — `bicameral.preflight` accepts `file_paths`
+
+```
+bicameral.preflight(
+  topic="<1-line topic>",
+  file_paths=["<repo-relative path>", ...],   # NEW — optional
+  participants=[...],
+)
+```
+
+When the caller supplies `file_paths`, the server returns decisions pinned
+to exactly those files (region-anchored, high precision). When `file_paths`
+is omitted, preflight falls back to the ledger keyword search — existing
+callers that only pass `topic` keep working and still surface drifted /
+ungrounded decisions whose descriptions match the topic.
+
+### Changed — `CodeIntelligencePort` reduced to deterministic primitives
+
+```python
+class CodeIntelligencePort(Protocol):
+    def validate_symbols(self, candidates: list[str]) -> list[dict]: ...
+    async def extract_symbols(self, file_path: str) -> list[dict]: ...
+    def get_neighbors(self, symbol_id: int) -> list[dict]: ...
+```
+
+No `search_code` method. `RealCodeLocatorAdapter` no longer instantiates
+`Bm25sClient` or `SqliteVecClient` — it only loads the tree-sitter symbol
+index and the structural graph.
+
+### Changed — skills
+
+- `bicameral-ingest` SKILL.md rewrite: grounding procedure is now "use
+  Grep/Read/Glob + validate_symbols, then pass explicit `code_regions`".
+  All BM25/RRF/search_hint guidance removed.
+- `bicameral-preflight` SKILL.md: teaches the new `file_paths` argument.
+- `test_v0417_jargon_hygiene`: BM25/RRF exception for bicameral-ingest
+  removed — no skill should mention backend retrieval jargon now.
+
+### Migration notes
+
+No breaking change for existing `bicameral.preflight(topic=...)` callers.
+`IngestMapping.search_hint` is removed — callers that were passing it
+get a Pydantic `extra fields` silent drop (tolerant by default) or an
+error if `extra="forbid"` is configured. Real fix: stop passing it.
+
+---
+
 ## 0.6.1 — 2026-04-23 — session-start drift banner + ledger catch-up middleware
 
 **Reliability fix**: two persistent desync gaps (G1 — hook unreliability, G3 — cross-session surfacing) are closed.

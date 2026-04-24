@@ -86,13 +86,48 @@ the happy path.
 ```
 bicameral.preflight(
   topic="<the 1-line topic>",
+  file_paths=["<repo-relative path>", ...],  # optional — see below
   participants=[<names if user mentioned specific people>],  # optional
 )
 ```
 
+**About `file_paths`** — if you've already Grep/Read/Globbed to scope
+which files the task will touch, pass them here. The server looks up
+decisions pinned to those exact files (region-anchored, high precision)
+and merges them with the topic-keyword matches. When you haven't scoped
+yet, omit `file_paths` — the handler falls back to topic-only keyword
+search and still surfaces drifted / ungrounded decisions whose
+descriptions match the topic.
+
+Rule of thumb: if you're about to edit specific files, name them.
+If the user is asking "how should I approach X?" and you haven't
+looked at the code yet, omit `file_paths` and let the topic do the work.
+
 The handler runs `bicameral.search` internally, gates on the user's
 `guided_mode` setting, conditionally chains to `bicameral.brief`, and
 returns a `PreflightResponse` with a `fired: bool` field.
+
+### 2.5 Render session-start banner if present
+
+Before evaluating `response.fired`, check `response.session_start_banner`.
+If non-null, render it immediately — regardless of `fired` value:
+
+```
+⚠ SESSION START — N open decision(s) from previous session:
+  [drifted]   <description> (Source: <source_ref>)
+  [ungrounded] <description> (Source: <source_ref>)
+  ...
+(showing top 10 of X)   ← only when response.session_start_banner.truncated
+Review before implementing in affected areas.
+```
+
+Render each item prefixed with its `status` field — `[drifted]` (code changed
+since verification) and `[ungrounded]` (never bound to code) have different
+meanings. Use `session_start_banner.message` verbatim as the header if
+rendering compactly.
+
+The banner fires at most once per MCP server session (server-side dedup).
+Render it verbatim — never suppress it, even when `fired=false`.
 
 ### 3. Decide whether to render
 
