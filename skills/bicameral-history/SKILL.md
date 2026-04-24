@@ -36,6 +36,26 @@ bicameral.history(
 
 ## How to present
 
+### Render session-start banner first if present
+
+Before rendering the history table, check `response.session_start_banner`.
+If non-null, render it at the very top of your reply:
+
+```
+⚠ SESSION START — N open decision(s) from previous session:
+  [drifted]    <description> (Source: <source_ref>)
+  [ungrounded] <description> (Source: <source_ref>)
+  ...
+(showing top 10 of X)   ← only when response.session_start_banner.truncated
+Review before implementing in affected areas.
+```
+
+The banner fires at most once per MCP server session (server-side dedup).
+Render it verbatim — it surfaces both drifted (code changed since verified)
+and ungrounded (never bound to code) decisions.
+
+### Then render the history
+
 Group decisions by `HistoryFeature`. For each group:
 
 1. **Header**: `FEATURE NAME  Nreflected  Ndrifted  Nungrounded  Nsuperseded`

@@ -43,25 +43,50 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
         return sync_state["session_banner"]
 
     try:
-        drifted = await ctx.ledger.get_decisions_by_status(["drifted"])
-        if not drifted:
+        open_items = await ctx.ledger.get_decisions_by_status(["drifted", "ungrounded"])
+        if not open_items:
             sync_state["session_banner"] = None
             return None
+
+        drifted_count = sum(1 for d in open_items if d.get("status") == "drifted")
+        ungrounded_count = sum(1 for d in open_items if d.get("status") == "ungrounded")
+
+        max_items = 10
+        truncated = len(open_items) > max_items
+        # Prioritize drifted over ungrounded in the truncated view
+        sorted_items = sorted(
+            open_items,
+            key=lambda d: 0 if d.get("status") == "drifted" else 1,
+        )[:max_items]
+
+        items = [
+            {
+                "decision_id": d.get("decision_id", ""),
+                "description": d.get("description", ""),
+                "source_ref": d.get("source_ref", ""),
+                "status": d.get("status", ""),
+            }
+            for d in sorted_items
+        ]
+
+        parts = []
+        if drifted_count:
+            parts.append(f"{drifted_count} drifted")
+        if ungrounded_count:
+            parts.append(f"{ungrounded_count} ungrounded")
+        summary = " + ".join(parts)
+        overflow = f" (showing top {max_items})" if truncated else ""
+        message = (
+            f"Session start: {summary} decision(s){overflow} — review before "
+            "implementing in affected areas."
+        )
+
         banner = SessionStartBanner(
-            drifted_count=len(drifted),
-            items=[
-                {
-                    "decision_id": d.get("decision_id", ""),
-                    "description": d.get("description", ""),
-                    "source_ref": d.get("source_ref", ""),
-                }
-                for d in drifted
-            ],
-            message=(
-                f"Session start: {len(drifted)} drifted decision(s) — "
-                "code has changed since these were last verified. "
-                "Review before implementing in affected areas."
-            ),
+            drifted_count=drifted_count,
+            ungrounded_count=ungrounded_count,
+            items=items,
+            truncated=truncated,
+            message=message,
         )
         sync_state["session_banner"] = banner
         return banner

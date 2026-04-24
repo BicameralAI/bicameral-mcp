@@ -23,13 +23,17 @@ from pydantic import BaseModel
 
 
 class SessionStartBanner(BaseModel):
-    """One-per-session banner surfaced on the first MCP call that finds drifted decisions.
+    """One-per-session banner surfaced on the first MCP call that finds open decisions.
 
     Populated by sync_middleware.get_session_start_banner and attached to
-    PreflightResponse, SearchDecisionsResponse, and HistoryResponse.
+    PreflightResponse, SearchDecisionsResponse, HistoryResponse, and
+    DashboardResponse. Surfaces both drifted (code changed since verification)
+    and ungrounded (never bound to code) decisions — Jacob's "still floating".
     """
     drifted_count: int
-    items: list[dict]   # [{decision_id, description, source_ref}]
+    ungrounded_count: int = 0
+    items: list[dict]   # [{decision_id, description, source_ref, status}]
+    truncated: bool = False     # True when count of open items exceeds the item list
     message: str
 
 
@@ -609,6 +613,7 @@ class DashboardResponse(BaseModel):
     url: str                       # http://localhost:{port}
     status: Literal["started", "already_running"]
     port: int
+    session_start_banner: SessionStartBanner | None = None
 
 
 # ── Tool: bicameral.bind ─────────────────────────────────────────────

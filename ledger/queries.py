@@ -949,6 +949,31 @@ async def delete_binds_to_edge(
         logger.warning("[delete_binds_to] %s → %s failed: %s", decision_id, region_id, exc)
 
 
+async def has_prior_compliant_verdict(
+    client: LedgerClient,
+    decision_id: str,
+    region_id: str,
+) -> bool:
+    """True if ANY past content_hash for this (decision, region) was verified compliant.
+
+    Used by project_decision_status to distinguish:
+      - never-verified bindings (→ pending, waiting for first verdict)
+      - previously-verified bindings where code has since changed (→ drifted)
+
+    Without this check, every code edit silently parks decisions at "pending"
+    forever because the new hash has no cache entry.
+    """
+    rows = await client.query(
+        "SELECT count() AS n FROM compliance_check "
+        "WHERE decision_id = $d AND region_id = $r AND verdict = 'compliant' "
+        "GROUP ALL",
+        {"d": decision_id, "r": region_id},
+    )
+    if not rows:
+        return False
+    return int(rows[0].get("n", 0)) > 0
+
+
 async def project_decision_status(
     client: LedgerClient,
     decision_id: str,
@@ -959,7 +984,10 @@ async def project_decision_status(
     - No binds_to AND product_signoff None → 'ungrounded'
     - No binds_to AND product_signoff set → 'pending'
     - Any bound region with drifted verdict → 'drifted'
-    - Any bound region with no verdict for current hash → 'pending'
+    - Any bound region with no verdict for current hash, prior compliant
+      verdict existed → 'drifted' (was verified, code has since changed)
+    - Any bound region with no verdict for current hash, no prior verdict
+      → 'pending' (first-time bind, awaiting initial verification)
     - All bound regions compliant + product_signoff set → 'reflected'
     - All bound regions compliant + product_signoff None → 'pending' (hero case)
 
@@ -999,8 +1027,14 @@ async def project_decision_status(
 
         verdict = await get_compliance_verdict(client, decision_id, region_id, content_hash)
         if verdict is None:
-            any_pending = True
-            all_compliant = False
+            # Cache miss for the current hash. Distinguish first-time bind
+            # (pending) from post-verification code change (drifted).
+            if await has_prior_compliant_verdict(client, decision_id, region_id):
+                any_drifted = True
+                all_compliant = False
+            else:
+                any_pending = True
+                all_compliant = False
         elif verdict.get("pruned", False):
             # Pruned regions are not_relevant — invisible to aggregation
             continue

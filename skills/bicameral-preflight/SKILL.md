@@ -100,11 +100,18 @@ Before evaluating `response.fired`, check `response.session_start_banner`.
 If non-null, render it immediately — regardless of `fired` value:
 
 ```
-⚠ SESSION START — N drifted decision(s) from previous session:
-  • <description> (Source: <source_ref>)
+⚠ SESSION START — N open decision(s) from previous session:
+  [drifted]   <description> (Source: <source_ref>)
+  [ungrounded] <description> (Source: <source_ref>)
   ...
+(showing top 10 of X)   ← only when response.session_start_banner.truncated
 Review before implementing in affected areas.
 ```
+
+Render each item prefixed with its `status` field — `[drifted]` (code changed
+since verification) and `[ungrounded]` (never bound to code) have different
+meanings. Use `session_start_banner.message` verbatim as the header if
+rendering compactly.
 
 The banner fires at most once per MCP server session (server-side dedup).
 Render it verbatim — never suppress it, even when `fired=false`.

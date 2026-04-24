@@ -175,7 +175,7 @@ async def _find_overlap_candidates(
         rows = await ledger.search_by_query(
             query=description,
             max_results=top_k + 1,  # +1 to account for potential self-match
-            min_confidence=0.1,
+            min_confidence=0.4,
         )
     except Exception as exc:
         logger.debug("[ingest] supersession BM25 query failed: %s", exc)
