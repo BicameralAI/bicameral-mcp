@@ -72,7 +72,10 @@ def _send_bg(payload: dict) -> None:
         req = urllib.request.Request(
             _RELAY_URL,
             data=data,
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "User-Agent": f"bicameral-mcp/{payload.get('version', 'unknown')}",
+            },
             method="POST",
         )
         urllib.request.urlopen(req, timeout=3)
