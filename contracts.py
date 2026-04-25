@@ -239,6 +239,11 @@ class DriftEntry(BaseModel):
     source_ref: str
     source_excerpt: str = ""
     meeting_date: str = ""
+    # V1 B2 — advisory metadata for the eventual V2 caller-LLM verdict prompt.
+    # True only for drifted entries whose HEAD-vs-working-tree byte diff is
+    # provably semantics-preserving per ledger.ast_diff.is_cosmetic_change.
+    # NEVER gates drift surfacing or status; pure metadata.
+    cosmetic_hint: bool = False
 
 
 class DetectDriftResponse(BaseModel):
