@@ -497,8 +497,13 @@ class SurrealDBLedgerAdapter:
         try:
             ungrounded_decisions = await get_all_decisions(self._client, filter="ungrounded")
             for d in ungrounded_decisions:
+                # get_all_decisions returns rows with `decision_id` (aliased
+                # from id via `type::string(id) AS decision_id`); reading
+                # `d["id"]` returns "" and produces unusable grounding
+                # checks the caller cannot bind against. Surfaced by V1 F1
+                # regression coverage.
                 pending_grounding_checks.append({
-                    "decision_id": str(d.get("id", "")),
+                    "decision_id": str(d.get("decision_id") or d.get("id", "")),
                     "description": str(d.get("description", "")),
                     "reason": "ungrounded",
                 })
