@@ -149,47 +149,23 @@ Look at `response.fired`:
 
 ### 3.5 Scan recent user turns for uningested corrections
 
-Before classifying server-returned findings, scan the last ~10 user
-messages in the current conversation for **uningested corrections** —
-load-bearing design, scope, or constraint decisions the user stated
-that are NOT yet in the decision ledger. This closes the 80% gap where
-the user corrects Claude mid-session and the correction shapes the
-code but never reaches bicameral.
+Before classifying server-returned findings, invoke
+`/bicameral:capture-corrections` in **in-session mode**:
 
-**Step A — cheap pre-filter (regex, zero LLM cost):**
-Retain only messages that contain at least one of these markers (case-
-insensitive): `"actually"`, `"shouldn't"`, `"should not"`, `"don't use"`,
-`"do not use"`, `"wait,"`, `"no wait"`, `"nope"`, `"not X"` (generic
-negation + referent), `"instead of"`, `"rather than"`, `"let's not"`.
-If zero messages match, skip the rest of this step.
+```
+Skill("bicameral:capture-corrections", args="--mode in-session")
+```
 
-**Step B — classify remaining candidates:**
-For each candidate, classify against this rubric:
+That skill owns the canonical scan-and-classify rubric (Steps A → B → C).
+In in-session mode it scans the last ~10 user messages, auto-ingests
+mechanical corrections silently, and returns ask-corrections for merging
+into the stop-and-ask queue below.
 
-- **correction (ask)** — load-bearing design / scope / product decision
-  that contradicts, redirects, or constrains the in-flight work.
-  Example: *"abandoned checkout shouldn't use account_status — that
-  conflates signed-up-never-paid with churned"*.
-- **correction (mechanical)** — pure symbol/name clarification with no
-  design impact. Example: *"s/account_status/stripe_status/"*.
-- **not-a-correction** — clarifying question, reaction, off-topic,
-  minor copy-edit. Skip.
-
-Only `user` messages qualify — Claude's responses are downstream of
-corrections, not evidence of them.
-
-**Step C — ledger check for each correction:**
-For each classified correction, call
-`bicameral.search(query=<one-line paraphrase>, top_k=3)`. If any hit
-has cosine similarity ≥ 0.75 → treat as already ingested, skip. All
-others → queue as `uningested_corrections` findings.
-
-**Step D — merge into the classification pass below.**
-Mechanical corrections auto-ingest silently via
-`bicameral.ingest(source="conversation", decisions=[...])` with no
-user question (zero-friction capture).
-Ask corrections go into the stop-and-ask queue as the new 5th
-category.
+**Merge outcomes into step 4:**
+- Mechanical corrections → already ingested by capture-corrections, no
+  output needed here.
+- Ask corrections → add as `uningested_corrections` category (priority
+  slot 3: after drift, before open questions). One question max.
 
 ### 4. Classify findings before surfacing
 

@@ -71,16 +71,31 @@ For **mechanical** corrections: skip the ledger check, auto-ingest directly.
 
 ---
 
-## In-session mode (preflight integration)
+## In-session mode
 
-This mode is handled by `bicameral-preflight/SKILL.md` step 3.5.
-Reference this skill as the canonical rubric source.
+Invoked by `bicameral-preflight` step 3.5 with `--mode in-session`.
 
-Outcome:
-- Mechanical corrections → `bicameral.ingest(source="conversation", ...)`
-  silently, no user question.
-- Ask corrections → added to the stop-and-ask queue as the `uningested_corrections`
-  category (one question max per preflight call).
+Scope: last ~10 user messages in the current conversation (not the full
+session — preflight fires on every code verb, so a full-session scan would
+re-examine the same turns repeatedly).
+
+### Steps
+
+**1. Run the canonical rubric** (Steps A → B → C above) on the last ~10
+user messages.
+
+**2. Mechanical corrections:**
+Auto-ingest silently via `bicameral.ingest(source="conversation", decisions=[...])`.
+No user question asked.
+
+**3. Ask corrections:**
+Return to preflight's step 3.5 caller as `uningested_corrections` findings.
+Preflight merges them into its stop-and-ask queue (one question max,
+priority slot 3: after drift, before open questions).
+
+**4. Silent empty path.**
+If no corrections found, return nothing. Preflight continues without any
+capture-corrections output.
 
 ---
 
