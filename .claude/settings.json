@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json,sys; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command','').lstrip(); ops=('git commit','git merge ','git pull','git rebase --continue'); [print('bicameral: git write-op detected \u2014 call bicameral.link_commit(commit_hash=\\'HEAD\\') now to sync the decision ledger') for _ in [1] if any(c.startswith(op) for op in ops)]\""
+          }
+        ]
+      }
+    ]
+  }
+}
