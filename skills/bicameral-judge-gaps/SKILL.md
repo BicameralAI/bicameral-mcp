@@ -5,6 +5,8 @@ description: Apply the v0.4.19 business-requirement gap-judgment rubric to a con
 
 # Bicameral Judge-Gaps
 
+> Tuning parameters for this skill are defined in `skills/CONSTANTS.md`.
+
 This is the **caller-session LLM** half of the v0.4.19 gap judge. The
 server (`handlers/gap_judge.py`) built a structured context pack —
 decisions in scope, source excerpts, cross-symbol related decision

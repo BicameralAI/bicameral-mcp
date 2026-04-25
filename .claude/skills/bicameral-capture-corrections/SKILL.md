@@ -61,11 +61,13 @@ Only `user` turns qualify. Claude's own responses are never corrections.
 For each **ask** correction:
 
 ```
-bicameral.search(query=<one-line paraphrase of correction>, top_k=3)
+bicameral.search(query=<one-line paraphrase of correction>, top_k=3, min_confidence=0.4)
 ```
 
-If any result has similarity ≥ 0.75 → treat as already ingested, skip.
-All others → queue as `uningested_corrections`.
+If any result is returned → treat as already ingested, skip.
+`bicameral.search` uses BM25 full-text scoring; `min_confidence=0.4` sets the
+floor. Presence in the result set (not a score value) is the dedup signal.
+All corrections with no results → queue as `uningested_corrections`.
 
 For **mechanical** corrections: skip the ledger check, auto-ingest directly.
 

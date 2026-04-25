@@ -5,6 +5,8 @@ description: Pre-flight context check BEFORE implementing code. AUTO-FIRES on AN
 
 # Bicameral Preflight
 
+> Tuning parameters for this skill are defined in `skills/CONSTANTS.md`.
+
 The proactive context-surfacing skill. Bicameral notices when you're
 about to implement something and pushes the relevant prior decisions,
 drift, and open questions at you BEFORE Claude writes any code.
@@ -74,8 +76,7 @@ Examples:
 | "Continue what we started yesterday on the email queue" | `email queue retention nudge` *(infer from prior turn)* |
 | "Build the audit log feature Brian asked for" | `audit log feature` (with `participants=["Brian"]`) |
 
-The handler validates the topic deterministically (≥4 chars, ≥2
-non-stopword content tokens, not a generic catch-all). If your topic
+The handler validates the topic deterministically. If your topic
 fails validation, the handler returns `fired=false` with
 `reason="topic_too_generic"` — that's the silent skip path. Don't
 worry about getting validation perfect; the handler is forgiving on
@@ -140,7 +141,7 @@ Look at `response.fired`:
   never user-facing. Possible reasons: `no_matches`,
   `no_actionable_signal` (normal mode only, no drift/divergence),
   `topic_too_generic` (failed deterministic topic validation),
-  `recently_checked` (per-session dedup hit within 5 min),
+  `recently_checked` (per-session dedup — same topic checked recently),
   `guided_mode_off` (hit signal but guided mode disabled and nothing
   actionable), `preflight_disabled` (explicit env override mute).
 

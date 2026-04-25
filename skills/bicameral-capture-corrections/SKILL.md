@@ -5,6 +5,8 @@ description: Scans recent conversation turns (or a full session transcript at se
 
 # Bicameral Capture Corrections
 
+> Tuning parameters for this skill are defined in `skills/CONSTANTS.md`.
+
 Closes the gap where user corrections shape code but never reach the ledger.
 Bicameral only captures what gets explicitly ingested. This skill catches the
 rest — the "actually, don't do X", "wait, that should use Y", "let's not go
@@ -61,11 +63,13 @@ Only `user` turns qualify. Claude's own responses are never corrections.
 For each **ask** correction:
 
 ```
-bicameral.search(query=<one-line paraphrase of correction>, top_k=3)
+bicameral.search(query=<one-line paraphrase of correction>, top_k=3, min_confidence=0.4)
 ```
 
-If any result has similarity ≥ 0.75 → treat as already ingested, skip.
-All others → queue as `uningested_corrections`.
+If any result is returned → treat as already ingested, skip.
+`bicameral.search` uses BM25 full-text scoring; `min_confidence=0.4` sets the
+floor. Presence in the result set (not a score value) is the dedup signal.
+All corrections with no results → queue as `uningested_corrections`.
 
 For **mechanical** corrections: skip the ledger check, auto-ingest directly.
 
@@ -109,10 +113,12 @@ manually as `/bicameral:capture-corrections`.
 **1. Check for `.bicameral/` directory.**
 If not present, exit silently — this repo isn't using bicameral.
 
-**2. Determine transcript scope.**
-- If invoked by SessionEnd hook: scan the full session (all user turns from
-  this session).
-- If invoked manually: scan the last 20 user turns as a proxy for the session.
+**2. Determine invocation mode and transcript scope.**
+- If invoked with `--auto-ingest` (by the SessionEnd hook): scan the full
+  session and skip the user confirmation in steps 6-7 — auto-ingest all
+  found corrections immediately without prompting.
+- If invoked manually (no flag): scan the last 20 user turns as a proxy
+  for the session and show the confirmation flow.
 
 **3. Run the canonical rubric** (Steps A → B → C above) across all turns.
 
@@ -177,9 +183,10 @@ Then run the standard ratify prompt (same as bicameral-ingest step 7).
 2. **Only user turns.** Claude's own text is never a correction source.
 3. **No double-ask.** If preflight already surfaced a correction this
    session, do not surface it again in the SessionEnd batch.
-4. **Similarity threshold is 0.75.** Don't second-guess it in v1.
-   If the check seems wrong (obvious duplicate slips through), adjust
-   the query phrasing, not the threshold.
+4. **Dedup by presence, not score.** Call `bicameral.search` with
+   `min_confidence=0.4`. If any result is returned, treat the correction
+   as already ingested. BM25 scores are corpus-dependent and unbounded —
+   never gate on a numeric score value.
 5. **Ingest as proposals.** Captured corrections enter as `proposed`
    and need explicit ratification — same as all other ingests.
 6. **Guard on `.bicameral/`.** Never run in repos without a bicameral
@@ -194,10 +201,16 @@ user's project `.claude/settings.json`. No manual configuration needed.
 
 Command written by the setup wizard:
 ```
-[ -d .bicameral ] && claude -p '/bicameral:capture-corrections' || true
+[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral:capture-corrections --auto-ingest' || true
 ```
 
-The `.bicameral` guard keeps it silent in repos that don't use bicameral.
+Two guards:
+- `.bicameral` directory check — keeps it silent in repos that don't use bicameral.
+- `BICAMERAL_SESSION_END_RUNNING` env var — the child `claude -p` process inherits
+  the env var, so when it terminates and fires its own SessionEnd hook, the guard
+  sees the var is set and exits immediately. Prevents infinite recursion.
+
+`--auto-ingest` skips the interactive Y/n confirmation (non-interactive invocation).
 
 ---
 
