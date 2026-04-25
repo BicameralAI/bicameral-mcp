@@ -198,6 +198,14 @@ Categories with no ask-findings are silently skipped. If every
 finding in every category is mechanical, produce NO output (same as
 `fired=false` — silent).
 
+**Cosmetic drift rule**: if a `drifted` entry has `cosmetic_hint=true`,
+classify it as **mechanical** regardless of guided mode. The server has
+verified via AST comparison that the change is whitespace-only and
+semantically inert — the stored intent is still intact. Auto-resolve
+silently; do NOT add it to the drift ask-queue and do NOT emit a
+blocking hint. Render it with `~` prefix (not `⚠ DRIFTED:`) if you
+render it at all — see the template in Step 5.
+
 ### 5. Render the surfaced block
 
 When at least one ask-finding exists, surface the response using this
@@ -217,6 +225,11 @@ format. Lead with the `(bicameral surfaced)` attribution line.
     <file_path>:<symbol>:<lines>
     Source: <source_ref>
     Drift evidence: <drift_evidence verbatim>
+
+  ~ REFORMATTED: <decision description>      ← cosmetic_hint=true only
+    <file_path>:<symbol>:<lines>
+    Source: <source_ref>
+    (whitespace-only change — intent intact, no action needed)
 
 ⚠ N divergent decision pair(s) — pick a winner before continuing:
   • <symbol> (<file_path>): <summary>
@@ -310,8 +323,9 @@ For every finding this skill surfaces, classify first:
 
 - **mechanical** — one obvious correct answer (e.g., renamed symbol
   with identical signature; a decision whose code moved but semantics
-  are intact). Auto-apply the resolution silently. Do NOT ask the
-  user.
+  are intact; a `drifted` entry with `cosmetic_hint=true` — AST
+  comparison confirmed whitespace-only change). Auto-apply the
+  resolution silently. Do NOT ask the user.
 - **ask** — reasonable people could disagree (e.g., drifted behavior
   where the old decision may still be valid; divergent decisions where
   no clear winner exists). Emit ONE question per finding, using the
