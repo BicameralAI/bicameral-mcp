@@ -150,8 +150,14 @@ def test_parse_error_returns_false():
 
 
 def test_jsx_routes_through_javascript():
-    """JSX/TSX fall back to javascript/typescript per LANGUAGE_FALLBACK."""
+    """JSX/TSX fall back to javascript/typescript per LANGUAGE_FALLBACK.
+
+    Inputs must differ in bytes (otherwise the early-return at the top of
+    is_cosmetic_change short-circuits and the fallback path is never
+    exercised). Whitespace-only diff keeps the expected outcome True
+    while forcing the LANGUAGE_FALLBACK['jsx'] → 'javascript' resolution
+    and the _get_parser code path to actually run.
+    """
     before = "const X = () => <div>hi</div>"
-    after = "const X = () => <div>hi</div>"
-    # Identical bytes — short-circuits before the fallback even matters
+    after = "const  X  =  () => <div>hi</div>"  # extra spaces in the JS portion
     assert is_cosmetic_change(before, after, "jsx") is True

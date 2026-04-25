@@ -22,11 +22,14 @@ async def handle_search_decisions(
 ) -> SearchDecisionsResponse:
     # V1 A3: time the mandatory catch-up so callers can see how long this
     # handler spent in link_commit. Local timing (not sync_state) so nested
-    # calls don't step on each other's metrics.
+    # calls don't step on each other's metrics. Scope mirrors
+    # ``ensure_ledger_synced`` (preflight / history): cover both
+    # ``handle_link_commit`` AND ``get_session_start_banner`` so the same
+    # ``sync_catchup_ms`` field measures the same surface across handlers.
     t0 = time.perf_counter()
     sync_status: LinkCommitResponse = await handle_link_commit(ctx, "HEAD")
-    catchup_ms = round((time.perf_counter() - t0) * 1000, 3)
     banner = await get_session_start_banner(ctx)
+    catchup_ms = round((time.perf_counter() - t0) * 1000, 3)
 
     raw_matches = await ctx.ledger.search_by_query(query, max_results=max_results, min_confidence=min_confidence)
 

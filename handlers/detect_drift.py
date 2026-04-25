@@ -95,8 +95,13 @@ async def handle_detect_drift(
     source = "working_tree" if use_working_tree else "HEAD"
 
     # V1 B2: enrich drifted entries with an AST cosmetic hint. Read-path
-    # only — never mutates content_hash, never changes status.
-    _enrich_with_cosmetic_hints(entries, file_path, ctx.repo_path)
+    # only — never mutates content_hash, never changes status. Hint is
+    # meaningful only when the response advertises ``source="working_tree"``
+    # (the cosmetic comparison axis is HEAD vs working tree); skip on
+    # HEAD-source so we don't attach hints derived from a diff axis the
+    # caller didn't ask about.
+    if use_working_tree:
+        _enrich_with_cosmetic_hints(entries, file_path, ctx.repo_path)
 
     return DetectDriftResponse(
         file_path=file_path,
@@ -133,8 +138,15 @@ def _enrich_with_cosmetic_hints(
     if lang is None:
         return  # unsupported extension — no hint computed for this file
 
-    head_full = get_git_content(file_path, 1, 10**9, repo_path, ref="HEAD")
-    wt_full = get_git_content(file_path, 1, 10**9, repo_path, ref="working_tree")
+    # NOTE: ledger.status.get_git_content takes start_line / end_line in
+    # its signature but ignores them — it always returns the full file
+    # body. Two existing legacy callers do the slicing themselves after
+    # the call. We pass 0, 0 to make the unused-args reality explicit;
+    # we slice locally below per-region. Cleaning up the upstream
+    # signature is a separate refactor across all callers (see ledger/
+    # status.py:110, ledger/adapter.py:67).
+    head_full = get_git_content(file_path, 0, 0, repo_path, ref="HEAD")
+    wt_full = get_git_content(file_path, 0, 0, repo_path, ref="working_tree")
     if head_full is None or wt_full is None:
         return  # file missing at one side — can't compare, leave default
 

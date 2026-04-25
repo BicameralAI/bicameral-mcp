@@ -80,22 +80,24 @@ def is_cosmetic_change(before: str, after: str, lang: str) -> bool:
         return False
     resolved = LANGUAGE_FALLBACK.get(normalized, normalized)
 
+    # Single guarded block: parse + tree-error check + recursive signature
+    # comparison all live under one try/except so the function obeys its
+    # documented "fail-safe → False" contract even when ``_signature``
+    # blows the recursion limit on a deeply nested AST.
     try:
         parser = _get_parser(resolved)
         before_bytes = before.encode("utf-8")
         after_bytes = after.encode("utf-8")
         tree_before = parser.parse(before_bytes)
         tree_after = parser.parse(after_bytes)
-    except Exception as exc:
-        logger.debug("[ast_diff] parse failed for %s: %s", normalized, exc)
+        # If either input doesn't parse cleanly, refuse to call it cosmetic.
+        if tree_before.root_node.has_error or tree_after.root_node.has_error:
+            return False
+        return _signature(tree_before.root_node, before_bytes) == \
+               _signature(tree_after.root_node, after_bytes)
+    except (Exception, RecursionError) as exc:
+        logger.debug("[ast_diff] classifier failed for %s: %s", normalized, exc)
         return False
-
-    # If either input doesn't parse cleanly, refuse to call it cosmetic.
-    if tree_before.root_node.has_error or tree_after.root_node.has_error:
-        return False
-
-    return _signature(tree_before.root_node, before_bytes) == \
-           _signature(tree_after.root_node, after_bytes)
 
 
 def _signature(node: Any, source: bytes) -> tuple:
