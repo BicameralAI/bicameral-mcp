@@ -211,8 +211,15 @@ async def test_scenario_02_code_changed_after_grounded_pending_until_verdict(_sc
     )
     drift = await handle_detect_drift(ctx, "src/payments.py")
     statuses = {d.status for d in drift.decisions if d.symbol == "calculate_discount"}
-    assert "pending" in statuses or "drifted" in statuses, (
-        f"Expected pending or drifted (post-v0.5.0 awaits a verdict), got: "
+    # Acceptable per-decision states across the relevant version contracts:
+    #   - 'pending' / 'drifted' (pre-v0.7.0): hash differs, awaiting a verdict
+    #   - 'proposal'             (v0.7.0+):    decision is drift-exempt until
+    #                                          explicitly ratified via
+    #                                          bicameral_ratify; the substantive
+    #                                          drift signal still flows through
+    #                                          pending_compliance_checks above.
+    assert statuses & {"pending", "drifted", "proposal"}, (
+        f"Expected pending / drifted / proposal, got: "
         f"{[(d.status, d.symbol) for d in drift.decisions]}"
     )
 
