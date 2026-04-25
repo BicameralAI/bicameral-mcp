@@ -44,6 +44,8 @@ jobs:
           "
 
       # ── Clone OSS repos for eval ground truth ────────────────────────
+      # Only medusa is needed — saleor/vendure were used by eval_code_locator.py
+      # which was removed in v0.6.4 when search_code was nuked.
       - name: Clone eval repos (shallow, pinned commits)
         run: |
           clone_at_commit() {
@@ -58,8 +60,6 @@ jobs:
           }
           mkdir -p test-results/.repos
           clone_at_commit https://github.com/medusajs/medusa test-results/.repos/medusa dbff8196af90042829a5b8fd06adb27d7b8b5df3
-          clone_at_commit https://github.com/saleor/saleor test-results/.repos/saleor 88eee1d6b9589523ce5bd6955db8ec8a775decde
-          clone_at_commit https://github.com/vendure-ecommerce/vendure test-results/.repos/vendure e63387aa9e8ac44bbc72896ef9143265e3403948
 
       # ── Run all phases in a single pytest invocation ───────────────
       - name: Run MCP regression tests
