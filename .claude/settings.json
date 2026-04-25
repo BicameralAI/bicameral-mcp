@@ -10,6 +10,16 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -d .bicameral ] && claude -p '/bicameral:capture-corrections' || true"
+          }
+        ]
+      }
     ]
   }
 }
