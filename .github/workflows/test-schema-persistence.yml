@@ -1,0 +1,45 @@
+name: Schema Persistence Tests
+
+on:
+  push:
+    paths:
+      - 'ledger/schema.py'
+      - 'ledger/client.py'
+      - 'ledger/adapter.py'
+      - 'tests/test_schema_persistence.py'
+      - 'pyproject.toml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ledger/schema.py'
+      - 'ledger/client.py'
+      - 'ledger/adapter.py'
+      - 'tests/test_schema_persistence.py'
+      - 'pyproject.toml'
+
+defaults:
+  run:
+    working-directory: .
+
+jobs:
+  schema-persistence:
+    name: Schema Persistence Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run schema persistence tests
+        run: pytest tests/test_schema_persistence.py -v --tb=short
+        env:
+          # tests construct their own surrealkv:// paths via tmp_path;
+          # this fallback prevents any fixture from defaulting to a shared db
+          SURREAL_URL: 'memory://'
+          REPO_PATH: ${{ github.workspace }}

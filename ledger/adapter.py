@@ -43,7 +43,7 @@ from .queries import (
     upsert_sync_state,
     upsert_vocab_cache,
 )
-from .schema import init_schema, migrate
+from .schema import DestructiveMigrationRequired, init_schema, migrate
 from .status import (
     compute_content_hash,
     derive_status,
@@ -113,19 +113,45 @@ class SurrealDBLedgerAdapter:
         self._url = url or os.getenv("SURREAL_URL", _default_db_url())
         self._client = LedgerClient(url=self._url, ns=ns, db=db)
         self._connected = False
+        self._pending_destructive: DestructiveMigrationRequired | None = None
 
     async def connect(self) -> None:
-        """Connect, initialize schema, and run migrations (idempotent)."""
+        """Connect, initialize schema, and run migrations (idempotent).
+
+        If a destructive migration is pending, stores it on _pending_destructive
+        and marks _connected=True (partial connect). All tool calls will then
+        surface the error until the user runs bicameral_reset(confirm=True).
+        SchemaVersionTooNew propagates immediately — caller must upgrade binary.
+        """
         if not self._connected:
             await self._client.connect()
             await init_schema(self._client)
-            await migrate(self._client)
+            # memory:// has no persisted data — always allow destructive migrations.
+            _allow_destructive = self._url.startswith("memory://")
+            try:
+                await migrate(self._client, allow_destructive=_allow_destructive)
+            except DestructiveMigrationRequired as exc:
+                self._pending_destructive = exc
+                self._connected = True
+                logger.warning("[ledger] destructive migration pending: %s", exc)
+                return
             self._connected = True
             logger.info("[ledger] SurrealDBLedgerAdapter ready at %s", self._url)
 
     async def _ensure_connected(self) -> None:
         if not self._connected:
             await self.connect()
+        if self._pending_destructive is not None:
+            raise self._pending_destructive
+
+    async def force_migrate(self) -> None:
+        """Apply all pending migrations including destructive ones.
+
+        Called by handle_reset after confirm=True to unblock the partial connect.
+        """
+        await migrate(self._client, allow_destructive=True)
+        self._pending_destructive = None
+        logger.info("[ledger] force_migrate: all pending migrations applied")
 
     # ── Core adapter interface ────────────────────────────────────────────
 
@@ -240,7 +266,7 @@ class SurrealDBLedgerAdapter:
             f"FROM decision WHERE {conditions} LIMIT 50"
         )
         result = await self._client.query(query)
-        return result[0] if result else []
+        return result if result else []
 
     async def ingest_commit(
         self,

@@ -54,7 +54,7 @@ async def _fresh_stub_ctx() -> tuple[_StubCtx, LedgerClient]:
     c = LedgerClient(url="memory://", ns="resolve_test", db="ledger_test")
     await c.connect()
     await init_schema(c)
-    await migrate(c)
+    await migrate(c, allow_destructive=True)
     return _StubCtx(_StubLedger(c)), c
 
 

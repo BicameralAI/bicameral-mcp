@@ -24,7 +24,7 @@ async def _fresh_client() -> LedgerClient:
     c = LedgerClient(url="memory://", ns="bicameral_test", db="ledger_test")
     await c.connect()
     await init_schema(c)
-    await migrate(c)
+    await migrate(c, allow_destructive=True)
     return c
 
 
@@ -265,7 +265,7 @@ async def test_migrate_is_idempotent():
     c = await _fresh_client()
     try:
         # Already at v5 from _fresh_client(); running migrate() again is fine.
-        await migrate(c)
+        await migrate(c, allow_destructive=True)
         rows = await c.query("SELECT version FROM schema_meta LIMIT 1")
         assert rows[0]["version"] == 5
     finally:

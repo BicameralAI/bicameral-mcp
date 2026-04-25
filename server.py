@@ -36,6 +36,7 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
+from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 from handlers.bind import handle_bind
 from handlers.gap_judge import handle_judge_gaps
 from handlers.ingest import handle_ingest
@@ -724,6 +725,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
+    except (DestructiveMigrationRequired, SchemaVersionTooNew) as exc:
+        _errored = True
+        action = (
+            "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
+            if isinstance(exc, DestructiveMigrationRequired)
+            else "upgrade your binary: pipx upgrade bicameral-mcp"
+        )
+        return [TextContent(
+            type="text",
+            text=json.dumps({"error": str(exc), "action": action}, indent=2),
+        )]
     except Exception:
         _errored = True
         raise

@@ -51,7 +51,11 @@ async def handle_reset(
     """
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
-        await ledger.connect()
+        await ledger.connect()  # may partially succeed with _pending_destructive set
+    # If a destructive migration is pending and the user confirmed, apply it now
+    # before wiping so the schema matches the code.
+    if confirm and hasattr(ledger, "force_migrate") and getattr(ledger, "_pending_destructive", None):
+        await ledger.force_migrate()
 
     cursors = await _get_cursors(ledger, ctx.repo_path)
     cursors_before = len(cursors)

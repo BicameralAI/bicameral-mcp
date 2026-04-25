@@ -29,6 +29,36 @@ logger = logging.getLogger(__name__)
 #   - removed: maps_to, implements
 SCHEMA_VERSION = 5
 
+# Maps schema version → minimum bicameral-mcp code version that understands it.
+# Used to produce actionable "upgrade your binary" messages.
+SCHEMA_COMPATIBILITY: dict[int, str] = {
+    1: "0.1.0",
+    2: "0.3.0",
+    3: "0.4.10",
+    4: "0.5.0",
+    5: "0.6.0",
+}
+
+# Migrations that drop or recreate tables/data. These are never auto-applied;
+# the user must explicitly confirm via bicameral_reset(confirm=True).
+DESTRUCTIVE_MIGRATIONS: frozenset[int] = frozenset({4})
+
+
+class DestructiveMigrationRequired(LedgerError):
+    """Pending migration step drops data and requires explicit user confirmation.
+
+    Raise when a destructive migration is pending and allow_destructive=False.
+    Callers should surface: "run bicameral_reset(confirm=True) to proceed."
+    """
+
+
+class SchemaVersionTooNew(LedgerError):
+    """DB schema version is newer than the running code understands.
+
+    Raised when the DB was written by a newer binary. User must upgrade.
+    """
+
+
 # Analyzers
 _ANALYZERS = [
     # Business language: transcripts, PRDs, decisions
@@ -434,10 +464,16 @@ async def _set_schema_version(client: LedgerClient, version: int) -> None:
     )
 
 
-async def migrate(client: LedgerClient) -> None:
+async def migrate(client: LedgerClient, allow_destructive: bool = False) -> None:
     """Run any pending migrations to bring the DB up to SCHEMA_VERSION.
 
     Called after init_schema() in adapter.connect(). Safe to call repeatedly.
+
+    Raises:
+        SchemaVersionTooNew: DB schema is ahead of the code — upgrade the binary.
+        DestructiveMigrationRequired: A pending step drops data and
+            allow_destructive=False. Call with allow_destructive=True (via
+            bicameral_reset confirm=True) to proceed.
     """
     current = await _get_schema_version(client)
 
@@ -445,12 +481,12 @@ async def migrate(client: LedgerClient) -> None:
         return
 
     if current > SCHEMA_VERSION:
-        logger.warning(
-            "[migration] DB schema version %d is newer than code version %d. "
-            "You may be running an older version of bicameral-mcp.",
-            current, SCHEMA_VERSION,
+        required_ver = SCHEMA_COMPATIBILITY.get(current, "unknown")
+        raise SchemaVersionTooNew(
+            f"DB schema v{current} requires bicameral-mcp>={required_ver}; "
+            f"you're running schema v{SCHEMA_VERSION}. "
+            f"Upgrade: pipx upgrade bicameral-mcp"
         )
-        return
 
     logger.info(
         "[migration] Schema version %d → %d (%d migration(s) to apply)",
@@ -462,6 +498,11 @@ async def migrate(client: LedgerClient) -> None:
         if fn is None:
             logger.warning("[migration] No migration function for version %d", target_version)
             continue
+        if target_version in DESTRUCTIVE_MIGRATIONS and not allow_destructive:
+            raise DestructiveMigrationRequired(
+                f"schema v{target_version - 1}→v{target_version} is a breaking migration "
+                f"that drops legacy data. Call bicameral_reset(confirm=True) to proceed."
+            )
         await fn(client)
         await _set_schema_version(client, target_version)
 

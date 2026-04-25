@@ -75,7 +75,7 @@ async def _fresh_client() -> LedgerClient:
     c = LedgerClient(url="memory://", ns="cache_sem_test", db="ledger_test")
     await c.connect()
     await init_schema(c)
-    await migrate(c)
+    await migrate(c, allow_destructive=True)
     return c
 
 
