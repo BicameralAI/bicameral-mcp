@@ -5,6 +5,8 @@ description: Ingest decisions into the decision ledger. AUTO-TRIGGER on ANY of t
 
 # Bicameral Ingest
 
+> Tuning parameters for this skill are defined in `skills/CONSTANTS.md`.
+
 Ingest **implementation-relevant** decisions from a source document into the decision ledger so they can be tracked against the codebase.
 
 ## When to use
@@ -23,7 +25,7 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 - Raw content exceeds ~2000 tokens
 - Markdown document contains ≥ 3 H1 headings or ≥ 5 H2 headings
-- Transcript contains ≥ 5 distinct speaker turns with ≥ 30s gaps between clusters
+- Transcript contains ≥ 5 distinct speaker turns with long gaps suggesting separate sessions
 - Your first-pass read identifies ≥ 3 distinct topical themes
 
 **If none of these trigger**, skip to step 1 — single-shot ingest stays the common case.
@@ -555,7 +557,7 @@ bicameral.ratify(
 Confirm the result:
 ```
 ✓ Ratified 3/3 — drift tracking active on these decisions.
-  (2 skipped — still proposals, will surface as stale after 14 days)
+  (2 skipped — still proposals, will surface as stale after inactivity)
 ```
 
 **Never silently skip the ratify step.** If the user says "just ingest, don't ask",

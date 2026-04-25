@@ -356,11 +356,21 @@ _BICAMERAL_HOOK_COMMAND = (
 )
 
 
-def _install_claude_hooks(repo_path: Path) -> bool:
-    """Merge the bicameral PostToolUse hook into .claude/settings.json.
+_BICAMERAL_SESSION_END_COMMAND = (
+    "[ -d .bicameral ] && claude -p '/bicameral:capture-corrections' || true"
+)
 
-    Idempotent — safe to call on every setup run. Returns True if a new
-    entry was written, False if already present.
+
+def _install_claude_hooks(repo_path: Path) -> bool:
+    """Merge bicameral hooks into the user's .claude/settings.json.
+
+    Installs two hooks:
+    - PostToolUse/Bash: reminds agent to call link_commit after git write-ops.
+    - SessionEnd: runs bicameral-capture-corrections to catch uningested
+      mid-session corrections (only fires when .bicameral/ exists).
+
+    Idempotent — safe to call on every setup run. Returns True if any new
+    entry was written, False if both were already present.
     """
     settings_path = repo_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -373,30 +383,48 @@ def _install_claude_hooks(repo_path: Path) -> bool:
             existing = {}
 
     hooks = existing.setdefault("hooks", {})
+    wrote_anything = False
+
+    # ── PostToolUse / Bash — git write-op reminder ───────────────────
     post_tool_use: list = hooks.setdefault("PostToolUse", [])
-
-    # Idempotency: skip if any existing Bash entry already references bicameral
-    for entry in post_tool_use:
-        if entry.get("matcher") == "Bash":
-            for h in entry.get("hooks", []):
-                if "bicameral" in h.get("command", ""):
-                    return False
-
-    # Find or create a Bash matcher entry
-    bash_entry = next(
-        (e for e in post_tool_use if e.get("matcher") == "Bash"), None
+    post_hook_present = any(
+        "bicameral" in h.get("command", "")
+        for entry in post_tool_use
+        if entry.get("matcher") == "Bash"
+        for h in entry.get("hooks", [])
     )
-    if bash_entry is None:
-        bash_entry = {"matcher": "Bash", "hooks": []}
-        post_tool_use.append(bash_entry)
+    if not post_hook_present:
+        bash_entry = next(
+            (e for e in post_tool_use if e.get("matcher") == "Bash"), None
+        )
+        if bash_entry is None:
+            bash_entry = {"matcher": "Bash", "hooks": []}
+            post_tool_use.append(bash_entry)
+        bash_entry["hooks"].append({
+            "type": "command",
+            "command": _BICAMERAL_HOOK_COMMAND,
+        })
+        wrote_anything = True
 
-    bash_entry["hooks"].append({
-        "type": "command",
-        "command": _BICAMERAL_HOOK_COMMAND,
-    })
+    # ── SessionEnd — capture uningested corrections ──────────────────
+    session_end: list = hooks.setdefault("SessionEnd", [])
+    session_end_present = any(
+        "bicameral" in h.get("command", "")
+        for entry in session_end
+        for h in entry.get("hooks", [])
+    )
+    if not session_end_present:
+        session_end.append({
+            "hooks": [{
+                "type": "command",
+                "command": _BICAMERAL_SESSION_END_COMMAND,
+            }]
+        })
+        wrote_anything = True
 
-    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
-    return True
+    if wrote_anything:
+        settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    return wrote_anything
 
 
 def _install_skills(repo_path: Path) -> int:

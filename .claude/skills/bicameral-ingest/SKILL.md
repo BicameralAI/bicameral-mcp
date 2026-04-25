@@ -23,7 +23,7 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 - Raw content exceeds ~2000 tokens
 - Markdown document contains ≥ 3 H1 headings or ≥ 5 H2 headings
-- Transcript contains ≥ 5 distinct speaker turns with ≥ 30s gaps between clusters
+- Transcript contains ≥ 5 distinct speaker turns with long gaps suggesting separate sessions
 - Your first-pass read identifies ≥ 3 distinct topical themes
 
 **If none of these trigger**, skip to step 1 — single-shot ingest stays the common case.

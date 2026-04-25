@@ -86,7 +86,7 @@ pipx install bicameral-mcp
 bicameral-mcp setup
 ```
 
-The setup wizard detects your repo, installs the MCP server config into Claude Code, and adds a git hook that automatically syncs the ledger after every commit. Restart Claude Code and you're done.
+The setup wizard detects your repo, installs the MCP server config into Claude Code, adds a git hook that automatically syncs the ledger after every commit, and adds a session-end hook that captures any design decisions you stated mid-session but didn't explicitly ingest. Restart Claude Code and you're done.
 
 Verify it works:
 
@@ -178,7 +178,8 @@ Running `bicameral-mcp setup` writes these files to your repo:
 | `.bicameral/ledger.db` | SurrealDB decision ledger (solo mode) | Auto-created on first tool call |
 | `.gitignore` entry | Ignores `.bicameral/` in solo mode | Recommended |
 | `.claude/settings.json` | PostToolUse hook: auto-calls `bicameral.link_commit` after git commits | Optional — improves sync |
-| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral:ingest`, `/bicameral:preflight`, etc.) | Recommended |
+| `.claude/settings.json` | SessionEnd hook: runs `bicameral-capture-corrections` to catch uningested mid-session decisions | Optional — closes correction capture gap |
+| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral:ingest`, `/bicameral:preflight`, `/bicameral:capture-corrections`, etc.) | Recommended |
 
 ### Removing Bicameral
 
