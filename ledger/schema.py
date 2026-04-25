@@ -32,16 +32,13 @@ SCHEMA_VERSION = 5
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
 SCHEMA_COMPATIBILITY: dict[int, str] = {
-    1: "0.1.0",
-    2: "0.3.0",
-    3: "0.4.10",
     4: "0.5.0",
     5: "0.6.0",
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
 # the user must explicitly confirm via bicameral_reset(confirm=True).
-DESTRUCTIVE_MIGRATIONS: frozenset[int] = frozenset({4})
+DESTRUCTIVE_MIGRATIONS: frozenset[int] = frozenset()
 
 
 class DestructiveMigrationRequired(LedgerError):
@@ -275,106 +272,6 @@ async def init_schema(client: LedgerClient) -> None:
 
 # ── Migrations ──────────────────────────────────────────────────────────
 
-async def _migrate_v0_to_v1(client: LedgerClient) -> None:
-    """v0 → v1: Add source_span table + yields edge (non-breaking)."""
-    logger.info("[migration] v0 → v1: source_span table + yields edge (non-breaking)")
-
-
-async def _migrate_v1_to_v2(client: LedgerClient) -> None:
-    """v1 → v2: vocab_cache.symbols needs FLEXIBLE TYPE array for nested objects."""
-    try:
-        await client.execute(
-            "DEFINE FIELD symbols ON vocab_cache FLEXIBLE TYPE array DEFAULT []",
-        )
-    except LedgerError as exc:
-        if "already exists" not in str(exc):
-            raise
-        logger.debug("[migration] v1 → v2: vocab_cache.symbols already FLEXIBLE — skipping")
-    logger.info("[migration] v1 → v2: vocab_cache.symbols → FLEXIBLE TYPE array")
-
-
-async def _migrate_v2_to_v3(client: LedgerClient) -> None:
-    """v2 → v3: compliance_check table — LLM verification cache (non-breaking)."""
-    logger.info("[migration] v2 → v3: compliance_check table (non-breaking)")
-
-
-async def _migrate_v3_to_v4(client: LedgerClient) -> None:
-    """v3 → v4: v0.5.0 decision-tier refactor — BREAKING / clean break.
-
-    Drops legacy tables (intent, source_span, maps_to, implements, old yields).
-    Recreates compliance_check with decision_id (renamed from intent_id).
-    New tables (input_span, decision, binds_to, locates) already created
-    by init_schema which ran before this migration.
-
-    Source cursor rows survive — they guide replay of original ingests
-    against the clean v4 schema.
-    """
-    logger.warning(
-        "[migration] v3 → v4: Schema v4 is a clean break — legacy v3 data is "
-        "dropped. Re-ingest from sources via bicameral.ingest. "
-        "Run bicameral.reset to see the source_cursor replay plan."
-    )
-
-    # Drop legacy tables. REMOVE TABLE cascades indexes + data.
-    for table in ("intent", "source_span", "maps_to", "implements"):
-        try:
-            await client.execute(f"REMOVE TABLE {table}")
-            logger.debug("[migration] dropped table %s", table)
-        except Exception as exc:
-            logger.debug("[migration] drop %s skipped: %s", table, exc)
-
-    # Drop old yields (source_span → intent) so init_schema's new
-    # yields (input_span → decision) can take its place uncontested.
-    try:
-        await client.execute("REMOVE TABLE yields")
-        logger.debug("[migration] dropped old yields edge")
-    except Exception as exc:
-        logger.debug("[migration] drop yields skipped: %s", exc)
-
-    # Recreate yields with v4 endpoint types (init_schema already tried but
-    # was blocked by "already exists" on the old table).
-    for sql in [
-        "DEFINE TABLE yields SCHEMAFULL TYPE RELATION IN input_span OUT decision",
-        "DEFINE FIELD created_at ON yields TYPE datetime DEFAULT time::now()",
-        "DEFINE INDEX idx_yields_unique ON yields FIELDS in, out UNIQUE",
-    ]:
-        await _execute_define_idempotent(client, sql)
-
-    # Drop compliance_check (had intent_id) so init_schema's new definition
-    # (decision_id + pruned field) can land cleanly.
-    try:
-        await client.execute("REMOVE TABLE compliance_check")
-        logger.debug("[migration] dropped compliance_check for field rename")
-    except Exception as exc:
-        logger.debug("[migration] drop compliance_check skipped: %s", exc)
-
-    # Recreate compliance_check with v4 fields.
-    for sql in [
-        "DEFINE TABLE compliance_check SCHEMAFULL",
-        "DEFINE FIELD decision_id  ON compliance_check TYPE string",
-        "DEFINE FIELD region_id    ON compliance_check TYPE string",
-        "DEFINE FIELD content_hash ON compliance_check TYPE string",
-        "DEFINE FIELD commit_hash  ON compliance_check TYPE string DEFAULT ''",
-        "DEFINE FIELD verdict      ON compliance_check TYPE string "
-        "ASSERT $value IN ['compliant', 'drifted', 'not_relevant']",
-        "DEFINE FIELD pruned       ON compliance_check TYPE bool DEFAULT false",
-        "DEFINE FIELD confidence   ON compliance_check TYPE string "
-        "ASSERT $value IN ['high', 'medium', 'low']",
-        "DEFINE FIELD explanation  ON compliance_check TYPE string DEFAULT ''",
-        "DEFINE FIELD phase        ON compliance_check TYPE string "
-        "ASSERT $value IN ['ingest', 'drift', 'regrounding', 'supersession', 'divergence'] "
-        "DEFAULT 'drift'",
-        "DEFINE FIELD checked_at   ON compliance_check TYPE datetime DEFAULT time::now()",
-        "DEFINE INDEX idx_cc_cache_key ON compliance_check FIELDS decision_id, region_id, content_hash UNIQUE",
-        "DEFINE INDEX idx_cc_decision  ON compliance_check FIELDS decision_id",
-        "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
-        "DEFINE INDEX idx_cc_commit    ON compliance_check FIELDS commit_hash",
-    ]:
-        await _execute_define_idempotent(client, sql)
-
-    logger.info("[migration] v3 → v4: complete")
-
-
 async def _migrate_v4_to_v5(client: LedgerClient) -> None:
     """v4 → v5: Remove stale v3-era yields edges and deduplicate.
 
@@ -437,12 +334,9 @@ async def _migrate_v4_to_v5(client: LedgerClient) -> None:
     logger.info("[migration] v4 → v5: yields table clean, unique index applied")
 
 
-# Registry: version → migration function that brings DB from version-1 to version
+# Registry: version → migration function that brings DB from version-1 to version.
+# Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
-    1: _migrate_v0_to_v1,
-    2: _migrate_v1_to_v2,
-    3: _migrate_v2_to_v3,
-    4: _migrate_v3_to_v4,
     5: _migrate_v4_to_v5,
 }
 
