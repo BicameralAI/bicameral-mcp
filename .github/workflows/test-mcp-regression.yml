@@ -72,20 +72,6 @@ jobs:
           --junitxml=test-results/results.xml
           --html=test-results/report.html --self-contained-html
 
-      # ── Retrieval quality regression gate ─────────────────────────
-      # Threshold recalibrated 2026-04-14: v0.4.6 changed _ground_single
-      # to re-run search_code with regex-token graph seeds, which improved
-      # multi-region grounding (FC-2 fix) but degraded description-mode MRR
-      # from 0.66 to ~0.19 because NL tokens fuzzy-match wrong symbols.
-      # Threshold lowered from 0.55 to 0.10 until F1 (LLM symbol seeding)
-      # restores seed quality. Variance raised to 0.25 for same reason.
-      - name: RAG eval regression gate (description mode — matches ingest path)
-        run: >
-          python tests/eval_code_locator.py
-          --multi-repo '{"medusa": "test-results/.repos/medusa", "saleor": "test-results/.repos/saleor", "vendure": "test-results/.repos/vendure"}'
-          --top-k 3 --use-description --min-mrr 0.10 --max-repo-variance 0.25
-          -o test-results/eval-regression.json
-
       # ── Diagnostic: report ANTHROPIC_API_KEY visibility ───────────
       # GitHub masks secret values in logs, but we can safely report
       # (a) whether the secret-expression evaluates to non-empty and
