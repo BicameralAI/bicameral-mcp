@@ -9,7 +9,7 @@ V1 of a two-part desync-correctness initiative. V1 ships measurement
 infrastructure, a strict-whitelist cosmetic-change classifier, relocation
 context enrichment, and a canonical 13-scenario regression matrix —
 **without touching any destructive write path**. V2 (separate effort,
-design captured in `docs/desync-optimization.md` with nine rounds of Codex
+design captured in `docs/v2-desync-optimization-guide.md` with nine rounds of Codex
 review) tackles the destructive-path overhaul: atomic rebind, baseline
 advancement with full CAS, schema migration v6, append-only verdict
 history.
@@ -18,7 +18,7 @@ V1 introduces zero new mutating capabilities. Every change is one of:
 read-only measurement, additive contract field, pure function, test
 coverage, or a surgical bug fix to an already-shipped path. The plan,
 phase breakdown, V2 deferred items, and Codex review parking lot live in
-`docs/desync-optimization-v1-plan.md`.
+`docs/v2-desync-optimization-guide.md`.
 
 ### Added — `tests/bench_drift.py` (A1)
 
@@ -175,9 +175,9 @@ properly upstream by `66796ef`, so V1 ships against
 
 ### Deferred to V2
 
-Captured in full in `docs/desync-optimization.md` (design target with
+Captured in full in `docs/v2-desync-optimization-guide.md` (design target with
 nine rounds of Codex review) and summarized in
-`docs/desync-optimization-v1-plan.md` §4–§5:
+`docs/v2-desync-optimization-guide.md` §4–§5:
 
 - A0 — atomic SurrealQL block primitive (Python SDK doesn't support
   `begin_transaction()` in embedded mode).
