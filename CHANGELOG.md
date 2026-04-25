@@ -3,6 +3,200 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased — desync optimization V1 — measurement + read-path advisory
+
+V1 of a two-part desync-correctness initiative. V1 ships measurement
+infrastructure, a strict-whitelist cosmetic-change classifier, relocation
+context enrichment, and a canonical 13-scenario regression matrix —
+**without touching any destructive write path**. V2 (separate effort,
+design captured in `docs/desync-optimization.md` with nine rounds of Codex
+review) tackles the destructive-path overhaul: atomic rebind, baseline
+advancement with full CAS, schema migration v6, append-only verdict
+history.
+
+V1 introduces zero new mutating capabilities. Every change is one of:
+read-only measurement, additive contract field, pure function, test
+coverage, or a surgical bug fix to an already-shipped path. The plan,
+phase breakdown, V2 deferred items, and Codex review parking lot live in
+`docs/desync-optimization-v1-plan.md`.
+
+### Added — `tests/bench_drift.py` (A1)
+
+Drift benchmark harness. Seeds 100 decisions across 25 files via
+tree-sitter `extract_symbols` (no BM25 index build required), times
+`handle_search_decisions`, `handle_detect_drift`, `handle_link_commit`
+under a `memory://` ledger, writes
+`test-results/bench/drift_baseline.json` plus a stdout summary.
+Marked `@pytest.mark.bench` so default test runs skip it; run via
+`pytest tests/bench_drift.py -v -m bench -s`.
+
+Baseline on Apple Silicon (post-rebase, surrealdb 2.0.0):
+
+| handler            | p50 (ms) | p95 (ms) | max (ms) |
+|--------------------|---------:|---------:|---------:|
+| search_decisions   |      9.2 |     10.4 |     11.0 |
+| detect_drift       |     14.2 |     15.5 |     16.4 |
+| link_commit (warm) |      7.3 |      8.0 |      8.3 |
+
+All 50–185× under the V2 perf targets in `PLAN.md:83`
+(`search_decisions < 2s`, `detect_drift < 1s`).
+
+### Added — `handlers/sync_middleware.repo_write_barrier(ctx)` (A2-light)
+
+Per-repo `asyncio.Lock` async context manager backed by a module-level
+`dict[repo_path, asyncio.Lock]`. `handle_bind` wraps its body via a thin
+`_do_bind` inner function. Different repos run concurrently; same repo
+serializes. Lazy guard-lock construction avoids the "bound to wrong
+loop" pitfall across test event loops. Yields a mutable `BarrierTiming`
+holder whose `held_ms` is populated on exit (including on exceptions).
+
+Deliberately narrow scope: does NOT protect `resolve_compliance` or
+cross-process writers — both are V2 scope (V1 plan §5.2, §5.5).
+
+### Added — `contracts.SyncMetrics` (A3)
+
+```python
+class SyncMetrics(BaseModel):
+    sync_catchup_ms: float | None = None
+    barrier_held_ms: float | None = None
+```
+
+Attached as `sync_metrics: SyncMetrics | None = None` to
+`SearchDecisionsResponse`, `PreflightResponse`, `HistoryResponse`,
+`BindResponse`. Purely additive, non-breaking. Each handler times its
+own sync call locally so nested calls (e.g. preflight chaining to
+search_decisions) don't step on each other's metrics.
+
+### Added — `ledger/ast_diff.is_cosmetic_change(before, after, lang)` (B1)
+
+Strict-whitelist tree-sitter classifier returning `True` only when two
+snippets differ by inter-token whitespace alone. Compares a recursive
+`(node.type, child_sigs | leaf_bytes)` signature; identifier renames,
+comment edits (incl. `# type: ignore` / `# noqa` / `// @ts-ignore` /
+build tags / lint pragmas), docstring edits, trailing-comma changes,
+string-literal changes, import reorders, and any AST shape change all
+return `False`. Reuses `code_locator.indexing.symbol_extractor._get_parser`
+so the cosmetic detector and symbol indexer can never silently disagree
+on supported languages: python, javascript, typescript, java, go, rust,
+c_sharp (plus jsx → javascript and tsx → typescript via
+`LANGUAGE_FALLBACK`). Unsupported langs, parse failures, and trees with
+`has_error` all fail safe to `False`.
+
+False negatives (real cosmetic changes routed unbiased to L3 in V2) are
+cheap; false positives (semantics-affecting changes mislabeled cosmetic)
+bias future L3 prompts toward "looks fine" — exactly the failure mode
+the strict whitelist prevents.
+
+### Added — `DriftEntry.cosmetic_hint: bool = False` (B2)
+
+Populated by `handlers.detect_drift._enrich_with_cosmetic_hints` after
+the pure `raw_decisions_to_drift_entries` mapping (IO encapsulated
+outside the pure function). Read-path advisory ONLY — never mutates
+`content_hash`, never gates drift surfacing or status, never advances
+baseline. Five fail-safe paths leave the hint `False`: non-drifted
+entry, equal HEAD/working-tree bytes, unsupported file extension,
+invalid line range, exception during classifier.
+
+Source comparison: HEAD bytes (via `ledger.status.get_git_content` ref
+`"HEAD"`) vs working-tree bytes (ref `"working_tree"`), sliced to the
+region's `(start_line, end_line)`. Language resolved from file extension
+via `code_locator.indexing.symbol_extractor.EXTENSION_LANGUAGE`.
+
+### Added — `pending_grounding_checks[].original_lines` (D1)
+
+For `reason='symbol_disappeared'` entries, the payload now carries
+`original_lines: [start_line, end_line]` so the caller LLM can run
+`git show <prev_ref>:<file_path>` to inspect the symbol's prior
+position when locating its new home. Strictly informational — no
+actionable workflow. Single-line addition in `ledger/adapter.py`.
+
+### Added — `tests/test_desync_scenarios.py` (F1)
+
+Canonical regression matrix for the 13 desync scenarios from the Notion
+"Auto-Grounding Problem" catalog, routed through the real handler
+layer per the Apr 8 PR #84 lesson (tests bypassing handlers miss
+post-ingest hooks). Self-contained tmp git-repo fixture per test.
+
+**Scorecard**: 12 PASS, 1 XFAIL.
+
+| # | Scenario | V1 outcome |
+|---|---|---|
+| 1 | New decision, matching code exists | ✅ ungrounded → caller binds |
+| 2 | Code changed after grounded | ✅ pending + `pending_compliance_check` |
+| 3 | Code deleted after grounded | ✅ symbol_disappeared |
+| 4 | Symbol renamed in file | ✅ symbol_disappeared with `original_lines` |
+| 5 | Symbol moved cross-file | ✅ symbol_disappeared |
+| 6 | Code added later | ✅ caller binds explicitly |
+| 7 | Cold start, no matching code | ✅ stays ungrounded |
+| 8 | Drifted intent → atomic re-ground | ⏸ XFAIL (V2 §8 D2 — `bicameral_rebind` with old-binding CAS) |
+| 9 | Intent description supersession | ✅ re-ingest succeeds |
+| 10 | N decisions share a symbol | ✅ both surface |
+| 11 | No server-side BM25 grounding (post-v0.6.0) | ✅ stays ungrounded |
+| 12 | Line-shift edit | ✅ no spurious drift (`resolve_symbol_lines` self-heals) |
+| 13 | `[Open Question]` prefix | ✅ ingested as gap |
+
+### Changed — `handlers/link_commit._build_verification_instruction()`
+
+Splits the v0.6.4 monolithic `_VERIFICATION_INSTRUCTION` into three
+composable parts so the response text is conditional on which
+`pending_*` payloads actually fired:
+
+- `pending_compliance_checks` present → resolve_compliance CTA.
+- `pending_grounding_checks` with `reason='ungrounded'` →
+  `Grep/Read → validate_symbols / extract_symbols → bicameral.bind` CTA
+  (safe — no prior binding to retire, no duplicate-binding risk).
+- `pending_grounding_checks` with `reason='symbol_disappeared'` →
+  **explicit "INFORMATIONAL ONLY — do NOT call bicameral.bind on the
+  new location" warning** citing the duplicate-binding hazard under
+  the N:N `binds_to` relation. Atomic rebind ships in V2.
+
+Addresses Codex pass-10 #2 + pass-12 #2: the v0.6.4 monolithic CTA
+inadvertently routed relocation cases through the unsafe bind path.
+The V1 split removes that without reducing the safe CTA for ungrounded.
+
+### Fixed — `ledger/adapter.py` ungrounded grounding-check `decision_id`
+
+`pending_grounding_checks` for ungrounded decisions emitted empty
+`decision_id` because the consumer read `d.get("id", "")` from
+`get_all_decisions(filter="ungrounded")`, but that query aliases the
+field to `decision_id`. Callers had no handle to bind against.
+Surfaced by V1 F1 regression coverage; existing
+`test_pending_grounding_checks_for_ungrounded_decisions` regression
+only asserted `len > 0`, missing the empty-ID bug. Read `decision_id`
+first, fall back to `id` for forward compatibility.
+
+### Tests
+
+75 passed, 1 xfailed in 7.11s after V1. Zero regressions on the
+v0.6.3/v0.6.4/0.6.4-bump rebase, and the SDK-2.0 idempotency-catch
+issue I had originally pinned around (`surrealdb<2.0.0`) is fixed
+properly upstream by `66796ef`, so V1 ships against
+`surrealdb>=2.0.0` directly.
+
+### Deferred to V2
+
+Captured in full in `docs/desync-optimization.md` (design target with
+nine rounds of Codex review) and summarized in
+`docs/desync-optimization-v1-plan.md` §4–§5:
+
+- A0 — atomic SurrealQL block primitive (Python SDK doesn't support
+  `begin_transaction()` in embedded mode).
+- A2a — full sync barrier (sync-token CAS + region fingerprint at
+  commit time).
+- C0 / C0a / C1 — schema migration v5→v6 (per-binding baseline
+  ownership, tombstone fields, append-only `compliance_verdict_history`,
+  full-CAS cache key, traversal filtering).
+- C2 — `bicameral_judge_drift` + `record_compliance_verdict` with
+  five-field CAS (incl. binding-state token).
+- C3 — `pending_compliance_checks` from `detect_drift` (cache-aware).
+- B3 — `bicameral_advance_baseline` (only after fresh L3 `compliant`
+  verdict matching full CAS).
+- D2 — `bicameral_rebind` with old-binding CAS; closes scenario 8.
+- Migration of the `handlers/resolve_compliance.py` hard-delete +
+  `handlers/ingest.py` auto-chained `handle_judge_gaps` to the
+  tombstone + CAS contract — hard prerequisite before V2 destructive
+  work ships.
+
 ## 0.7.0 — 2026-04-24 — Accountable North Star: proposal state + signoff schema
 
 Every decision now has provenance: who proposed it, who ratified it, in which session.

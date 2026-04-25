@@ -80,11 +80,26 @@ Code search is caller-owned: Claude Code / Cursor / etc. use their native Grep/R
 - [x] Zero active mocks
 - [x] Full E2E verified
 - [x] GitHub Actions CI replaces pre-push git hook
+- [x] Performance: `search_decisions` < 2s, `detect_drift` < 1s on 100+ decisions — measured by V1 A1 (`tests/bench_drift.py`) at p95 = 10.4 ms / 15.5 ms, 55–185× under target
 
 ### Remaining
-- [ ] Performance: `search_decisions` < 2s, `detect_drift` < 1s on repo with 100+ decisions
-- [ ] LLM drift judge: wire `claude-haiku-4-5` for changed-region comparison in `detect_drift`
+- [ ] LLM drift judge: wire `claude-haiku-4-5` for changed-region comparison in `detect_drift` (V2 — `docs/desync-optimization.md` §8 C2)
 - [ ] All 4 tools demoed live in Claude Code (MCP connected)
+
+## Desync Optimization V1 — DONE (read-path advisory + measurement)
+
+Plan: `docs/desync-optimization-v1-plan.md`. V2 design target with full
+Codex-review history: `docs/desync-optimization.md`. V1 introduces zero
+new mutating capabilities.
+
+- [x] A1 — `tests/bench_drift.py` benchmark harness; `test-results/bench/drift_baseline.json` artifact
+- [x] A2-light — `handlers/sync_middleware.repo_write_barrier(ctx)` (per-repo `asyncio.Lock`); `handle_bind` wrapped
+- [x] A3 — `contracts.SyncMetrics` + `sync_metrics` field on Search/Preflight/History/Bind responses
+- [x] B1 — `ledger/ast_diff.is_cosmetic_change(before, after, lang)` (strict tree-sitter whitelist, 21 tests)
+- [x] B2 — `DriftEntry.cosmetic_hint` advisory + `_enrich_with_cosmetic_hints` helper in `handle_detect_drift`
+- [x] D1 — `original_lines` field on `symbol_disappeared` grounding checks; **`_build_verification_instruction` split** so relocation cases never get the unsafe `bicameral.bind` CTA
+- [x] F1 — `tests/test_desync_scenarios.py` canonical 13-scenario regression matrix (12 pass + 1 V2 xfail)
+- [x] Incidental fix — empty `decision_id` on ungrounded `pending_grounding_checks` (`ledger/adapter.py:475`)
 
 ---
 

@@ -109,11 +109,59 @@ _Tracks actual implementation status in `pilot/mcp/`. Updated by Claude as work 
 - [x] Zero active mocks
 - [x] Full E2E verified
 - [x] GitHub Actions CI (replaces pre-push hook)
-- [ ] Performance benchmarks
-- [ ] LLM drift judge
+- [x] Performance benchmarks (V1 A1 — `tests/bench_drift.py`; baseline
+      55–185× under V2 targets — see `docs/desync-optimization-v1-plan.md` §A1)
+- [ ] LLM drift judge (V2 — see `docs/desync-optimization.md` §8 C2)
+
+### Desync Optimization V1 — DONE (read-path advisory + measurement)
+
+Plan: `docs/desync-optimization-v1-plan.md`. V2 design target:
+`docs/desync-optimization.md`. V1 introduces zero new mutating paths.
+
+- [x] **A1** — drift benchmark harness (`tests/bench_drift.py`)
+- [x] **A2-light** — per-repo `asyncio.Lock` for `handle_bind`
+      (`handlers/sync_middleware.repo_write_barrier`)
+- [x] **A3** — sync-metrics instrumentation (`SyncMetrics` contract +
+      handler-side timing on search / preflight / history / bind)
+- [x] **B1** — strict-whitelist tree-sitter cosmetic-change classifier
+      (`ledger/ast_diff.is_cosmetic_change`)
+- [x] **B2** — `DriftEntry.cosmetic_hint` advisory metadata
+      (`handlers/detect_drift._enrich_with_cosmetic_hints`)
+- [x] **D1** — `original_lines` enrichment on `symbol_disappeared`
+      grounding checks
+- [x] **F1** — canonical 13-scenario regression matrix
+      (`tests/test_desync_scenarios.py`); scorecard 12 pass + 1 V2 xfail
+- [x] **pass-12 follow-up** — `_build_verification_instruction` split
+      so `symbol_disappeared` cases get an explicit "do NOT call
+      bicameral.bind" warning instead of the v0.6.4 monolithic CTA
+      (Codex pass-10 #2 + pass-12 #2)
+- [x] **incidental fix** — `ledger/adapter.py:475` was emitting empty
+      `decision_id` on ungrounded grounding checks; surfaced by F1
+
+### V2 — Deferred (destructive-path overhaul)
+
+Tracked in full in `docs/desync-optimization.md` (nine rounds of Codex
+review) and summarized in `docs/desync-optimization-v1-plan.md` §4–§5.
+Hard prerequisite before V2 destructive work ships: migrate
+`handlers/resolve_compliance.py` hard-delete and the
+`handlers/ingest.py` auto-chained `handle_judge_gaps` to tombstone +
+full-CAS semantics.
+
+- [ ] A0 — atomic SurrealQL block primitive
+- [ ] A2a — full sync barrier (token CAS + region fingerprint at commit)
+- [ ] C0 / C0a / C1 — schema v5→v6 migration + traversal filtering +
+      full-CAS cache key
+- [ ] C2 — `bicameral_judge_drift` + `record_compliance_verdict` with
+      five-field CAS (incl. binding-state)
+- [ ] C3 — cache-aware `pending_compliance_checks` from `detect_drift`
+- [ ] B3 — `bicameral_advance_baseline` (only after L3 `compliant`
+      verdict)
+- [ ] D2 — `bicameral_rebind` with old-binding CAS; closes scenario 8
 
 ---
 
 ## Mock Registry
 
-All mocks deleted. See `mocks/README.md` for history.
+All mocks deleted. V1 introduces no new mocks (read-path advisory
+only). See git history for the original Phase 1 / Phase 2 mock
+replacements (`RealCodeLocatorAdapter`, `SurrealDBLedgerAdapter`).
