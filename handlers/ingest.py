@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from contracts import (
+    ContextForCandidate,
     IngestPayload,
     IngestResponse,
     IngestStats,
@@ -138,6 +139,59 @@ def _derive_topic(payload: dict) -> str:
     return ""
 
 
+async def _find_context_for_candidates(
+    mappings: list[dict],
+    ledger,
+    top_k: int = 5,
+) -> list[ContextForCandidate]:
+    """After ingest writes spans, find context_pending decisions that may be answered.
+
+    Runs BM25 search per span text and filters to decisions with
+    signoff.state='context_pending'. Returns up to top_k candidates total
+    (deduped by (span_id, decision_id) pair). Never raises — returns [] on error.
+    """
+    from ledger.queries import get_input_span_id, search_context_pending_by_text
+
+    inner = getattr(ledger, "_inner", ledger)
+    client = inner._client
+
+    seen_pairs: set[tuple[str, str]] = set()
+    candidates: list[ContextForCandidate] = []
+
+    for mapping in mappings:
+        span = mapping.get("span") or {}
+        span_text = span.get("text", "")
+        source_type = span.get("source_type", "manual")
+        source_ref = span.get("source_ref", "")
+        if not span_text:
+            continue
+        try:
+            span_id = await get_input_span_id(client, source_type, source_ref, span_text)
+            if not span_id:
+                continue
+            matches = await search_context_pending_by_text(client, span_text, top_k=top_k)
+            for m in matches:
+                decision_id = m.get("decision_id", "")
+                if not decision_id:
+                    continue
+                pair = (span_id, decision_id)
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                candidates.append(ContextForCandidate(
+                    span_id=span_id,
+                    decision_id=decision_id,
+                    decision_description=m.get("description", ""),
+                    overlap_score=float(m.get("overlap_score", 0.0)),
+                ))
+                if len(candidates) >= top_k:
+                    return candidates
+        except Exception as exc:
+            logger.debug("[ingest] context_for scan failed: %s", exc)
+
+    return candidates
+
+
 async def _find_overlap_candidates(
     description: str,
     ledger,
@@ -212,36 +266,45 @@ async def handle_ingest(
     payload = ctx.code_graph.resolve_symbols(payload)
 
     # Stop-and-ask v1: supersession candidate detection.
-    # For each incoming decision, BM25-query existing decisions and surface
-    # top-3 overlap candidates. Pure retrieval — the caller-LLM skill
-    # classifies whether each candidate is a true supersession (ask) or a
-    # parallel decision (auto-record silently). Failures are swallowed so
-    # this never blocks the ingest itself.
+    # Collect per-mapping candidates so we can apply collision_pending signoff
+    # only to the specific mappings that have overlap candidates.
+    # Pure retrieval — failures are swallowed so this never blocks ingest.
+    from datetime import datetime, timezone
+    _now_iso = datetime.now(timezone.utc).isoformat()
+    _session_id = getattr(ctx, "session_id", None) or ""
+
+    mappings = payload.get("mappings") or []
+    mapping_candidates: list[list[SupersessionCandidate]] = []
     supersession_candidates_all: list[SupersessionCandidate] = []
-    for mapping in payload.get("mappings") or []:
+    for mapping in mappings:
         description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
-        if not description:
-            continue
-        try:
-            candidates = await _find_overlap_candidates(description, ledger, top_k=3)
-            supersession_candidates_all.extend(candidates)
-        except Exception as exc:
-            logger.debug("[ingest] supersession scan failed for '%s': %s", description[:60], exc)
+        if description:
+            try:
+                candidates = await _find_overlap_candidates(description, ledger, top_k=3)
+            except Exception as exc:
+                logger.debug("[ingest] supersession scan failed for '%s': %s", description[:60], exc)
+                candidates = []
+        else:
+            candidates = []
+        mapping_candidates.append(candidates)
+        supersession_candidates_all.extend(candidates)
 
     # No auto-grounding: mappings are passed through as-is.
     # Caller-LLM binding flow: the caller uses bicameral.bind after ingest
     # to supply code regions for ungrounded decisions.
     #
     # v0.7.0: every new ingest enters as 'proposed' by default.
+    # v0.8.0: if a mapping has supersession candidates, hold it at 'collision_pending'
+    # so the decision doesn't become a live proposal until the collision is resolved.
     # Caller may override by supplying signoff in the mapping; if so, pass through.
-    from datetime import datetime, timezone
-    _now_iso = datetime.now(timezone.utc).isoformat()
-    _session_id = getattr(ctx, "session_id", None) or ""
     _proposed_signoff = {"state": "proposed", "session_id": _session_id, "created_at": _now_iso}
-    mappings = payload.get("mappings") or []
-    for m in mappings:
+    for i, m in enumerate(mappings):
         if m.get("signoff") is None:
-            m["signoff"] = _proposed_signoff
+            has_candidates = bool(mapping_candidates[i]) if i < len(mapping_candidates) else False
+            if has_candidates:
+                m["signoff"] = {**_proposed_signoff, "state": "collision_pending"}
+            else:
+                m["signoff"] = _proposed_signoff
     payload = {**payload, "mappings": mappings}
 
     # Pollution guard (v0.4.6, Bug 3): warn the user if they're ingesting
@@ -272,6 +335,17 @@ async def handle_ingest(
         pass
 
     result = await ledger.ingest_payload(payload, ctx=ctx)
+
+    # v0.8.0: context_for candidate detection.
+    # After spans are written, BM25-search for context_pending decisions that
+    # the new spans may answer. Returns up to 5 candidates across all mappings.
+    context_for_candidates: list = []
+    try:
+        context_for_candidates = await _find_context_for_candidates(
+            payload.get("mappings") or [], ledger, top_k=5
+        )
+    except Exception as exc:
+        logger.debug("[ingest] context_for detection failed: %s", exc)
 
     # Sync ledger to HEAD and re-ground any previously ungrounded intents.
     # The LinkCommitResponse carries ``pending_compliance_checks`` from the
@@ -346,6 +420,7 @@ async def handle_ingest(
             result.get("ungrounded_decisions", [])
         ),
         supersession_candidates=supersession_candidates_all,
+        context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
         judgment_payload=judgment_payload,
         sync_status=sync_status,

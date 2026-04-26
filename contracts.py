@@ -374,6 +374,19 @@ class IngestStats(BaseModel):
     cache_hits: int = 0
 
 
+class ContextForCandidate(BaseModel):
+    """A context_pending decision that the new ingest span may answer.
+
+    Returned in IngestResponse.context_for_candidates when BM25 search finds
+    a decision with signoff.state='context_pending' that overlaps with the
+    ingested span. Human confirms or rejects via bicameral.resolve_collision.
+    """
+    span_id: str           # input_span record ID (e.g. 'input_span:abc123')
+    decision_id: str
+    decision_description: str
+    overlap_score: float = 0.0  # rank-position score; raw BM25 score is always 0 in v2 embedded
+
+
 class IngestResponse(BaseModel):
     ingested: bool
     repo: str
@@ -382,6 +395,7 @@ class IngestResponse(BaseModel):
     stats: IngestStats
     pending_grounding_decisions: list[dict] = []
     supersession_candidates: "list[SupersessionCandidate]" = []
+    context_for_candidates: "list[ContextForCandidate]" = []
     source_cursor: SourceCursorSummary | None = None
     judgment_payload: "GapJudgmentPayload | None" = None
     sync_status: LinkCommitResponse | None = None
@@ -456,6 +470,9 @@ class PreflightResponse(BaseModel):
     action_hints: list[ActionHint] = []
     sources_chained: list[str] = []
     session_start_banner: SessionStartBanner | None = None
+    # v0.8.0 HITL annotations (topic-independent, ledger health)
+    unresolved_collisions: list[BriefDecision] = []   # collision_pending from prior sessions
+    context_pending_ready: list[BriefDecision] = []   # context_pending with ≥1 confirmed context_for
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────
@@ -518,7 +535,28 @@ class RatifyResponse(BaseModel):
     decision_id: str
     was_new: bool         # True if this call set the signoff; False if already set
     signoff: dict
-    projected_status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"]
+    projected_status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending", "superseded"]
+
+
+# ── Tool: bicameral.resolve_collision ────────────────────────────────────────
+
+
+class ResolveCollisionResponse(BaseModel):
+    """Response envelope for bicameral.resolve_collision.
+
+    Dual-mode:
+      - collision: new_id + old_id + action ('supersede'|'keep_both')
+      - context_for: span_id + decision_id + confirmed (bool)
+    """
+    mode: Literal["collision", "context_for"]
+    action_taken: str
+    new_decision_id: str = ""   # collision mode
+    old_decision_id: str = ""   # collision mode
+    span_id: str = ""           # context_for mode
+    decision_id: str = ""       # context_for mode
+    edge_written: bool = False
+    new_status: str = ""        # projected status of new decision after action
+    old_status: str = ""        # projected status of old decision (supersede only)
 
 
 # ── Stop-and-ask v1: SupersessionCandidate (enriched for v0.5.0) ─────
@@ -535,7 +573,7 @@ class SupersessionCandidate(BaseModel):
     description: str
     overlap_score: float
     signoff: dict | None = None
-    projected_status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"] = "ungrounded"
+    projected_status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending", "superseded"] = "ungrounded"
 
 
 # ── Tool: bicameral.history ──────────────────────────────────────────────────
@@ -618,3 +656,4 @@ class BindResponse(BaseModel):
 
 # Forward references
 IngestResponse.model_rebuild()
+ResolveCollisionResponse.model_rebuild()

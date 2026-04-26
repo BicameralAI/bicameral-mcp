@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -35,6 +35,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     4: "0.5.0",
     5: "0.6.0",
     6: "0.7.0",
+    7: "0.8.0",
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -100,7 +101,7 @@ _TABLES = [
     "DEFINE FIELD meeting_date   ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD speakers       ON decision TYPE array<string> DEFAULT []",
     "DEFINE FIELD status         ON decision TYPE string DEFAULT 'ungrounded' "
-    "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded', 'proposal']",
+    "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded', 'proposal', 'superseded', 'context_pending']",
     "DEFINE FIELD created_at     ON decision TYPE datetime DEFAULT time::now()",
     # v0.4.13-style content-addressable dedup; same derivation, renamed type
     "DEFINE FIELD canonical_id   ON decision TYPE string DEFAULT ''",
@@ -192,6 +193,23 @@ _TABLES = [
     "DEFINE INDEX idx_cc_decision  ON compliance_check FIELDS decision_id",
     "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
     "DEFINE INDEX idx_cc_commit    ON compliance_check FIELDS commit_hash",
+
+    # graph_proposal — AI-generated edge proposals for human review.
+    # from_id / to_id are TYPE string (not TYPE record) because this table can
+    # link across different node types. Traverse via type::thing($from_id).
+    # AI does NOT write here yet (schema-only for v0.8.x infrastructure).
+    "DEFINE TABLE graph_proposal SCHEMAFULL",
+    "DEFINE FIELD proposal_type ON graph_proposal TYPE string "
+    "ASSERT $value IN ['context_for', 'supersedes', 'related_to', 'contradicts']",
+    "DEFINE FIELD from_id       ON graph_proposal TYPE string",
+    "DEFINE FIELD to_id         ON graph_proposal TYPE string",
+    "DEFINE FIELD reason        ON graph_proposal TYPE string DEFAULT ''",
+    "DEFINE FIELD confidence    ON graph_proposal TYPE float",
+    "DEFINE FIELD state         ON graph_proposal TYPE string "
+    "ASSERT $value IN ['pending', 'approved', 'rejected', 'auto_approved'] DEFAULT 'pending'",
+    "DEFINE FIELD session_id    ON graph_proposal TYPE string DEFAULT ''",
+    "DEFINE FIELD created_at    ON graph_proposal TYPE datetime DEFAULT time::now()",
+    "DEFINE FIELD reviewed_at   ON graph_proposal TYPE option<datetime> DEFAULT NONE",
 ]
 
 # Edge tables — all with UNIQUE(in, out) for team-mode replay idempotency
@@ -199,6 +217,10 @@ _TABLES = [
 # Decision tier:
 #   input_span -yields-> decision    (extraction provenance, 1:N)
 #   decision -binds_to-> code_region (decision is about this code, N:N)
+#
+# HITL edges (v0.8.0):
+#   decision -supersedes-> decision  (human-confirmed supersession)
+#   input_span -context_for-> decision (human-confirmed context provision)
 #
 # Retrieval tier:
 #   symbol -locates-> code_region   (symbol body occupies this region at this commit)
@@ -220,6 +242,22 @@ _EDGES = [
     "DEFINE FIELD confidence ON locates TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at ON locates TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_locates_unique ON locates FIELDS in, out UNIQUE",
+
+    # decision → decision (human-confirmed supersession — v0.8.0 HITL)
+    "DEFINE TABLE supersedes SCHEMAFULL TYPE RELATION IN decision OUT decision",
+    "DEFINE FIELD confidence  ON supersedes TYPE float",
+    "DEFINE FIELD reason      ON supersedes TYPE string DEFAULT ''",
+    "DEFINE FIELD created_at  ON supersedes TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_supersedes_unique ON supersedes FIELDS in, out UNIQUE",
+
+    # input_span → decision (human-confirmed context provision — v0.8.0 HITL)
+    "DEFINE TABLE context_for SCHEMAFULL TYPE RELATION IN input_span OUT decision",
+    "DEFINE FIELD relevance_score ON context_for TYPE float",
+    "DEFINE FIELD reason          ON context_for TYPE string DEFAULT ''",
+    "DEFINE FIELD state           ON context_for TYPE string "
+    "ASSERT $value IN ['proposed', 'confirmed', 'rejected'] DEFAULT 'proposed'",
+    "DEFINE FIELD created_at      ON context_for TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_ctx_unique ON context_for FIELDS in, out UNIQUE",
 
     # code_region → code_region (structural dependency — unchanged)
     "DEFINE TABLE depends_on SCHEMAFULL TYPE RELATION IN code_region OUT code_region",
@@ -410,11 +448,58 @@ async def _migrate_v5_to_v6(client: LedgerClient) -> None:
     logger.info("[migration] v5 → v6: signoff field indexed")
 
 
+async def _migrate_v6_to_v7(client: LedgerClient) -> None:
+    """v6 → v7: Add HITL graph edges and graph_proposal table.
+
+    Additive only — no data loss. Defines new tables and updates the
+    decision.status ASSERT to include 'superseded' and 'context_pending'.
+    """
+    new_stmts = [
+        # New HITL edge tables
+        "DEFINE TABLE supersedes SCHEMAFULL TYPE RELATION IN decision OUT decision",
+        "DEFINE FIELD confidence  ON supersedes TYPE float",
+        "DEFINE FIELD reason      ON supersedes TYPE string DEFAULT ''",
+        "DEFINE FIELD created_at  ON supersedes TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_supersedes_unique ON supersedes FIELDS in, out UNIQUE",
+
+        "DEFINE TABLE context_for SCHEMAFULL TYPE RELATION IN input_span OUT decision",
+        "DEFINE FIELD relevance_score ON context_for TYPE float",
+        "DEFINE FIELD reason          ON context_for TYPE string DEFAULT ''",
+        "DEFINE FIELD state           ON context_for TYPE string "
+        "ASSERT $value IN ['proposed', 'confirmed', 'rejected'] DEFAULT 'proposed'",
+        "DEFINE FIELD created_at      ON context_for TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_ctx_unique ON context_for FIELDS in, out UNIQUE",
+
+        # Proposal infrastructure (AI does not write here yet)
+        "DEFINE TABLE graph_proposal SCHEMAFULL",
+        "DEFINE FIELD proposal_type ON graph_proposal TYPE string "
+        "ASSERT $value IN ['context_for', 'supersedes', 'related_to', 'contradicts']",
+        "DEFINE FIELD from_id       ON graph_proposal TYPE string",
+        "DEFINE FIELD to_id         ON graph_proposal TYPE string",
+        "DEFINE FIELD reason        ON graph_proposal TYPE string DEFAULT ''",
+        "DEFINE FIELD confidence    ON graph_proposal TYPE float",
+        "DEFINE FIELD state         ON graph_proposal TYPE string "
+        "ASSERT $value IN ['pending', 'approved', 'rejected', 'auto_approved'] DEFAULT 'pending'",
+        "DEFINE FIELD session_id    ON graph_proposal TYPE string DEFAULT ''",
+        "DEFINE FIELD created_at    ON graph_proposal TYPE datetime DEFAULT time::now()",
+        "DEFINE FIELD reviewed_at   ON graph_proposal TYPE option<datetime> DEFAULT NONE",
+
+        # Expanded status ASSERT (additive — existing values remain valid)
+        "DEFINE FIELD status ON decision TYPE string DEFAULT 'ungrounded' "
+        "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded', "
+        "'proposal', 'superseded', 'context_pending']",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, sql.strip())
+    logger.info("[migration] v6 → v7: HITL edge tables and graph_proposal defined")
+
+
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
     5: _migrate_v4_to_v5,
     6: _migrate_v5_to_v6,
+    7: _migrate_v6_to_v7,
 }
 
 

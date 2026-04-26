@@ -44,6 +44,7 @@ from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
 from handlers.reset import handle_reset
 from handlers.ratify import handle_ratify
+from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
 from handlers.history import handle_history
 from handlers.update import get_update_notice, handle_update
@@ -90,6 +91,7 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.judge_gaps",
     "bicameral.resolve_compliance",
     "bicameral.ratify",
+    "bicameral.resolve_collision",
     "bicameral.history",
     "bicameral.dashboard",
     "validate_symbols",
@@ -450,6 +452,53 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="bicameral.resolve_collision",
+            description=(
+                "Resolve a collision or context_for candidate surfaced by bicameral.ingest. "
+                "Dual-mode: "
+                "(1) Collision mode — called when supersession_candidates is non-empty: "
+                "provide new_id + old_id + action='supersede'|'keep_both'. "
+                "'supersede' writes a decision→supersedes→decision edge and marks old_id as superseded. "
+                "'keep_both' clears the collision hold on new_id so both decisions enter normal flow. "
+                "(2) Context-for mode — called when context_for_candidates is non-empty: "
+                "provide span_id + decision_id + confirmed=true|false. "
+                "Writes an input_span→context_for→decision edge (confirmed or rejected). "
+                "Context-pending decisions with ≥1 confirmed context_for edge become eligible "
+                "for bicameral.ratify. "
+                "Slash alias: /bicameral:resolve-collision"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "new_id": {
+                        "type": "string",
+                        "description": "[Collision mode] The newly ingested decision ID",
+                    },
+                    "old_id": {
+                        "type": "string",
+                        "description": "[Collision mode] The existing decision that may be superseded",
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["supersede", "keep_both"],
+                        "description": "[Collision mode] 'supersede' writes edge + marks old as superseded; 'keep_both' just clears the collision hold",
+                    },
+                    "span_id": {
+                        "type": "string",
+                        "description": "[Context-for mode] The input_span record ID from context_for_candidates",
+                    },
+                    "decision_id": {
+                        "type": "string",
+                        "description": "[Context-for mode] The context_pending decision that the span may answer",
+                    },
+                    "confirmed": {
+                        "type": "boolean",
+                        "description": "[Context-for mode] True to confirm the span answers the decision; False to reject",
+                    },
+                },
+            },
+        ),
+        Tool(
             name="bicameral.history",
             description=(
                 "Read-only dump of the full decision ledger in a renderable shape. "
@@ -634,6 +683,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 decision_id=arguments["decision_id"],
                 signer=arguments["signer"],
                 note=arguments.get("note", ""),
+            )
+        elif name in ("bicameral.resolve_collision", "resolve_collision"):
+            result = await handle_resolve_collision(
+                ctx,
+                new_id=arguments.get("new_id"),
+                old_id=arguments.get("old_id"),
+                action=arguments.get("action"),
+                span_id=arguments.get("span_id"),
+                decision_id=arguments.get("decision_id"),
+                confirmed=arguments.get("confirmed"),
             )
         elif name in ("bicameral.bind", "bind"):
             result = await handle_bind(

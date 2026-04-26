@@ -997,16 +997,26 @@ async def project_decision_status(
     until ratified.
     """
     dec_rows = await client.query(
-        f"SELECT signoff FROM {decision_id} LIMIT 1",
+        f"SELECT signoff, status FROM {decision_id} LIMIT 1",
     )
     if not dec_rows:
         return "ungrounded"
+
+    # Short-circuit: superseded is a terminal state written by HITL (resolve_collision).
+    # It is never re-derived from compliance — drift sweeps must not overwrite it.
+    if dec_rows[0].get("status") == "superseded":
+        return "superseded"
+
     signoff = dec_rows[0].get("signoff")
 
     # Short-circuit: context_pending decisions need a business driver answer before
     # they enter the normal drift/compliance cycle.
     if signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending":
         return "context_pending"
+
+    # Short-circuit: collision_pending decisions are held proposals awaiting HITL resolution
+    if signoff and isinstance(signoff, dict) and signoff.get("state") == "collision_pending":
+        return "proposal"
 
     # Short-circuit: proposed decisions are drift-exempt
     if signoff and isinstance(signoff, dict) and signoff.get("state") == "proposed":
@@ -1131,3 +1141,156 @@ def _normalize_decisions(rows: list[dict]) -> list[dict]:
             speakers = row.get("speakers") or []
             row["speaker"] = speakers[0] if speakers else ""
     return rows
+
+
+# ── HITL graph edges (v0.8.0) ────────────────────────────────────────────────
+
+
+async def relate_supersedes(
+    client: LedgerClient,
+    new_id: str,
+    old_id: str,
+    confidence: float = 1.0,
+    reason: str = "",
+) -> None:
+    """Write decision → supersedes → decision edge. Idempotent via UNIQUE(in, out)."""
+    await _execute_idempotent_edge(
+        client,
+        f"RELATE {new_id}->supersedes->{old_id} "
+        "SET confidence=$c, reason=$r, created_at=time::now()",
+        {"c": confidence, "r": reason},
+    )
+
+
+async def relate_context_for(
+    client: LedgerClient,
+    span_id: str,
+    decision_id: str,
+    state: str = "confirmed",
+    relevance_score: float = 0.0,
+    reason: str = "",
+) -> None:
+    """Write input_span → context_for → decision edge.
+
+    state: 'confirmed' | 'rejected' | 'proposed'
+    Idempotent: updates state if edge already exists (via UPSERT on unique pair).
+    """
+    try:
+        await client.execute(
+            f"RELATE {span_id}->context_for->{decision_id} "
+            "SET state=$s, relevance_score=$rs, reason=$r, created_at=time::now()",
+            {"s": state, "rs": relevance_score, "r": reason},
+        )
+    except LedgerError as exc:
+        if "already contains" in str(exc):
+            # Edge exists — update state and reason in place
+            await client.execute(
+                f"UPDATE context_for SET state=$s, reason=$r "
+                f"WHERE in = {span_id} AND out = {decision_id}",
+                {"s": state, "r": reason},
+            )
+        else:
+            raise
+
+
+async def get_input_span_id(
+    client: LedgerClient,
+    source_type: str,
+    source_ref: str,
+    text: str,
+) -> str:
+    """Look up an input_span record ID by its dedup key. Returns '' if not found."""
+    rows = await client.query(
+        "SELECT type::string(id) AS id FROM input_span "
+        "WHERE source_type = $st AND source_ref = $sr AND text = $text LIMIT 1",
+        {"st": source_type, "sr": source_ref, "text": text},
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
+async def search_context_pending_by_text(
+    client: LedgerClient,
+    text: str,
+    top_k: int = 5,
+) -> list[dict]:
+    """BM25 search on decision descriptions, filtered to context_pending signoff state.
+
+    Returns up to top_k decisions that are in context_pending state and whose
+    description matches the given text. Score is rank-position (BM25 score is
+    always 0.0 in SurrealDB v2 embedded).
+    """
+    rows = await client.query(
+        "SELECT type::string(id) AS decision_id, description, signoff "
+        "FROM decision WHERE description @0@ $q LIMIT $n",
+        {"q": text, "n": top_k + 10},  # +10 slack for post-filter
+    )
+    results = []
+    total = len(rows)
+    for i, row in enumerate(rows):
+        signoff = row.get("signoff")
+        if not (signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending"):
+            continue
+        results.append({
+            "decision_id": row.get("decision_id", ""),
+            "description": row.get("description", ""),
+            "overlap_score": round(1.0 - (i / max(total, 1)) * 0.4, 2),
+        })
+        if len(results) >= top_k:
+            break
+    return results
+
+
+async def get_collision_pending_decisions(
+    client: LedgerClient,
+) -> list[dict]:
+    """Return all decisions with signoff.state = 'collision_pending'.
+
+    These are held proposals awaiting HITL supersession resolution. Used by
+    preflight to surface unresolved collisions from prior sessions.
+    """
+    rows = await client.query(
+        "SELECT type::string(id) AS decision_id, description, signoff, status "
+        "FROM decision WHERE signoff.state = 'collision_pending'",
+    )
+    return [
+        {
+            "decision_id": str(r.get("decision_id", "")),
+            "description": str(r.get("description", "")),
+            "signoff": r.get("signoff"),
+            "status": str(r.get("status", "proposal")),
+        }
+        for r in (rows or [])
+        if r.get("decision_id")
+    ]
+
+
+async def get_context_for_ready_decisions(
+    client: LedgerClient,
+) -> list[dict]:
+    """Return context_pending decisions that have ≥1 confirmed context_for edge.
+
+    These are ready for ratification — they have context but haven't been
+    ratified yet. Used by preflight to surface the ready-for-ratification queue.
+    """
+    rows = await client.query(
+        """
+        SELECT
+            type::string(id) AS decision_id,
+            description,
+            signoff,
+            status,
+            count(<-context_for[WHERE state = 'confirmed']) AS confirmed_ctx_count
+        FROM decision
+        WHERE signoff.state = 'context_pending'
+        """,
+    )
+    return [
+        {
+            "decision_id": str(r.get("decision_id", "")),
+            "description": str(r.get("description", "")),
+            "signoff": r.get("signoff"),
+            "status": "context_pending",
+        }
+        for r in (rows or [])
+        if r.get("decision_id") and int(r.get("confirmed_ctx_count") or 0) > 0
+    ]

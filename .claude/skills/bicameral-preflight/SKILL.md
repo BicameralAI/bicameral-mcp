@@ -211,7 +211,25 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 ⚠ N unresolved open question(s):
   • <description>
     Source: <source_ref>
+
+⚠ N unresolved collision(s) from prior session(s) — resolve before first edit:
+  • [collision_pending] <decision description>
+    Call: bicameral.resolve_collision(new_id=..., old_id=..., action='supersede'|'keep_both')
+
+⚠ N context_pending decision(s) ready for ratification:
+  • [context_pending] <decision description>
+    ≥1 confirmed context_for edge — eligible for bicameral.ratify
 ```
+
+**Unresolved collisions** (`response.unresolved_collisions`) are decisions held
+at `collision_pending` from prior sessions. Call `bicameral.resolve_collision`
+before the first file edit when this list is non-empty — these are un-live proposals
+that may be duplicates of what you're about to implement.
+
+**Context-pending ready** (`response.context_pending_ready`) are `context_pending`
+decisions that have ≥1 confirmed `context_for` edge (someone confirmed a span
+answers the open question). They are eligible for `bicameral.ratify`. Prompt
+the user to ratify when this list is non-empty, but do NOT block implementation.
 
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.

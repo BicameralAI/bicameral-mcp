@@ -277,14 +277,24 @@ it to real code.
 After calling `bicameral.ingest`, read `IngestResponse.supersession_candidates`.
 Each entry is a prior decision whose text overlaps with one of the newly
 ingested decisions (top 3 per new decision via ledger keyword search).
+
+**v0.8.0: collision-held status.** When `supersession_candidates` is non-empty
+for a mapping, that new decision is held at `status='proposal'` with
+`signoff.state='collision_pending'` — it does NOT enter the live decision set
+until you resolve the collision via `bicameral.resolve_collision`. This prevents
+the graph from silently accumulating contradictory decisions.
+
 Classify each candidate:
 
 - **mechanical** (parallel scope) — the prior decision covers a
   different code area, team, or lifecycle phase than the new one.
-  Auto-record both silently. No question needed.
+  Call `bicameral.resolve_collision(new_id=..., old_id=..., action='keep_both')`.
+  Both decisions become live proposals. No supersedes edge written.
 - **ask** (true supersession) — the prior decision appears to make a
   contradictory or superseded claim about the same behavior. Emit
   ONE question per ask-candidate, capped at **3 questions per ingest**.
+  On confirmation, call `bicameral.resolve_collision(new_id=..., old_id=..., action='supersede')`.
+  The old decision becomes `status='superseded'`; the new one enters normal flow.
 
 If the queue of ask-candidates exceeds 3, emit the first 3 as
 individual questions, then present a batched final approval gate for
@@ -301,9 +311,39 @@ areas; B if any appear to change a commitment the team has already
 shipped against.
 ```
 
+**Session-drop recovery**: if the session ends before `bicameral.resolve_collision`
+is called, the new decision remains `status='proposal'` (collision_pending) in the
+ledger. Bicameral preflight surfaces it as an "unresolved collision" at the next
+session. Resolve it then, or call `bicameral.reset` scoped to that decision to discard it.
+
 **Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, present
 supersession candidates as informational notes only; do not gate
 the ingest.
+
+### 2.6 Context-for proposals (stop-and-ask v1b)
+
+After calling `bicameral.ingest`, also read `IngestResponse.context_for_candidates`.
+Each entry is a `context_pending` decision (one that needs business context before
+ratification) whose description keyword-matches the newly ingested span text.
+
+For each candidate, present:
+```
+This excerpt may answer the open question for decision [decision_description]:
+  "<span excerpt>"
+
+Does this span provide the context needed for that decision? [Y/n]
+```
+
+On **confirm** (`confirmed=true`): call
+`bicameral.resolve_collision(span_id=..., decision_id=..., confirmed=True)`.
+An `input_span → context_for → decision` edge is written with `state='confirmed'`.
+
+On **reject** (`confirmed=false`): call with `confirmed=False`. The edge is
+written with `state='rejected'` so this span isn't re-surfaced on future ingests.
+
+The decision does NOT automatically advance — it stays `context_pending` until
+`bicameral.ratify` is called explicitly (typically after the next preflight surfaces
+it as "ready for ratification").
 
 ### 3. Ingest the filtered set
 

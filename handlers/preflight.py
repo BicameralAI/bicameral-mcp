@@ -377,6 +377,33 @@ async def handle_preflight(
         divergences, drift_candidates, gaps, guided_mode,
     ) or search_resp.action_hints
 
+    # v0.8.0: HITL annotations — topic-independent ledger health checks.
+    # These fire on every preflight (when fired=True) regardless of topic.
+    unresolved_collisions: list[BriefDecision] = []
+    context_pending_ready: list[BriefDecision] = []
+    try:
+        from ledger.queries import get_collision_pending_decisions, get_context_for_ready_decisions
+        inner = getattr(ctx.ledger, "_inner", ctx.ledger)
+        client = inner._client
+        coll_rows = await get_collision_pending_decisions(client)
+        for r in coll_rows:
+            unresolved_collisions.append(BriefDecision(
+                decision_id=r["decision_id"],
+                description=r["description"],
+                status="proposal",
+                signoff=r.get("signoff"),
+            ))
+        ctx_rows = await get_context_for_ready_decisions(client)
+        for r in ctx_rows:
+            context_pending_ready.append(BriefDecision(
+                decision_id=r["decision_id"],
+                description=r["description"],
+                status="context_pending",
+                signoff=r.get("signoff"),
+            ))
+    except Exception as exc:
+        logger.debug("[preflight] HITL annotation queries failed: %s", exc)
+
     return PreflightResponse(
         topic=topic,
         fired=True,
@@ -389,4 +416,6 @@ async def handle_preflight(
         action_hints=action_hints,
         sources_chained=sources_chained,
         session_start_banner=banner,
+        unresolved_collisions=unresolved_collisions,
+        context_pending_ready=context_pending_ready,
     )
