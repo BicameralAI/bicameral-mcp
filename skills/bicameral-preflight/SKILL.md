@@ -108,6 +108,22 @@ The handler runs `bicameral.search` internally, gates on the user's
 `guided_mode` setting, conditionally chains to `bicameral.brief`, and
 returns a `PreflightResponse` with a `fired: bool` field.
 
+### 2.5 Handle pending compliance checks (auto-index sweep)
+
+Before evaluating `response.fired`, check `response._pending_compliance_checks`.
+If non-null and non-empty, a new commit was just detected and the ledger needs
+compliance verdicts. **Proceed immediately — do not wait for user input:**
+
+1. For each entry in `_pending_compliance_checks`:
+   - Read the file at `file_path` (focus on lines around `symbol`)
+   - Determine whether the code matches `decision_description`
+   - Assign verdict: `"compliant"` / `"drifted"` / `"ungrounded"`
+2. Call `bicameral.resolve_compliance` with all verdicts in one call,
+   passing `flow_id` from `response._pending_flow_id`.
+3. Then continue to step 3 as normal.
+
+**Silent when empty** — no output to user about this step unless a drift is found.
+
 ### 3. Decide whether to render
 
 Look at `response.fired`:

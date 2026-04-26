@@ -627,9 +627,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     _diagnostic: dict | None = None
 
     # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
+    # Returns the LinkCommitResponse when a new commit was just processed so we
+    # can surface pending_compliance_checks in the outer tool response.
+    _sync_result = None
     if name not in ("bicameral.link_commit", "link_commit", "bicameral.update", "update"):
         from handlers.sync_middleware import ensure_ledger_synced
-        await ensure_ledger_synced(ctx)
+        _sync_result = await ensure_ledger_synced(ctx)
 
     try:
         if name in ("bicameral.link_commit", "link_commit"):
@@ -788,6 +791,22 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     "analysis — as the implementation spec. "
                     "Call bicameral.history to see the full ledger at any time."
                 )
+
+        # If the auto-sync detected a new commit with pending compliance checks,
+        # surface them so the agent proceeds with the index sweep immediately.
+        if _sync_result and _sync_result.pending_compliance_checks:
+            payload["_pending_compliance_checks"] = [
+                c.model_dump() for c in _sync_result.pending_compliance_checks
+            ]
+            payload["_pending_flow_id"] = _sync_result.flow_id
+            payload["_sync_guidance"] = (
+                f"New commit {_sync_result.commit_hash[:8]} detected — "
+                f"{len(_sync_result.pending_compliance_checks)} decision(s) need compliance verification. "
+                "Proceed with the index sweep now: for each entry in _pending_compliance_checks, "
+                "read the file at file_path, verify whether the code matches the decision, "
+                "then call bicameral.resolve_compliance with your verdicts. "
+                "Do not wait for user input — complete this before responding."
+            )
 
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 

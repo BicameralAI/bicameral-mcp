@@ -14,6 +14,10 @@ exceptions so it never blocks a handler.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from contracts import LinkCommitResponse
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +26,12 @@ logger = logging.getLogger(__name__)
 _LAST_SYNCED_SHA: str | None = None
 
 
-async def ensure_ledger_synced(ctx) -> None:
+async def ensure_ledger_synced(ctx) -> "LinkCommitResponse | None":
     """Sync ledger to HEAD if it has moved since the last sync in this process.
 
-    Calls handle_link_commit only when the live HEAD SHA differs from
-    _LAST_SYNCED_SHA. Idempotent and exception-safe.
+    Returns the LinkCommitResponse when a new commit was processed — callers
+    should inspect pending_compliance_checks and surface them to the agent.
+    Returns None when HEAD hasn't changed (no-op) or on error.
     """
     global _LAST_SYNCED_SHA
 
@@ -34,8 +39,10 @@ async def ensure_ledger_synced(ctx) -> None:
         from handlers.link_commit import handle_link_commit, _read_current_head_sha
         live_head = _read_current_head_sha(getattr(ctx, "repo_path", "") or ".")
         if live_head and live_head != _LAST_SYNCED_SHA:
-            await handle_link_commit(ctx, "HEAD")
+            result = await handle_link_commit(ctx, "HEAD")
             _LAST_SYNCED_SHA = live_head
             logger.debug("[sync_middleware] catch-up ran for %s", live_head[:8])
+            return result
     except Exception as exc:
         logger.debug("[sync_middleware] catch-up failed: %s", exc)
+    return None

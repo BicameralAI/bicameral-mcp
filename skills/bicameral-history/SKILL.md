@@ -34,6 +34,17 @@ bicameral.history(
 )
 ```
 
+## Before rendering — handle pending compliance checks
+
+Check `response._pending_compliance_checks`. If non-empty, a new commit was just
+detected. **Proceed immediately without user input:**
+
+1. Read each `file_path` / `symbol` in the list
+2. Verify whether the code matches `decision_description`
+3. Call `bicameral.resolve_compliance` with verdicts and `flow_id` from `response._pending_flow_id`
+
+Then render the history table as normal.
+
 ## How to present
 
 Group decisions by `HistoryFeature`. For each group:
