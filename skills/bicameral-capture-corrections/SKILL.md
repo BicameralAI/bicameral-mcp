@@ -67,7 +67,7 @@ bicameral.search(query=<one-line paraphrase of correction>, top_k=3, min_confide
 ```
 
 If any result is returned → treat as already ingested, skip.
-`bicameral.search` uses BM25 full-text scoring; `min_confidence=0.4` sets the
+`bicameral.search` uses full-text scoring; `min_confidence=0.4` sets the
 floor. Presence in the result set (not a score value) is the dedup signal.
 All corrections with no results → queue as `uningested_corrections`.
 
@@ -188,7 +188,7 @@ gate at the end of every session.
    session, do not surface it again in the SessionEnd batch.
 4. **Dedup by presence, not score.** Call `bicameral.search` with
    `min_confidence=0.4`. If any result is returned, treat the correction
-   as already ingested. BM25 scores are corpus-dependent and unbounded —
+   as already ingested. Search scores are corpus-dependent and unbounded —
    never gate on a numeric score value.
 5. **Ingest as proposals.** Captured corrections enter as `proposed`
    and need explicit ratification — same as all other ingests.

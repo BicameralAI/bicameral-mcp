@@ -99,7 +99,7 @@ async def test_banner_includes_ungrounded_decisions():
 async def test_banner_queries_both_drifted_and_ungrounded_statuses():
     ctx = _make_ctx(open_rows=[_drifted()])
     await get_session_start_banner(ctx)
-    ctx.ledger.get_decisions_by_status.assert_called_once_with(["drifted", "ungrounded", "proposal"])
+    ctx.ledger.get_decisions_by_status.assert_called_once_with(["drifted", "ungrounded", "proposal", "context_pending"])
 
 
 @pytest.mark.asyncio
