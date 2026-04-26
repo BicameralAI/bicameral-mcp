@@ -718,17 +718,21 @@ async def upsert_compliance_check(
     phase: str,
     commit_hash: str = "",
     pruned: bool = False,
+    ephemeral: bool = False,
 ) -> bool:
     """Write a compliance_check row keyed on (decision_id, region_id, content_hash).
 
     Returns True when written, False when the row already existed (first-write-wins).
     verdict must be one of: 'compliant', 'drifted', 'not_relevant'.
+    ephemeral=True marks the verdict as from a WIP/fixup commit; downstream
+    queries filter these out when computing decision status and drift scoring.
     """
     try:
         await client.execute(
             "CREATE compliance_check SET decision_id = $d, region_id = $r, "
             "content_hash = $h, verdict = $v, confidence = $cf, "
-            "explanation = $e, phase = $p, commit_hash = $cm, pruned = $pr",
+            "explanation = $e, phase = $p, commit_hash = $cm, pruned = $pr, "
+            "ephemeral = $ep",
             {
                 "d": decision_id,
                 "r": region_id,
@@ -739,6 +743,7 @@ async def upsert_compliance_check(
                 "p": phase,
                 "cm": commit_hash,
                 "pr": pruned,
+                "ep": ephemeral,
             },
         )
         return True
@@ -766,9 +771,13 @@ async def get_compliance_verdict(
     region_id: str,
     content_hash: str,
 ) -> dict | None:
-    """Return the cached LLM verdict for this exact code shape, or None."""
+    """Return the cached LLM verdict for this exact code shape, or None.
+
+    Includes both ephemeral (feature-branch) and non-ephemeral verdicts — callers
+    use the `ephemeral` field on the row to differentiate branch-delta vs main state.
+    """
     rows = await client.query(
-        "SELECT verdict, pruned, confidence, explanation, phase, checked_at "
+        "SELECT verdict, pruned, confidence, explanation, phase, checked_at, ephemeral "
         "FROM compliance_check "
         "WHERE decision_id = $d AND region_id = $r AND content_hash = $h "
         "LIMIT 1",
@@ -962,6 +971,9 @@ async def has_prior_compliant_verdict(
 
     Without this check, every code edit silently parks decisions at "pending"
     forever because the new hash has no cache entry.
+
+    Includes ephemeral (feature-branch) verdicts — branch-delta compliance still
+    counts as prior signal for drift detection.
     """
     rows = await client.query(
         "SELECT count() AS n FROM compliance_check "

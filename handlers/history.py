@@ -282,7 +282,7 @@ async def handle_history(
     6. Truncate at 50 features and set truncated flag.
     """
     from handlers.sync_middleware import ensure_ledger_synced
-    banner = await ensure_ledger_synced(ctx)
+    await ensure_ledger_synced(ctx)
 
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
@@ -345,5 +345,4 @@ async def handle_history(
         truncated=truncated,
         total_features=total_features,
         as_of=as_of_ref,
-        session_start_banner=banner,
     )

@@ -50,6 +50,5 @@ avoid coupling:
 
 | Constant | Location | Notes |
 |---|---|---|
-| `_STALE_PROPOSAL_DAYS` | `handlers/sync_middleware.py` | Days before a proposal surfaces in the session-start banner |
 | `recently_checked` TTL | `handlers/preflight.py` | Per-session dedup window for repeated preflight calls on the same topic |
 | Topic validation rules | `handlers/preflight.py` | Server-side; skills say "the handler validates" without specifying the rule |

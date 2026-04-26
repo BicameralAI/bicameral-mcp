@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -36,6 +36,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     5: "0.6.0",
     6: "0.7.0",
     7: "0.8.0",
+    8: "0.9.0",
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -189,10 +190,12 @@ _TABLES = [
     "ASSERT $value IN ['ingest', 'drift', 'regrounding', 'supersession', 'divergence'] "
     "DEFAULT 'drift'",
     "DEFINE FIELD checked_at   ON compliance_check TYPE datetime DEFAULT time::now()",
+    "DEFINE FIELD ephemeral    ON compliance_check TYPE bool DEFAULT false",
     "DEFINE INDEX idx_cc_cache_key ON compliance_check FIELDS decision_id, region_id, content_hash UNIQUE",
     "DEFINE INDEX idx_cc_decision  ON compliance_check FIELDS decision_id",
     "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
     "DEFINE INDEX idx_cc_commit    ON compliance_check FIELDS commit_hash",
+    "DEFINE INDEX idx_cc_ephemeral ON compliance_check FIELDS ephemeral",
 
     # graph_proposal — AI-generated edge proposals for human review.
     # from_id / to_id are TYPE string (not TYPE record) because this table can
@@ -494,12 +497,35 @@ async def _migrate_v6_to_v7(client: LedgerClient) -> None:
     logger.info("[migration] v6 → v7: HITL edge tables and graph_proposal defined")
 
 
+async def _migrate_v7_to_v8(client: LedgerClient) -> None:
+    """v7 → v8: Add ephemeral field to compliance_check.
+
+    Additive only — no data loss. Backfills existing records to ephemeral=false
+    so queries using WHERE ephemeral = false continue to include all pre-v8 rows.
+    """
+    new_stmts = [
+        "DEFINE FIELD ephemeral ON compliance_check TYPE bool DEFAULT false",
+        "DEFINE INDEX idx_cc_ephemeral ON compliance_check FIELDS ephemeral",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, sql.strip())
+
+    try:
+        await client.execute("UPDATE compliance_check SET ephemeral = false WHERE ephemeral = NONE")
+        logger.info("[migration] v7 → v8: backfilled compliance_check.ephemeral = false on existing rows")
+    except Exception as exc:
+        logger.warning("[migration] v7 → v8: backfill failed (non-fatal): %s", exc)
+
+    logger.info("[migration] v7 → v8: ephemeral field added to compliance_check")
+
+
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
     5: _migrate_v4_to_v5,
     6: _migrate_v5_to_v6,
     7: _migrate_v6_to_v7,
+    8: _migrate_v7_to_v8,
 }
 
 

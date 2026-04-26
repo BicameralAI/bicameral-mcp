@@ -276,9 +276,8 @@ async def handle_preflight(
             guided_mode=guided_mode,
         )
 
-    # Sync ledger to HEAD and collect the session-start banner (once per session).
     from handlers.sync_middleware import ensure_ledger_synced
-    banner = await ensure_ledger_synced(ctx)
+    await ensure_ledger_synced(ctx)
 
     sources_chained: list[str] = []
 
@@ -314,7 +313,6 @@ async def handle_preflight(
             fired=False,
             reason="no_matches",
             guided_mode=guided_mode,
-            session_start_banner=banner,
         )
 
     # Merge: region-anchored results first (direct pin = high precision),
@@ -330,7 +328,6 @@ async def handle_preflight(
             reason="no_matches",
             guided_mode=guided_mode,
             sources_chained=sources_chained,
-            session_start_banner=banner,
         )
 
     # Search-level gate: in normal mode, require actionable signal.
@@ -364,7 +361,6 @@ async def handle_preflight(
             reason=reason,  # type: ignore[arg-type]
             guided_mode=guided_mode,
             sources_chained=sources_chained,
-            session_start_banner=banner,
         )
 
     decisions = [_to_brief_decision(m) for m in search_resp.matches]
@@ -415,7 +411,6 @@ async def handle_preflight(
         open_questions=open_questions,
         action_hints=action_hints,
         sources_chained=sources_chained,
-        session_start_banner=banner,
         unresolved_collisions=unresolved_collisions,
         context_pending_ready=context_pending_ready,
     )

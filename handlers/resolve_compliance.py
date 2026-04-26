@@ -83,6 +83,7 @@ async def handle_resolve_compliance(
         )
 
     sync_state = getattr(ctx, "_sync_state", None)
+    is_ephemeral = False
     if isinstance(sync_state, dict):
         expected_flow_id = sync_state.get("pending_flow_id")
         if expected_flow_id and flow_id != expected_flow_id:
@@ -96,6 +97,8 @@ async def handle_resolve_compliance(
                 "[resolve_compliance] called without flow_id — pass the flow_id "
                 "from the preceding link_commit response to tie these calls together"
             )
+        if expected_flow_id and flow_id == expected_flow_id:
+            is_ephemeral = sync_state.get("pending_ephemeral", False)
 
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
@@ -142,6 +145,7 @@ async def handle_resolve_compliance(
             phase=phase,
             commit_hash=commit_hash or "",
             pruned=is_pruned,
+            ephemeral=is_ephemeral,
         )
 
         # Prune the binds_to edge when the caller says "not relevant" —

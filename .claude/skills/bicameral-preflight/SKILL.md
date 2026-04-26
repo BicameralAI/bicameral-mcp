@@ -5,6 +5,8 @@ description: Pre-flight context check BEFORE implementing code. AUTO-FIRES on AN
 
 # Bicameral Preflight
 
+> Tuning parameters for this skill are defined in `skills/CONSTANTS.md`.
+
 The proactive context-surfacing skill. Bicameral notices when you're
 about to implement something and pushes the relevant prior decisions,
 drift, and open questions at you BEFORE Claude writes any code.
@@ -106,51 +108,30 @@ The handler runs `bicameral.search` internally, gates on the user's
 `guided_mode` setting, conditionally chains to `bicameral.brief`, and
 returns a `PreflightResponse` with a `fired: bool` field.
 
-### 2.5 Render session-start banner if present
-
-Before evaluating `response.fired`, check `response.session_start_banner`.
-If non-null, render it immediately — regardless of `fired` value:
-
-```
-⚠ SESSION START — N open decision(s) from previous session:
-  [drifted]   <description> (Source: <source_ref>)
-  [ungrounded] <description> (Source: <source_ref>)
-  ...
-(showing top 10 of X)   ← only when response.session_start_banner.truncated
-Review before implementing in affected areas.
-```
-
-Render each item prefixed with its `status` field — `[drifted]` (code changed
-since verification) and `[ungrounded]` (never bound to code) have different
-meanings. Use `session_start_banner.message` verbatim as the header if
-rendering compactly.
-
-The banner fires at most once per MCP server session (server-side dedup).
-Render it verbatim — never suppress it, even when `fired=false`.
-
 ### 3. Decide whether to render
 
-**Always show relevant decisions when any are found** — even if
-`fired=false`. The decisions block is the primary value of preflight;
-silencing it when there's no urgent signal hides context the developer
-needs.
+Look at `response.fired`:
 
-Look at `response.fired` and `reason`:
+- **`fired == false`** → produce **NO OUTPUT** about the preflight.
+  Do not say "I checked bicameral and found nothing." Do not say "no
+  relevant context." Just proceed silently with the user's original
+  request. The `reason` field tells you why — useful for debugging,
+  never user-facing. Possible reasons: `no_matches`,
+  `no_actionable_signal` (normal mode only, no drift/divergence),
+  `topic_too_generic` (failed deterministic topic validation),
+  `recently_checked` (per-session dedup — same topic checked recently),
+  `guided_mode_off` (hit signal but guided mode disabled and nothing
+  actionable), `preflight_disabled` (explicit env override mute).
 
-- **`no_matches` or `topic_too_generic`** → produce **NO OUTPUT**.
-  Nothing was found; there is nothing to surface. Proceed silently.
+**Note on ephemeral commits**: when `bicameral.link_commit` is called on a
+feature branch commit (one not yet in the authoritative branch), the response
+includes `ephemeral: true` and any compliance verdicts are tagged as such.
+These verdicts are still authoritative for status — `drifted`/`reflected` reflects
+the branch state — but the dashboard renders them with a branch-delta indicator
+so you can see what your branch changes relative to main.
 
-- **`recently_checked`** → produce **NO OUTPUT**. Same topic was checked
-  in the last 5 minutes; the developer already saw the context.
-
-- **`preflight_disabled`** → produce **NO OUTPUT**. Explicitly muted.
-
-- **All other cases** (including `no_actionable_signal`, `guided_mode_off`,
-  or `fired=true`) → **always render the decisions block** with signoff
-  status. When `fired=true`, also render any drift, divergence, or
-  open-question blocks. Even when nothing is urgent, showing the N prior
-  decisions in scope — with their signoff state — is useful before any
-  code edit.
+- **`fired == true`** → render the surfaced block (next step) BEFORE
+  doing any code work.
 
 ### 3.5 Scan recent user turns for uningested corrections
 
@@ -217,25 +198,7 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 ⚠ N unresolved open question(s):
   • <description>
     Source: <source_ref>
-
-⚠ N unresolved collision(s) from prior session(s) — resolve before first edit:
-  • [collision_pending] <decision description>
-    Call: bicameral.resolve_collision(new_id=..., old_id=..., action='supersede'|'keep_both')
-
-⚠ N context_pending decision(s) ready for ratification:
-  • [context_pending] <decision description>
-    ≥1 confirmed context_for edge — eligible for bicameral.ratify
 ```
-
-**Unresolved collisions** (`response.unresolved_collisions`) are decisions held
-at `collision_pending` from prior sessions. Call `bicameral.resolve_collision`
-before the first file edit when this list is non-empty — these are un-live proposals
-that may be duplicates of what you're about to implement.
-
-**Context-pending ready** (`response.context_pending_ready`) are `context_pending`
-decisions that have ≥1 confirmed `context_for` edge (someone confirmed a span
-answers the open question). They are eligible for `bicameral.ratify`. Prompt
-the user to ratify when this list is non-empty, but do NOT block implementation.
 
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.

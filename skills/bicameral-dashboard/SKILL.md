@@ -18,23 +18,7 @@ Do NOT fire on preflight, ingest, drift, or search prompts — those have dedica
 
 1. Call `bicameral.dashboard` (no required arguments).
 
-2. **Render the session-start banner first if present.** Check
-   `response.session_start_banner`. If non-null, render it at the top
-   BEFORE the dashboard URL — users launching the dashboard are the
-   most likely to want to see open items from the previous session:
-
-   ```
-   ⚠ SESSION START — N open decision(s) from previous session:
-     [drifted]    <description> (Source: <source_ref>)
-     [ungrounded] <description> (Source: <source_ref>)
-     ...
-   (showing top 10 of X)   ← only when response.session_start_banner.truncated
-   Review before implementing in affected areas.
-   ```
-
-   The banner fires at most once per MCP server session. Render verbatim.
-
-3. Render the dashboard URL:
+2. Render the dashboard URL:
 
    ```
    Dashboard: {url}  ({status})

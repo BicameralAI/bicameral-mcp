@@ -108,44 +108,6 @@ The handler runs `bicameral.search` internally, gates on the user's
 `guided_mode` setting, conditionally chains to `bicameral.brief`, and
 returns a `PreflightResponse` with a `fired: bool` field.
 
-### 2.5 Render session-start banner if present
-
-Before evaluating `response.fired`, check `response.session_start_banner`.
-If non-null, render it immediately — regardless of `fired` value:
-
-```
-⚠ SESSION START — N open decision(s) from previous session:
-  [drifted]        <description> (Source: <source_ref>)
-  [context_pending] <description>
-                    → <context_question>
-  [ungrounded]     <description> (Source: <source_ref>)
-  ...
-(showing top 10 of X)   ← only when response.session_start_banner.truncated
-Review before implementing in affected areas.
-```
-
-Render each item prefixed with its `status` field. Status meanings:
-- `[drifted]` — code changed since last verification
-- `[context_pending]` — parked during ingest; business driver unclear. **Always show the `context_question` inline** so the user can answer on the spot.
-- `[ungrounded]` — tracked but never bound to code
-
-**Context-pending resolution at session start** — if any `context_pending` items are present, after rendering the banner ask:
-
-```
-⚑ N decision(s) need business context before they can be tracked:
-  1  "<description>"
-     → <context_question>
-
-Answer now (e.g. "1a") to promote to proposals, or skip to address later.
-```
-
-On answer: name-a-driver option → re-ingest as `proposed` with driver noted. "Hygiene only" option → mark as `rejected`. No answer → stays `context_pending` for next session.
-
-**Silent when empty.** Use `session_start_banner.message` verbatim as the header if rendering compactly.
-
-The banner fires at most once per MCP server session (server-side dedup).
-Render it verbatim — never suppress it, even when `fired=false`.
-
 ### 3. Decide whether to render
 
 Look at `response.fired`:
@@ -160,6 +122,13 @@ Look at `response.fired`:
   `recently_checked` (per-session dedup — same topic checked recently),
   `guided_mode_off` (hit signal but guided mode disabled and nothing
   actionable), `preflight_disabled` (explicit env override mute).
+
+**Note on ephemeral commits**: when `bicameral.link_commit` is called on a
+feature branch commit (one not yet in the authoritative branch), the response
+includes `ephemeral: true` and any compliance verdicts are tagged as such.
+These verdicts are still authoritative for status — `drifted`/`reflected` reflects
+the branch state — but the dashboard renders them with a branch-delta indicator
+so you can see what your branch changes relative to main.
 
 - **`fired == true`** → render the surfaced block (next step) BEFORE
   doing any code work.

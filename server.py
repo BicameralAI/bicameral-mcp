@@ -727,8 +727,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse
-            from handlers.sync_middleware import ensure_ledger_synced
-            banner = await ensure_ledger_synced(ctx)
             srv = get_dashboard_server()
             if not srv.running:
                 await srv.start(ctx_factory=BicameralContext.from_env)
@@ -739,7 +737,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 url=srv.url,
                 status=status,
                 port=srv.port,
-                session_start_banner=banner,
             )
             payload = result.model_dump()
             update_notice = get_update_notice(SERVER_VERSION)

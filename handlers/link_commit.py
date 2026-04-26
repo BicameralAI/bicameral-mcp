@@ -27,9 +27,34 @@ Until then, flow_id ties the two calls together for auditability:
 from __future__ import annotations
 
 import logging
+import subprocess
 import uuid
 
 from contracts import LinkCommitResponse, PendingComplianceCheck
+
+
+def _is_ephemeral_commit(commit_hash: str, repo_path: str, authoritative_ref: str = "") -> bool:
+    """Return True when the commit has not yet landed in the authoritative branch.
+
+    Uses `git merge-base --is-ancestor` to check reachability. A commit on a
+    feature branch (or any WIP commit not yet merged to main) is ephemeral;
+    its compliance verdicts are excluded from drift scoring and status projection
+    until it lands in the authoritative ref.
+
+    Returns False (non-ephemeral) when authoritative_ref is unset or the check fails.
+    """
+    if not authoritative_ref or not commit_hash:
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit_hash, authoritative_ref],
+            cwd=repo_path,
+            capture_output=True,
+            timeout=5,
+        )
+        return result.returncode != 0  # 0 = reachable from main = not ephemeral
+    except Exception:
+        return False
 
 
 _VERIFICATION_INSTRUCTION = (
@@ -207,10 +232,17 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
 
     has_action_items = bool(pending) or bool(pending_grounding_raw)
 
+    is_ephemeral = _is_ephemeral_commit(
+        result["commit_hash"],
+        ctx.repo_path,
+        authoritative_ref=authoritative_ref,
+    )
+
     flow_id = str(uuid.uuid4())
     sync_state = getattr(ctx, "_sync_state", None)
     if isinstance(sync_state, dict):
         sync_state["pending_flow_id"] = flow_id
+        sync_state["pending_ephemeral"] = is_ephemeral
 
     response = LinkCommitResponse(
         commit_hash=result["commit_hash"],
@@ -226,6 +258,7 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         pending_grounding_checks=pending_grounding_raw,
         verification_instruction=_VERIFICATION_INSTRUCTION if has_action_items else "",
         flow_id=flow_id,
+        ephemeral=is_ephemeral,
     )
     _store_sync_cache(ctx, commit_hash, response)
 
