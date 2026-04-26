@@ -3,75 +3,79 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Bicameral — Decision Dashboard</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<title>Bicameral — Decision Ledger</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:wght@600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg:          #fbfaf7;
-  --bg-soft:     #f5f3ed;
-  --bg-card:     #ffffff;
-  --border:      #e7e3d8;
-  --border-soft: #efece3;
-  --text:        #2a2825;
-  --text-dim:    #75716a;
-  --text-bright: #1a1816;
-  --accent:      #3a5af6;
-  --accent-soft: #eef0ff;
-  --green:       #15803d;
-  --green-soft:  #ecf7ee;
-  --amber:       #b45309;
-  --amber-soft:  #fdf4e3;
-  --red:         #b91c1c;
-  --red-soft:    #fdf0ef;
-  --purple:      #7c3aed;
-  --purple-soft: #f3eeff;
-  --mono: "JetBrains Mono", "SF Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
-  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --canvas:      #f5f4ed;
+  --paper:       #faf9f4;
+  --text:        #2C2C2C;
+  --text-dim:    #6B6558;
+  --text-light:  #9B9482;
+  --accent:      #1B365D;
+  --accent-soft: rgba(27,54,93,0.07);
+  --green:       #2D6A4F;
+  --green-soft:  #eef6f0;
+  --amber:       #A85C00;
+  --amber-soft:  #fdf4e7;
+  --purple:      #5B3A8F;
+  --purple-soft: #f2edfb;
+  --border:      #D4CFBE;
+  --border-dark: #9B9482;
+  --mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+  --serif: "Lora", Georgia, serif;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 body {
-  background: var(--bg);
+  background: var(--canvas);
   color: var(--text);
   font-family: var(--mono);
   font-size: 12.5px;
-  line-height: 1.65;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── TOP BAR ───────────────────────────────────────────────── */
+/* ── TOPBAR ───────────────────────────────────────────────── */
 .topbar {
-  position: sticky; top: 0; z-index: 10;
-  background: var(--bg-card);
-  border-bottom: 1px solid var(--border);
-  padding: 9px 28px;
+  position: sticky; top: 0; z-index: 20;
+  background: var(--accent);
+  padding: 10px 28px;
   display: flex; align-items: center; gap: 14px;
 }
-.logo {
-  font-family: var(--mono);
-  font-size: 11.5px; font-weight: 500;
-  letter-spacing: 0.06em;
-  color: var(--text-bright);
-}
-.logo-mark { color: var(--accent); }
-.tb-dot { color: var(--border); font-size: 16px; line-height: 1; }
-.status-pill {
-  font-size: 10.5px; font-family: var(--mono);
-  padding: 2px 9px; border-radius: 100px;
-  border: 1px solid var(--border); color: var(--text-dim);
+.topbar-logo {
+  font-family: var(--serif);
+  font-size: 15px; font-weight: 700;
+  color: #f5f4ed;
   letter-spacing: 0.02em;
 }
-.status-pill.live         { border-color: var(--green);  color: var(--green); }
-.status-pill.connecting   { border-color: var(--amber);  color: var(--amber); }
-.status-pill.disconnected { border-color: var(--red);    color: var(--red); }
-.tb-ref {
-  margin-left: auto;
-  font-size: 11px; color: var(--text-dim); font-family: var(--mono);
-  letter-spacing: 0.01em;
+.topbar-logo span { opacity: 0.5; font-weight: 600; }
+.topbar-pill {
+  font-size: 10px; padding: 2px 8px;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.7);
+  letter-spacing: 0.08em;
 }
+.topbar-pill.live   { border-color: #52c98a; color: #52c98a; }
+.topbar-pill.connecting  { border-color: rgba(255,255,255,0.4); color: rgba(255,255,255,0.4); }
+.topbar-pill.disconnected { border-color: #e05252; color: #e05252; }
+.topbar-ref {
+  margin-left: auto;
+  font-size: 10.5px; color: rgba(255,255,255,0.45);
+  letter-spacing: 0.04em;
+}
+.topbar-toggle {
+  margin-left: 8px;
+  display: flex; align-items: center; gap: 7px;
+  font-size: 10px; color: rgba(255,255,255,0.55);
+  letter-spacing: 0.06em; cursor: pointer; user-select: none;
+}
+.topbar-toggle input[type=checkbox] { accent-color: #52c98a; width: 13px; height: 13px; cursor: pointer; }
+.topbar-toggle:hover { color: rgba(255,255,255,0.85); }
 
-/* ── MAIN CONTENT ──────────────────────────────────────────── */
-.main { max-width: 960px; margin: 0 auto; padding: 28px 28px 96px; }
+/* ── MAIN ────────────────────────────────────────────────── */
+.main { max-width: 1000px; margin: 0 auto; padding: 24px 28px 80px; }
 
 .empty {
   padding: 72px 0; text-align: center;
@@ -80,147 +84,182 @@ body {
 .empty code { color: var(--accent); background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
 
 .truncation-note {
-  text-align: center; padding: 14px; color: var(--text-dim);
-  font-size: 10.5px; border-top: 1px dashed var(--border); margin-top: 4px;
+  text-align: center; padding: 14px;
+  color: var(--text-dim); font-size: 10.5px;
+  border-top: 1px dashed var(--border); margin-top: 4px;
 }
 .truncation-note code { color: var(--accent); }
 
-/* ── FEATURE ───────────────────────────────────────────────── */
-.feature { margin-bottom: 2px; }
+/* ── FEATURE SECTION ──────────────────────────────────────── */
+.feature-section { margin-bottom: 28px; }
 
-.feature-hdr {
-  display: flex; align-items: center; gap: 0;
-  padding: 7px 10px; border-radius: 5px;
+.section-divider {
+  border-top: 2px solid var(--accent);
+  padding: 9px 0 0;
+  display: flex; align-items: baseline; gap: 12px;
   cursor: pointer; user-select: none;
-  transition: background 100ms;
 }
-.feature-hdr:hover { background: var(--bg-soft); }
+.section-divider:hover .section-name { opacity: 0.75; }
+.section-chev { font-size: 9px; color: var(--text-light); flex-shrink: 0; }
+.section-name {
+  font-family: var(--serif);
+  font-size: 13px; font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  transition: opacity 0.1s;
+}
+.section-body { display: block; }
+.section-body.collapsed { display: none; }
 
-.f-chev {
-  color: var(--text-dim); font-size: 9px; width: 16px;
-  flex-shrink: 0; margin-right: 4px;
+/* ── COLUMN HEADERS ───────────────────────────────────────── */
+.col-headers {
+  display: grid;
+  grid-template-columns: 120px 1fr 180px;
+  padding: 6px 12px 6px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-top: 2px;
 }
-.f-name {
-  font-size: 11.5px; font-weight: 500;
-  letter-spacing: 0.07em;
-  color: var(--text-bright);
-  white-space: nowrap;
-}
-.f-rule {
-  flex: 1; height: 1px;
-  background: var(--border-soft);
-  margin: 0 12px;
-  min-width: 16px;
-  opacity: 0;
-  transition: opacity 150ms;
-}
-.feature.open .f-rule { opacity: 1; }
-
-.f-counts { display: flex; gap: 10px; align-items: center; flex-shrink: 0; }
-.fct { font-size: 11.5px; font-weight: 500; }
-.fct.ok   { color: var(--green); }
-.fct.warn { color: var(--amber); }
-.fct.dim  { color: var(--text-dim); }
-.fct.disc { color: var(--purple); }
-.fct.sup  { color: var(--accent); opacity: 0.45; }
-
-.feature-body {
-  display: none;
-  margin: 0 0 0 20px;
-  border-left: 1px solid var(--border-soft);
-  padding: 0 0 8px 0;
-}
-.feature.open .feature-body { display: block; }
-
-.feature-sep {
-  height: 1px; background: var(--border);
-  margin: 0 0 4px 0;
+.col-headers span {
+  font-size: 9.5px; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--text-light);
 }
 
 /* ── DECISION ROW ──────────────────────────────────────────── */
 .dec {
-  border-bottom: 1px solid var(--border-soft);
+  position: relative;
+  border-bottom: 1px solid var(--border);
   cursor: pointer;
+  transition: background 0.1s;
 }
-.dec:last-child { border-bottom: none; }
+.dec::before {
+  content: '';
+  position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px;
+}
+.dec.s-reflected::before  { background: var(--green); }
+.dec.s-drifted::before    { background: var(--amber); }
+.dec.s-ungrounded::before { background: var(--border-dark); }
+.dec.s-discovered::before { background: var(--purple); }
+.dec.s-gap::before        { background: var(--amber); }
+.dec.s-superseded::before { background: var(--border); }
+.dec:hover  { background: rgba(27,54,93,0.025); }
+.dec.open   { background: rgba(27,54,93,0.03); }
 
 .dec-hdr {
-  display: flex; align-items: baseline; gap: 6px;
-  padding: 6px 12px;
+  display: grid;
+  grid-template-columns: 120px 1fr 180px;
+  padding: 8px 12px 8px 12px;
+  align-items: center;
+  min-height: 40px;
 }
-.dec-hdr:hover { background: var(--bg-soft); }
-
-.d-chev {
-  color: var(--text-dim); font-size: 9px;
-  flex-shrink: 0; width: 12px; margin-right: 2px;
+.d-ratified-col { }
+.d-text-col {
+  display: flex; align-items: center; gap: 6px;
+  padding-right: 12px;
 }
+.d-chev { font-size: 9px; color: var(--text-light); flex-shrink: 0; transition: transform 0.2s; }
+.dec.open .d-chev { transform: rotate(90deg); }
 .d-text {
-  flex: 1; font-style: italic;
-  color: var(--text); font-size: 12px;
+  font-size: 12px; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   min-width: 0;
 }
 .dec.open .d-text { white-space: normal; overflow: visible; text-overflow: unset; }
+.d-state-col { }
 
-/* ── DOUBLE-ENTRY BADGE ────────────────────────────────────── */
-/*
-  Each decision has two pills side-by-side: [CLAIM] [FULFILLMENT]
-  CLAIM   = the source side (was it recorded from a meeting/transcript/slack?)
-  FULFIL  = the code side (is it grounded / reflected / drifted?)
-  Together they show the "double-entry" ledger state at a glance.
-*/
-.d-badge {
-  display: flex; align-items: center; gap: 4px;
-  flex-shrink: 0; margin-left: 10px;
+/* ── RATIFIED PILL ────────────────────────────────────────── */
+.rat-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 100px;
+  font-size: 10px; letter-spacing: 0.05em;
+  position: relative; cursor: default; user-select: none;
+  white-space: nowrap;
 }
-.badge-pill {
-  font-size: 10px; font-family: var(--mono);
-  padding: 1px 7px; border-radius: 3px;
-  border: 1px solid; white-space: nowrap;
-  letter-spacing: 0.02em;
+.rat-pill[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); left: 0;
+  background: #1a1816; color: #f5f4ed;
+  padding: 5px 12px; font-size: 10px;
+  white-space: nowrap; z-index: 200; border-radius: 3px;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.22);
 }
-/* claim side colors */
-.bp-claim-present { color: var(--green);  border-color: var(--green);  background: var(--green-soft); }
-.bp-claim-absent  { color: var(--purple); border-color: var(--purple); background: var(--purple-soft); }
-/* fulfillment side colors */
-.bp-code-ok       { color: var(--green);  border-color: var(--green);  background: var(--green-soft); }
-.bp-code-drift    { color: var(--amber);  border-color: var(--amber);  background: var(--amber-soft); }
-.bp-code-none     { color: var(--text-dim); border-color: var(--border); background: var(--bg-soft); }
-.bp-code-sup      { color: var(--text-dim); border-color: var(--border); background: var(--bg-soft); opacity: 0.6; }
+.rat-pill[data-tip]:hover::after { opacity: 1; }
 
-/* ── EXPANDED BODY — TWO COLUMNS ───────────────────────────── */
+.rp-ratified {
+  background: var(--green-soft);
+  border: 1px solid var(--green);
+  color: var(--green);
+}
+.rp-proposed {
+  background: var(--canvas);
+  border: 1px dashed var(--border-dark);
+  color: var(--text-light);
+}
+.rp-context {
+  background: var(--amber-soft);
+  border: 1px dashed var(--amber);
+  color: var(--amber);
+}
+.rp-discovered {
+  background: var(--purple-soft);
+  border: 1px solid var(--purple);
+  color: var(--purple);
+}
+
+/* ── FULFILLMENT PILL ──────────────────────────────────────── */
+.ful-pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 100px;
+  font-size: 10px; letter-spacing: 0.05em; white-space: nowrap;
+}
+.fp-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.fp-reflected  { background: var(--green-soft);   border: 1px solid var(--green);       color: var(--green); }
+.fp-drifted    { background: var(--amber-soft);   border: 1px solid var(--amber);       color: var(--amber); }
+.fp-ungrounded { background: rgba(0,0,0,0.03);    border: 1px solid var(--border-dark); color: var(--text-light); }
+.fp-discovered { background: var(--purple-soft);  border: 1px solid var(--purple);      color: var(--purple); }
+.fp-gap        { background: var(--amber-soft);   border: 1px dashed var(--amber);      color: var(--amber); }
+.fp-superseded { background: rgba(0,0,0,0.03);    border: 1px solid var(--border);      color: var(--border-dark); }
+.fp-reflected  .fp-dot { background: var(--green); }
+.fp-drifted    .fp-dot { background: var(--amber); }
+.fp-ungrounded .fp-dot { border: 1.5px solid var(--border-dark); background: transparent; }
+.fp-discovered .fp-dot { background: var(--purple); }
+.fp-gap        .fp-dot { background: var(--amber); }
+.fp-superseded .fp-dot { background: var(--border-dark); }
+
+/* ── EXPANDED BODY ─────────────────────────────────────────── */
 .dec-body {
   display: none;
-  padding: 4px 12px 10px 26px;
+  padding: 10px 12px 14px 12px;
+  border-top: 1px dashed var(--border);
+  background: var(--paper);
 }
 .dec.open .dec-body { display: block; }
 
 .dec-cols {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 6px;
+  gap: 0 28px;
 }
-
 .col-hdr {
-  font-size: 10px; font-weight: 500;
-  letter-spacing: 0.08em; color: var(--text-dim);
+  font-size: 9px; font-weight: 600;
+  letter-spacing: 0.16em; color: var(--text-light);
   text-transform: uppercase;
   padding-bottom: 5px;
-  border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
 }
 
 /* sources column */
-.src-entry { margin-bottom: 10px; }
+.src-entry { margin-bottom: 12px; }
 .src-entry:last-child { margin-bottom: 0; }
 .src-meta {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 10.5px; color: var(--text-dim); margin-bottom: 3px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+  font-size: 10.5px; color: var(--text-dim); margin-bottom: 4px;
 }
 .src-type-pill {
   font-size: 9.5px; padding: 0 5px;
-  background: var(--bg-soft); border: 1px solid var(--border-soft);
+  background: var(--canvas); border: 1px solid var(--border);
   border-radius: 2px; color: var(--text-dim);
 }
 .src-speaker { color: var(--text); font-weight: 500; }
@@ -233,44 +272,41 @@ body {
   font-style: italic; font-size: 11.5px;
   color: var(--text); line-height: 1.55;
 }
-.src-quote::before { content: '\201C'; color: var(--text-dim); font-size: 13px; }
-.src-quote::after  { content: '\201D'; color: var(--text-dim); font-size: 13px; }
-.no-sources {
-  font-size: 11px; color: var(--purple); font-style: italic;
-}
+.src-quote::before { content: '\201C'; color: var(--text-light); font-size: 13px; }
+.src-quote::after  { content: '\201D'; color: var(--text-light); font-size: 13px; }
+.no-sources { font-size: 11px; color: var(--text-light); font-style: italic; }
 
 /* code column */
 .code-entry { margin-bottom: 8px; }
 .code-entry:last-child { margin-bottom: 0; }
 .code-loc {
-  display: flex; align-items: baseline; gap: 6px;
+  display: flex; align-items: baseline; gap: 7px;
   font-size: 11px;
 }
 .code-file { color: var(--accent); }
 .code-sym  { color: var(--text-dim); font-size: 10.5px; }
-.code-status-line {
-  font-size: 10.5px; margin-top: 2px;
-}
+.code-status-line { font-size: 10.5px; margin-top: 2px; }
 .csl-ok    { color: var(--green); }
 .csl-drift { color: var(--amber); }
-.csl-none  { color: var(--text-dim); font-style: italic; }
+.csl-none  { color: var(--text-light); font-style: italic; }
 .drift-detail {
   font-size: 10px; color: var(--amber);
-  margin-top: 1px; padding-left: 10px;
+  margin-top: 2px; padding-left: 10px;
 }
 .drift-detail::before { content: '⚠ '; }
-.no-code {
-  font-size: 11px; color: var(--text-dim); font-style: italic;
-}
+.no-code { font-size: 11px; color: var(--text-light); font-style: italic; }
 </style>
 </head>
 <body>
 
 <header class="topbar">
-  <span class="logo"><span class="logo-mark">▸</span> BICAMERAL</span>
-  <span class="tb-dot">·</span>
-  <span id="spill" class="status-pill connecting">connecting…</span>
-  <span id="tref" class="tb-ref"></span>
+  <span class="topbar-logo">Bicameral <span>/ Decision Ledger</span></span>
+  <span id="spill" class="topbar-pill connecting">connecting…</span>
+  <label class="topbar-toggle">
+    <input type="checkbox" id="show-proposed" checked onchange="applyToggle()">
+    show proposed
+  </label>
+  <span id="tref" class="topbar-ref"></span>
 </header>
 
 <main class="main" id="root">
@@ -278,74 +314,82 @@ body {
 </main>
 
 <script>
-// ── constants ────────────────────────────────────────────────
-const ST = {
-  reflected:  { fct: 'ok'   },
-  drifted:    { fct: 'warn' },
-  ungrounded: { fct: 'dim'  },
-  superseded: { fct: 'sup'  },
-  discovered: { fct: 'disc' },
-  gap:        { fct: 'warn' },
-};
-
+// ── helpers ─────────────────────────────────────────────────
 function esc(s) {
   return String(s ?? '')
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-// ── counts ───────────────────────────────────────────────────
-function counts(decisions) {
-  const c = {};
-  decisions.forEach(d => { c[d.status] = (c[d.status] || 0) + 1; });
-  return c;
+function fmtDate(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch { return iso.slice(0, 10); }
 }
 
-function renderCounts(c) {
-  const icons = { reflected: '✓', drifted: '⚠', ungrounded: '○', discovered: '~', superseded: '↩', gap: '?' };
-  return ['drifted','gap','ungrounded','discovered','reflected','superseded']
-    .filter(s => c[s])
-    .map(s => `<span class="fct ${(ST[s]||{fct:'dim'}).fct}">${c[s]}${icons[s]||'?'}</span>`)
-    .join('');
+// ── signoff helpers ──────────────────────────────────────────
+function signoffState(d) {
+  const s = d.signoff;
+  if (!s) return 'proposed';
+  return s.state || 'proposed';
 }
 
-// ── double-entry badge ───────────────────────────────────────
-// Returns two pill spans: [CLAIM side] [FULFILLMENT side]
-function renderBadge(d) {
-  const srcs = d.sources || [];
-  const hasClaim = srcs.length > 0;
+function isProposed(d) {
+  const st = signoffState(d);
+  return st === 'proposed' || st === 'collision_pending';
+}
 
-  // Claim pill — what source type recorded this decision?
-  let claimPill;
-  if (d.status === 'gap') {
-    claimPill = `<span class="badge-pill bp-code-drift">? open</span>`;
-  } else if (!hasClaim) {
-    claimPill = `<span class="badge-pill bp-claim-absent">~ codebase</span>`;
-  } else {
-    const t = srcs[0].source_type || 'source';
-    claimPill = `<span class="badge-pill bp-claim-present">${esc(t)}</span>`;
+// ── sort decisions: ratified desc, proposed at bottom ────────
+function sortDecisions(decisions) {
+  return [...decisions].sort((a, b) => {
+    const ap = isProposed(a), bp = isProposed(b);
+    if (ap && !bp) return 1;
+    if (!ap && bp) return -1;
+    if (ap && bp) return 0;
+    const da = a.signoff?.ratified_at || '';
+    const db = b.signoff?.ratified_at || '';
+    return db.localeCompare(da); // descending
+  });
+}
+
+// ── ratified pill ────────────────────────────────────────────
+function renderRatPill(d) {
+  if (!d.sources || !d.sources.length) {
+    // discovered — no claim side at all
+    return `<span class="rat-pill rp-discovered" data-tip="Found in code — no recorded source">~ no source</span>`;
   }
-
-  // Fulfillment pill — what is the code-side state?
-  let codePill;
-  if (d.status === 'superseded') {
-    codePill = `<span class="badge-pill bp-code-sup">↩ superseded</span>`;
-  } else if (d.status === 'drifted') {
-    codePill = `<span class="badge-pill bp-code-drift">⚠ drifted</span>`;
-  } else if (d.status === 'reflected') {
-    codePill = `<span class="badge-pill bp-code-ok">✓ reflected</span>`;
-  } else if (d.status === 'ungrounded') {
-    codePill = `<span class="badge-pill bp-code-none">○ ungrounded</span>`;
-  } else if (d.status === 'gap') {
-    codePill = `<span class="badge-pill bp-code-none">○ none</span>`;
-  } else {
-    // discovered — has code but no source (already handled claim side)
-    codePill = `<span class="badge-pill bp-code-ok">✓ in code</span>`;
+  const st = signoffState(d);
+  if (st === 'context_pending') {
+    const q = d.signoff?.context_question || 'Business driver unclear';
+    return `<span class="rat-pill rp-context" data-tip="Needs context: ${esc(q)}">⚑ needs context</span>`;
   }
-
-  return `<div class="d-badge">${claimPill}${codePill}</div>`;
+  if (isProposed(d)) {
+    return `<span class="rat-pill rp-proposed">○ proposed</span>`;
+  }
+  // ratified
+  const date = fmtDate(d.signoff?.ratified_at || d.signoff?.created_at || '');
+  const signer = d.signoff?.signer ? `Ratified by: ${d.signoff.signer}` : 'Ratified';
+  const tip = [signer, date].filter(Boolean).join(' · ');
+  const label = date || '✓ ratified';
+  return `<span class="rat-pill rp-ratified" data-tip="${esc(tip)}">✓ ${esc(date || 'ratified')}</span>`;
 }
 
-// ── sources column ───────────────────────────────────────────
+// ── fulfillment pill ─────────────────────────────────────────
+const FUL_CONF = {
+  reflected:  { cls: 'fp-reflected',  icon: '✓', label: 'reflected' },
+  drifted:    { cls: 'fp-drifted',    icon: '⚠', label: 'drifted'   },
+  ungrounded: { cls: 'fp-ungrounded', icon: '○', label: 'tracked'   },
+  discovered: { cls: 'fp-discovered', icon: '~', label: 'discovered' },
+  gap:        { cls: 'fp-gap',        icon: '?', label: 'open'      },
+  superseded: { cls: 'fp-superseded', icon: '↩', label: 'superseded' },
+};
+
+function renderFulPill(d) {
+  const c = FUL_CONF[d.status] || FUL_CONF.ungrounded;
+  return `<span class="ful-pill ${c.cls}"><span class="fp-dot"></span>${c.icon} ${c.label}</span>`;
+}
+
+// ── sources column (expanded) ─────────────────────────────────
 function renderSources(d) {
   const srcs = d.sources || [];
   if (d.status === 'gap') {
@@ -354,111 +398,111 @@ function renderSources(d) {
 <div style="font-size:11px;color:var(--text-dim);margin-top:4px;font-style:italic">${esc(q)}</div>`;
   }
   if (!srcs.length) {
-    return `<div class="no-sources">~ no meeting source — decision exists in code only</div>
-<div style="font-size:10.5px;color:var(--text-dim);margin-top:4px;font-style:italic">
-  Ingest the meeting where this was decided, or acknowledge as standing policy.
-</div>`;
+    return `<div class="no-sources">~ no meeting source — decision found in code only</div>`;
   }
   return srcs.map(s => {
-    const meta = [s.date ? s.date.slice(0,10) : '', s.speaker ? `<span class="src-speaker">${esc(s.speaker)}</span>` : ''].filter(Boolean).join(' · ');
+    const parts = [
+      s.source_type ? `<span class="src-type-pill">${esc(s.source_type)}</span>` : '',
+      s.source_ref  ? `<span>${esc(s.source_ref)}</span>` : '',
+      s.date        ? `<span class="src-date">${esc(s.date.slice(0,10))}</span>` : '',
+      s.speaker     ? `<span class="src-speaker">${esc(s.speaker)}</span>` : '',
+    ].filter(Boolean).join('');
     return `
 <div class="src-entry">
-  <div class="src-meta">
-    <span class="src-type-pill">${esc(s.source_type || 'source')}</span>
-    ${s.source_ref ? `<span>${esc(s.source_ref)}</span>` : ''}
-    ${meta ? `<span>${meta}</span>` : ''}
-  </div>
+  <div class="src-meta">${parts}</div>
   ${s.quote ? `<div class="src-quote">${esc(s.quote)}</div>` : ''}
 </div>`;
   }).join('');
 }
 
-// ── code column ──────────────────────────────────────────────
-function renderCode(d) {
-  const f = d.fulfillment;
-  if (!f) {
-    return `<div class="no-code">No code region found${d.status === 'ungrounded' ? ' — decision not yet implemented' : ''}.</div>`;
+// ── code regions column (expanded) ───────────────────────────
+function renderCodeRegions(d) {
+  const fuls = d.fulfillments || [];
+  if (!fuls.length) {
+    const msg = d.status === 'ungrounded'
+      ? 'No code region yet — requirement tracked, not yet implemented.'
+      : 'No code region found.';
+    return `<div class="no-code">${msg}</div>`;
   }
 
-  const sym = f.symbol ? `<span class="code-sym">${esc(f.symbol)}</span>` : '';
-  const loc = `${esc(f.file_path)}:${f.start_line}–${f.end_line}`;
-
-  let statusLine;
-  if (d.status === 'drifted') {
-    const hashDelta = (f.baseline_hash && f.current_hash)
-      ? `${f.baseline_hash.slice(0,7)} → ${f.current_hash.slice(0,7)}`
-      : '';
-    const driftMsg = hashDelta || d.drift_evidence || 'content changed since last sync';
-    statusLine = `<div class="code-status-line csl-drift">⚠ drifted</div>
-      <div class="drift-detail">${esc(driftMsg)}</div>`;
-  } else if (d.status === 'reflected') {
-    statusLine = `<div class="code-status-line csl-ok">✓ reflected</div>`;
-  } else {
-    statusLine = `<div class="code-status-line csl-none">${d.status}</div>`;
-  }
-
-  return `
+  return fuls.map(f => {
+    const loc = `${esc(f.file_path)}:${f.start_line}–${f.end_line}`;
+    const sym = f.symbol ? `<span class="code-sym">${esc(f.symbol)}</span>` : '';
+    let statusLine = '';
+    if (d.status === 'drifted') {
+      const driftMsg = d.drift_evidence || 'content changed since last sync';
+      statusLine = `<div class="code-status-line csl-drift">⚠ drifted</div>
+        <div class="drift-detail">${esc(driftMsg)}</div>`;
+    } else if (d.status === 'reflected') {
+      statusLine = `<div class="code-status-line csl-ok">✓ reflected</div>`;
+    } else {
+      statusLine = `<div class="code-status-line csl-none">${esc(d.status)}</div>`;
+    }
+    return `
 <div class="code-entry">
   <div class="code-loc">
-    <span class="code-file">${loc}</span>
-    ${sym}
+    <span class="code-file">${loc}</span>${sym}
   </div>
   ${statusLine}
 </div>`;
+  }).join('');
 }
 
 // ── decision row ──────────────────────────────────────────────
 function renderDec(d, idx) {
+  const stCls = `s-${d.status || 'ungrounded'}`;
+  const proposed = isProposed(d);
   return `
-<div class="dec" id="d${idx}" onclick="toggleDec(this)">
+<div class="dec ${stCls}${proposed ? ' is-proposed' : ''}" id="d${idx}" onclick="toggleDec(this)">
   <div class="dec-hdr">
-    <span class="d-chev">▶</span>
-    <span class="d-text">${esc('"' + d.summary + '"')}</span>
-    ${renderBadge(d)}
+    <div class="d-ratified-col">${renderRatPill(d)}</div>
+    <div class="d-text-col">
+      <span class="d-chev">▶</span>
+      <span class="d-text">${esc(d.summary)}</span>
+    </div>
+    <div class="d-state-col">${renderFulPill(d)}</div>
   </div>
   <div class="dec-body">
     <div class="dec-cols">
       <div>
-        <div class="col-hdr">Claim — sources</div>
+        <div class="col-hdr">Sources</div>
         ${renderSources(d)}
       </div>
       <div>
-        <div class="col-hdr">Fulfillment — code</div>
-        ${renderCode(d)}
+        <div class="col-hdr">Code Regions</div>
+        ${renderCodeRegions(d)}
       </div>
     </div>
   </div>
 </div>`;
 }
 
-// ── feature ───────────────────────────────────────────────────
-function hasPriority(f) {
-  const s = new Set(f.decisions.map(d => d.status));
-  return s.has('drifted') || s.has('ungrounded') || s.has('discovered');
-}
-
+// ── feature section ───────────────────────────────────────────
 function renderFeature(f, fi) {
-  const c    = counts(f.decisions);
-  const open = hasPriority(f);
-  const decs = f.decisions.map((d, di) => renderDec(d, fi * 1000 + di)).join('');
-
+  const sorted = sortDecisions(f.decisions);
+  const decs = sorted.map((d, di) => renderDec(d, fi * 1000 + di)).join('');
   return `
-<div class="feature${open ? ' open' : ''}" id="ft${fi}">
-  <div class="feature-hdr" onclick="toggleFeature('ft${fi}')">
-    <span class="f-chev">${open ? '▼' : '▶'}</span>
-    <span class="f-name">${esc(f.name.toUpperCase())}</span>
-    <span class="f-rule"></span>
-    <span class="f-counts">${renderCounts(c)}</span>
+<div class="feature-section" id="ft${fi}">
+  <div class="section-divider" onclick="toggleSection('ft${fi}')">
+    <span class="section-chev" id="ft${fi}-chev">▼</span>
+    <span class="section-name">${esc(f.name)}</span>
   </div>
-  <div class="feature-body">
-    <div class="feature-sep"></div>
+  <div class="section-body" id="ft${fi}-body">
+    <div class="col-headers">
+      <span>Ratified</span>
+      <span>Decision</span>
+      <span>Code State</span>
+    </div>
     ${decs}
   </div>
 </div>`;
 }
 
 // ── render ────────────────────────────────────────────────────
+let _lastData = null;
+
 function render(data) {
+  _lastData = data;
   const features = data.features || [];
   document.getElementById('tref').textContent =
     data.as_of ? `@ ${String(data.as_of).slice(0, 9)}` : '';
@@ -472,42 +516,47 @@ function render(data) {
     return;
   }
 
-  const sorted = [...features].sort((a, b) => {
-    const pri = f => hasPriority(f) ? 0 : 1;
-    return pri(a) - pri(b);
-  });
-
   const truncNote = data.truncated
     ? `<div class="truncation-note">Showing 50 of ${data.total_features} features — use <code>feature_filter</code> in bicameral.history to drill in.</div>`
     : '';
 
   document.getElementById('root').innerHTML =
-    sorted.map((f, i) => renderFeature(f, i)).join('') + truncNote;
+    features.map((f, i) => renderFeature(f, i)).join('') + truncNote;
+
+  applyToggle();
+}
+
+// ── proposed toggle ───────────────────────────────────────────
+function applyToggle() {
+  const show = document.getElementById('show-proposed').checked;
+  document.querySelectorAll('.dec.is-proposed').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
 }
 
 // ── toggle ────────────────────────────────────────────────────
-function toggleFeature(id) {
-  const el   = document.getElementById(id);
-  const open = el.classList.toggle('open');
-  el.querySelector('.f-chev').textContent = open ? '▼' : '▶';
+function toggleSection(id) {
+  const body = document.getElementById(id + '-body');
+  const chev = document.getElementById(id + '-chev');
+  const collapsed = body.classList.toggle('collapsed');
+  chev.textContent = collapsed ? '▶' : '▼';
 }
 
 function toggleDec(el) {
-  const open = el.classList.toggle('open');
-  el.querySelector('.d-chev').textContent = open ? '▼' : '▶';
+  el.classList.toggle('open');
 }
 
 // ── live connection ────────────────────────────────────────────
 const pill = document.getElementById('spill');
 
 function connect() {
-  pill.className = 'status-pill connecting';
+  pill.className = 'topbar-pill connecting';
   pill.textContent = 'connecting…';
   const es = new EventSource('/events');
-  es.onopen    = () => { pill.className = 'status-pill live'; pill.textContent = '● live'; };
+  es.onopen    = () => { pill.className = 'topbar-pill live'; pill.textContent = '● live'; };
   es.onmessage = e => { try { render(JSON.parse(e.data)); } catch {} };
   es.onerror   = () => {
-    pill.className = 'status-pill disconnected';
+    pill.className = 'topbar-pill disconnected';
     pill.textContent = '✕ disconnected';
     es.close();
     setTimeout(connect, 4000);

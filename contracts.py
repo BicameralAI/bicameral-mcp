@@ -607,8 +607,9 @@ class HistoryDecision(BaseModel):
     featureId: str
     status: Literal["reflected", "drifted", "ungrounded", "superseded", "discovered", "gap"]
     sources: list[HistorySource]          # 1+ input spans; empty for discovered/gap
-    fulfillment: HistoryFulfillment | None = None  # None when ungrounded/gap/discovered
+    fulfillments: list[HistoryFulfillment] = []   # all bound code regions
     drift_evidence: str | None = None    # human-readable delta when drifted
+    signoff: dict | None = None          # ratification record: state, signer, ratified_at
 
 
 class HistoryFeature(BaseModel):

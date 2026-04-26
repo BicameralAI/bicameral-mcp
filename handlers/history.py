@@ -103,20 +103,21 @@ def _row_to_history_decision(
     description = str(row.get("description") or "")
     status = str(row.get("status") or "ungrounded")
 
-    # Code regions → fulfillment (use first region)
+    # Code regions → fulfillments (all bound regions)
     code_regions = row.get("code_regions") or []
-    fulfillment: HistoryFulfillment | None = None
-    if code_regions:
-        r = code_regions[0]
+    fulfillments: list[HistoryFulfillment] = []
+    for r in code_regions:
+        if not r:
+            continue
         symbol = r.get("symbol") or r.get("symbol_name") or None
-        fulfillment = HistoryFulfillment(
+        fulfillments.append(HistoryFulfillment(
             file_path=str(r.get("file_path") or ""),
             symbol=symbol,
             start_line=int(r.get("start_line") or 0),
             end_line=int(r.get("end_line") or 0),
             baseline_hash=r.get("content_hash") or None,
             current_hash=r.get("content_hash") or None,
-        )
+        ))
 
     # Source spans → HistorySource list
     # get_all_decisions returns source_excerpt + meeting_date extracted from first span.
@@ -159,12 +160,12 @@ def _row_to_history_decision(
     history_status = _decision_status_for_history(
         description=description,
         decision_status=status,
-        has_code_regions=bool(code_regions),
+        has_code_regions=bool(fulfillments),
         has_sources=bool(sources),
     )
 
-    # Drift evidence — look for it in the row (populated by link_commit sweeps)
     drift_evidence: str | None = row.get("drift_evidence") or None
+    signoff: dict | None = row.get("signoff") or None
 
     return HistoryDecision(
         id=decision_id,
@@ -172,8 +173,9 @@ def _row_to_history_decision(
         featureId=feature_id,
         status=history_status,  # type: ignore[arg-type]
         sources=sources,
-        fulfillment=fulfillment,
+        fulfillments=fulfillments,
         drift_evidence=drift_evidence,
+        signoff=signoff,
     )
 
 
