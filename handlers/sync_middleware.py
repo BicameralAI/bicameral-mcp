@@ -65,7 +65,9 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
         return sync_state["session_banner"]
 
     try:
-        open_items = await ctx.ledger.get_decisions_by_status(["drifted", "ungrounded", "proposal"])
+        open_items = await ctx.ledger.get_decisions_by_status(
+            ["drifted", "ungrounded", "proposal", "context_pending"]
+        )
         if not open_items:
             sync_state["session_banner"] = None
             return None
@@ -74,40 +76,50 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
         ungrounded_count = sum(1 for d in open_items if d.get("status") == "ungrounded")
         proposal_count = sum(1 for d in open_items if d.get("status") == "proposal")
         stale_proposal_count = sum(1 for d in open_items if _is_stale_proposal(d))
+        context_pending_count = sum(1 for d in open_items if d.get("status") == "context_pending")
 
-        # Only surface proposals in the banner if there are stale ones — normal
-        # proposals are expected noise; stale ones need attention.
-        has_attention_items = bool(drifted_count or ungrounded_count or stale_proposal_count)
+        # context_pending always surfaces (needs a business driver answer).
+        # Proposals only surface when stale — normal proposals are expected noise.
+        has_attention_items = bool(drifted_count or ungrounded_count or stale_proposal_count or context_pending_count)
         if not has_attention_items:
             sync_state["session_banner"] = None
             return None
 
         max_items = 10
-        # Priority order: drifted first, then stale proposals, then ungrounded
+        # Priority: drifted → context_pending (needs answer) → stale proposals → ungrounded
         def _sort_key(d: dict) -> int:
             s = d.get("status", "")
             if s == "drifted":
                 return 0
-            if s == "proposal" and _is_stale_proposal(d):
+            if s == "context_pending":
                 return 1
-            return 2
+            if s == "proposal" and _is_stale_proposal(d):
+                return 2
+            return 3
 
         sorted_items = sorted(open_items, key=_sort_key)[:max_items]
         truncated = len(open_items) > max_items
 
-        items = [
-            {
+        items = []
+        for d in sorted_items:
+            item: dict = {
                 "decision_id": d.get("decision_id", ""),
                 "description": d.get("description", ""),
                 "source_ref": d.get("source_ref", ""),
                 "status": d.get("status", ""),
             }
-            for d in sorted_items
-        ]
+            if d.get("status") == "context_pending":
+                signoff = d.get("signoff") or {}
+                q = signoff.get("context_question", "") if isinstance(signoff, dict) else ""
+                if q:
+                    item["context_question"] = q
+            items.append(item)
 
         parts = []
         if drifted_count:
             parts.append(f"{drifted_count} drifted")
+        if context_pending_count:
+            parts.append(f"{context_pending_count} awaiting business context")
         if ungrounded_count:
             parts.append(f"{ungrounded_count} ungrounded")
         if stale_proposal_count:
@@ -124,6 +136,7 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
             ungrounded_count=ungrounded_count,
             proposal_count=proposal_count,
             stale_proposal_count=stale_proposal_count,
+            context_pending_count=context_pending_count,
             items=items,
             truncated=truncated,
             message=message,

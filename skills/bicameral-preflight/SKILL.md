@@ -115,17 +115,33 @@ If non-null, render it immediately — regardless of `fired` value:
 
 ```
 ⚠ SESSION START — N open decision(s) from previous session:
-  [drifted]   <description> (Source: <source_ref>)
-  [ungrounded] <description> (Source: <source_ref>)
+  [drifted]        <description> (Source: <source_ref>)
+  [context_pending] <description>
+                    → <context_question>
+  [ungrounded]     <description> (Source: <source_ref>)
   ...
 (showing top 10 of X)   ← only when response.session_start_banner.truncated
 Review before implementing in affected areas.
 ```
 
-Render each item prefixed with its `status` field — `[drifted]` (code changed
-since verification) and `[ungrounded]` (never bound to code) have different
-meanings. Use `session_start_banner.message` verbatim as the header if
-rendering compactly.
+Render each item prefixed with its `status` field. Status meanings:
+- `[drifted]` — code changed since last verification
+- `[context_pending]` — parked during ingest; business driver unclear. **Always show the `context_question` inline** so the user can answer on the spot.
+- `[ungrounded]` — tracked but never bound to code
+
+**Context-pending resolution at session start** — if any `context_pending` items are present, after rendering the banner ask:
+
+```
+⚑ N decision(s) need business context before they can be tracked:
+  1  "<description>"
+     → <context_question>
+
+Answer now (e.g. "1a") to promote to proposals, or skip to address later.
+```
+
+On answer: name-a-driver option → re-ingest as `proposed` with driver noted. "Hygiene only" option → mark as `rejected`. No answer → stays `context_pending` for next session.
+
+**Silent when empty.** Use `session_start_banner.message` verbatim as the header if rendering compactly.
 
 The banner fires at most once per MCP server session (server-side dedup).
 Render it verbatim — never suppress it, even when `fired=false`.

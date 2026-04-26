@@ -1003,6 +1003,11 @@ async def project_decision_status(
         return "ungrounded"
     signoff = dec_rows[0].get("signoff")
 
+    # Short-circuit: context_pending decisions need a business driver answer before
+    # they enter the normal drift/compliance cycle.
+    if signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending":
+        return "context_pending"
+
     # Short-circuit: proposed decisions are drift-exempt
     if signoff and isinstance(signoff, dict) and signoff.get("state") == "proposed":
         return "proposal"

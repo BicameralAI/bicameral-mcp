@@ -34,7 +34,8 @@ class SessionStartBanner(BaseModel):
     ungrounded_count: int = 0
     proposal_count: int = 0      # proposals awaiting ratification
     stale_proposal_count: int = 0  # proposals idle >14 days
-    items: list[dict]   # [{decision_id, description, source_ref, status}]
+    context_pending_count: int = 0  # parked decisions awaiting business context
+    items: list[dict]   # [{decision_id, description, source_ref, status, context_question?}]
     truncated: bool = False     # True when count of open items exceeds the item list
     message: str
 
@@ -64,7 +65,7 @@ class SourceCursorSummary(BaseModel):
 class DecisionStatusEntry(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
     source_type: str                  # transcript | notion | document | manual | implementation_choice
     source_ref: str                   # meeting ID, Notion page ID, etc.
     ingested_at: str                  # ISO datetime
@@ -90,7 +91,7 @@ class DecisionStatusResponse(BaseModel):
 class DecisionMatch(BaseModel):
     decision_id: str
     description: str                  # the original decision text
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
     confidence: float                 # BM25 match score (0–1)
     source_ref: str
     code_regions: list[CodeRegionSummary]
@@ -218,7 +219,7 @@ class SearchDecisionsResponse(BaseModel):
 class DriftEntry(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
     symbol: str
     lines: tuple[int, int]
     drift_evidence: str = ""
@@ -389,7 +390,7 @@ class IngestResponse(BaseModel):
 class BriefDecision(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
     source_type: str = ""
     source_ref: str = ""
     code_regions: list[CodeRegionSummary] = []
@@ -489,7 +490,7 @@ class GapRubric(BaseModel):
 class GapJudgmentContextDecision(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
     source_excerpt: str = ""
     source_ref: str = ""
     meeting_date: str = ""

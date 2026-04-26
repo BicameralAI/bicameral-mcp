@@ -64,9 +64,32 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 - Using semantic clustering as the first move when structural signals exist (wastes tokens)
 - Fabricating topic titles or decision estimates you aren't confident in — if uncertain, mark as `?` in the preview and let the user decide
 
+### 0.5. Pre-ingest context pull (v0.7.3+)
+
+**Before extracting any candidates**, query the ledger for existing decisions in the same feature area. This gives you domain priors that inform the business-tie filter and fork test in Step 1.
+
+**Procedure**:
+
+1. Identify the dominant feature area from the source (same noun phrase you'd use in Step 1.5 — e.g. "Session Identity", "Accountable Live", "Checkout Flow").
+
+2. Call `bicameral.search(query=<feature_area>, top_k=10)`.
+
+3. Read the results and note:
+   - **Business drivers already established** in this area (privacy, compliance, contract, SLA). A new candidate whose driver matches an established pattern is more likely to be real — even if the source is silent on the driver.
+   - **Forks already resolved** (e.g. "we chose opaque keys over direct IDs"). A new candidate that re-raises a resolved fork needs a supersession check, not a fork test.
+   - **Empty results** → first ingest of this area; no priors. The filter runs context-free. Circle-back routing (Step 2 park path) is especially important here — be quicker to park than to ingest.
+
+4. Use these priors when evaluating candidates in Step 1:
+   - If ledger context establishes a privacy/compliance pattern and a new candidate is privacy-shaped → treat the ledger context as evidence for the business driver, even if the source is silent. Ingest as `proposed` with a note: `"business driver inferred from ledger: <prior decision description>"`.
+   - If no ledger context → apply the filters strictly and park ambiguous cases.
+
+**Skip this step** (proceed directly to Step 1) when the source is a completely new domain with no plausible overlap with existing decisions (e.g. first-ever ingest into an empty ledger). The `bicameral.search` call is cheap — when in doubt, call it.
+
 ### 1. Extract candidate decisions
 
-Read the source. For each statement, decide whether it's a real implementation decision **tied to a business outcome** or whether it should be excluded. Apply the hard-exclude rules first, then the business-tie filter, then the include rules. When in doubt, exclude.
+**Default to fewer, higher-quality decisions.** A ledger with 3 business-tied decisions that the team will actually act on is more valuable than 10 mixed-quality entries that erode trust. When the filter is ambiguous, park — don't include.
+
+Read the source. For each statement, decide whether it's a real implementation decision **tied to a business outcome** or whether it should be excluded. Apply the hard-exclude rules first, then the business-tie filter, then the include rules. **When in doubt, park (not exclude silently) — the circle-back mechanism surfaces it for resolution.**
 
 **HARD EXCLUDE — these patterns are NEVER decisions, even if they sound technical**:
 
@@ -138,6 +161,18 @@ Example: "Use opaque user keys (zoom_member_keys table) instead of exposing Supa
 
 **DENSITY LIMIT — if you draft more than 4 decisions from a single topic segment, you're probably over-extracting.** Topic segments are intentionally narrow (3–6 word titles). Finding 5+ decisions in one segment almost always means you're enumerating implementation details rather than capturing architectural choices. Apply the fork test and redundancy check aggressively until you're at ≤4. Treat >4 as a hard signal to prune, not a green light.
 
+**ROUTING TABLE — after both gates, route each candidate:**
+
+| Gate 1 (business tie) | Gate 2 (fork exists) | Driver visible where? | Route |
+|---|---|---|---|
+| Pass | Pass | In the source itself | → ingest as `proposed` |
+| Pass | Pass | In ledger context (Step 0.5) | → ingest as `proposed`, note: `"driver inferred from ledger: {prior}"` |
+| Pass | Pass | Nowhere visible | → **park as `context_pending`** with generated question |
+| Pass | Fail | — | → **drop** (spec, not a decision) |
+| Fail | — | — | → **drop** (engineering hygiene) |
+
+The park path is not a consolation prize — it's the right answer when the filter is uncertain. A parked decision surfaces at the next session start and preflight with a specific question. The user resolves it; the ledger stays clean.
+
 **INCLUDE — concrete decisions with explicit team commitment AND a business tie**:
 
 - Architectural choices, API contracts, data-model decisions, technology choices (with business driver)
@@ -145,7 +180,7 @@ Example: "Use opaque user keys (zoom_member_keys table) instead of exposing Supa
 - Configuration values and refinements that encode a business rule ("set discount tier TTL to 24h", "key on user ID hash per GDPR pseudonymization")
 - Action items with code implications, a named owner, AND a business driver
 
-When in doubt, **exclude**. A clean ledger with 5 business-tied decisions is more useful than 20 mixed with engineering hygiene the PM can't act on.
+When in doubt, **park**. A ledger with 3 high-confidence decisions is worth more than 10 mixed-quality entries that the team stops trusting.
 
 ### Worked examples
 
@@ -419,6 +454,36 @@ payload: {
 - **Internal format, always preferred.** You resolved `code_regions` via Step 2. Ingest with explicit pins. The ledger is a trustworthy drift anchor — editing those pinned files fires real drift alarms; editing unrelated files fires nothing. This is the posture we want for real branches.
 - **Natural format, for abstract decisions only.** The decision is genuinely abstract ("ship by Q3," "SOC2-compliant session storage") or points at code that doesn't exist yet. It stays ungrounded in the ledger until a future `bicameral.bind` pins it. Honest empty state beats a false binding.
 
+**Context-pending format (v0.7.3+)** — use when a candidate passes the fork test but has no visible business driver in the source or ledger context. Park it rather than silently dropping or forcing inclusion:
+
+```
+payload: {
+  query: "<feature area>",
+  source: "transcript",
+  title: "<source ref>",
+  date: "<ISO date>",
+  decisions: [
+    {
+      description: "zoom_member_keys: opaque keys instead of Supabase IDs",
+      signoff: {
+        state: "context_pending",
+        context_question: "Is this driven by: (a) a privacy/vendor data-isolation requirement, (b) a compliance audit, (c) a customer contract clause, or (d) engineering hygiene only?",
+        parked_at: "<ISO datetime>",
+        session_id: "<session id>"
+      }
+    }
+  ]
+}
+```
+
+**Generating `context_question`** — tailor it to the candidate's technical domain:
+- Privacy/identity-shaped → "Is this driven by: (a) a privacy requirement or vendor data-isolation policy, (b) a compliance audit, (c) a customer contract, or (d) engineering hygiene only?"
+- Reliability-shaped → "Is this driven by: (a) an uptime SLA or customer commitment, (b) a specific incident post-mortem, (c) a contract clause, or (d) engineering hygiene only?"
+- Security-shaped → "Is this driven by: (a) a compliance audit or regulatory deadline, (b) a customer security requirement, (c) an incident, or (d) security hygiene only?"
+- Default → "Is there a business reason this was implemented this way rather than the simpler alternative? If yes, briefly name it."
+
+Ingest context-pending decisions in the **same `bicameral.ingest` call** as the `proposed` decisions from the same source — do not fire a separate call. The server routes them by `signoff.state`.
+
 ### 3b. Verify grounding candidates (v0.4.21+)
 
 When the ingest response contains `sync_status.pending_compliance_checks`
@@ -471,8 +536,29 @@ regions had cached verdicts from prior runs).
 
 Show the user:
 - How many candidate decisions were extracted vs. how many passed the relevance filter
-- How many were ingested, how many mapped to code, how many are ungrounded
-- If decisions were dropped, briefly list what was excluded and why (e.g., "Dropped 3 strategic/market decisions")
+- How many were ingested as `proposed`, how many parked as `context_pending`, how many dropped
+- How many ingested decisions mapped to code vs. are ungrounded
+- If decisions were dropped, briefly list what was excluded and why ("Dropped 2: spec not a decision; 1: engineering hygiene")
+- If decisions were parked, list them with their `context_question` so the user can answer inline if they choose
+
+**Parked decisions surface prompt** — after reporting, if any decisions were parked:
+
+```
+⚑ Parked N decision(s) — business driver unclear:
+
+  1  "<decision description>"
+     → <context_question>
+
+  2  "<decision description>"
+     → <context_question>
+
+Answer now (e.g. "1a, 2c") to resolve and promote to proposals, or leave for next session.
+```
+
+If the user answers:
+- Option (a)/(b)/(c) naming a business driver → update the decision: re-ingest as `proposed` with the named driver appended to the description. Call `bicameral.ratify` if the user also confirms.
+- Option (d) "engineering hygiene only" → the decision was correctly filtered out. Call `bicameral.update` to set `signoff.state = "rejected"` (or delete if the ledger supports it). Do not ratify.
+- No answer / "leave for now" → the decision stays `context_pending` and will surface at the next preflight.
 
 ### 5. Present the auto-fired brief (v0.4.8+)
 
