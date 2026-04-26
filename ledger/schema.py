@@ -277,13 +277,26 @@ _META = [
 ]
 
 
-async def _execute_define_idempotent(client: LedgerClient, sql: str) -> None:
-    """Run a DEFINE statement; treat "already exists" as success.
+def _with_overwrite(sql: str) -> str:
+    """Inject OVERWRITE into a DEFINE statement so it updates existing definitions.
 
-    Also catches "already contains" — SurrealDB's error when a UNIQUE index
-    definition is attempted on a table that already has duplicate rows. This
-    lets the server start up so the migration that cleans the stale data can
-    actually run. The migration re-issues the DEFINE INDEX after cleanup.
+    Transforms e.g. "DEFINE FIELD status ON ..." into
+    "DEFINE FIELD status OVERWRITE ON ..." so that init_schema always applies
+    the current field constraints (ASSERT clauses, DEFAULT values, TYPE) even
+    when the field already exists in the DB.
+    """
+    for keyword in ("DEFINE TABLE", "DEFINE FIELD", "DEFINE INDEX", "DEFINE ANALYZER", "DEFINE EVENT"):
+        if sql.upper().startswith(keyword) and "OVERWRITE" not in sql.upper():
+            return keyword + " OVERWRITE" + sql[len(keyword):]
+    return sql
+
+
+async def _execute_define_idempotent(client: LedgerClient, sql: str) -> None:
+    """Run a DEFINE statement; treat "already exists" / "already contains" as success.
+
+    "already contains" is SurrealDB's error when a UNIQUE index is attempted on
+    a table that already has duplicate rows. This lets the server start so the
+    migration that cleans stale data can run; the migration re-issues the index.
     """
     try:
         await client.execute(sql)
@@ -300,16 +313,16 @@ async def _execute_define_idempotent(client: LedgerClient, sql: str) -> None:
 
 
 async def init_schema(client: LedgerClient) -> None:
-    """Create all tables, indexes, and analyzers.
+    """Create or update all tables, indexes, and analyzers.
 
-    Idempotent: running against an already-initialized database is a
-    no-op. Each DEFINE statement runs through _execute_define_idempotent
-    so DDL bugs still surface loudly while "already exists" is a no-op.
+    Uses OVERWRITE on every DEFINE statement so field constraints (ASSERT
+    clauses, DEFAULT values, TYPE) are always brought up to the current schema
+    definition — even when running against a DB created by an older version.
     """
     for sql in (_ANALYZERS + _TABLES + _EDGES + _META):
         sql = sql.strip()
         if sql:
-            await _execute_define_idempotent(client, sql)
+            await _execute_define_idempotent(client, _with_overwrite(sql))
 
 
 # ── Migrations ──────────────────────────────────────────────────────────
