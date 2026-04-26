@@ -344,16 +344,33 @@ _BICAMERAL_SESSION_END_COMMAND = (
     "[ -d .bicameral ] && claude -p '/bicameral:capture-corrections' || true"
 )
 
+# Fires after every Bash tool use. When the command is a git write-op
+# (commit / merge / pull / rebase --continue), prints a one-line reminder so
+# the agent calls bicameral.link_commit in the same turn — keeping the ledger
+# current without waiting for the next preflight/history call.
+_BICAMERAL_POST_COMMIT_COMMAND = (
+    "python3 -c \""
+    "import json,sys; "
+    "d=json.load(sys.stdin); "
+    "c=d.get('tool_input',{}).get('command',''); "
+    "ops=('git commit','git merge ','git pull','git rebase --continue'); "
+    "[print('bicameral: new commit detected — call bicameral.link_commit"
+    "(commit_hash=\\'HEAD\\') to sync the ledger') "
+    "for _ in [1] if any(op in c for op in ops)]\""
+)
+
 
 def _install_claude_hooks(repo_path: Path) -> bool:
     """Merge bicameral hooks into the project-level .claude/settings.json.
 
-    Installs one hook:
+    Installs two hooks:
+    - PostToolUse/Bash: reminds the agent to call link_commit immediately
+      after git write-ops (commit / merge / pull / rebase --continue).
     - SessionEnd: runs bicameral-capture-corrections to catch uningested
       mid-session corrections (only fires when .bicameral/ exists).
 
-    Idempotent — safe to call on every setup run. Returns True if a new
-    entry was written, False if already present.
+    Idempotent — safe to call on every setup run. Returns True if any new
+    entry was written, False if both were already present.
     """
     settings_path = repo_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -367,6 +384,27 @@ def _install_claude_hooks(repo_path: Path) -> bool:
 
     hooks = existing.setdefault("hooks", {})
     wrote_anything = False
+
+    # ── PostToolUse / Bash — git write-op reminder ───────────────────
+    post_tool_use: list = hooks.setdefault("PostToolUse", [])
+    post_hook_present = any(
+        "bicameral" in h.get("command", "")
+        for entry in post_tool_use
+        if entry.get("matcher") == "Bash"
+        for h in entry.get("hooks", [])
+    )
+    if not post_hook_present:
+        bash_entry = next(
+            (e for e in post_tool_use if e.get("matcher") == "Bash"), None
+        )
+        if bash_entry is None:
+            bash_entry = {"matcher": "Bash", "hooks": []}
+            post_tool_use.append(bash_entry)
+        bash_entry["hooks"].append({
+            "type": "command",
+            "command": _BICAMERAL_POST_COMMIT_COMMAND,
+        })
+        wrote_anything = True
 
     # ── SessionEnd — capture uningested corrections ──────────────────
     session_end: list = hooks.setdefault("SessionEnd", [])
@@ -630,7 +668,7 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
         if num_skills:
             print(f"  Claude Code: installed {num_skills} slash commands")
         if _install_claude_hooks(repo_path):
-            print("  Claude Code: installed session-end hook → capture-corrections")
+            print("  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end")
 
     # Summary
     agent_names = ", ".join(AGENTS[a]["name"] for a in agents)
