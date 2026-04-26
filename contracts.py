@@ -186,6 +186,7 @@ class LinkCommitResponse(BaseModel):
     pending_compliance_checks: list[PendingComplianceCheck] = []
     pending_grounding_checks: list[dict] = []
     verification_instruction: str = ""
+    flow_id: str = ""
 
 
 class ActionHint(BaseModel):
@@ -381,12 +382,8 @@ class IngestResponse(BaseModel):
     pending_grounding_decisions: list[dict] = []
     supersession_candidates: "list[SupersessionCandidate]" = []
     source_cursor: SourceCursorSummary | None = None
-    brief: "BriefResponse | None" = None
     judgment_payload: "GapJudgmentPayload | None" = None
     sync_status: LinkCommitResponse | None = None
-
-
-# ── Tool 6: /bicameral_brief ─────────────────────────────────────────
 
 
 class BriefDecision(BaseModel):
@@ -409,29 +406,11 @@ class BriefGap(BaseModel):
     relevant_source_refs: list[str] = []
 
 
-class BriefQuestion(BaseModel):
-    question: str
-    why: str
-
-
 class BriefDivergence(BaseModel):
     symbol: str
     file_path: str
     conflicting_decisions: list[BriefDecision]
     summary: str
-
-
-class BriefResponse(BaseModel):
-    topic: str
-    participants: list[str] = []
-    as_of: str
-    ref: str
-    decisions: list[BriefDecision] = []
-    drift_candidates: list[BriefDecision] = []
-    divergences: list[BriefDivergence] = []
-    gaps: list[BriefGap] = []
-    suggested_questions: list[BriefQuestion] = []
-    action_hints: list[ActionHint] = []
 
 
 # ── Tool 7: /bicameral_reset ─────────────────────────────────────────

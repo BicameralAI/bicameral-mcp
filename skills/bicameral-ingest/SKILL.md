@@ -115,6 +115,29 @@ A decision is **not business-tied** when the entire motivation is engineering hy
 
 The test: strip the technical verb from the decision. What's left should either (a) name a stakeholder-observable outcome, or (b) cite a named business driver from the same source. If neither, the decision is engineering-only — reject it.
 
+**FORK TEST (Gate 2) — only extract decisions where a genuine choice was made.** Every candidate that passes the business-tie filter must also pass this test: *Can you name a plausible alternative that a different team might have reasonably chosen instead?*
+
+Ask: "If we handed this spec to two different senior engineering teams, would one team make a meaningfully different choice here?"
+
+- **YES** → real decision (a fork existed) → continue to include rules
+- **NO** → specification (any competent team would implement it the same way) → **EXCLUDE**
+
+Common false positives that pass Gate 1 but fail Gate 2:
+
+| Pattern | Why it fails the fork test |
+|---|---|
+| API response field list | Any team building this system returns the same essential fields — no fork |
+| Implied implementation detail | Given a higher-level decision, this is the only reasonable implementation |
+| "We'll include X in the Y" | Specification of what X contains, not a choice between alternatives |
+| Naming/format conventions | Token prefix or length spec — once you commit to opaque keys, format is trivial |
+| Definition of interface contract | "The response returns A, B, C, D" — this is a spec, not a decision |
+
+**REDUNDANCY PRUNING — exclude decisions implied by others you're already keeping.** After drafting your candidate list, check: does decision B necessarily follow from decision A? If yes, keep A and drop B. The ledger should track the minimum deciding set — the choices that uniquely characterize the architecture. Everything implied by those choices is derivable, not an independent decision.
+
+Example: "Use opaque user keys (zoom_member_keys table) instead of exposing Supabase IDs to Zoom" (A) → "zoom_member_keys table maps user_id to am_-prefixed random key, max 36 chars" (B). B is fully implied by A — it's just the format spec. Drop B.
+
+**DENSITY LIMIT — if you draft more than 4 decisions from a single topic segment, you're probably over-extracting.** Topic segments are intentionally narrow (3–6 word titles). Finding 5+ decisions in one segment almost always means you're enumerating implementation details rather than capturing architectural choices. Apply the fork test and redundancy check aggressively until you're at ≤4. Treat >4 as a hard signal to prune, not a green light.
+
 **INCLUDE — concrete decisions with explicit team commitment AND a business tie**:
 
 - Architectural choices, API contracts, data-model decisions, technology choices (with business driver)
@@ -161,6 +184,21 @@ Keep the business driver attached to each decision's description so the gap judg
 > "Priya: let's rotate the JWT signing key quarterly — just good hygiene. Lena: separately, we need to add PII redaction to the audit log before the GDPR self-assessment next month, otherwise we fail the data-minimization check."
 
 → **Extract: 1 decision** — "Add PII redaction to the audit log (driver: GDPR self-assessment data-minimization check, next month deadline)." The key-rotation line is security hygiene with no business driver named — reject it. A PM reviewing the ledger can act on the GDPR item; they can't act on key rotation.
+
+**Example 6 — Token system spec: fork test drops implied details and pure specs (even when they have business drivers)**
+
+> "We'll issue Video SDK JWTs via a zoom-session-token edge function. The edge function validates membership and session eligibility before signing — only eligible members join sessions. We'll determine role_type from the user's host/admin membership and include it in the token so coaches get recording controls and room-movement permissions. Token response contract: signature, sessionName, sessionKey, userKey, roleType. We're using opaque zoom_user_keys from a zoom_member_keys table instead of exposing Supabase IDs to Zoom — eliminates display-name matching fragility, keeps member identity private from the vendor."
+
+Apply both filters — Gate 1 (business tie) then Gate 2 (fork test):
+
+| Candidate | Gate 1: business driver? | Gate 2: fork exists? | Result |
+|---|---|---|---|
+| Opaque zoom_member_keys (zoom_member_keys table) instead of exposing Supabase IDs | ✓ Privacy, eliminates matching fragility | ✓ Direct ID exposure was the alternative | **KEEP** |
+| JWT issued by edge function, validates eligibility before signing | ✓ Only eligible members join | ✓ No gate (open sessions) or backend service were alternatives | **KEEP** |
+| role_type (host/member) in token — coaches get different controls | ✓ Role-based session controls | ✗ Given a token-based auth system, encoding identity is implied — no fork | **DROP (implied by #2)** |
+| Response contract: signature, sessionName, sessionKey, userKey, roleType | ✓ Frontend depends on it | ✗ Any team implementing this system returns these fields — it's the spec, not a choice | **DROP (spec, not a decision)** |
+
+→ **Extract: 2 decisions** — the opaque key architecture and the eligibility gate. The role_type encoding and the field list are implied or are pure spec — they add no independent signal to the ledger. Note: "Token response contract" passes Gate 1 (has a business driver) but fails Gate 2 (no fork). Gate 1 alone is not sufficient.
 
 ### 1.5 Assign a feature group (stop-and-ask v0)
 

@@ -66,6 +66,31 @@ Group decisions by `HistoryFeature`. For each group:
 
 When `truncated=True`, note "Showing 50 of N features — use `feature_filter` to drill in."
 
+## After rendering — surface unratified proposals
+
+After the history table, scan the rendered decisions for any whose
+`signoff.state == "proposed"` (i.e. not yet ratified). Group them by
+feature area and present a single ratify prompt:
+
+```
+⚪ Unratified proposals in: <Feature A>, <Feature B>, <Feature C>
+   Drift tracking is paused on these until ratified.
+   Ratify now? [Y/n or pick features: A C]  ›
+```
+
+- If the user confirms all or a subset, call `bicameral.ratify` for
+  each decision in the confirmed features (same call as
+  `bicameral-ingest` step 7).
+- If they decline, note it inline and move on — never ask twice in
+  the same session.
+- **Silent when there are no proposals.** Never say "nothing to
+  ratify." The empty path is always silent.
+
+This is the canonical ratification surface. `bicameral-ingest` and
+`bicameral-capture-corrections` both leave decisions as proposals
+deliberately — history is where the user reviews and ratifies in
+bulk, rather than being asked at the end of every ingest.
+
 ## Status badges
 
 | Status | Badge | Meaning |
@@ -75,3 +100,4 @@ When `truncated=True`, note "Showing 50 of N features — use `feature_filter` t
 | ungrounded | ○ | Decision tracked but no code region found |
 | discovered | ~ | Code implies a decision that was never recorded |
 | superseded | — | Replaced by a later decision |
+| proposed | ⚪ | Ingested but not yet ratified; drift tracking paused |

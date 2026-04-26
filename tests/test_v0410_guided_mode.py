@@ -30,14 +30,13 @@ from contracts import (
     BriefDecision,
     BriefDivergence,
     BriefGap,
-    BriefResponse,
     CodeRegionSummary,
     DecisionMatch,
     LinkCommitResponse,
     SearchDecisionsResponse,
 )
 from handlers.action_hints import (
-    generate_hints_for_brief,
+    generate_hints_from_findings,
     generate_hints_for_search,
 )
 
@@ -100,25 +99,6 @@ def _brief_decision(
         source_ref="test-ref",
         code_regions=[],
         severity_tier=1,
-    )
-
-
-def _brief_response(
-    *,
-    decisions: list[BriefDecision] | None = None,
-    drift_candidates: list[BriefDecision] | None = None,
-    divergences: list[BriefDivergence] | None = None,
-    gaps: list[BriefGap] | None = None,
-) -> BriefResponse:
-    return BriefResponse(
-        topic="test",
-        as_of="2026-04-14T00:00:00Z",
-        ref="HEAD",
-        decisions=decisions or [],
-        drift_candidates=drift_candidates or [],
-        divergences=divergences or [],
-        gaps=gaps or [],
-        suggested_questions=[],
     )
 
 
@@ -214,16 +194,15 @@ def test_search_fires_both_review_and_ground_when_mixed():
         assert all(h.blocking == guided for h in hints)
 
 
-# ── Brief hint generator ───────────────────────────────────────────
+# ── Findings hint generator (replaces brief hint generator) ────────
 
 
-def test_brief_empty_response_no_hints_in_either_mode():
-    response = _brief_response()
-    assert generate_hints_for_brief(response, guided_mode=False) == []
-    assert generate_hints_for_brief(response, guided_mode=True) == []
+def test_findings_empty_no_hints_in_either_mode():
+    assert generate_hints_from_findings([], [], [], guided_mode=False) == []
+    assert generate_hints_from_findings([], [], [], guided_mode=True) == []
 
 
-def test_brief_divergence_fires_in_normal_mode_as_advisory():
+def test_findings_divergence_fires_in_normal_mode_as_advisory():
     divergence = BriefDivergence(
         symbol="SessionCache",
         file_path="src/session.ts",
@@ -233,37 +212,33 @@ def test_brief_divergence_fires_in_normal_mode_as_advisory():
         ],
         summary="2 decisions contradict",
     )
-    response = _brief_response(divergences=[divergence])
-    hints = generate_hints_for_brief(response, guided_mode=False)
+    hints = generate_hints_from_findings([divergence], [], [], guided_mode=False)
     assert len(hints) == 1
     assert hints[0].kind == "resolve_divergence"
     assert hints[0].blocking is False
     assert any("SessionCache" in ref for ref in hints[0].refs)
 
 
-def test_brief_divergence_fires_in_guided_mode_as_blocking():
+def test_findings_divergence_fires_in_guided_mode_as_blocking():
     divergence = BriefDivergence(
         symbol="X",
         file_path="src/x.ts",
         conflicting_decisions=[_brief_decision(), _brief_decision()],
         summary="conflict",
     )
-    response = _brief_response(divergences=[divergence])
-    hints = generate_hints_for_brief(response, guided_mode=True)
+    hints = generate_hints_from_findings([divergence], [], [], guided_mode=True)
     assert len(hints) == 1
     assert hints[0].blocking is True
     assert "BEFORE" in hints[0].message
 
 
-def test_brief_drift_candidates_fire_in_both_modes():
-    response = _brief_response(
-        drift_candidates=[
-            _brief_decision(intent_id="a", status="drifted"),
-            _brief_decision(intent_id="b", status="drifted"),
-        ],
-    )
-    advisory = generate_hints_for_brief(response, guided_mode=False)
-    blocking = generate_hints_for_brief(response, guided_mode=True)
+def test_findings_drift_candidates_fire_in_both_modes():
+    drift = [
+        _brief_decision(intent_id="a", status="drifted"),
+        _brief_decision(intent_id="b", status="drifted"),
+    ]
+    advisory = generate_hints_from_findings([], drift, [], guided_mode=False)
+    blocking = generate_hints_from_findings([], drift, [], guided_mode=True)
 
     assert len(advisory) == 1 and advisory[0].kind == "review_drift"
     assert advisory[0].blocking is False
@@ -274,21 +249,19 @@ def test_brief_drift_candidates_fire_in_both_modes():
     assert blocking[0].refs == ["a", "b"]
 
 
-def test_brief_open_question_gap_fires_in_both_modes():
-    response = _brief_response(
-        gaps=[
-            BriefGap(
-                description="RSVP sync direction — bidirectional or one-way?",
-                hint="open-question phrasing (vs/or/tbd/?)",
-            ),
-            BriefGap(
-                description="unrelated gap",
-                hint="missing acceptance criteria",
-            ),
-        ],
-    )
+def test_findings_open_question_gap_fires_in_both_modes():
+    gaps = [
+        BriefGap(
+            description="RSVP sync direction — bidirectional or one-way?",
+            hint="open-question phrasing (vs/or/tbd/?)",
+        ),
+        BriefGap(
+            description="unrelated gap",
+            hint="missing acceptance criteria",
+        ),
+    ]
     for guided in (False, True):
-        hints = generate_hints_for_brief(response, guided_mode=guided)
+        hints = generate_hints_from_findings([], [], gaps, guided_mode=guided)
         open_q = [h for h in hints if h.kind == "answer_open_questions"]
         assert len(open_q) == 1
         assert open_q[0].blocking is guided
@@ -296,26 +269,16 @@ def test_brief_open_question_gap_fires_in_both_modes():
         assert "RSVP sync" in open_q[0].refs[0]
 
 
-def test_brief_fires_all_three_kinds_when_everything_present():
-    response = _brief_response(
-        drift_candidates=[_brief_decision(intent_id="a", status="drifted")],
-        divergences=[
-            BriefDivergence(
-                symbol="X",
-                file_path="src/x.ts",
-                conflicting_decisions=[_brief_decision(), _brief_decision()],
-                summary="conflict",
-            )
-        ],
-        gaps=[
-            BriefGap(
-                description="open q",
-                hint="open-question phrasing",
-            ),
-        ],
-    )
+def test_findings_fires_all_three_kinds_when_everything_present():
+    drift = [_brief_decision(intent_id="a", status="drifted")]
+    divergences = [BriefDivergence(
+        symbol="X", file_path="src/x.ts",
+        conflicting_decisions=[_brief_decision(), _brief_decision()],
+        summary="conflict",
+    )]
+    gaps = [BriefGap(description="open q", hint="open-question phrasing")]
     for guided in (False, True):
-        hints = generate_hints_for_brief(response, guided_mode=guided)
+        hints = generate_hints_from_findings(divergences, drift, gaps, guided_mode=guided)
         kinds = {h.kind for h in hints}
         assert kinds == {"resolve_divergence", "review_drift", "answer_open_questions"}
         assert all(h.blocking == guided for h in hints)
@@ -325,11 +288,9 @@ def test_brief_fires_all_three_kinds_when_everything_present():
 
 
 def test_action_hints_default_to_empty_list():
-    """Default constructor produces empty action_hints — matches v0.4.8
-    wire shape for downstream callers that don't care about the field."""
+    """Default constructor produces empty action_hints."""
     response = _search_response([_match()])
     assert response.action_hints == []
-    assert _brief_response().action_hints == []
 
 
 # ── Context flag parsing ────────────────────────────────────────────

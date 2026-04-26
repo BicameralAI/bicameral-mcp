@@ -24,7 +24,7 @@ import pytest
 
 from adapters.ledger import get_ledger, reset_ledger_singleton
 from context import BicameralContext
-from handlers.brief import handle_brief
+
 from handlers.detect_drift import handle_detect_drift
 from handlers.search_decisions import handle_search_decisions
 
@@ -80,52 +80,6 @@ async def test_search_response_includes_source_excerpt(monkeypatch, surreal_url)
     assert match.meeting_date == "2026-03-30", (
         f"meeting_date should round-trip; got {match.meeting_date!r}"
     )
-
-
-@pytest.mark.phase2
-@pytest.mark.asyncio
-async def test_brief_response_includes_source_excerpt(monkeypatch, surreal_url):
-    """brief.decisions[i] surfaces source_excerpt via _to_brief_decision."""
-    monkeypatch.setenv("USE_REAL_LEDGER", "1")
-    monkeypatch.setenv("SURREAL_URL", surreal_url)
-    reset_ledger_singleton()  # isolate from prior test's ledger state
-
-    ledger = get_ledger()
-    if hasattr(ledger, "connect"):
-        await ledger.connect()
-
-    payload = {
-        "query": "session caching",
-        "repo": "test-repo",
-        "mappings": [
-            {
-                "span": {
-                    "span_id": "span-2",
-                    "source_type": "slack",
-                    "text": (
-                        "Brian: let's cache user sessions in Redis for "
-                        "horizontal scaling — local memory will break "
-                        "when we add the second worker."
-                    ),
-                    "source_ref": "slack:payments:1726113809330439",
-                    "meeting_date": "2026-04-02",
-                },
-                "intent": "Cache user sessions in Redis for horizontal scaling",
-                "symbols": [],
-                "code_regions": [],
-            }
-        ],
-    }
-    await ledger.ingest_payload(payload)
-
-    ctx = BicameralContext.from_env()
-    brief = await handle_brief(ctx, topic="session caching Redis")
-    assert brief.decisions, "Expected at least one matched decision in brief"
-    decision = brief.decisions[0]
-    assert "Redis" in decision.source_excerpt, (
-        f"source_excerpt should contain the meeting passage; got {decision.source_excerpt!r}"
-    )
-    assert decision.meeting_date == "2026-04-02"
 
 
 @pytest.mark.phase2

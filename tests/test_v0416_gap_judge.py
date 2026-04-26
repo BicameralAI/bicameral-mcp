@@ -27,8 +27,7 @@ import pytest
 
 from adapters.ledger import get_ledger, reset_ledger_singleton
 from context import BicameralContext
-from contracts import BriefResponse, GapRubric, GapRubricCategory
-from handlers.brief import handle_brief
+from contracts import GapRubric, GapRubricCategory
 from handlers.gap_judge import (
     _JUDGMENT_PROMPT,
     _build_context_decisions,
@@ -355,8 +354,8 @@ async def test_judge_gaps_builds_context_pack(_isolated_ledger):
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_ingest_chain_attaches_judgment_payload(_isolated_ledger):
-    """End-to-end: a successful ingest with a derivable topic must
-    return IngestResponse.judgment_payload alongside the brief."""
+    """End-to-end: a successful ingest with a derivable topic returns
+    IngestResponse.judgment_payload populated by the judge_gaps chain."""
     ledger = get_ledger()
     await ledger.connect()
     ctx = BicameralContext.from_env()
@@ -368,58 +367,35 @@ async def test_ingest_chain_attaches_judgment_payload(_isolated_ledger):
     )
     response = await handle_ingest(ctx, payload)
 
-    assert response.brief is not None, "v0.4.8 brief attach must still work"
     assert response.judgment_payload is not None, (
-        "v0.4.16: judgment_payload must be attached when ingest→brief "
-        "chain produces decisions"
+        "judgment_payload must be attached when ingest has a derivable topic"
     )
-    assert response.judgment_payload.topic == response.brief.topic
     assert len(response.judgment_payload.decisions) >= 1
     assert len(response.judgment_payload.rubric.categories) == 5
 
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_ingest_chain_skips_judgment_when_brief_empty(_isolated_ledger):
-    """When the payload has no derivable topic, brief is None —
-    therefore judgment_payload must also be None."""
+async def test_ingest_chain_skips_judgment_when_no_topic(_isolated_ledger):
+    """When the payload has no derivable topic, judgment_payload is None."""
     ledger = get_ledger()
     await ledger.connect()
     ctx = BicameralContext.from_env()
 
-    # action_item-only payload has no derivable topic → brief skipped
     payload = {
         "repo": str(_isolated_ledger),
         "action_items": [{"action": "write unit tests", "owner": ""}],
     }
     response = await handle_ingest(ctx, payload)
 
-    assert response.brief is None
-    assert response.judgment_payload is None, (
-        "judgment_payload must be None when the brief chain skipped"
-    )
-
-
-@pytest.mark.phase2
-@pytest.mark.asyncio
-async def test_standalone_brief_never_carries_judgment_payload():
-    """BriefResponse must not carry a judgment_payload field at all.
-    Only IngestResponse.judgment_payload exists — calling bicameral.brief
-    directly should never produce a judgment pack."""
-    assert "judgment_payload" not in BriefResponse.model_fields, (
-        "BriefResponse must not have a judgment_payload field — "
-        "the ingest→brief auto-chain is the only path that attaches it. "
-        "Adding it to BriefResponse would force every standalone brief "
-        "call to pay the judgment cost."
-    )
+    assert response.judgment_payload is None
 
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_gap_judge_chain_failure_is_non_fatal(_isolated_ledger):
     """If the chained handle_judge_gaps raises, the ingest itself
-    must still return a valid IngestResponse with brief populated
-    and judgment_payload set to None."""
+    must still return a valid IngestResponse with judgment_payload=None."""
     ledger = get_ledger()
     await ledger.connect()
     ctx = BicameralContext.from_env()
@@ -436,9 +412,6 @@ async def test_gap_judge_chain_failure_is_non_fatal(_isolated_ledger):
         response = await handle_ingest(ctx, payload)
 
     assert response.ingested is True
-    # Brief still ran (this patches only gap_judge, not brief)
-    assert response.brief is not None
-    # Gap judge exploded → payload is None, ingest still returned
     assert response.judgment_payload is None
 
 

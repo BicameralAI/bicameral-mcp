@@ -166,7 +166,10 @@ bicameral.ingest(
   }]
 )
 ```
-Then run the standard ratify prompt (same as bicameral-ingest step 7).
+Do **not** run the ratify prompt here. Ratification is surfaced by
+`bicameral-history` when the user next reviews the ledger — grouping
+all unratified proposals together is a better experience than a ratify
+gate at the end of every session.
 
 **9. Confirm:**
 ```

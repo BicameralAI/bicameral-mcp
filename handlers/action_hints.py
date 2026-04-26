@@ -34,7 +34,9 @@ from __future__ import annotations
 
 from contracts import (
     ActionHint,
-    BriefResponse,
+    BriefDecision,
+    BriefDivergence,
+    BriefGap,
     ScanBranchResponse,
     SearchDecisionsResponse,
 )
@@ -79,8 +81,8 @@ def _divergence_message(count: int, guided: bool) -> str:
         return (
             f"{count} divergent decision pair(s) detected on the same "
             f"symbol. Two non-superseded decisions contradict each other "
-            f"— pick which wins with the user and mark the loser "
-            f"superseded via bicameral_update BEFORE any code change."
+            f"— pick which wins with the user and re-ingest the chosen "
+            f"decision BEFORE any code change."
         )
     return (
         f"Heads up — {count} divergent decision pair(s) detected on the "
@@ -190,44 +192,42 @@ def generate_hints_for_scan_branch(
     return hints
 
 
-def generate_hints_for_brief(
-    response: BriefResponse,
+def generate_hints_from_findings(
+    divergences: list[BriefDivergence],
+    drift_candidates: list[BriefDecision],
+    gaps: list[BriefGap],
     guided_mode: bool,
 ) -> list[ActionHint]:
-    """Inspect a ``BriefResponse`` and emit action hints.
+    """Emit action hints from pre-computed divergences, drift, and gaps.
 
-    Hints fire whenever findings exist, regardless of ``guided_mode``.
-    The flag controls intensity only.
+    Called directly by preflight (and formerly by brief). Takes raw
+    findings lists so callers don't need to construct a BriefResponse.
 
     Kinds:
-      - ``resolve_divergence`` — brief.divergences non-empty
-      - ``review_drift`` — brief.drift_candidates non-empty
-      - ``answer_open_questions`` — brief.gaps contains open-question gaps
+      - ``resolve_divergence`` — divergences non-empty
+      - ``review_drift``       — drift_candidates non-empty
+      - ``answer_open_questions`` — gaps contains open-question phrasing
     """
     hints: list[ActionHint] = []
 
-    if response.divergences:
-        refs = [
-            f"{d.symbol} ({d.file_path})"
-            for d in response.divergences
-        ]
+    if divergences:
         hints.append(ActionHint(
             kind="resolve_divergence",
-            message=_divergence_message(len(response.divergences), guided_mode),
+            message=_divergence_message(len(divergences), guided_mode),
             blocking=guided_mode,
-            refs=refs,
+            refs=[f"{d.symbol} ({d.file_path})" for d in divergences],
         ))
 
-    if response.drift_candidates:
+    if drift_candidates:
         hints.append(ActionHint(
             kind="review_drift",
-            message=_drift_message(len(response.drift_candidates), guided_mode),
+            message=_drift_message(len(drift_candidates), guided_mode),
             blocking=guided_mode,
-            refs=[d.decision_id for d in response.drift_candidates],
+            refs=[d.decision_id for d in drift_candidates],
         ))
 
     open_q_gaps = [
-        g for g in response.gaps
+        g for g in gaps
         if "open-question" in g.hint or "open question" in g.hint
     ]
     if open_q_gaps:

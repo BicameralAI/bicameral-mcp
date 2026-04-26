@@ -98,10 +98,7 @@ def _derive_last_source_ref(payload: dict) -> str:
     return refs[-1] if refs else str(payload.get("query", "")).strip()
 
 
-# ── v0.4.8: post-ingest brief auto-chain ────────────────────────────
-
-
-_BRIEF_TOPIC_MAX = 200
+_TOPIC_MAX = 200
 
 
 def _word_truncate(text: str, limit: int) -> str:
@@ -109,49 +106,34 @@ def _word_truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
     clipped = text[:limit]
-    # Drop the trailing (possibly half-word) token if there's still a
-    # space somewhere earlier in the slice. Falls through to the raw
-    # clip when the slice is one giant token with no spaces.
     if " " in clipped:
         return clipped.rsplit(" ", 1)[0]
     return clipped
 
 
-def _derive_brief_topic(payload: dict) -> str:
-    """Pick a topic string for the auto-fired ``handle_brief`` call.
+def _derive_topic(payload: dict) -> str:
+    """Pick a topic string for the judge_gaps auto-chain.
 
-    Priority order:
-      1. ``payload.query`` if the caller supplied one — most accurate
-         signal of what they were asking about.
-      2. The single **longest** raw decision description from
-         ``payload.decisions``. We pick one (not a concatenation) because
-         multi-topic ingests otherwise blend unrelated content into one
-         BM25 query and brief returns a mess. Most ingests cluster around
-         one topic anyway; the longest decision is the richest anchor.
-         Raw ``decisions[]`` avoids the ``[Action:]`` / ``[Open Question]``
-         prefixes that ``_normalize_payload`` injects into ``mappings[].intent``.
-      3. ``payload.title`` as a last resort.
-      4. Empty string → caller skips the brief chain entirely.
+    Priority: payload.query → longest decision description → payload.title.
+    Returns empty string when nothing useful is found (skips chain).
     """
     query = str(payload.get("query") or "").strip()
     if query:
-        return _word_truncate(query, _BRIEF_TOPIC_MAX)
+        return _word_truncate(query, _TOPIC_MAX)
 
     decisions = payload.get("decisions") or []
-    decision_texts: list[str] = []
-    for d in decisions:
-        if not isinstance(d, dict):
-            continue
-        text = str(d.get("description") or d.get("title") or "").strip()
-        if text:
-            decision_texts.append(text)
+    decision_texts = [
+        str(d.get("description") or d.get("title") or "").strip()
+        for d in decisions
+        if isinstance(d, dict)
+    ]
+    decision_texts = [t for t in decision_texts if t]
     if decision_texts:
-        longest = max(decision_texts, key=len)
-        return _word_truncate(longest, _BRIEF_TOPIC_MAX)
+        return _word_truncate(max(decision_texts, key=len), _TOPIC_MAX)
 
     title = str(payload.get("title") or "").strip()
     if title:
-        return _word_truncate(title, _BRIEF_TOPIC_MAX)
+        return _word_truncate(title, _TOPIC_MAX)
 
     return ""
 
@@ -300,44 +282,17 @@ async def handle_ingest(
     except Exception as exc:
         logger.warning("[ingest] post-ingest link_commit failed: %s", exc)
 
-    # v0.4.8: auto-fire bicameral_brief on a derived topic so the caller
-    # gets divergence / drift / gap / suggested_question signal in the
-    # same response as the ingest stats. Brief failures are logged and
-    # swallowed — they must not break the ingest itself.
-    brief_response = None
-    brief_topic: str | None = None
-    try:
-        brief_topic = _derive_brief_topic(payload)
-        if brief_topic:
-            from handlers.brief import handle_brief
-            brief_participants = payload.get("participants") or None
-            brief_response = await handle_brief(
-                ctx,
-                topic=brief_topic,
-                participants=brief_participants,
-            )
-    except Exception as exc:
-        logger.warning("[ingest] post-ingest brief chain failed: %s", exc)
-
-    # v0.4.16: when the brief produced decisions, chain into the gap
-    # judge to attach a caller-session judgment_payload. The payload
-    # carries the rubric + context pack; the caller's Claude session
-    # applies it in its own LLM context. Server never calls an LLM.
-    # Standalone bicameral.brief calls never go through this path —
-    # only the ingest auto-chain attaches the payload.
+    # Auto-chain: fire judge_gaps on a derived topic so the caller gets a
+    # structured gap-judgment payload in the same response as ingest stats.
+    # Failures are swallowed — must not break the ingest itself.
     judgment_payload = None
-    if (
-        brief_response is not None
-        and brief_response.decisions
-        and brief_topic
-    ):
-        try:
+    try:
+        topic = _derive_topic(payload)
+        if topic:
             from handlers.gap_judge import handle_judge_gaps
-            judgment_payload = await handle_judge_gaps(
-                ctx, topic=brief_topic,
-            )
-        except Exception as exc:
-            logger.warning("[ingest] post-brief gap-judge chain failed: %s", exc)
+            judgment_payload = await handle_judge_gaps(ctx, topic=topic)
+    except Exception as exc:
+        logger.warning("[ingest] post-ingest gap-judge chain failed: %s", exc)
 
     cursor_summary = None
     source_type = str(((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual"))
@@ -392,7 +347,6 @@ async def handle_ingest(
         ),
         supersession_candidates=supersession_candidates_all,
         source_cursor=cursor_summary,
-        brief=brief_response,
         judgment_payload=judgment_payload,
         sync_status=sync_status,
     )

@@ -34,7 +34,6 @@ from contracts import (
     BriefDecision,
     BriefDivergence,
     BriefGap,
-    BriefResponse,
     CodeRegionSummary,
     DecisionMatch,
     LinkCommitResponse,
@@ -45,7 +44,6 @@ from handlers.preflight import (
     _check_dedup,
     _content_tokens,
     _dedup_key_for,
-    _has_actionable_signal_in_brief,
     _has_actionable_signal_in_search,
     _validate_topic,
     handle_preflight,
@@ -139,31 +137,7 @@ def test_actionable_signal_in_search_only_reflected():
     assert _has_actionable_signal_in_search(matches) is False
 
 
-def test_actionable_signal_in_brief_divergence():
-    brief = SimpleNamespace(
-        divergences=[SimpleNamespace()],
-        gaps=[],
-    )
-    assert _has_actionable_signal_in_brief(brief) is True
-
-
-def test_actionable_signal_in_brief_open_question_gap():
-    brief = SimpleNamespace(
-        divergences=[],
-        gaps=[SimpleNamespace(hint="open-question phrasing")],
-    )
-    assert _has_actionable_signal_in_brief(brief) is True
-
-
-def test_actionable_signal_in_brief_plain():
-    brief = SimpleNamespace(
-        divergences=[],
-        gaps=[SimpleNamespace(hint="missing acceptance criteria")],
-    )
-    assert _has_actionable_signal_in_brief(brief) is False
-
-
-# ── Handler tests with mocked search/brief ──────────────────────────
+# ── Handler tests with mocked search ────────────────────────────────
 
 
 def _ctx(guided: bool = False, sync_state: dict | None = None):
@@ -212,31 +186,6 @@ def _match(intent_id: str, status: str = "reflected", file_path: str = "src/foo.
         ],
     )
 
-
-def _empty_brief() -> BriefResponse:
-    return BriefResponse(
-        topic="test",
-        as_of="2026-04-14T00:00:00Z",
-        ref="HEAD",
-    )
-
-
-def _brief_with(
-    divergences: list[BriefDivergence] | None = None,
-    open_qs: list[str] | None = None,
-    drift_candidates: list[BriefDecision] | None = None,
-) -> BriefResponse:
-    return BriefResponse(
-        topic="test",
-        as_of="2026-04-14T00:00:00Z",
-        ref="HEAD",
-        divergences=divergences or [],
-        gaps=[
-            BriefGap(description=q, hint="open-question phrasing")
-            for q in (open_qs or [])
-        ],
-        drift_candidates=drift_candidates or [],
-    )
 
 
 @pytest.mark.asyncio
@@ -298,9 +247,6 @@ async def test_normal_mode_silent_on_plain_matches_only():
     with patch(
         "handlers.preflight.handle_search_decisions",
         new=AsyncMock(return_value=search),
-    ), patch(
-        "handlers.preflight.handle_brief",
-        new=AsyncMock(return_value=_empty_brief()),
     ):
         r = await handle_preflight(ctx, topic="Stripe webhook payment")
     assert r.fired is False
@@ -309,18 +255,12 @@ async def test_normal_mode_silent_on_plain_matches_only():
 
 @pytest.mark.asyncio
 async def test_guided_mode_fires_on_plain_matches():
-    """Standard intensity: guided mode fires whenever there are matches,
-    even without actionable signal."""
+    """Standard intensity: guided mode fires whenever there are matches."""
     ctx = _ctx(guided=True)
-    search = _search_response_with([
-        _match("intent:1", status="reflected"),
-    ])
+    search = _search_response_with([_match("intent:1", status="reflected")])
     with patch(
         "handlers.preflight.handle_search_decisions",
         new=AsyncMock(return_value=search),
-    ), patch(
-        "handlers.preflight.handle_brief",
-        new=AsyncMock(return_value=_empty_brief()),
     ):
         r = await handle_preflight(ctx, topic="Stripe webhook payment")
     assert r.fired is True
@@ -332,77 +272,15 @@ async def test_guided_mode_fires_on_plain_matches():
 async def test_normal_mode_fires_on_drifted_match():
     """Even in normal mode, a drifted match is enough to fire."""
     ctx = _ctx(guided=False)
-    search = _search_response_with([
-        _match("intent:1", status="drifted"),
-    ])
+    search = _search_response_with([_match("intent:1", status="drifted")])
     with patch(
         "handlers.preflight.handle_search_decisions",
         new=AsyncMock(return_value=search),
-    ), patch(
-        "handlers.preflight.handle_brief",
-        new=AsyncMock(return_value=_empty_brief()),
     ):
         r = await handle_preflight(ctx, topic="Stripe webhook payment")
     assert r.fired is True
     assert r.reason == "fired"
     assert len(r.drift_candidates) >= 1
-
-
-@pytest.mark.asyncio
-async def test_brief_chain_fires_when_search_has_drift():
-    """Q1=B: brief chain fires when search returns drift, regardless of mode."""
-    ctx = _ctx(guided=False)
-    search = _search_response_with([_match("intent:1", status="drifted")])
-    brief = _brief_with(open_qs=["Should we use Redis or local memory?"])
-    with patch(
-        "handlers.preflight.handle_search_decisions",
-        new=AsyncMock(return_value=search),
-    ), patch(
-        "handlers.preflight.handle_brief",
-        new=AsyncMock(return_value=brief),
-    ) as mock_brief:
-        r = await handle_preflight(ctx, topic="Stripe webhook payment")
-    assert mock_brief.called
-    assert "brief" in r.sources_chained
-    assert r.fired is True
-    assert len(r.open_questions) == 1
-
-
-@pytest.mark.asyncio
-async def test_brief_chain_skipped_when_search_has_only_plain_matches_in_normal_mode():
-    """Q1=B inverse: brief chain does NOT fire on plain matches in
-    normal mode (would be wasted work; the gate would still produce
-    fired=false)."""
-    ctx = _ctx(guided=False)
-    search = _search_response_with([_match("intent:1", status="reflected")])
-    with patch(
-        "handlers.preflight.handle_search_decisions",
-        new=AsyncMock(return_value=search),
-    ), patch(
-        "handlers.preflight.handle_brief",
-        new=AsyncMock(return_value=_empty_brief()),
-    ) as mock_brief:
-        r = await handle_preflight(ctx, topic="Stripe webhook payment")
-    assert not mock_brief.called
-    assert r.fired is False
-
-
-@pytest.mark.asyncio
-async def test_brief_chain_fires_in_guided_mode_even_on_plain_matches():
-    """Q1=B: in guided mode, brief chains even on plain matches because
-    the user opted into the loud experience."""
-    ctx = _ctx(guided=True)
-    search = _search_response_with([_match("intent:1", status="reflected")])
-    with patch(
-        "handlers.preflight.handle_search_decisions",
-        new=AsyncMock(return_value=search),
-    ), patch(
-        "handlers.preflight.handle_brief",
-        new=AsyncMock(return_value=_empty_brief()),
-    ) as mock_brief:
-        r = await handle_preflight(ctx, topic="Stripe webhook payment")
-    assert mock_brief.called
-    assert "brief" in r.sources_chained
 
 
 @pytest.mark.asyncio
@@ -418,23 +296,3 @@ async def test_search_failure_fails_open():
     assert r.reason == "no_matches"
 
 
-@pytest.mark.asyncio
-async def test_brief_failure_continues_with_search_only():
-    """Robustness: if brief throws, preflight falls back to search-only
-    rendering instead of failing the whole call."""
-    ctx = _ctx(guided=False)
-    search = _search_response_with([_match("intent:1", status="drifted")])
-    async def _boom(*a, **kw):
-        raise RuntimeError("brief crashed")
-    with patch(
-        "handlers.preflight.handle_search_decisions",
-        new=AsyncMock(return_value=search),
-    ), patch("handlers.preflight.handle_brief", side_effect=_boom):
-        r = await handle_preflight(ctx, topic="Stripe webhook payment")
-    # Should still fire because search alone has actionable signal
-    assert r.fired is True
-    assert r.reason == "fired"
-    assert "search" in r.sources_chained
-    # Brief in sources_chained means it was attempted; on failure it
-    # should NOT be in sources_chained
-    assert "brief" not in r.sources_chained

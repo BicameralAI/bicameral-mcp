@@ -38,7 +38,7 @@ from contracts import (
     GapRubricCategory,
     SearchDecisionsResponse,
 )
-from handlers.brief import _extract_gaps
+from handlers.analysis import _extract_gaps
 from handlers.search_decisions import handle_search_decisions
 
 logger = logging.getLogger(__name__)

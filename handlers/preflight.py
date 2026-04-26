@@ -8,28 +8,22 @@ code to get a gated context block. The handler:
   2. Checks per-session dedup — if the same topic was preflight-checked
      within the last 5 minutes, fired=False.
   3. Region-anchored lookup: if the caller passed ``file_paths``, looks
-     up decisions pinned to those files in the ledger. The caller LLM
-     owns file-scoping; the server owns the ledger pin lookup.
-  4. Ledger keyword search: calls ``handle_search_decisions(topic)``
-     for decisions whose descriptions/keywords overlap with the topic.
+     up decisions pinned to those files in the ledger.
+  4. Ledger keyword search: ``handle_search_decisions(topic)``.
   5. Merges region-anchored (higher precision) with keyword matches.
   6. Empty matches → fired=False with reason=no_matches.
-  7. **Gating**:
+  7. Runs divergence detection and gap extraction directly on search
+     results (pure functions from handlers.analysis — no extra IO).
+  8. **Gating**:
      - guided_mode=False (normal): fired=True only when matches contain
-       drift, ungrounded decisions, or (after brief chain) divergences /
-       open questions. "Less intense" — silent on plain matches.
+       drift, ungrounded, divergences, or open questions.
      - guided_mode=True (standard): fired=True on any matches.
-  8. Conditionally chains to ``handle_brief(topic)`` when matches contain
-     drift or ungrounded status — that's where divergences and gaps live.
   9. Returns a ``PreflightResponse`` with everything composed.
 
-The gate logic lives in Python (here), not in the skill markdown, so
-it's enforced regardless of agent compliance. The skill is a thin
-wrapper that calls this tool and renders the response when fired=True.
+The gate logic lives in Python, not in the skill markdown. The skill is
+a thin wrapper that renders the response when fired=True.
 
-Trust contract: ``fired=False`` means the agent produces ZERO OUTPUT to
-the user. No "I checked and found nothing" noise. The empty path is
-silent.
+Trust contract: ``fired=False`` means the agent produces ZERO OUTPUT.
 """
 
 from __future__ import annotations
@@ -48,7 +42,8 @@ from contracts import (
     DecisionMatch,
     PreflightResponse,
 )
-from handlers.brief import handle_brief, _to_brief_decision
+from handlers.analysis import _detect_divergences, _extract_gaps, _to_brief_decision
+from handlers.action_hints import generate_hints_from_findings
 from handlers.search_decisions import handle_search_decisions
 
 logger = logging.getLogger(__name__)
@@ -146,26 +141,6 @@ def _has_actionable_signal_in_search(matches: list) -> bool:
         for m in matches
     )
 
-
-def _has_actionable_signal_in_brief(brief_response) -> bool:
-    """Brief-level signal: divergences or open-question gaps. Drift is
-    already covered by the search-level gate.
-    """
-    if brief_response.divergences:
-        return True
-    if any(
-        ("open-question" in g.hint or "open question" in g.hint)
-        for g in brief_response.gaps
-    ):
-        return True
-    return False
-
-
-def _extract_open_questions(brief_response) -> list[BriefGap]:
-    return [
-        g for g in brief_response.gaps
-        if "open-question" in g.hint or "open question" in g.hint
-    ]
 
 
 async def _region_anchored_preflight(
@@ -358,41 +333,29 @@ async def handle_preflight(
             session_start_banner=banner,
         )
 
-    # Search-level gate: in normal mode, require actionable signal in
-    # the search response itself. Plain reflected matches are silenced.
+    # Search-level gate: in normal mode, require actionable signal.
     search_actionable = _has_actionable_signal_in_search(search_resp.matches)
 
-    # Step 2 — conditionally chain to brief. Brief is the source of truth
-    # for divergences and open-question gaps. We chain when the search
-    # already shows signal (drift/ungrounded), or when guided mode wants
-    # the full picture even on plain matches.
-    chain_brief = search_actionable or guided_mode
-    brief_resp = None
-    if chain_brief:
-        try:
-            brief_resp = await handle_brief(
-                ctx, topic=topic, participants=participants,
-            )
-            sources_chained.append("brief")
-        except Exception as exc:
-            logger.warning("[preflight] brief chain failed, continuing: %s", exc)
-            brief_resp = None
+    # Run divergence detection and gap extraction directly on search results.
+    # Pure functions — no extra IO, no duplicate link_commit or search call.
+    divergences = _detect_divergences(search_resp.matches)
+    gaps = _extract_gaps(search_resp.matches)
+    open_questions = [
+        g for g in gaps
+        if "open-question" in g.hint or "open question" in g.hint
+    ]
+    analysis_actionable = bool(divergences) or bool(open_questions)
 
-    brief_actionable = bool(brief_resp) and _has_actionable_signal_in_brief(brief_resp)
-
-    # Final gate decision: in normal mode, fired=True only when at least
-    # one of search or brief turned up actionable signal. In guided mode,
-    # fired=True on any matches at all.
+    # Final gate: normal mode fires only on actionable signal; guided fires on any match.
     if guided_mode:
         fired = True
         reason = "fired"
+    elif search_actionable or analysis_actionable:
+        fired = True
+        reason = "fired"
     else:
-        if search_actionable or brief_actionable:
-            fired = True
-            reason = "fired"
-        else:
-            fired = False
-            reason = "no_actionable_signal"
+        fired = False
+        reason = "no_actionable_signal"
 
     if not fired:
         return PreflightResponse(
@@ -404,37 +367,15 @@ async def handle_preflight(
             session_start_banner=banner,
         )
 
-    # Compose the populated response. Brief is the richer view (it has
-    # severity_tier, drift_evidence, divergences, gaps), but it can
-    # return empty in pathological cases. Fall back to search-derived
-    # values when brief didn't surface anything useful.
-    brief_has_decisions = (
-        brief_resp is not None and len(brief_resp.decisions) > 0
-    )
-    if brief_has_decisions:
-        decisions = brief_resp.decisions
-        drift_candidates = brief_resp.drift_candidates
-    else:
-        decisions = [_to_brief_decision(m) for m in search_resp.matches]
-        drift_candidates = [
-            _to_brief_decision(m)
-            for m in search_resp.matches
-            if m.status == "drifted"
-        ]
-
-    # Divergences and open questions can only come from brief (search
-    # doesn't compute them). When brief was skipped or empty, they're
-    # naturally empty here.
-    divergences = brief_resp.divergences if brief_resp is not None else []
-    open_questions = _extract_open_questions(brief_resp) if brief_resp is not None else []
-
-    # Action hints come from whichever response carries more signal.
-    # Brief's hint set is a superset of search's when brief was chained,
-    # so prefer brief when it has anything; otherwise use search's hints.
-    if brief_resp is not None and brief_resp.action_hints:
-        action_hints = brief_resp.action_hints
-    else:
-        action_hints = search_resp.action_hints
+    decisions = [_to_brief_decision(m) for m in search_resp.matches]
+    drift_candidates = [
+        _to_brief_decision(m)
+        for m in search_resp.matches
+        if m.status == "drifted"
+    ]
+    action_hints = generate_hints_from_findings(
+        divergences, drift_candidates, gaps, guided_mode,
+    ) or search_resp.action_hints
 
     return PreflightResponse(
         topic=topic,

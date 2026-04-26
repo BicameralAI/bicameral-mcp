@@ -8,6 +8,18 @@ v0.5.0 changes from v0.4.x:
   - decision_id replaces intent_id (clean break, no aliases)
   - status is projected holistically via project_decision_status after all
     verdicts in the batch are written (closes last-verdict-wins caveat)
+
+SAMPLING MIGRATION NOTE
+-----------------------
+This tool exists because MCP sampling (server-initiated LLM sub-call) is
+not yet supported by Claude Code for third-party servers. Once sampling
+lands, the intended flow is for link_commit to fire sampling/createMessage
+with the pending checks, receive verdicts inline, and write them itself —
+making this tool an internal helper rather than a public MCP tool.
+
+flow_id ties this call back to the link_commit that generated the checks.
+A missing or mismatched flow_id logs a warning (stale/orphaned call). This
+will become a hard error once the codebase fully migrates to flow_id usage.
 """
 from __future__ import annotations
 
@@ -51,6 +63,7 @@ async def handle_resolve_compliance(
     phase: str,
     verdicts: Iterable[dict | ComplianceVerdict],
     commit_hash: str | None = None,
+    flow_id: str | None = None,
 ) -> ResolveComplianceResponse:
     """Persist a batch of caller-LLM compliance verdicts.
 
@@ -68,6 +81,21 @@ async def handle_resolve_compliance(
         raise ValueError(
             f"Unknown phase {phase!r} — must be one of {sorted(_VALID_PHASES)}"
         )
+
+    sync_state = getattr(ctx, "_sync_state", None)
+    if isinstance(sync_state, dict):
+        expected_flow_id = sync_state.get("pending_flow_id")
+        if expected_flow_id and flow_id != expected_flow_id:
+            logger.warning(
+                "[resolve_compliance] flow_id mismatch: expected %s, got %s — "
+                "verdicts may be stale or from a different link_commit call",
+                expected_flow_id[:8], (flow_id or "missing")[:8],
+            )
+        elif expected_flow_id and not flow_id:
+            logger.warning(
+                "[resolve_compliance] called without flow_id — pass the flow_id "
+                "from the preceding link_commit response to tie these calls together"
+            )
 
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):

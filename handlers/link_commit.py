@@ -2,11 +2,32 @@
 
 Heartbeat of the ledger — syncs a commit's changes into the graph.
 Idempotent: calling twice for the same commit is a no-op.
+
+SAMPLING MIGRATION NOTE
+-----------------------
+The two-tool split (link_commit → caller reads code → resolve_compliance)
+is a manual implementation of the MCP sampling primitive, which does not
+yet have broad client support (Claude Code as of 2026-04 does not expose
+sampling for third-party MCP servers).
+
+Once client sampling support lands, the intended migration is:
+  1. link_commit fires sampling/createMessage with pending_compliance_checks
+     as the prompt, scoped read_file tools, and a structured verdict schema.
+  2. The LLM sub-loop runs inside this tool call; verdicts come back inline.
+  3. link_commit writes compliance rows itself and returns a fully resolved
+     response — resolve_compliance becomes an internal helper, not a tool.
+
+Until then, flow_id ties the two calls together for auditability:
+  - link_commit writes flow_id into the response and sync cache.
+  - resolve_compliance validates the flow_id matches the last sync.
+  - resolve_compliance called without a matching flow_id logs a warning
+    (stale or orphaned call).
 """
 
 from __future__ import annotations
 
 import logging
+import uuid
 
 from contracts import LinkCommitResponse, PendingComplianceCheck
 
@@ -139,6 +160,7 @@ def invalidate_sync_cache(ctx) -> None:
     if isinstance(sync_state, dict):
         sync_state.pop("last_sync_sha", None)
         sync_state.pop("last_sync_response", None)
+        sync_state.pop("pending_flow_id", None)
 
 
 async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitResponse:
@@ -185,6 +207,11 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
 
     has_action_items = bool(pending) or bool(pending_grounding_raw)
 
+    flow_id = str(uuid.uuid4())
+    sync_state = getattr(ctx, "_sync_state", None)
+    if isinstance(sync_state, dict):
+        sync_state["pending_flow_id"] = flow_id
+
     response = LinkCommitResponse(
         commit_hash=result["commit_hash"],
         synced=result["synced"],
@@ -198,6 +225,7 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         pending_compliance_checks=pending,
         pending_grounding_checks=pending_grounding_raw,
         verification_instruction=_VERIFICATION_INSTRUCTION if has_action_items else "",
+        flow_id=flow_id,
     )
     _store_sync_cache(ctx, commit_hash, response)
 
