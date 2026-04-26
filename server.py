@@ -626,6 +626,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     _errored = False
     _diagnostic: dict | None = None
 
+    # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
+    if name not in ("bicameral.link_commit", "link_commit", "bicameral.update", "update"):
+        from handlers.sync_middleware import ensure_ledger_synced
+        await ensure_ledger_synced(ctx)
+
     try:
         if name in ("bicameral.link_commit", "link_commit"):
             result = await handle_link_commit(

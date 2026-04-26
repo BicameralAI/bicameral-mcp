@@ -281,9 +281,6 @@ async def handle_history(
     5. Apply feature_filter (substring match, case-insensitive).
     6. Truncate at 50 features and set truncated flag.
     """
-    from handlers.sync_middleware import ensure_ledger_synced
-    await ensure_ledger_synced(ctx)
-
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()

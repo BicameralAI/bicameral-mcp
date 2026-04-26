@@ -276,9 +276,6 @@ async def handle_preflight(
             guided_mode=guided_mode,
         )
 
-    from handlers.sync_middleware import ensure_ledger_synced
-    await ensure_ledger_synced(ctx)
-
     sources_chained: list[str] = []
 
     # Step 1a — region-anchored lookup: caller-supplied file_paths → pinned decisions.
