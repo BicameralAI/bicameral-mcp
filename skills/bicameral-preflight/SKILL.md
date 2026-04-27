@@ -82,6 +82,42 @@ fails validation, the handler returns `fired=false` with
 worry about getting validation perfect; the handler is forgiving on
 the happy path.
 
+### 1.5 Expand the topic with paraphrases
+
+Decisions in the ledger are often written in **business or product
+language** ("rate limiting policy", "audit trail for admin actions"),
+while topics extracted from a developer's prompt are usually in
+**implementation language** ("throttling middleware", "admin endpoint
+logging"). The ledger's keyword search is lexical — it cannot bridge
+the gap on its own.
+
+**Before calling `bicameral.preflight`, append 1–3 paraphrases** that
+cover the likely business-language vocabulary for the topic. Join them
+with spaces — no separators, no "OR", no quotes. The handler tokenizes
+on word boundaries, so a longer multi-vocabulary string just means
+more candidate keywords for BM25 to match against.
+
+| Implementation-language topic (you extracted) | Expanded topic to send |
+|---|---|
+| `throttling middleware sliding window` | `throttling middleware sliding window rate limiting request quota per minute` |
+| `idempotent payment processing duplicate charge` | `idempotent payment processing duplicate charge customer billed twice order` |
+| `csv export feature gating subscription tier` | `csv export feature gating subscription tier free plan raw data download` |
+| `admin endpoint logging middleware` | `admin endpoint logging middleware audit log administrator action` |
+| `auth password validation strength checker` | `auth password validation strength checker minimum length characters complexity` |
+
+**Rules of thumb:**
+
+1. Keep the original implementation-language terms — don't replace,
+   *augment*. The expansion is additive.
+2. 1–3 paraphrases is the sweet spot. More than that risks pulling in
+   unrelated decisions; fewer wastes the lift.
+3. Use the vocabulary you'd expect a PM or designer to use — customer
+   outcome language ("charged twice", "raw data download"), not
+   implementation jargon ("HTTP 429", "redux dispatch").
+4. **Don't expand for purely technical topics** where business
+   vocabulary doesn't apply (e.g. `request_id header api middleware`
+   — there's no biz-language version, expansion adds noise).
+
 ### 2. Call `bicameral.preflight`
 
 ```

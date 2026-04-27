@@ -91,6 +91,36 @@ def _default_db_url() -> str:
 _STATUS_PRIORITY = {"drifted": 3, "reflected": 2, "pending": 1, "ungrounded": 0}
 
 
+# Issue #58 Phase 1: caller-side query expansion produces multi-token
+# topics. Tokens that don't appear in the target decision must not drop
+# the whole match (which is what SurrealDB v2's `@0@` AND semantics
+# does). The adapter's search_by_query splits on these tokens, OR-unions
+# per-term BM25 results, and ranks by term-match count.
+_QUERY_STOPWORDS = frozenset({
+    "the", "and", "for", "that", "this", "with", "are", "from", "have",
+    "must", "be", "of", "to", "in", "on", "at", "an", "is", "by",
+    "or", "if", "as", "we", "it", "us", "our",
+})
+
+
+def _tokenize_query(query: str) -> list[str]:
+    """Split a topic string into search tokens. Lowercased, ≥3 chars,
+    stopwords removed, hyphens preserved (`free-tier` is one token).
+    Order is preserved with first-occurrence dedup so a topic like
+    `auth password validation auth` yields `[auth, password, validation]`.
+    """
+    import re
+    raw = re.findall(r"[A-Za-z0-9][A-Za-z0-9-]{2,}", (query or "").lower())
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in raw:
+        if t in _QUERY_STOPWORDS or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
 def _aggregate_decision_status(region_statuses: list[str]) -> str:
     """Collapse per-region statuses to a single decision status.
 
@@ -165,8 +195,54 @@ class SurrealDBLedgerAdapter:
         max_results: int = 10,
         min_confidence: float = 0.5,
     ) -> list[dict]:
+        """BM25 search with token-level OR semantics.
+
+        SurrealDB v2's `@0@` operator on the biz_analyzer behaves as
+        AND-style matching: a multi-term query like
+        `"rate limiting middleware throttle requests per minute free-tier accounts"`
+        misses any decision that doesn't contain ALL those tokens. That
+        breaks caller-side topic expansion (issue #58 Phase 1) — every
+        added paraphrase term that isn't in the decision drops the hit.
+
+        This wrapper tokenizes the query, runs separate per-token BM25
+        searches, unions the results, and re-ranks by the number of
+        tokens each decision matched (tie-break by best per-token rank).
+        Single-token queries fall through to the existing path.
+        """
         await self._ensure_connected()
-        return await search_by_bm25(self._client, query, max_results, min_confidence)
+        tokens = _tokenize_query(query)
+        if len(tokens) <= 1:
+            return await search_by_bm25(self._client, query, max_results, min_confidence)
+
+        seen: dict[str, dict] = {}
+        term_hits: dict[str, int] = {}
+        best_rank: dict[str, int] = {}
+        for token in tokens:
+            rows = await search_by_bm25(
+                self._client, token,
+                max_results=max(max_results * 3, 30),
+                min_confidence=0.0,
+            )
+            for rank, r in enumerate(rows):
+                did = r["decision_id"]
+                if did not in seen:
+                    seen[did] = r
+                    term_hits[did] = 0
+                    best_rank[did] = rank
+                else:
+                    best_rank[did] = min(best_rank[did], rank)
+                term_hits[did] += 1
+
+        ranked = sorted(
+            seen.values(),
+            key=lambda r: (-term_hits[r["decision_id"]], best_rank[r["decision_id"]]),
+        )
+
+        total = len(ranked)
+        for i, row in enumerate(ranked):
+            row["confidence"] = round(1.0 - (i / max(total, 1)) * 0.4, 2)
+
+        return [r for r in ranked[:max_results] if r.get("confidence", 0.0) >= min_confidence]
 
     async def decision_exists(self, decision_id: str) -> bool:
         await self._ensure_connected()
