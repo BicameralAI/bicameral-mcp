@@ -61,8 +61,8 @@ async def handle_resolve_collision(
     if action is not None:
         if not new_id or not old_id:
             raise ValueError("collision mode requires new_id and old_id")
-        if action not in ("supersede", "keep_both"):
-            raise ValueError(f"action must be 'supersede' or 'keep_both', got {action!r}")
+        if action not in ("supersede", "keep_both", "link_parent"):
+            raise ValueError(f"action must be 'supersede', 'keep_both', or 'link_parent', got {action!r}")
 
         if not await decision_exists(client, new_id):
             raise ValueError(f"No decision row for new_id={new_id}")
@@ -86,6 +86,31 @@ async def handle_resolve_collision(
 
             logger.info(
                 "[resolve_collision] supersede: %s supersedes %s", new_id, old_id
+            )
+
+        elif action == "link_parent":
+            # Cross-level parent-child link: write parent_decision_id on the child (new_id).
+            # old_id is the parent (higher-level decision, e.g. L1).
+            # No supersedes edge, no status change — purely structural.
+            if not await decision_exists(client, old_id):
+                raise ValueError(f"No decision row for old_id={old_id}")
+            await client.execute(
+                f"UPDATE {new_id} SET parent_decision_id = $pid",
+                {"pid": old_id},
+            )
+            logger.info(
+                "[resolve_collision] link_parent: %s.parent_decision_id = %s", new_id, old_id
+            )
+            new_status = await project_decision_status(client, new_id)
+            await update_decision_status(client, new_id, new_status)
+            return ResolveCollisionResponse(
+                mode="collision",
+                action_taken="link_parent",
+                new_decision_id=new_id,
+                old_decision_id=old_id,
+                edge_written=True,
+                new_status=new_status,
+                old_status="",
             )
 
         else:  # keep_both

@@ -483,8 +483,8 @@ async def list_tools() -> list[Tool]:
                     },
                     "action": {
                         "type": "string",
-                        "enum": ["supersede", "keep_both"],
-                        "description": "[Collision mode] 'supersede' writes edge + marks old as superseded; 'keep_both' just clears the collision hold",
+                        "enum": ["supersede", "keep_both", "link_parent"],
+                        "description": "[Collision mode] 'supersede' writes edge + marks old as superseded; 'keep_both' clears the collision hold; 'link_parent' writes parent_decision_id on new_id (child) pointing to old_id (parent) — use for cross-level pairs (L2 child of L1)",
                     },
                     "span_id": {
                         "type": "string",

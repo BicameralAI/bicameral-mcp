@@ -5,11 +5,13 @@ description: Resolve a same-level conflict or context_for candidate after post-i
 
 # Bicameral Resolve Collision
 
-HITL (human-in-the-loop) resolution for two types of signals:
+HITL (human-in-the-loop) resolution for three types of signals:
 
-1. **Collision**: A newly ingested decision overlaps with an existing one at the same level.
+1. **Same-level collision**: A newly ingested decision overlaps with an existing one at the same level.
    Detected by caller-LLM via `bicameral.history` after ingest (v0.9.3+) — not server keyword search.
-2. **Context-for**: A newly ingested span may answer an existing `context_pending` decision.
+2. **Cross-level parent link**: A newly ingested decision is a child of an existing one at a different
+   level (e.g., new L2 is a child of existing L1). Write the structural link; no human question needed.
+3. **Context-for**: A newly ingested span may answer an existing `context_pending` decision.
    Human confirms or rejects the proposed link.
 
 ## When to call (v0.9.3+)
@@ -20,10 +22,9 @@ at ingest time. The trigger flow is:
 1. Call `bicameral.ingest` → decisions enter as `proposed`
 2. Call `bicameral.history(feature_group=<group>)` to check for existing decisions
 3. Compare newly ingested decisions against history:
-   - **Cross-level match** (L1↔L2, L1↔L3, L2↔L3): auto-mechanical — parent/child pair, not
-     a conflict. No action needed.
-   - **Same-level, no meaningful overlap**: auto-mechanical.
-   - **Same-level conflict**: call `bicameral_resolve_collision` (capped at 3 per ingest session)
+   - **Cross-level match** (L1↔L2, L1↔L3, L2↔L3): call `link_parent` — no human question, automatic.
+   - **Same-level, no meaningful overlap**: auto-mechanical, no call needed.
+   - **Same-level conflict**: call `bicameral_resolve_collision` with `supersede` or `keep_both` (capped at 3 per ingest session)
 4. At preflight when `PreflightResponse.unresolved_collisions` is non-empty → Collision mode (recovery)
 5. After `bicameral.ingest` when `IngestResponse.context_for_candidates` is non-empty → Context-for mode
 
@@ -32,8 +33,8 @@ at ingest time. The trigger flow is:
 ```
 bicameral.resolve_collision(
   new_id="decision:<id>",      # newly ingested decision (proposed)
-  old_id="decision:<id>",      # existing decision it may supersede
-  action="supersede"|"keep_both"
+  old_id="decision:<id>",      # existing decision it may supersede or is parent of
+  action="supersede"|"keep_both"|"link_parent"
 )
 ```
 
@@ -43,10 +44,15 @@ contradict. The old decision would mislead a coding agent if left live.
 **When to keep_both**: the decisions cover different code areas, teams, or lifecycle phases
 even though their descriptions overlap. Both are valid; the match was a false positive.
 
+**When to link_parent**: the new decision is at a lower level than the existing one (e.g., new
+L2 is a child of existing L1). No human question needed — call automatically when a cross-level
+pair is identified. `new_id` is the child; `old_id` is the parent.
+
 **What happens:**
 - `supersede`: writes `new_id → supersedes → old_id` edge; marks `old_id.status='superseded'`;
   `new_id` stays as a live proposal.
 - `keep_both`: no supersedes edge; both remain live proposals.
+- `link_parent`: writes `new_id.parent_decision_id = old_id`; no status changes; no human question.
 
 ## Context-for mode
 

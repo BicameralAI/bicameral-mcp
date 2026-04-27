@@ -454,8 +454,8 @@ The response includes `created_decisions: [{decision_id, description, decision_l
 1. Call `bicameral.history(feature_group=<group just ingested>)`. If the result is empty (new feature area, no prior decisions) or if all history entries appear in `created_decisions` (first ingest for this group), skip this step entirely.
 
 2. Compare each entry in `created_decisions` against the pre-existing decisions in the history response (i.e., decisions whose IDs are **not** in `created_decisions`). For each pair, classify:
-   - **Cross-level** (new L1 ↔ old L2, or vice versa): auto-mechanical. These are parent/child or complementary pairs — never superseding. No question needed.
-   - **Same-level, no conflict**: descriptions cover different behaviors. Auto-mechanical.
+   - **Cross-level** (new L2 child of existing L1, or new L3 child of existing L2): call `bicameral_resolve_collision(new_id=<child>, old_id=<parent>, action='link_parent')` automatically — no human question. The lower-level decision is always the child (`new_id`).
+   - **Same-level, no conflict**: descriptions cover different behaviors. No call needed.
    - **Same-level conflict**: descriptions appear contradictory (e.g., "90-day pause limit" vs. "30-day pause limit" for the same feature). Surface via `AskUserQuestion` — capped at **3 questions per ingest**.
 
 3. For each genuine same-level conflict, call:
