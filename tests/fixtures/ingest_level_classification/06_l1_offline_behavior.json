@@ -1,0 +1,8 @@
+{
+  "id": "06_l1_offline_behavior",
+  "description": "L1 with behavioral description and no date — not strategy",
+  "source": "When connectivity drops, the app queues writes locally and syncs them to the server on reconnect. Users see a banner indicating offline mode is active.",
+  "expected_level": "L1",
+  "expected_route": "proposed",
+  "rationale": "Names user-observable behaviors: write queuing, sync on reconnect, offline banner. No date or milestone — this is a behavioral commitment, not a roadmap intent. L1 tiebreaker: behavior named even without a date. Two observable behaviors → two L1 decisions if splitting, or one compound L1."
+}

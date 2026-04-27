@@ -1,0 +1,8 @@
+{
+  "id": "02_l2_redis_sessions",
+  "description": "Architecture decision with named component, approach, and stated purpose",
+  "source": "We'll use Redis-backed session storage to enable horizontal scaling across API replicas. Sticky sessions on a single node would cap us at one instance and can't meet the 20k concurrent user SLA.",
+  "expected_level": "L2",
+  "expected_route": "proposed",
+  "rationale": "Subject is a component (Redis-backed session storage). Predicate names the approach AND the purpose (horizontal scaling). A fork exists: sticky sessions on a single node was the named alternative. Gate 1 passes: '20k concurrent user SLA' is a named business SLA. Gate 2 passes: two teams might reasonably choose sticky-session vs. Redis."
+}

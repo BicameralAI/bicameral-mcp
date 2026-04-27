@@ -1,0 +1,8 @@
+{
+  "id": "07_l2_no_driver_context_pending",
+  "description": "L2 decision whose business driver is absent from source and not inferable from context",
+  "source": "We're using SurrealDB for the decision graph instead of PostgreSQL.",
+  "expected_level": "L2",
+  "expected_route": "context_pending",
+  "rationale": "Fork exists: SurrealDB vs PostgreSQL is a real architectural choice two teams might make differently. Gate 2 passes. But Gate 1 fails in isolation: no business driver is visible in the source (no customer commitment, SLA, compliance, or L1 in the same excerpt). Route: park as context_pending with generated question asking for the business driver. If a business driver is confirmed later, promote to proposed."
+}

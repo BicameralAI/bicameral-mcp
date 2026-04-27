@@ -1,0 +1,8 @@
+{
+  "id": "04_l2_no_fork_drop",
+  "description": "Engineering decision that passes Gate 1 but fails Gate 2 — drop",
+  "source": "The export API returns fields: user_id, email, created_at, plan_type, and last_login_at. The token response contract includes access_token, refresh_token, and expires_in.",
+  "expected_level": null,
+  "expected_route": "drop",
+  "rationale": "Passes Gate 1 (has a business context — user export, token auth). Fails Gate 2: any team implementing this API would return the same essential fields. No fork existed — this is a specification of WHAT is returned, not a choice between alternatives. Redundancy pruning: definition of interface contract."
+}

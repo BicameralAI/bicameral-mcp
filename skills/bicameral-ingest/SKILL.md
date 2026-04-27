@@ -43,16 +43,31 @@ Ingest **implementation-relevant** decisions from a source document into the dec
      est_decisions: <integer, ~how many decisions you expect this segment to yield>
    ```
 
-3. **Present the preview to the user VERBATIM** as a numbered list, with every topic visible (title + 1-line summary + source range + estimated decision count). End with: *"Confirm, edit (merge / rename / skip), or re-split?"*
+3. **Present the preview to the user VERBATIM** as a numbered list, with every topic visible (title + 1-line summary + source range + estimated decision count). Then call `AskUserQuestion`:
+   ```
+   AskUserQuestion({
+     question: "Review these N topic segments — does this look right?",
+     header: "Segments",
+     multiSelect: false,
+     options: [
+       { label: "Confirm — proceed with these segments",
+         description: "Ingest all N segments as shown." },
+       { label: "Edit segments",
+         description: "Use the Other field to describe what to merge, skip, or rename." },
+       { label: "Re-split finer",
+         description: "Generate more, narrower segments." },
+       { label: "Re-split broader",
+         description: "Generate fewer, wider segments." }
+     ]
+   })
+   ```
 
-4. **Wait for the user's response**. Accept natural-language edits:
-   - "merge 3 and 4" → combine topics 3 and 4 into one block
-   - "skip 5" → drop topic 5 from the plan
-   - "rename 1 to X" → update title
-   - "re-split with 8 topics instead of 5" → re-run segmentation with a finer granularity
-   - "confirm" (or equivalent) → proceed to ingest
-   
-   If the user made any structural edit, re-present the updated preview and wait again. Loop until the user confirms.
+4. **Handle the response**:
+   - "Confirm" → proceed to step 5.
+   - "Edit segments" + Other text → apply the described edits (merge / skip / rename), re-present the updated preview, loop with another `AskUserQuestion` until confirmed.
+   - "Re-split finer/broader" → re-run segmentation at the requested granularity, re-present.
+
+   Loop until the user confirms.
 
 5. **Fan out**: after confirmation, call `bicameral.ingest` **once per topic block**. Pass that topic's `title` as the `query` field. Derive each block's decisions from only its own source range. Each call goes through its own brief auto-chain + gap-judge attach.
 
@@ -104,7 +119,51 @@ Read the source. For each statement, decide whether it's a real implementation d
 | Strategy / hiring / pricing / OKRs / fundraising | "Q3 OKR is at 78%" / "tag SAML in CRM" |
 | Reversed within the same source | speaker A proposes X → blocked → team agrees on Y → only Y is the decision, X is not |
 
-**BUSINESS-TIE FILTER (v0.4.19+) — only track implementation decisions tied to a business decision**. Engineering-only decisions and security-only decisions are out of scope unless they're explicitly driven by a business decision (compliance deadline, customer contract, pricing change, UX commitment, revenue target, SLA promise, regulated-data handling).
+**LEVEL CLASSIFICATION GATE (v0.9.3+) — classify before applying any filter.** After the hard-exclude check, assign every surviving candidate a decision level. The level determines which gates apply.
+
+| Level | What it is | Gate 1 (business tie) | Gate 2 (fork) | Description framing |
+|---|---|---|---|---|
+| **L1 — Product Commitment** | A user-observable behavior the team commits to delivering | **Skip** — the commitment IS the driver | **Skip** — no competing alternative needed | Product/outcome language: "Users can pause their subscription" |
+| **L2 — Approach / Architecture** | How a product commitment is implemented | Required (may be inferred from L1 in same source — see Gate 1 below) | Required | Approach language: "Redis-backed sessions for horizontal scale" |
+| **L3 — Implementation Detail** | A specific detail implied by an already-chosen L1+L2 | Drop unless exceptional | Drop unless exceptional | Rarely tracked |
+
+**L1 signal patterns** — a candidate is L1 when it contains commitment language + a named user outcome:
+- Modal necessity on a user action: "users can/will/must be able to X"
+- Product contract: "the system supports/provides/exposes X"
+- Behavioral requirement: "when a user does X, the product does Y"
+- Acceptance criteria framing: "the feature is complete when X is observable"
+
+**L1 vs. strategy tiebreaker** — an L1 must name a user-observable behavior, not a roadmap intent. If the statement names a date or milestone but no behavior, it is strategy, not L1. Examples:
+- "Users can work offline" → **L1** (behavior named)
+- "We will ship offline mode in Q3" → **strategy** (date named, no behavior specified — hard-exclude)
+- "When connectivity drops, the app queues writes and syncs on reconnect" → **L1** (behavior named, even if no date)
+
+**L1 does NOT require a named business driver or a fork.** The product decision to commit to a feature capability IS the business decision. If the source is a PRD or feature spec, expect L1 to be the primary output. Do not run Gate 1 or Gate 2 on L1 candidates — only hard-exclude check applies.
+
+**L3 exceptions (rarely track)** — only keep an L3 detail if it encodes a non-obvious constraint that would surprise a future developer and is NOT derivable from L1 + L2. Example: "max key length 36 chars — Zoom SDK hard limit." Even then, describe it in product terms if possible.
+
+**DESCRIPTION GRAMMAR — write for CodeGenome (v0.9.3+).** The description you write is source data for semantic grounding. Each level has a required grammar that maps to a distinct CodeGenome layer.
+
+| Level | Required subject | Required predicate | Quality test | CodeGenome role |
+|---|---|---|---|---|
+| **L1** | A user role (Members, Users, Admins, Guests) | An observable behavior the user experiences | "Could you write a failing acceptance test for this?" | `claim` record — behavioral assertion; PMs query against this |
+| **L2** | A component, layer, or approach | Technical behavior + the purpose it serves | "Would a new engineer know *why* this approach was chosen?" | `resolve_subjects` query text — maps to code symbols via graph |
+| **L3** | A specific constraint or limit | The external forcing function (SDK limit, API cap, protocol rule) | "Would this surprise a dev who already read L1 + L2?" | Rarely tracked — no CodeGenome identity record |
+
+**L1 description — correct grammar:**
+- ✅ "Members can pause their subscription for up to 90 days"
+- ✅ "When connectivity drops, the app queues writes and syncs on reconnect"
+- ❌ "We will support subscription pausing" — agent is the team, not the user; this is roadmap intent
+- ❌ "The system handles session persistence internally" — not user-observable
+
+**L2 description — correct grammar:**
+- ✅ "Redis-backed session store enables horizontal scaling across API replicas"
+- ✅ "Sidekiq background jobs for CSV export — keeps response times under 200ms on large datasets"
+- ❌ "Use Redis for sessions" — missing rationale; CodeGenome cannot match this to a business outcome
+- ❌ "Export runs asynchronously" — missing component name and purpose
+
+**BUSINESS-TIE FILTER — Gate 1, L2 decisions only (v0.4.19+).** Skip for L1. Apply to L2: only track implementation decisions tied to a business decision. Engineering-only decisions are out of scope unless explicitly driven by a business outcome (compliance deadline, customer contract, pricing change, UX commitment, revenue target, SLA promise, regulated-data handling). Business driver may be **inferred from an L1 decision in the same source** — if you're ingesting an L1 that says "Users can export data as CSV" and an L2 says "Export runs as a background job via Sidekiq", the L1 provides the business tie for the L2.
+
 
 A decision is **business-tied** when at least one of these is true in the same source:
 - A stakeholder-observable outcome is named (user sees X, metric Y moves, compliance check passes, customer contract clause honored)
@@ -138,7 +197,7 @@ A decision is **not business-tied** when the entire motivation is engineering hy
 
 The test: strip the technical verb from the decision. What's left should either (a) name a stakeholder-observable outcome, or (b) cite a named business driver from the same source. If neither, the decision is engineering-only — reject it.
 
-**FORK TEST (Gate 2) — only extract decisions where a genuine choice was made.** Every candidate that passes the business-tie filter must also pass this test: *Can you name a plausible alternative that a different team might have reasonably chosen instead?*
+**FORK TEST — Gate 2, L2 decisions only.** Skip for L1. Every L2 candidate that passes Gate 1 must also pass this test: *Can you name a plausible alternative that a different team might have reasonably chosen instead?*
 
 Ask: "If we handed this spec to two different senior engineering teams, would one team make a meaningfully different choice here?"
 
@@ -159,19 +218,30 @@ Common false positives that pass Gate 1 but fail Gate 2:
 
 Example: "Use opaque user keys (zoom_member_keys table) instead of exposing Supabase IDs to Zoom" (A) → "zoom_member_keys table maps user_id to am_-prefixed random key, max 36 chars" (B). B is fully implied by A — it's just the format spec. Drop B.
 
-**DENSITY LIMIT — if you draft more than 4 decisions from a single topic segment, you're probably over-extracting.** Topic segments are intentionally narrow (3–6 word titles). Finding 5+ decisions in one segment almost always means you're enumerating implementation details rather than capturing architectural choices. Apply the fork test and redundancy check aggressively until you're at ≤4. Treat >4 as a hard signal to prune, not a green light.
+**DENSITY LIMIT — level-aware.** Topic segments are intentionally narrow (3–6 word titles).
+- **L1 from a feature spec/PRD**: up to 8 per segment — feature specs legitimately enumerate multiple product commitments.
+- **L1 from a transcript**: ≤ 4 per segment — transcripts rarely commit to this many capabilities in one topic.
+- **L2**: ≤ 4 per segment. Finding 5+ L2 decisions in one segment almost always means you're enumerating implementation details.
+- **L3**: ≤ 1 per segment, only with explicit justification that it encodes a non-derivable constraint.
 
-**ROUTING TABLE — after both gates, route each candidate:**
+If you exceed the L2 limit, apply the fork test and redundancy check aggressively to prune.
 
-| Gate 1 (business tie) | Gate 2 (fork exists) | Driver visible where? | Route |
-|---|---|---|---|
-| Pass | Pass | In the source itself | → ingest as `proposed` |
-| Pass | Pass | In ledger context (Step 0.5) | → ingest as `proposed`, note: `"driver inferred from ledger: {prior}"` |
-| Pass | Pass | Nowhere visible | → **park as `context_pending`** with generated question |
-| Pass | Fail | — | → **drop** (spec, not a decision) |
-| Fail | — | — | → **drop** (engineering hygiene) |
+**ROUTING TABLE — route each candidate by level and gate result:**
+
+| Level | Gate 1 (business tie) | Gate 2 (fork exists) | Driver visible where? | Route |
+|---|---|---|---|---|
+| **L1** | — (skipped) | — (skipped) | Inherent in commitment | → ingest as `proposed`. Description in product/outcome language. |
+| **L2** | Pass | Pass | In the source itself | → ingest as `proposed` |
+| **L2** | Pass | Pass | In L1 of same source | → ingest as `proposed`, note: `"business tie inferred from L1: {L1 description}"` |
+| **L2** | Pass | Pass | In ledger context (Step 0.5) | → ingest as `proposed`, note: `"driver inferred from ledger: {prior}"` |
+| **L2** | Pass | Pass | Nowhere visible | → **park as `context_pending`** with generated question |
+| **L2** | Pass | Fail | — | → **drop** (spec, not a decision) |
+| **L2** | Fail | — | — | → **drop** (engineering hygiene) |
+| **L3** | — | — | — | → **drop** unless encodes non-derivable constraint (see L3 exceptions above) |
 
 The park path is not a consolation prize — it's the right answer when the filter is uncertain. A parked decision surfaces at the next session start and preflight with a specific question. The user resolves it; the ledger stays clean.
+
+**CODEGENOME ALIGNMENT — this level split is intentional infrastructure.** L1 descriptions become `claim` records (behavioral assertions, PM-readable, no code binding). L2 descriptions become `query_text` for `resolve_subjects` (structural anchors that map to code symbols via `get_neighbors`). L1 decisions never generate `subject_identity` records — an L1 without code bindings is correct, not a grounding gap. Writing descriptions to the grammar above means CodeGenome Phase 1 can ingest existing decisions without reformatting.
 
 **INCLUDE — concrete decisions with explicit team commitment AND a business tie**:
 
@@ -235,6 +305,29 @@ Apply both filters — Gate 1 (business tie) then Gate 2 (fork test):
 
 → **Extract: 2 decisions** — the opaque key architecture and the eligibility gate. The role_type encoding and the field list are implied or are pure spec — they add no independent signal to the ledger. Note: "Token response contract" passes Gate 1 (has a business driver) but fails Gate 2 (no fork). Gate 1 alone is not sufficient.
 
+**Example 7 — Feature spec (PRD): L1 product commitments are the primary output**
+
+> Feature: Member Subscription Management
+> - Members can pause their subscription for up to 90 days without losing their place in the program
+> - Members receive an email confirmation within 5 minutes of pausing or resuming
+> - Coaches can see which members are paused and their resume date in the member roster
+> - Paused members are excluded from session invites and billing cycles automatically
+> - Admins can force-resume a paused member from the admin console
+
+Apply level classification first. This is a feature spec — L1 extraction mode.
+
+| Candidate | Level | Hard exclude? | Gate 1 | Gate 2 | Result |
+|---|---|---|---|---|---|
+| Members can pause subscription up to 90 days without losing program place | L1 | No — clear commitment | — | — | **KEEP** |
+| Email confirmation within 5 min of pause/resume | L1 | No — SLA-like observable | — | — | **KEEP** |
+| Coaches see paused members + resume date in roster | L1 | No — observable UX | — | — | **KEEP** |
+| Paused members excluded from invites + billing | L1 | No — behavioral requirement | — | — | **KEEP** |
+| Admin can force-resume from console | L1 | No — capability commitment | — | — | **KEEP** |
+
+→ **Extract: 5 L1 decisions.** All are product commitments — user-observable behaviors the team has committed to. No Gate 1/Gate 2 needed. Descriptions stay in product language (no implementation details). The 90-day limit and 5-minute SLA are not "specs not decisions" — they are specific product commitments that another team might reasonably have set differently (could be 30 days, could be async confirmation). The density limit for L1 from a feature spec is 8, so 5 is fine.
+
+**Anti-pattern caught**: the old filter would have dropped all 5 as "spec, not a decision" (Gate 2 fail — "any team would implement this"). With level classification, these are correctly routed as L1 product commitments that bypass Gate 2.
+
 ### 1.5 Assign a feature group (stop-and-ask v0)
 
 After extracting candidate decisions and before resolving code regions,
@@ -269,23 +362,26 @@ multiple groups when decisions clearly cover distinct, unrelated features.
    decision clearly spans or belongs to a different feature than the
    dominant group, surface it before calling `bicameral.ingest`:
 
+   Call `AskUserQuestion`:
    ```
-   ⚠ I'm not sure how to categorize this decision:
-     "<decision text>"
-
-   Proposed group for the rest: "<dominant group>"
-
-   Options:
-     a) Use "<dominant group>" anyway
-     b) "<existing group B>" (existing)
-     c) "<proposed different group>" (new)
-     d) Enter a different group name
-
-   Which feature does this belong to?
+   AskUserQuestion({
+     question: "Which feature group does this decision belong to?\n  \"<decision text>\"",
+     header: "Feature group",
+     multiSelect: false,
+     options: [
+       { label: "<dominant group> (current)",
+         description: "Use the group assigned to all other decisions in this ingest." },
+       { label: "<existing group B>",
+         description: "An existing group in the ledger that matches this decision." },
+       { label: "<proposed different group> (new)",
+         description: "Create a new group for this decision." },
+       { label: "Other",
+         description: "Type a different group name." }
+     ]
+   })
    ```
 
-   Wait for the user's response. Do not ask for every decision — only
-   the ones that genuinely don't fit the dominant group.
+   Do not ask for every decision — only the ones that genuinely don't fit the dominant group.
 
 5. **Pass `feature_group`** on each decision in the ingest payload.
    For the internal format, add `feature_group` at the mapping level.
@@ -347,38 +443,56 @@ doesn't exist yet. For the pending case, ingest it with empty `code_regions`
 — it stays ungrounded until a future ingest or `bicameral.bind` call pins
 it to real code.
 
-### 2.5 Premise gate — supersession detection (stop-and-ask v1)
+### 2.5 Post-ingest conflict check (v0.9.3+)
 
-After calling `bicameral.ingest`, read `IngestResponse.supersession_candidates`.
-Each entry is a prior decision whose text overlaps with one of the newly
-ingested decisions (top 3 per new decision via ledger keyword search).
-Classify each candidate:
+After calling `bicameral.ingest`, check for conflicts against existing decisions using the caller-LLM — no server keyword search involved.
 
-- **mechanical** (parallel scope) — the prior decision covers a
-  different code area, team, or lifecycle phase than the new one.
-  Auto-record both silently. No question needed.
-- **ask** (true supersession) — the prior decision appears to make a
-  contradictory or superseded claim about the same behavior. Emit
-  ONE question per ask-candidate, capped at **3 questions per ingest**.
+The response includes `created_decisions: [{decision_id, description, decision_level}]` — the exact IDs of every decision just created. Use these IDs (not fuzzy text matching) when calling `bicameral_resolve_collision`.
 
-If the queue of ask-candidates exceeds 3, emit the first 3 as
-individual questions, then present a batched final approval gate for
-the remainder:
+**Procedure:**
 
-```
-Bicameral flagged N more potential supersessions that I didn't ask
-individually. Options:
-  A. Proceed — record all as parallel decisions (treat as non-superseding)
-  B. Review them now — list them all and you pick for each
-  C. Cancel this ingest — let me refine the payload first
-RECOMMENDATION: Choose A if these are decisions from different product
-areas; B if any appear to change a commitment the team has already
-shipped against.
-```
+1. Call `bicameral.history(feature_group=<group just ingested>)`. If the result is empty (new feature area, no prior decisions) or if all history entries appear in `created_decisions` (first ingest for this group), skip this step entirely.
 
-**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, present
-supersession candidates as informational notes only; do not gate
-the ingest.
+2. Compare each entry in `created_decisions` against the pre-existing decisions in the history response (i.e., decisions whose IDs are **not** in `created_decisions`). For each pair, classify:
+   - **Cross-level** (new L1 ↔ old L2, or vice versa): auto-mechanical. These are parent/child or complementary pairs — never superseding. No question needed.
+   - **Same-level, no conflict**: descriptions cover different behaviors. Auto-mechanical.
+   - **Same-level conflict**: descriptions appear contradictory (e.g., "90-day pause limit" vs. "30-day pause limit" for the same feature). Surface via `AskUserQuestion` — capped at **3 questions per ingest**.
+
+3. For each genuine same-level conflict, call:
+   ```
+   AskUserQuestion({
+     question: "New decision may conflict with an existing one:\n  NEW: \"<new description>\"\n  OLD: \"<old description>\"\nHow should I handle this?",
+     header: "Conflict",
+     multiSelect: false,
+     options: [
+       { label: "Supersede the old decision",
+         description: "New decision wins. Old is marked superseded and removed from drift tracking." },
+       { label: "Keep both as parallel decisions",
+         description: "Both are recorded. Flag as a divergence for the next meeting." }
+     ]
+   })
+   ```
+   - "Supersede": call `bicameral_resolve_collision(new_id=<from created_decisions>, old_id=<from history>, action='supersede')`.
+   - "Keep both": call `bicameral_resolve_collision(new_id=<from created_decisions>, old_id=<from history>, action='keep_both')`.
+
+4. If more than 3 same-level conflicts are found, ask about the first 3 individually, then present a batch gate for the remainder:
+   ```
+   AskUserQuestion({
+     question: "N more potential conflicts exist that I haven't asked about individually. How should I handle them?",
+     header: "Batch conflicts",
+     multiSelect: false,
+     options: [
+       { label: "Keep all as parallel decisions (recommended)",
+         description: "Record all as non-superseding. Best if decisions cover different contexts." },
+       { label: "Review each one now",
+         description: "I'll ask about each conflict individually." },
+       { label: "Cancel — let me refine the payload first",
+         description: "Abort remaining conflict resolution. Re-ingest when ready." }
+     ]
+   })
+   ```
+
+**Advisory-mode override:** if `BICAMERAL_GUIDED_MODE=0`, log conflicts as informational notes only; do not gate the ingest.
 
 ### 3. Ingest the filtered set
 
@@ -445,9 +559,13 @@ payload: {
 **Field rules** — get these right or decisions evaporate:
 
 - **`mappings[].code_regions`** is the whole game. When you pass explicit regions, the decision is bound exactly where you said. No server-side guessing, no false positives from vocab mismatch.
-- **`decisions[].description`** is the concise business decision name — ≤15 words, outcome/commitment framing, no raw code identifiers. It is what appears as the title in the dashboard. Think of it as the answer to "what did the team commit to?" not "how was it implemented?".
-  - Good: `"Opaque Zoom keys prevent cross-group identity leakage"` / `"Redis rate limiter fulfills enterprise 1k req/min SLA"`
-  - Bad: `"zoom_member_keys table uses am_-prefixed opaque zoom_user_key instead of Supabase IDs"` / `"Move rate limiter from in-memory to Redis with 1000-requests-per-minute cap keyed on tenant ID"`
+- **`decisions[].description`** is the concise decision name — ≤15 words, framed by level. It is what appears as the title in the dashboard.
+  - **L1**: Product/outcome language — answer "what did the team commit users can do or experience?" No technical terms.
+    - Good: `"Members can pause subscription for up to 90 days"` / `"Coaches see paused members in roster"`
+    - Bad: `"subscription.status = 'paused' with resume_at timestamp"` (technical, L3)
+  - **L2**: Approach language — answer "what implementation approach was chosen?" Name the approach, not the details.
+    - Good: `"Opaque Zoom keys prevent cross-group identity leakage"` / `"Redis rate limiter fulfills enterprise 1k req/min SLA"`
+    - Bad: `"zoom_member_keys table uses am_-prefixed opaque zoom_user_key instead of Supabase IDs"` / `"Move rate limiter from in-memory to Redis with 1000-requests-per-minute cap keyed on tenant ID"` (too much detail)
   - `title` is accepted as a synonym; `text` is tolerated as an alias. At least one must be non-empty or the decision is silently dropped.
 - **`decisions[].source_excerpt`** (natural format) / **`mappings[].span.text`** (internal format) must carry the **verbatim quote** from the source — what was actually said or written. This is stored separately in the ledger as `input_span.text` and surfaces as the source quote in the dashboard. **Never leave it empty and never copy `description` into it** — if the source is a transcript, quote the speaker directly; if a PRD, quote the relevant sentence. If no clean verbatim quote exists, write a 1-sentence paraphrase of what was said, enclosed in brackets: `"[Paraphrase: team agreed to use Redis to meet the scale commitment]"`.
 - **`action_items[].action`** is the canonical text field. `text` is tolerated as an alias (v0.4.16+). `owner` defaults to `"unassigned"`. `due` is an optional ISO date.
@@ -548,24 +666,30 @@ Show the user:
 - If decisions were dropped, briefly list what was excluded and why ("Dropped 2: spec not a decision; 1: engineering hygiene")
 - If decisions were parked, list them with their `context_question` so the user can answer inline if they choose
 
-**Parked decisions surface prompt** — after reporting, if any decisions were parked:
+**Parked decisions surface prompt** — after reporting, if any decisions were parked, call one `AskUserQuestion` per parked decision (batch up to 4 per call; loop for more). Each question presents the options from the decision's `context_question`:
 
 ```
-⚑ Parked N decision(s) — business driver unclear:
-
-  1  "<decision description>"
-     → <context_question>
-
-  2  "<decision description>"
-     → <context_question>
-
-Answer now (e.g. "1a, 2c") to resolve and promote to proposals, or leave for next session.
+AskUserQuestion({
+  question: "⚑ Parked: \"<decision description>\"\n<context_question>",
+  header: "Parked decision",
+  multiSelect: false,
+  options: [
+    { label: "<option a label — e.g. privacy requirement>",
+      description: "Promotes to proposed with this driver recorded." },
+    { label: "<option b label — e.g. compliance audit>",
+      description: "Promotes to proposed with this driver recorded." },
+    { label: "<option c label — e.g. customer contract>",
+      description: "Promotes to proposed with this driver recorded." },
+    { label: "Engineering hygiene only — drop it",
+      description: "Decision was correctly filtered. Marks as rejected." }
+  ]
+})
 ```
 
-If the user answers:
-- Option (a)/(b)/(c) naming a business driver → update the decision: re-ingest as `proposed` with the named driver appended to the description. Call `bicameral.ratify` if the user also confirms.
-- Option (d) "engineering hygiene only" → the decision was correctly filtered out. Call `bicameral.update` to set `signoff.state = "rejected"` (or delete if the ledger supports it). Do not ratify.
-- No answer / "leave for now" → the decision stays `context_pending` and will surface at the next preflight.
+Handle the response:
+- Options (a)/(b)/(c) naming a business driver → re-ingest as `proposed` with the named driver appended to the description. Call `bicameral.ratify` if the user also confirms.
+- "Engineering hygiene only — drop it" → call `bicameral.update` to set `signoff.state = "rejected"`. Do not ratify.
+- User selects "Other" and types "leave for now" / similar → the decision stays `context_pending` and surfaces at the next preflight.
 
 ### 5. Present the auto-fired brief (v0.4.8+)
 
@@ -660,21 +784,44 @@ All decisions ingested by `bicameral.ingest` enter as **proposals** (`signoff.st
 until they are ratified. Ratification is the user's explicit sign-off that a decision
 is committed, not just discussed.
 
-**Always surface the ratify prompt after ingest.** Present as a numbered list, then ask:
+**Always surface the ratify prompt after ingest.** Use `AskUserQuestion`:
 
+**If N ≤ 4 decisions**: use `multiSelect: true` with one option per decision. All pre-selected (recommended). User unchecks any they want to skip.
 ```
-Captured N decisions as proposals — drift tracking is paused until ratified.
-
-  1  <decision description>
-  2  <decision description>
-  3  <decision description>
-
-Ratify all N? [Y/n or pick: 1 3]  ›
+AskUserQuestion({
+  question: "Captured N decisions as proposals — select which to ratify now (drift tracking starts on ratified decisions):",
+  header: "Ratify",
+  multiSelect: true,
+  options: [
+    { label: "<decision 1 description>", description: "L1/L2 · <feature group>" },
+    { label: "<decision 2 description>", description: "L1/L2 · <feature group>" },
+    ...
+  ]
+})
 ```
 
-- If there are **≤ 5 decisions**: show the full list, default hint is `[Y/n or pick: 1 3]`
-- If there are **> 5 decisions**: default the hint to `all` and let them exclude: `[all / pick: 1 3 5 / none]`
-- User types: `all` / `y` / enter → ratify everything; `1 3` (space-separated numbers) → ratify subset; `none` / `n` → skip
+**If N > 4 decisions**: use a single-select shortcut:
+```
+AskUserQuestion({
+  question: "Captured N decisions as proposals — ratify now to start drift tracking:",
+  header: "Ratify",
+  multiSelect: false,
+  options: [
+    { label: "Ratify all N (recommended)",
+      description: "Drift tracking starts immediately on all N decisions." },
+    { label: "Pick which to ratify",
+      description: "Use the Other field to specify decision numbers (e.g. '1 3 5')." },
+    { label: "Skip — review later",
+      description: "All stay as proposals. They'll surface as stale after inactivity." }
+  ]
+})
+```
+
+Handle the response:
+- **multiSelect result**: ratify the checked decisions; skip the unchecked ones.
+- "Ratify all N" → ratify everything.
+- "Pick which" + Other text → parse the numbers, ratify the specified subset.
+- "Skip" → skip all.
 
 **For each ratified decision**, call:
 ```

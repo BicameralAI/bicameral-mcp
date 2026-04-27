@@ -8,7 +8,7 @@ v0.5.0 changes:
   - ComplianceVerdict.compliant:bool → verdict:Literal["compliant","drifted","not_relevant"]
   - PendingComplianceCheck.decision_id (was intent_id)
   - IngestDecision gains signoff field
-  - New: RatifyResponse, SupersessionCandidate
+  - New: RatifyResponse
   - ResolveComplianceRejection reason "unknown_intent_id" → "unknown_decision_id"
 """
 
@@ -314,6 +314,8 @@ class IngestMapping(BaseModel):
     code_regions: list[IngestCodeRegion] = []
     signoff: dict | None = None
     feature_group: str | None = None
+    decision_level: str | None = None    # L1 | L2 | L3
+    parent_decision_id: str | None = None
 
 
 class IngestDecision(BaseModel):
@@ -388,14 +390,25 @@ class ContextForCandidate(BaseModel):
     overlap_score: float = 0.0  # rank-position score; raw BM25 score is always 0 in v2 embedded
 
 
+class CreatedDecision(BaseModel):
+    """One decision created during an ingest call.
+
+    Returned in IngestResponse.created_decisions so the caller-LLM can
+    cross-reference against bicameral.history without fuzzy text matching.
+    """
+    decision_id: str
+    description: str
+    decision_level: str | None = None   # L1 | L2 | L3
+
+
 class IngestResponse(BaseModel):
     ingested: bool
     repo: str
     query: str
     source_refs: list[str]
     stats: IngestStats
+    created_decisions: list[CreatedDecision] = []
     pending_grounding_decisions: list[dict] = []
-    supersession_candidates: "list[SupersessionCandidate]" = []
     context_for_candidates: "list[ContextForCandidate]" = []
     source_cursor: SourceCursorSummary | None = None
     judgment_payload: "GapJudgmentPayload | None" = None
@@ -414,6 +427,8 @@ class BriefDecision(BaseModel):
     source_excerpt: str = ""
     meeting_date: str = ""
     signoff: dict | None = None
+    decision_level: str | None = None   # L1 | L2 | L3 — CodeGenome claim/identity split
+    parent_decision_id: str | None = None  # L2 → L1 parent link for evidence inheritance
 
 
 class BriefGap(BaseModel):
@@ -560,23 +575,6 @@ class ResolveCollisionResponse(BaseModel):
     old_status: str = ""        # projected status of old decision (supersede only)
 
 
-# ── Stop-and-ask v1: SupersessionCandidate (enriched for v0.5.0) ─────
-
-
-class SupersessionCandidate(BaseModel):
-    """BM25 overlap candidate surfaced during ingest to detect supersession.
-
-    v0.5.0: re-keyed on decision_id; enriched with signoff and
-    projected_status so the caller-LLM classifier can reason about
-    supersession with full double-entry context.
-    """
-    decision_id: str
-    description: str
-    overlap_score: float
-    signoff: dict | None = None
-    projected_status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending", "superseded"] = "ungrounded"
-
-
 # ── Tool: bicameral.history ──────────────────────────────────────────────────
 
 
@@ -611,6 +609,8 @@ class HistoryDecision(BaseModel):
     fulfillments: list[HistoryFulfillment] = []   # all bound code regions
     drift_evidence: str | None = None    # human-readable delta when drifted
     signoff: dict | None = None          # ratification record: state, signer, ratified_at
+    decision_level: str | None = None   # L1 | L2 | L3 — for balance-sheet display
+    parent_decision_id: str | None = None
 
 
 class HistoryFeature(BaseModel):

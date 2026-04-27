@@ -172,6 +172,7 @@ async def get_all_decisions(
             speakers,
             status,
             signoff,
+            decision_level,
             created_at,
             ->binds_to->code_region.{{
                 file_path,
@@ -355,7 +356,8 @@ async def get_decisions_for_file(
                 source_ref,
                 status,
                 signoff,
-                created_at
+                created_at,
+                decision_level
             } AS decisions
         FROM code_region
         WHERE file_path = $fp
@@ -464,7 +466,8 @@ async def get_decisions_for_files(
                 source_ref,
                 status,
                 signoff,
-                created_at
+                created_at,
+                decision_level
             } AS decisions
         FROM code_region
         WHERE file_path IN $fps
@@ -574,6 +577,8 @@ async def upsert_decision(
     speakers: list = (),
     status: str = "ungrounded",
     signoff: dict | None = None,
+    decision_level: str | None = None,
+    parent_decision_id: str | None = None,
 ) -> str:
     """Create or update a decision node. Returns the decision ID string.
 
@@ -607,6 +612,12 @@ async def upsert_decision(
         if feature_group is not None:
             set_clause += ", feature_group = $feature_group"
             update_params["feature_group"] = feature_group
+        if decision_level is not None:
+            set_clause += ", decision_level = $decision_level"
+            update_params["decision_level"] = decision_level
+        if parent_decision_id is not None:
+            set_clause += ", parent_decision_id = $parent_decision_id"
+            update_params["parent_decision_id"] = parent_decision_id
         await client.query(
             f"UPDATE {existing[0]['id']} SET {set_clause}",
             update_params,
@@ -637,6 +648,12 @@ async def upsert_decision(
     if feature_group is not None:
         create_clause += ", feature_group=$feature_group"
         create_params["feature_group"] = feature_group
+    if decision_level is not None:
+        create_clause += ", decision_level=$decision_level"
+        create_params["decision_level"] = decision_level
+    if parent_decision_id is not None:
+        create_clause += ", parent_decision_id=$parent_decision_id"
+        create_params["parent_decision_id"] = parent_decision_id
     rows = await client.query(create_clause, create_params)
     return str(rows[0].get("id", "")) if rows else ""
 

@@ -10,11 +10,11 @@ import logging
 
 from contracts import (
     ContextForCandidate,
+    CreatedDecision,
     IngestPayload,
     IngestResponse,
     IngestStats,
     SourceCursorSummary,
-    SupersessionCandidate,
 )
 
 logger = logging.getLogger(__name__)
@@ -192,49 +192,6 @@ async def _find_context_for_candidates(
     return candidates
 
 
-async def _find_overlap_candidates(
-    description: str,
-    ledger,
-    top_k: int = 3,
-) -> list[SupersessionCandidate]:
-    """Query existing decisions via BM25 to surface supersession candidates.
-
-    Returns up to ``top_k`` decisions whose description overlaps with
-    ``description``, excluding exact matches. Pure retrieval — no LLM.
-    The caller-LLM skill classifies whether each candidate is a true
-    supersession (ask) or a parallel decision (auto-record silently).
-
-    Returns [] on any failure so a BM25 error never breaks ingest.
-    """
-    try:
-        rows = await ledger.search_by_query(
-            query=description,
-            max_results=top_k + 1,  # +1 to account for potential self-match
-            min_confidence=0.4,
-        )
-    except Exception as exc:
-        logger.debug("[ingest] supersession BM25 query failed: %s", exc)
-        return []
-
-    candidates: list[SupersessionCandidate] = []
-    desc_lower = description.lower().strip()
-    for row in rows:
-        # Skip self-match (exact description equality, case-insensitive)
-        if (row.get("description") or "").lower().strip() == desc_lower:
-            continue
-        candidates.append(SupersessionCandidate(
-            decision_id=row.get("decision_id") or row.get("id") or "",
-            description=row.get("description") or "",
-            overlap_score=float(row.get("score") or row.get("confidence") or 0.0),
-            signoff=row.get("signoff"),
-            projected_status=row.get("status") or "ungrounded",
-        ))
-        if len(candidates) >= top_k:
-            break
-
-    return candidates
-
-
 async def handle_ingest(
     ctx,
     payload: dict,
@@ -265,46 +222,18 @@ async def handle_ingest(
 
     payload = ctx.code_graph.resolve_symbols(payload)
 
-    # Stop-and-ask v1: supersession candidate detection.
-    # Collect per-mapping candidates so we can apply collision_pending signoff
-    # only to the specific mappings that have overlap candidates.
-    # Pure retrieval — failures are swallowed so this never blocks ingest.
     from datetime import datetime, timezone
     _now_iso = datetime.now(timezone.utc).isoformat()
     _session_id = getattr(ctx, "session_id", None) or ""
 
-    mappings = payload.get("mappings") or []
-    mapping_candidates: list[list[SupersessionCandidate]] = []
-    supersession_candidates_all: list[SupersessionCandidate] = []
-    for mapping in mappings:
-        description = mapping.get("intent") or (mapping.get("span") or {}).get("text", "")
-        if description:
-            try:
-                candidates = await _find_overlap_candidates(description, ledger, top_k=3)
-            except Exception as exc:
-                logger.debug("[ingest] supersession scan failed for '%s': %s", description[:60], exc)
-                candidates = []
-        else:
-            candidates = []
-        mapping_candidates.append(candidates)
-        supersession_candidates_all.extend(candidates)
-
-    # No auto-grounding: mappings are passed through as-is.
-    # Caller-LLM binding flow: the caller uses bicameral.bind after ingest
-    # to supply code regions for ungrounded decisions.
-    #
     # v0.7.0: every new ingest enters as 'proposed' by default.
-    # v0.8.0: if a mapping has supersession candidates, hold it at 'collision_pending'
-    # so the decision doesn't become a live proposal until the collision is resolved.
-    # Caller may override by supplying signoff in the mapping; if so, pass through.
+    # v0.9.3: supersession detection removed from server — caller-LLM checks
+    # bicameral.history after ingest and calls bicameral_resolve_collision for conflicts.
+    mappings = payload.get("mappings") or []
     _proposed_signoff = {"state": "proposed", "session_id": _session_id, "created_at": _now_iso}
-    for i, m in enumerate(mappings):
+    for m in mappings:
         if m.get("signoff") is None:
-            has_candidates = bool(mapping_candidates[i]) if i < len(mapping_candidates) else False
-            if has_candidates:
-                m["signoff"] = {**_proposed_signoff, "state": "collision_pending"}
-            else:
-                m["signoff"] = _proposed_signoff
+            m["signoff"] = _proposed_signoff
     payload = {**payload, "mappings": mappings}
 
     # Pollution guard (v0.4.6, Bug 3): warn the user if they're ingesting
@@ -416,10 +345,18 @@ async def handle_ingest(
             grounded_pct=grounded_pct,
             grounding_deferred=0,
         ),
-        pending_grounding_decisions=list(
-            result.get("ungrounded_decisions", [])
-        ),
-        supersession_candidates=supersession_candidates_all,
+        created_decisions=[
+            CreatedDecision(
+                decision_id=d["decision_id"],
+                description=d["description"],
+                decision_level=d.get("decision_level"),
+            )
+            for d in result.get("created_decisions", [])
+        ],
+        pending_grounding_decisions=[
+            d for d in result.get("ungrounded_decisions", [])
+            if d.get("decision_level") != "L1"
+        ],
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
         judgment_payload=judgment_payload,

@@ -158,6 +158,42 @@ full-CAS semantics.
       verdict)
 - [ ] D2 — `bicameral_rebind` with old-binding CAS; closes scenario 8
 
+### Hierarchical Decisions + Ingest Filter Redesign (v0.9.3)
+
+From eng review 2026-04-26. Four independent workstreams — A+B+C launch in parallel, D waits on schema.
+
+**Lane A — Skill + Evals (no server changes)** ✅
+- [x] Add L1/L2/L3 tiebreaker rule to `skills/bicameral-ingest/SKILL.md`
+- [x] Add eval fixtures: `tests/fixtures/ingest_level_classification/` — 7 JSON fixtures (01–07), each with `{source, expected_level, expected_route, rationale}`
+- [x] Create canonical `skills/bicameral-resolve-collision/SKILL.md`: trigger now caller-LLM post `bicameral.history` — not server keyword search. Tool contract unchanged.
+- [ ] Delete stale `.claude/skills/bicameral-*/SKILL.md` duplicates that have canonical counterparts. Requires deciding whether Claude Code reads from `pilot/mcp/skills/` directly or still needs `.claude/skills/` symlinks.
+
+**Lane B — Schema v9 migration** ✅
+- [x] Add `decision_level: option<string>` (`L1|L2|L3`) field to `decision` table in `ledger/schema.py`
+- [x] Add `parent_decision_id: option<string>` field to `decision` table
+- [x] Write `_migrate_v8_to_v9` in `ledger/schema.py` (additive — no data loss); SCHEMA_VERSION bumped to 9
+- [x] Update `contracts.py`: add `decision_level` and `parent_decision_id` to `BriefDecision`; `ledger/queries.py` and `ledger/adapter.py` pass through from mapping
+
+**Lane C — Server: remove BM25 supersession** ✅
+- [x] Remove `_find_overlap_candidates` from `handlers/ingest.py`
+- [x] Remove `collision_pending` signoff state logic from `handlers/ingest.py` (`collision_pending` left as orphaned valid status in schema ASSERT for rollback safety)
+- [x] Remove `supersession_candidates` from `IngestResponse` and `SupersessionCandidate` from `contracts.py`
+- [x] Delete `tests/test_supersession.py` (tested removed function)
+- [x] Update `skills/bicameral-ingest/SKILL.md` Step 2.5: replace server-BM25 supersession flow with post-ingest `bicameral.history` call + caller-LLM classification. Cross-level matches auto-mechanical. Same-level conflicts → call `bicameral_resolve_collision`.
+
+**Lane D — L1 identity exemption — CodeGenome-aligned** ✅
+- [x] L1 decisions filtered from `pending_grounding_decisions` in `handlers/ingest.py`
+- [x] L1 decisions filtered from `pending_grounding_checks` ungrounded sweep in `ledger/adapter.py`
+- [x] L1 decisions skipped in `symbol_disappeared` grounding check in `ledger/adapter.py`
+- [x] `decision_level` added to both `<-binds_to<-decision.{...}` traversal selects and `get_all_decisions` in `ledger/queries.py`
+- [x] `_resolve_subjects_eligible` stub added to `handlers/detect_drift.py` (CodeGenome Phase 1 replaces body)
+- [x] CodeGenome hook comment added in `handlers/link_commit.py` at bind path
+
+**Lane E — CodeGenome hooks** ✅
+- [x] `_resolve_subjects_eligible(decision) -> bool` in `handlers/detect_drift.py`: L2=True, L1/L3=False, None=True (backward compat)
+- [x] `# CodeGenome hook: L2-only enrichment` comment in `handlers/link_commit.py`
+- [x] `parent_decision_id` surfaced in ungrounded list from `ledger/adapter.py`; `decision_level` and `parent_decision_id` on `BriefDecision` in `contracts.py`
+
 ---
 
 ## Mock Registry

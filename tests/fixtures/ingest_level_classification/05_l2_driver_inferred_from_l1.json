@@ -1,0 +1,8 @@
+{
+  "id": "05_l2_driver_inferred_from_l1",
+  "description": "L2 decision whose Gate 1 business driver is inferred from an L1 in the same source",
+  "source": "Users can export their data as CSV at any time. [L1 — already classified]\n\nExport runs as a Sidekiq background job to keep response times under 200ms for large datasets.",
+  "expected_level": "L2",
+  "expected_route": "proposed",
+  "rationale": "The Sidekiq decision fails Gate 1 in isolation (no named business driver in the sentence itself). But the same source contains an L1: 'Users can export data as CSV at any time.' The L1 provides the business tie. Gate 1 passes via inferred driver. Gate 2 passes: alternatives exist (sync export, streaming, Lambda job). Route: proposed with note 'business tie inferred from L1'."
+}

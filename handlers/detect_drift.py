@@ -29,6 +29,23 @@ from ledger.status import get_git_content, resolve_symbol_lines
 logger = logging.getLogger(__name__)
 
 
+def _resolve_subjects_eligible(decision: dict) -> bool:
+    """Return True only for decisions that should feed CodeGenome resolve_subjects.
+
+    L2 decisions have the technical specificity needed to map to code symbols.
+    L1 (behavioral claims) and L3 (detail) do not — running resolve_subjects
+    on them produces noise or no matches. L1 decisions are intentionally
+    ungrounded; treating them as grounding gaps is incorrect.
+
+    CodeGenome Phase 1 replaces this stub's body with actual resolve_subjects
+    calls. The gate condition stays: only L2 enters the identity graph.
+    """
+    level = decision.get("decision_level")
+    if level is None:
+        return True   # pre-v0.9.3 decisions: eligible by default for backward compat
+    return level == "L2"
+
+
 def raw_decisions_to_drift_entries(
     raw_decisions: list[dict],
 ) -> tuple[list[DriftEntry], dict[str, int]]:

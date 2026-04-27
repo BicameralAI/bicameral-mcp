@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -37,6 +37,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     6: "0.7.0",
     7: "0.8.0",
     8: "0.9.0",
+    9: "0.9.3",
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -110,6 +111,11 @@ _TABLES = [
     # from compliance_check aggregation at read time via project_decision_status.
     # Shape: {state: 'proposed'|'ratified', session_id, created_at/ratified_at, signer?, note?}
     "DEFINE FIELD signoff ON decision FLEXIBLE TYPE option<object> DEFAULT NONE",
+    # v0.9.3 — hierarchical decision model (CodeGenome-aligned)
+    # L1 = product commitment (claim layer), L2 = architecture (identity layer), L3 = detail (rarely tracked)
+    "DEFINE FIELD decision_level     ON decision TYPE option<string> DEFAULT NONE "
+    "ASSERT $value = NONE OR $value IN ['L1', 'L2', 'L3']",
+    "DEFINE FIELD parent_decision_id ON decision TYPE option<string> DEFAULT NONE",
     "DEFINE INDEX idx_decision_canonical ON decision FIELDS canonical_id UNIQUE",
     "DEFINE INDEX idx_decision_fts ON decision FIELDS description "
     "SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75) HIGHLIGHTS",
@@ -532,6 +538,23 @@ async def _migrate_v7_to_v8(client: LedgerClient) -> None:
     logger.info("[migration] v7 → v8: ephemeral field added to compliance_check")
 
 
+async def _migrate_v8_to_v9(client: LedgerClient) -> None:
+    """v8 → v9: Add decision_level and parent_decision_id to decision table.
+
+    Additive only — no data loss. Existing decisions get NULL for both fields
+    (the DEFAULT NONE handles this automatically at query time).
+    """
+    new_stmts = [
+        "DEFINE FIELD decision_level ON decision TYPE option<string> DEFAULT NONE "
+        "ASSERT $value = NONE OR $value IN ['L1', 'L2', 'L3']",
+        "DEFINE FIELD parent_decision_id ON decision TYPE option<string> DEFAULT NONE",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, sql.strip())
+
+    logger.info("[migration] v8 → v9: decision_level and parent_decision_id added")
+
+
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
@@ -539,6 +562,7 @@ _MIGRATIONS: dict[int, ...] = {
     6: _migrate_v5_to_v6,
     7: _migrate_v6_to_v7,
     8: _migrate_v7_to_v8,
+    9: _migrate_v8_to_v9,
 }
 
 

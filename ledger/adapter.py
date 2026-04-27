@@ -444,14 +444,16 @@ class SurrealDBLedgerAdapter:
                 # included so the caller can inspect the prior code via
                 # ``git show <prev_ref>:<file_path>`` if useful.
                 if symbol_disappeared:
-                    pending_grounding_checks.append({
-                        "decision_id": decision_id,
-                        "description": str(decision.get("description", "")),
-                        "reason": "symbol_disappeared",
-                        "file_path": file_path,
-                        "symbol": symbol_name,
-                        "original_lines": [start_line, end_line],
-                    })
+                    # L1 decisions are intentionally ungrounded — skip grounding alarm.
+                    if decision.get("decision_level") != "L1":
+                        pending_grounding_checks.append({
+                            "decision_id": decision_id,
+                            "description": str(decision.get("description", "")),
+                            "reason": "symbol_disappeared",
+                            "file_path": file_path,
+                            "symbol": symbol_name,
+                            "original_lines": [start_line, end_line],
+                        })
                     continue
 
                 verdict: dict | None = None
@@ -494,9 +496,13 @@ class SurrealDBLedgerAdapter:
                 undocumented_symbols.append(symbol_name)
 
         # Surface any ungrounded decisions so the caller can bind them.
+        # L1 decisions are intentionally ungrounded (behavioral claims, no code binding) —
+        # suppress them here so they don't show as grounding gaps.
         try:
             ungrounded_decisions = await get_all_decisions(self._client, filter="ungrounded")
             for d in ungrounded_decisions:
+                if d.get("decision_level") == "L1":
+                    continue
                 # get_all_decisions returns rows with `decision_id` (aliased
                 # from id via `type::string(id) AS decision_id`); reading
                 # `d["id"]` returns "" and produces unusable grounding
@@ -605,6 +611,7 @@ class SurrealDBLedgerAdapter:
         symbols_mapped = 0
         regions_linked = 0
         ungrounded = []
+        created_decisions: list[dict] = []
         region_ids: list[str] = []
 
         for mapping in payload.get("mappings", []):
@@ -618,6 +625,8 @@ class SurrealDBLedgerAdapter:
             code_regions = mapping.get("code_regions", [])
             initial_status = "ungrounded" if not code_regions else "pending"
             feature_group = mapping.get("feature_group") or None
+            decision_level = mapping.get("decision_level") or None
+            parent_decision_id = mapping.get("parent_decision_id") or None
 
             # Create input_span node only when verbatim text is available.
             # Per v0.5.0 contract: span.text must be non-empty; the schema
@@ -644,6 +653,8 @@ class SurrealDBLedgerAdapter:
                 speakers=span.get("speakers", []),
                 signoff=signoff,
                 feature_group=feature_group,
+                decision_level=decision_level,
+                parent_decision_id=parent_decision_id,
             )
             decisions_created += 1
 
@@ -651,12 +662,18 @@ class SurrealDBLedgerAdapter:
                 logger.warning("[ingest] failed to create decision for: %s", description[:60])
                 continue
 
+            # Track every created decision for the caller-LLM collision check.
+            created_entry: dict = {"decision_id": decision_id, "description": description}
+            if decision_level:
+                created_entry["decision_level"] = decision_level
+            created_decisions.append(created_entry)
+
             # Link input_span → yields → decision
             if span_id and decision_id:
                 await relate_yields(self._client, span_id, decision_id)
 
             if not code_regions:
-                ungrounded.append({"decision_id": decision_id, "description": description})
+                ungrounded.append(created_entry)
                 continue
 
             region_statuses: list[str] = []
@@ -735,6 +752,7 @@ class SurrealDBLedgerAdapter:
                 "ungrounded": len(ungrounded),
             },
             "ungrounded_decisions": ungrounded,
+            "created_decisions": created_decisions,
             "region_ids": region_ids,
         }
 

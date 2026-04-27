@@ -176,6 +176,8 @@ def _row_to_history_decision(
         fulfillments=fulfillments,
         drift_evidence=drift_evidence,
         signoff=signoff,
+        decision_level=row.get("decision_level") or None,
+        parent_decision_id=row.get("parent_decision_id") or None,
     )
 
 
@@ -203,6 +205,8 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
                 rationale,
                 feature_hint,
                 feature_group,
+                decision_level,
+                parent_decision_id,
                 source_type,
                 source_ref,
                 meeting_date,

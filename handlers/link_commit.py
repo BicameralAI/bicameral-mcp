@@ -257,6 +257,10 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
     # that advance main (still "main") but catches feature-branch work.
     authoritative_ref = getattr(ctx, "authoritative_ref", "") or ""
 
+    # CodeGenome hook (L2-only enrichment): when CodeGenome Phase 1 ships,
+    # call resolve_subjects here for each newly-bound L2 decision to map it
+    # to code symbols via get_neighbors. Gate with _resolve_subjects_eligible
+    # from handlers.detect_drift — L1 decisions must never enter the identity graph.
     result = await ctx.ledger.ingest_commit(
         commit_hash,
         ctx.repo_path,

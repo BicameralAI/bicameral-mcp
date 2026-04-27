@@ -1,0 +1,8 @@
+{
+  "id": "03_strategy_not_l1",
+  "description": "Roadmap intent with a date but no named user-observable behavior — hard-exclude",
+  "source": "We will ship offline mode by Q3.",
+  "expected_level": null,
+  "expected_route": "drop",
+  "rationale": "Agent is the team, not the user. Names a date (Q3) and a milestone (ship offline mode) but no user-observable behavior. L1 tiebreaker: must name a behavior, not a date. Hard-exclude: strategy, not a decision."
+}
