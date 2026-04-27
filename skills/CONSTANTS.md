@@ -34,6 +34,10 @@ under "Used by".
 | `FEATURE_GROUP_WORD_OVERLAP` | `2` | ingest feature grouping | Minimum significant content words shared to fuzzy-match an existing group |
 | `MAX_STOP_AND_ASK_PER_INGEST` | `3` | ingest step 6 | Hard cap on clarifying questions per ingest call |
 | `INGEST_CONFIRM_THRESHOLD` | `5` | ingest ratify UX | ≤ threshold → show full list; > threshold → default to "all / exclude" prompt |
+| `DENSITY_LIMIT_L1_SPEC` | `8` | ingest density check | Max L1 decisions per segment when source is a PRD / feature spec |
+| `DENSITY_LIMIT_L1_TRANSCRIPT` | `4` | ingest density check | Max L1 decisions per segment when source is a transcript |
+| `DENSITY_LIMIT_L2` | `4` | ingest density check | Max L2 (architecture/approach) decisions per segment |
+| `DENSITY_LIMIT_L3` | `1` | ingest density check | Max L3 decisions per segment; require explicit justification |
 
 ## Judge Gaps
 

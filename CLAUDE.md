@@ -1,5 +1,9 @@
 # MCP Server — Claude Agent Instructions
 
+## Canonical Skill Source
+
+`pilot/mcp/skills/` is the **single canonical location** for all skill files in this project. Do not edit `.claude/skills/bicameral-*/SKILL.md` copies — they are stale duplicates and should be deleted. When a skill file changes, commit only the `pilot/mcp/skills/` version.
+
 ## Tool Changes Require Skill Changes (Mandatory)
 
 Any change to an MCP tool's behavior — new fields in a response, new status values,

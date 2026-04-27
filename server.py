@@ -136,7 +136,7 @@ async def list_tools() -> list[Tool]:
                 "symbols, code_regions: [{symbol, file_path, start_line, end_line, type}]}]}. "
                 "(2) Natural: {query, source, title, date, participants, "
                 "decisions: [{description, id?, title?, status?, participants?}], "
-                "action_items: [{action, owner?, due?}], open_questions?: [string]}. "
+                "action_items: [{action, owner?, due?}]}. "
                 "Canonical decision text field is `description` (also accepts `title` as a synonym and `text` as a "
                 "v0.4.16+ alias). Canonical action-item text field is `action` (also accepts `text` as an alias). "
                 "At least one text field per decision must be non-empty or the decision is silently dropped. "

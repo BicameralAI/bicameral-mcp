@@ -50,46 +50,22 @@ def _slugify(name: str) -> str:
     return slug.strip("-") or "uncategorized"
 
 
-_ACTION_PREFIX = "[Action:"
-_QUESTION_PREFIX = "[Open Question]"
-
-
-def _is_action_item(description: str) -> bool:
-    return description.startswith(_ACTION_PREFIX)
-
-
-def _is_open_question(description: str) -> bool:
-    return description.startswith(_QUESTION_PREFIX)
-
 
 def _decision_status_for_history(
-    description: str,
     decision_status: str,
     has_code_regions: bool,
-    has_sources: bool,
+    signoff_state: str | None = None,
 ) -> str:
-    """Map internal decision status to HistoryDecision status literal.
+    """Map DB decision status to HistoryDecision status (code-compliance axis only).
 
-    Rules (in priority order):
-    - "[Open Question]" prefix → "gap" (requirement gap: neither claimed nor fulfilled)
-    - superseded → "superseded"
-    - no sources (no input_span) → "discovered"
-    - has code regions, drifted → "drifted"
-    - has code regions, reflected → "reflected"
-    - no code regions → "ungrounded"
+    Superseded decisions surface their last known code-compliance status so the
+    balance sheet stays meaningful; the superseded fact is carried by signoff_state.
+    Everything without code bindings is ungrounded regardless of description or sources.
     """
-    if _is_open_question(description):
-        return "gap"
-    if decision_status == "superseded":
-        return "superseded"
-    if not has_sources:
-        return "discovered"
     if not has_code_regions:
         return "ungrounded"
-    if decision_status == "drifted":
-        return "drifted"
-    if decision_status == "reflected":
-        return "reflected"
+    if decision_status in ("drifted", "reflected", "pending"):
+        return decision_status
     return "ungrounded"
 
 
@@ -157,21 +133,22 @@ def _row_to_history_decision(
                 quote=source_excerpt or description,
             ))
 
-    history_status = _decision_status_for_history(
-        description=description,
-        decision_status=status,
-        has_code_regions=bool(fulfillments),
-        has_sources=bool(sources),
-    )
-
     drift_evidence: str | None = row.get("drift_evidence") or None
     signoff: dict | None = row.get("signoff") or None
+    signoff_state = signoff.get("state") if isinstance(signoff, dict) else None
+
+    history_status = _decision_status_for_history(
+        decision_status=status,
+        has_code_regions=bool(fulfillments),
+        signoff_state=signoff_state,
+    )
 
     return HistoryDecision(
         id=decision_id,
         summary=description,
         featureId=feature_id,
         status=history_status,  # type: ignore[arg-type]
+        signoff_state=signoff_state,
         sources=sources,
         fulfillments=fulfillments,
         drift_evidence=drift_evidence,
@@ -261,11 +238,11 @@ def _feature_key_for_row(row: dict) -> str:
 
 
 def _priority_for_feature(decisions: list[HistoryDecision]) -> int:
-    """Features with drifted, ungrounded, or gap decisions sort first (lower = higher priority)."""
+    """Features with drifted or ungrounded decisions sort first (lower = higher priority)."""
     statuses = {d.status for d in decisions}
     if "drifted" in statuses:
         return 0
-    if "ungrounded" in statuses or "gap" in statuses:
+    if "ungrounded" in statuses or "pending" in statuses:
         return 1
     return 2
 
@@ -303,13 +280,8 @@ async def handle_history(
 
     rows = await _fetch_all_decisions_enriched(ledger)
 
-    # Group by feature key — skip action items entirely (they're task assignments,
-    # not decisions, and were only written to the ledger by legacy ingests).
     feature_groups: dict[str, list[dict]] = {}
     for row in rows:
-        description = str(row.get("description") or "")
-        if _is_action_item(description):
-            continue
         key = _feature_key_for_row(row)
         feature_groups.setdefault(key, []).append(row)
 

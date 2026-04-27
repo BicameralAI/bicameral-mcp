@@ -95,11 +95,17 @@ body {
 
 .section-divider {
   border-top: 2px solid var(--accent);
-  padding: 9px 0 0;
-  display: flex; align-items: baseline; gap: 12px;
+  display: grid;
+  grid-template-columns: 1fr 120px 120px;
+  align-items: stretch;
+  min-height: 42px;
   cursor: pointer; user-select: none;
 }
 .section-divider:hover .section-name { opacity: 0.75; }
+.section-name-col {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px 8px 0;
+}
 .section-chev { font-size: 9px; color: var(--text-light); flex-shrink: 0; }
 .section-name {
   font-family: var(--serif);
@@ -108,21 +114,12 @@ body {
   letter-spacing: 0.06em; text-transform: uppercase;
   transition: opacity 0.1s;
 }
+.section-divider .d-signoff-col,
+.section-divider .d-state-col { background: rgba(27,54,93,0.03); }
 .section-body { display: block; }
 .section-body.collapsed { display: none; }
 
-/* ── COLUMN HEADERS ───────────────────────────────────────── */
-.col-headers {
-  display: grid;
-  grid-template-columns: 120px 1fr 180px;
-  padding: 6px 12px 6px 12px;
-  border-bottom: 1px solid var(--border);
-  margin-top: 2px;
-}
-.col-headers span {
-  font-size: 9.5px; letter-spacing: 0.14em;
-  text-transform: uppercase; color: var(--text-light);
-}
+
 
 /* ── DECISION ROW ──────────────────────────────────────────── */
 .dec {
@@ -139,64 +136,93 @@ body {
 .dec.s-reflected::before  { background: var(--green); }
 .dec.s-drifted::before    { background: var(--amber); }
 .dec.s-ungrounded::before { background: var(--border-dark); }
-.dec.s-discovered::before { background: var(--purple); }
-.dec.s-gap::before        { background: var(--amber); }
-.dec.s-superseded::before { background: var(--border); }
-.dec.s-superseded .d-text { text-decoration: line-through; opacity: 0.55; }
-.dec.s-superseded .d-ratified-col { opacity: 0.55; }
+.dec.is-discovered::before { background: var(--purple); }
+.dec.is-superseded::before { background: var(--border); }
+.dec.is-superseded .d-text { text-decoration: line-through; opacity: 0.55; }
+.dec.is-superseded .d-signoff-col,
+.dec.is-superseded .d-state-col { opacity: 0.55; }
 
-/* rejected — dashed line across the row, muted, no code tracking */
-.dec.is-rejected {
-  position: relative;
-}
+/* rejected — dashed line across the row, muted */
+.dec.is-rejected { position: relative; }
 .dec.is-rejected::after {
   content: '';
   position: absolute;
-  left: 12px; right: 12px;
-  top: 50%;
+  left: 12px; right: 12px; top: 50%;
   border-top: 1px dashed var(--border-dark);
-  pointer-events: none;
-  z-index: 1;
+  pointer-events: none; z-index: 1;
 }
 .dec.is-rejected .d-text { opacity: 0.45; }
-.dec.is-rejected .d-ratified-col { opacity: 0.55; }
+.dec.is-rejected .d-signoff-col,
 .dec.is-rejected .d-state-col { opacity: 0.45; }
-.dec:hover  { background: rgba(27,54,93,0.025); }
-.dec.open   { background: rgba(27,54,93,0.03); }
+.dec:hover { background: rgba(27,54,93,0.025); }
+.dec.open  { background: rgba(27,54,93,0.03); }
 
 .dec-hdr {
   display: grid;
-  grid-template-columns: 120px 1fr 180px;
-  padding: 8px 12px 8px 12px;
-  align-items: center;
+  grid-template-columns: 1fr 120px 120px;
+  align-items: stretch;
   min-height: 40px;
 }
-.d-ratified-col { }
 .d-text-col {
   display: flex; align-items: center; gap: 6px;
-  padding-right: 12px;
+  padding: 8px 12px;
+  min-width: 0; overflow: hidden;
 }
-.d-chev { font-size: 9px; color: var(--text-light); flex-shrink: 0; transition: transform 0.2s; }
-.dec.open .d-chev { transform: rotate(90deg); }
 .d-text {
   font-size: 12px; color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   min-width: 0;
 }
 .dec.open .d-text { white-space: normal; overflow: visible; text-overflow: unset; }
-.d-state-col { }
 
-/* ── RATIFIED PILL ────────────────────────────────────────── */
+/* ── STATUS CELLS (rectangular, fill column) ──────────────── */
+.d-signoff-col, .d-state-col {
+  display: flex; align-items: center; justify-content: center;
+  border-left: 1px solid var(--border);
+  font-size: 9.5px; letter-spacing: 0.03em;
+  padding: 4px 6px; text-align: center;
+  white-space: nowrap; position: relative;
+  cursor: default; user-select: none;
+}
+.d-signoff-col[data-tip]::after,
+.d-state-col[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); right: 0;
+  background: #1a1816; color: #f5f4ed;
+  padding: 5px 12px; font-size: 10px;
+  white-space: nowrap; z-index: 200; border-radius: 3px;
+  pointer-events: none; opacity: 0; transition: opacity 0.15s;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.22);
+}
+.d-signoff-col[data-tip]:hover::after,
+.d-state-col[data-tip]:hover::after { opacity: 1; }
+
+/* signoff states */
+.sc-ratified   { background: var(--green-soft);          color: var(--green); }
+.sc-proposed   { background: var(--canvas);              color: var(--text-light); }
+.sc-discovered { background: var(--purple-soft);         color: var(--purple); }
+.sc-context    { background: var(--amber-soft);          color: var(--amber); }
+.sc-collision  { background: var(--amber-soft);          color: var(--amber); }
+.sc-rejected   { background: rgba(180,30,30,0.06);       color: rgba(180,30,30,0.75); }
+.sc-superseded { background: rgba(0,0,0,0.03);           color: var(--text-light); }
+
+/* code state */
+.fs-reflected  { background: var(--green-soft);          color: var(--green); }
+.fs-drifted    { background: var(--amber-soft);          color: var(--amber); }
+.fs-pending    { background: var(--canvas);              color: var(--text-dim); }
+.fs-ungrounded { background: rgba(0,0,0,0.02);           color: var(--text-light); }
+
+/* ── RATIFIED PILL (L1 section headers only) ──────────────── */
 .rat-pill {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 9px; border-radius: 100px;
-  font-size: 10px; letter-spacing: 0.05em;
+  padding: 2px 8px; border-radius: 3px;
+  font-size: 10px; letter-spacing: 0.04em;
   position: relative; cursor: default; user-select: none;
   white-space: nowrap;
 }
 .rat-pill[data-tip]::after {
   content: attr(data-tip);
-  position: absolute; top: calc(100% + 6px); left: 0;
+  position: absolute; top: calc(100% + 6px); right: 0;
   background: #1a1816; color: #f5f4ed;
   padding: 5px 12px; font-size: 10px;
   white-space: nowrap; z-index: 200; border-radius: 3px;
@@ -204,121 +230,101 @@ body {
   box-shadow: 0 4px 12px rgba(0,0,0,0.22);
 }
 .rat-pill[data-tip]:hover::after { opacity: 1; }
+.rp-ratified   { background: var(--green-soft);        border: 1px solid var(--green);        color: var(--green); }
+.rp-proposed   { background: var(--canvas);            border: 1px dashed var(--border-dark); color: var(--text-light); }
+.rp-context    { background: var(--amber-soft);        border: 1px dashed var(--amber);       color: var(--amber); }
+.rp-discovered { background: var(--purple-soft);       border: 1px solid var(--purple);       color: var(--purple); }
+.rp-rejected   { background: rgba(180,30,30,0.06);     border: 1px dashed rgba(180,30,30,0.5); color: rgba(180,30,30,0.75); }
 
-.rp-ratified {
-  background: var(--green-soft);
-  border: 1px solid var(--green);
-  color: var(--green);
+/* ── HIERARCHY ──────────────────────────────────────────────── */
+.lvl-badge {
+  font-size: 8.5px; padding: 1px 5px; border-radius: 2px;
+  letter-spacing: 0.06em; font-weight: 600; flex-shrink: 0;
+  border: 1px solid; margin-right: 3px;
 }
-.rp-proposed {
-  background: var(--canvas);
-  border: 1px dashed var(--border-dark);
-  color: var(--text-light);
-}
-.rp-context {
-  background: var(--amber-soft);
-  border: 1px dashed var(--amber);
-  color: var(--amber);
-}
-.rp-discovered {
-  background: var(--purple-soft);
-  border: 1px solid var(--purple);
-  color: var(--purple);
-}
-.rp-rejected {
-  background: rgba(180,30,30,0.06);
-  border: 1px dashed rgba(180,30,30,0.5);
-  color: rgba(180,30,30,0.75);
-}
-
-/* ── FULFILLMENT PILL ──────────────────────────────────────── */
-.ful-pill {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 2px 9px; border-radius: 100px;
-  font-size: 10px; letter-spacing: 0.05em; white-space: nowrap;
-}
-.fp-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-.fp-reflected  { background: var(--green-soft);   border: 1px solid var(--green);       color: var(--green); }
-.fp-drifted    { background: var(--amber-soft);   border: 1px solid var(--amber);       color: var(--amber); }
-.fp-ungrounded { background: rgba(0,0,0,0.03);    border: 1px solid var(--border-dark); color: var(--text-light); }
-.fp-discovered { background: var(--purple-soft);  border: 1px solid var(--purple);      color: var(--purple); }
-.fp-gap        { background: var(--amber-soft);   border: 1px dashed var(--amber);      color: var(--amber); }
-.fp-superseded { background: rgba(0,0,0,0.03);    border: 1px solid var(--border);      color: var(--border-dark); }
-.fp-reflected  .fp-dot { background: var(--green); }
-.fp-drifted    .fp-dot { background: var(--amber); }
-.fp-ungrounded .fp-dot { border: 1.5px solid var(--border-dark); background: transparent; }
-.fp-discovered .fp-dot { background: var(--purple); }
-.fp-gap        .fp-dot { background: var(--amber); }
-.fp-superseded .fp-dot { background: var(--border-dark); }
+.lvl-l1 { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.lvl-l2 { background: transparent; border-color: var(--border-dark); color: var(--text-dim); }
+.lvl-l3 { background: transparent; border-color: var(--border); color: var(--text-light); }
+.depth-spacer { flex-shrink: 0; display: inline-block; }
 
 /* ── EXPANDED BODY ─────────────────────────────────────────── */
 .dec-body {
   display: none;
-  padding: 10px 12px 14px 12px;
-  border-top: 1px dashed var(--border);
+  padding: 10px 14px 12px 14px;
+  border-top: 1px solid var(--border);
   background: var(--paper);
 }
 .dec.open .dec-body { display: block; }
 
-.dec-cols {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 28px;
-}
-.col-hdr {
-  font-size: 9px; font-weight: 600;
-  letter-spacing: 0.16em; color: var(--text-light);
-  text-transform: uppercase;
-  padding-bottom: 5px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 8px;
-}
-
-/* sources column */
-.src-entry { margin-bottom: 12px; }
-.src-entry:last-child { margin-bottom: 0; }
-.src-meta {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
-  font-size: 10.5px; color: var(--text-dim); margin-bottom: 4px;
-}
+/* source entries */
 .src-type-pill {
-  font-size: 9.5px; padding: 0 5px;
+  font-size: 9px; padding: 1px 5px;
   background: var(--canvas); border: 1px solid var(--border);
   border-radius: 2px; color: var(--text-dim);
 }
-.src-speaker { color: var(--text); font-weight: 500; }
-.src-date    { color: var(--text-dim); }
-.src-quote {
-  padding: 6px 10px;
-  background: rgba(255,255,255,0.65);
+.src-speaker { color: var(--text); font-weight: 500; font-size: 10px; }
+.src-date    { color: var(--text-dim); font-size: 10px; }
+.det-src { margin-bottom: 10px; }
+.det-src:last-child { margin-bottom: 0; }
+.det-src-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 5px;
+  font-size: 10px; color: var(--text-dim); margin-bottom: 5px;
+}
+.det-quote {
+  padding: 5px 10px;
+  background: rgba(255,255,255,0.7);
   border-left: 2px solid var(--border);
-  border-radius: 0 4px 4px 0;
+  border-radius: 0 3px 3px 0;
   font-style: italic; font-size: 11.5px;
   color: var(--text); line-height: 1.55;
 }
-.src-quote::before { content: '\201C'; color: var(--text-light); font-size: 13px; }
-.src-quote::after  { content: '\201D'; color: var(--text-light); font-size: 13px; }
-.no-sources { font-size: 11px; color: var(--text-light); font-style: italic; }
+.det-quote::before { content: '\201C'; color: var(--text-light); font-size: 13px; }
+.det-quote::after  { content: '\201D'; color: var(--text-light); font-size: 13px; }
+.det-no-src { font-size: 11px; color: var(--text-light); font-style: italic; }
 
-/* code column */
-.code-entry { margin-bottom: 8px; }
-.code-entry:last-child { margin-bottom: 0; }
-.code-loc {
-  display: flex; align-items: baseline; gap: 7px;
-  font-size: 11px;
+/* code chips */
+.det-chips {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-top: 8px;
 }
-.code-file { color: var(--accent); }
-.code-sym  { color: var(--text-dim); font-size: 10.5px; }
-.code-status-line { font-size: 10.5px; margin-top: 2px; }
-.csl-ok    { color: var(--green); }
-.csl-drift { color: var(--amber); }
-.csl-none  { color: var(--text-light); font-style: italic; }
-.drift-detail {
-  font-size: 10px; color: var(--amber);
-  margin-top: 2px; padding-left: 10px;
+.det-chip {
+  display: inline-flex; align-items: center;
+  font-size: 10.5px; padding: 2px 8px;
+  background: var(--canvas); border: 1px solid var(--border);
+  border-radius: 3px; color: var(--text-dim);
 }
-.drift-detail::before { content: '⚠ '; }
-.no-code { font-size: 11px; color: var(--text-light); font-style: italic; }
+.det-chip.ok    { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+.det-chip.drift { border-color: var(--amber); color: var(--amber); background: var(--amber-soft); }
+.det-drift {
+  margin-top: 6px; font-size: 10.5px; color: var(--amber); padding-left: 2px;
+}
+.det-drift::before { content: '⚠ '; }
+
+/* ── L1 SUB-SECTION ─────────────────────────────────────── */
+.l1-section { }
+.l1-header {
+  display: grid;
+  grid-template-columns: 1fr 120px 120px;
+  align-items: stretch;
+  min-height: 38px;
+  border-top: 1px solid var(--border);
+  cursor: pointer; user-select: none;
+  background: rgba(0,0,0,0.02);
+}
+.l1-header:hover { background: rgba(0,0,0,0.035); }
+.l1-chev  { font-size: 9px; color: var(--text-dim); flex-shrink: 0; }
+.l1-badge {
+  font-size: 8px; padding: 1px 4px; border-radius: 2px; flex-shrink: 0;
+  font-weight: 700; letter-spacing: 0.05em;
+  background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent);
+}
+.l1-desc { font-size: 12px; color: var(--text); font-weight: 500; min-width: 0; }
+.l1-src  { font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+.l1-body { padding-left: 20px; }
+.l1-body.collapsed { display: none; }
+.l1-empty { font-size: 11px; color: var(--text-light); font-style: italic; padding: 7px 28px; }
+
+
 </style>
 </head>
 <body>
@@ -365,38 +371,99 @@ function signoffState(d) {
   if (!s) return 'proposed';
   return s.state || 'proposed';
 }
-
 function isProposed(d) {
   const st = signoffState(d);
   return st === 'proposed' || st === 'collision_pending';
 }
+function isRejected(d)  { return signoffState(d) === 'rejected'; }
+function isDiscovered(d){ return d.signoff?.discovered === true; }
 
-function isRejected(d) {
-  return signoffState(d) === 'rejected';
-}
-
-// ── sort decisions: ratified desc, proposed at bottom, rejected last ─
+// ── sort: ratified desc → proposed at bottom → rejected last ─
 function sortDecisions(decisions) {
   return [...decisions].sort((a, b) => {
     const ar = isRejected(a), br = isRejected(b);
-    if (ar && !br) return 1;
-    if (!ar && br) return -1;
+    if (ar !== br) return ar ? 1 : -1;
     const ap = isProposed(a), bp = isProposed(b);
-    if (ap && !bp) return 1;
-    if (!ap && bp) return -1;
+    if (ap !== bp) return ap ? 1 : -1;
     if (ap && bp) return 0;
-    const da = a.signoff?.ratified_at || '';
-    const db = b.signoff?.ratified_at || '';
-    return db.localeCompare(da); // descending
+    return (b.signoff?.ratified_at || '').localeCompare(a.signoff?.ratified_at || '');
   });
 }
 
-// ── ratified pill ────────────────────────────────────────────
-function renderRatPill(d) {
-  if (!d.sources || !d.sources.length) {
-    // discovered — no claim side at all
-    return `<span class="rat-pill rp-discovered" data-tip="Found in code — no recorded source">~ no source</span>`;
+// ── rectangular status cells ──────────────────────────────────
+function renderSignoffCell(d) {
+  const st = signoffState(d);
+  let cls, text, tip = '';
+  if (st === 'context_pending') {
+    const q = d.signoff?.context_question || 'Business driver unclear';
+    cls = 'sc-context'; text = '⚑ needs context'; tip = `Needs context: ${q}`;
+  } else if (isRejected(d)) {
+    const rejDate = fmtDate(d.signoff?.rejected_at || '');
+    const signer  = d.signoff?.signer ? `Rejected by: ${d.signoff.signer}` : 'Rejected';
+    const note    = d.signoff?.note   ? ` · ${d.signoff.note}` : '';
+    cls = 'sc-rejected'; text = '✕ rejected';
+    tip = [signer, rejDate].filter(Boolean).join(' · ') + note;
+  } else if (d.signoff_state === 'superseded') {
+    cls = 'sc-superseded'; text = '— superseded';
+  } else if (d.signoff_state === 'collision_pending') {
+    cls = 'sc-collision'; text = '⚡ collision';
+  } else if (isProposed(d)) {
+    if (isDiscovered(d)) {
+      cls = 'sc-discovered'; text = '~ AI surfaced'; tip = 'Surfaced by AI — not explicitly stated by a human';
+    } else {
+      cls = 'sc-proposed'; text = '○ proposed';
+    }
+  } else {
+    const date   = fmtDate(d.signoff?.ratified_at || d.signoff?.created_at || '');
+    const signer = d.signoff?.signer ? `Ratified by: ${d.signoff.signer}` : 'Ratified';
+    cls = 'sc-ratified'; text = `✓ ${date || 'ratified'}`;
+    tip = [signer, date].filter(Boolean).join(' · ');
   }
+  const tipAttr = tip ? ` data-tip="${esc(tip)}"` : '';
+  return `<div class="d-signoff-col ${cls}"${tipAttr}>${text}</div>`;
+}
+
+function renderStateCell(d) {
+  const conf = {
+    reflected:  { cls: 'fs-reflected',  text: '✓ reflected' },
+    drifted:    { cls: 'fs-drifted',    text: '⚠ drifted'   },
+    pending:    { cls: 'fs-pending',    text: '… pending'   },
+    ungrounded: { cls: 'fs-ungrounded', text: '○ tracked'   },
+  };
+  const c = conf[d.status] || conf.ungrounded;
+  const tip = d.status === 'drifted' && d.drift_evidence ? ` data-tip="${esc(d.drift_evidence)}"` : '';
+  return `<div class="d-state-col ${c.cls}"${tip}>${c.text}</div>`;
+}
+
+// ── decision tree helpers ─────────────────────────────────────
+function buildDecisionTree(decisions) {
+  const map = {};
+  decisions.forEach(d => { map[d.id] = { d, children: [] }; });
+  const roots = [];
+  decisions.forEach(d => {
+    const pid = d.parent_decision_id;
+    if (pid && map[pid]) {
+      map[pid].children.push(map[d.id]);
+    } else {
+      roots.push(map[d.id]);
+    }
+  });
+  return { roots, map };
+}
+
+function flattenDecisionTree(nodes, depth) {
+  const out = [];
+  nodes.forEach(node => {
+    out.push({ d: node.d, depth });
+    if (node.children.length) {
+      flattenDecisionTree(node.children, depth + 1).forEach(x => out.push(x));
+    }
+  });
+  return out;
+}
+
+// ── ratified pill (L1 section headers only) ──────────────────
+function renderRatPill(d) {
   const st = signoffState(d);
   if (st === 'context_pending') {
     const q = d.signoff?.context_question || 'Business driver unclear';
@@ -404,144 +471,171 @@ function renderRatPill(d) {
   }
   if (isRejected(d)) {
     const rejDate = fmtDate(d.signoff?.rejected_at || '');
-    const signer = d.signoff?.signer ? `Rejected by: ${d.signoff.signer}` : 'Rejected';
-    const note = d.signoff?.note ? ` · ${d.signoff.note}` : '';
-    const tip = [signer, rejDate].filter(Boolean).join(' · ') + note;
+    const signer  = d.signoff?.signer ? `Rejected by: ${d.signoff.signer}` : 'Rejected';
+    const note    = d.signoff?.note   ? ` · ${d.signoff.note}` : '';
+    const tip     = [signer, rejDate].filter(Boolean).join(' · ') + note;
     return `<span class="rat-pill rp-rejected" data-tip="${esc(tip)}">✕ rejected</span>`;
   }
   if (isProposed(d)) {
+    if (isDiscovered(d))
+      return `<span class="rat-pill rp-discovered" data-tip="Surfaced by AI">~ AI surfaced</span>`;
     return `<span class="rat-pill rp-proposed">○ proposed</span>`;
   }
-  // ratified
-  const date = fmtDate(d.signoff?.ratified_at || d.signoff?.created_at || '');
+  const date   = fmtDate(d.signoff?.ratified_at || d.signoff?.created_at || '');
   const signer = d.signoff?.signer ? `Ratified by: ${d.signoff.signer}` : 'Ratified';
-  const tip = [signer, date].filter(Boolean).join(' · ');
-  const label = date || '✓ ratified';
+  const tip    = [signer, date].filter(Boolean).join(' · ');
   return `<span class="rat-pill rp-ratified" data-tip="${esc(tip)}">✓ ${esc(date || 'ratified')}</span>`;
 }
 
-// ── fulfillment pill ─────────────────────────────────────────
-const FUL_CONF = {
-  reflected:  { cls: 'fp-reflected',  icon: '✓', label: 'reflected' },
-  drifted:    { cls: 'fp-drifted',    icon: '⚠', label: 'drifted'   },
-  ungrounded: { cls: 'fp-ungrounded', icon: '○', label: 'tracked'   },
-  discovered: { cls: 'fp-discovered', icon: '~', label: 'discovered' },
-  gap:        { cls: 'fp-gap',        icon: '?', label: 'open'      },
-  superseded: { cls: 'fp-superseded', icon: '↩', label: 'superseded' },
-};
-
-function renderFulPill(d) {
-  const c = FUL_CONF[d.status] || FUL_CONF.ungrounded;
-  return `<span class="ful-pill ${c.cls}"><span class="fp-dot"></span>${c.icon} ${c.label}</span>`;
-}
-
-// ── sources column (expanded) ─────────────────────────────────
-function renderSources(d) {
+// ── expanded detail body ──────────────────────────────────────
+function renderDetailSources(d) {
   const srcs = d.sources || [];
-  if (d.status === 'gap') {
-    const q = d.summary.replace(/^\[Open Question\]\s*/i, '');
-    return `<div class="no-sources" style="color:var(--amber)">? open question / requirement gap</div>
-<div style="font-size:11px;color:var(--text-dim);margin-top:4px;font-style:italic">${esc(q)}</div>`;
-  }
   if (!srcs.length) {
-    return `<div class="no-sources">~ no meeting source — decision found in code only</div>`;
+    const msg = isDiscovered(d)
+      ? '~ AI surfaced — not explicitly stated in any meeting or document'
+      : '~ no meeting source';
+    return `<div class="det-no-src">${msg}</div>`;
   }
   return srcs.map(s => {
-    const parts = [
+    const meta = [
       s.source_type ? `<span class="src-type-pill">${esc(s.source_type)}</span>` : '',
       s.source_ref  ? `<span>${esc(s.source_ref)}</span>` : '',
       s.date        ? `<span class="src-date">${esc(s.date.slice(0,10))}</span>` : '',
       s.speaker     ? `<span class="src-speaker">${esc(s.speaker)}</span>` : '',
     ].filter(Boolean).join('');
-    return `
-<div class="src-entry">
-  <div class="src-meta">${parts}</div>
-  ${s.quote ? `<div class="src-quote">${esc(s.quote)}</div>` : ''}
+    return `<div class="det-src">
+  ${meta ? `<div class="det-src-meta">${meta}</div>` : ''}
+  ${s.quote ? `<div class="det-quote">${esc(s.quote)}</div>` : ''}
 </div>`;
   }).join('');
 }
 
-// ── code regions column (expanded) ───────────────────────────
-function renderCodeRegions(d) {
+function renderCodeChips(d) {
   const fuls = d.fulfillments || [];
-  if (!fuls.length) {
-    const msg = d.status === 'ungrounded'
-      ? 'No code region yet — requirement tracked, not yet implemented.'
-      : 'No code region found.';
-    return `<div class="no-code">${msg}</div>`;
-  }
-
-  return fuls.map(f => {
-    const loc = `${esc(f.file_path)}:${f.start_line}–${f.end_line}`;
-    const sym = f.symbol ? `<span class="code-sym">${esc(f.symbol)}</span>` : '';
-    let statusLine = '';
-    if (d.status === 'drifted') {
-      const driftMsg = d.drift_evidence || 'content changed since last sync';
-      statusLine = `<div class="code-status-line csl-drift">⚠ drifted</div>
-        <div class="drift-detail">${esc(driftMsg)}</div>`;
-    } else if (d.status === 'reflected') {
-      statusLine = `<div class="code-status-line csl-ok">✓ reflected</div>`;
-    } else {
-      statusLine = `<div class="code-status-line csl-none">${esc(d.status)}</div>`;
-    }
-    return `
-<div class="code-entry">
-  <div class="code-loc">
-    <span class="code-file">${loc}</span>${sym}
-  </div>
-  ${statusLine}
-</div>`;
+  if (!fuls.length) return '';
+  const chipCls = d.status === 'reflected' ? 'ok' : d.status === 'drifted' ? 'drift' : '';
+  const chips = fuls.map(f => {
+    const loc = `${f.file_path}:${f.start_line}`;
+    const sym = f.symbol ? ` · ${f.symbol}` : '';
+    return `<span class="det-chip ${chipCls}">${esc(loc + sym)}</span>`;
   }).join('');
+  const driftMsg = d.status === 'drifted' && d.drift_evidence
+    ? `<div class="det-drift">${esc(d.drift_evidence)}</div>` : '';
+  return `<div class="det-chips">${chips}</div>${driftMsg}`;
 }
 
 // ── decision row ──────────────────────────────────────────────
-function renderDec(d, idx) {
-  const stCls = `s-${d.status || 'ungrounded'}`;
+function renderDec(d, idx, depth) {
+  depth = depth || 0;
+  const stCls    = `s-${d.status || 'ungrounded'}`;
   const proposed = isProposed(d);
-  const superseded = d.status === 'superseded';
+  const discovered = isDiscovered(d);
+  const superseded = d.signoff_state === 'superseded';
   const rejected = isRejected(d);
+  const level    = d.decision_level || (depth === 0 ? null : depth === 1 ? 'L2' : 'L3');
+  const lvlBadge = level ? `<span class="lvl-badge lvl-${level.toLowerCase()}">${level}</span>` : '';
+  const spacer   = depth > 0 ? `<span class="depth-spacer" style="width:${depth * 18}px"></span>` : '';
+  const body     = renderDetailSources(d) + renderCodeChips(d);
   return `
-<div class="dec ${stCls}${proposed ? ' is-proposed' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" id="d${idx}" onclick="toggleDec(this)">
+<div class="dec ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" id="d${idx}" onclick="toggleDec(this)">
   <div class="dec-hdr">
-    <div class="d-ratified-col">${renderRatPill(d)}</div>
     <div class="d-text-col">
-      <span class="d-chev">▶</span>
-      <span class="d-text">${esc(d.summary)}</span>
+      ${spacer}${lvlBadge}<span class="d-text">${esc(d.summary)}</span>
     </div>
-    <div class="d-state-col">${renderFulPill(d)}</div>
+    ${renderSignoffCell(d)}
+    ${renderStateCell(d)}
   </div>
-  <div class="dec-body">
-    <div class="dec-cols">
-      <div>
-        <div class="col-hdr">Sources</div>
-        ${renderSources(d)}
-      </div>
-      <div>
-        <div class="col-hdr">Code Regions</div>
-        ${renderCodeRegions(d)}
-      </div>
-    </div>
-  </div>
+  <div class="dec-body">${body}</div>
 </div>`;
 }
 
+// ── gap banner removed — signoff + code state columns are the complete picture ──
+
+// ── L1 sub-section ────────────────────────────────────────────
+function renderL1Source(d) {
+  const src = (d.sources || [])[0];
+  return src?.source_ref || '';
+}
+
+function renderL1Section(l1, children, id) {
+  const srcText = renderL1Source(l1);
+  const lvl = l1.decision_level;
+  const badge = lvl ? `<span class="l1-badge">${esc(lvl)}</span>` : '';
+  const header = `
+<div class="l1-header" onclick="toggleL1('${id}')">
+  <div class="d-text-col">
+    <span class="l1-chev" id="${id}-chev">▼</span>
+    ${badge}
+    <span class="l1-desc">${esc(l1.summary)}</span>
+    ${srcText ? `<span class="l1-src">${esc(srcText)}</span>` : ''}
+  </div>
+  ${renderSignoffCell(l1)}
+  <div class="d-state-col fs-ungrounded">—</div>
+</div>`;
+
+  let bodyInner;
+  if (!children.length) {
+    bodyInner = `<div class="l1-empty">No implementation decisions yet.</div>`;
+  } else {
+    const { roots, map } = buildDecisionTree(children);
+    const sortedRoots = sortDecisions(roots.map(n => n.d)).map(d => map[d.id]);
+    const flat = flattenDecisionTree(sortedRoots, 0);
+    bodyInner = flat.map(({ d, depth }, di) => renderDec(d, id + '-' + di, depth)).join('');
+  }
+
+  return `<div class="l1-section">${header}<div class="l1-body" id="${id}-body">${bodyInner}</div></div>`;
+}
+
 // ── feature section ───────────────────────────────────────────
+function getAllDescendants(childNodes) {
+  const result = [];
+  childNodes.forEach(node => {
+    result.push(node.d);
+    getAllDescendants(node.children).forEach(d => result.push(d));
+  });
+  return result;
+}
+
 function renderFeature(f, fi) {
-  const sorted = sortDecisions(f.decisions);
-  const decs = sorted.map((d, di) => renderDec(d, fi * 1000 + di)).join('');
+  const decisions = f.decisions || [];
+
+  // Build full tree from parent_decision_id relationships
+  const { roots, map } = buildDecisionTree(decisions);
+
+  // Roots with children → section headers (L1-style)
+  // Roots without children → flat orphan rows
+  const parentRoots = roots.filter(n => n.children.length > 0);
+  const orphanRoots  = roots.filter(n => n.children.length === 0);
+
+  const sortedParents = sortDecisions(parentRoots.map(n => n.d)).map(d => map[d.id]);
+  const sortedOrphans = sortDecisions(orphanRoots.map(n => n.d)).map(d => map[d.id]);
+
+  // Orphan flat rows
+  let orphanHtml = '';
+  if (sortedOrphans.length) {
+    const flat = flattenDecisionTree(sortedOrphans, 0);
+    orphanHtml = flat.map(({ d, depth }, di) => renderDec(d, fi * 1000 + di, depth)).join('');
+  }
+
+  // Section-header rows (parent decisions + their subtrees)
+  const sectionHtml = sortedParents.map((node, li) => {
+    const allChildren = getAllDescendants(node.children);
+    return renderL1Section(node.d, allChildren, `l1-${fi}-${li}`);
+  }).join('');
+
   return `
 <div class="feature-section" id="ft${fi}">
   <div class="section-divider" onclick="toggleSection('ft${fi}')">
-    <span class="section-chev" id="ft${fi}-chev">▼</span>
-    <span class="section-name">${esc(f.name)}</span>
+    <div class="section-name-col">
+      <span class="section-chev" id="ft${fi}-chev">▼</span>
+      <span class="section-name">${esc(f.name)}</span>
+    </div>
+    <div class="d-signoff-col"></div>
+    <div class="d-state-col"></div>
   </div>
   <div class="section-body" id="ft${fi}-body">
-    <div class="col-headers">
-      <span>Ratified</span>
-      <span>Decision</span>
-      <span>Code State</span>
-    </div>
-    ${decs}
+    ${orphanHtml}
+    ${sectionHtml}
   </div>
 </div>`;
 }
@@ -608,6 +702,14 @@ function toggleSection(id) {
 
 function toggleDec(el) {
   el.classList.toggle('open');
+}
+
+function toggleL1(id) {
+  const body = document.getElementById(id + '-body');
+  const chev = document.getElementById(id + '-chev');
+  if (!body) return;
+  const collapsed = body.classList.toggle('collapsed');
+  if (chev) chev.textContent = collapsed ? '▶' : '▼';
 }
 
 // ── live connection ────────────────────────────────────────────

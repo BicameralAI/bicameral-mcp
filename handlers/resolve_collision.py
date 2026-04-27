@@ -78,9 +78,26 @@ async def handle_resolve_collision(
                 reason=f"human-confirmed supersession via resolve_collision session={_session_id}",
             )
 
-            # Mark old decision as superseded
+            # Mark old decision as superseded in signoff (not status).
+            # Supersession is a human editorial decision, not a code-compliance observation.
+            # The old decision's status field retains its last code-compliance value
+            # and is frozen — drift sweeps skip decisions where signoff.state='superseded'.
+            # Merge with existing signoff so a prior ratification record is preserved.
+            _existing_rows = await client.query(
+                f"SELECT signoff FROM {old_id} LIMIT 1"
+            )
+            _old_signoff: dict = {}
+            if _existing_rows and isinstance(_existing_rows[0], dict):
+                _old_signoff = _existing_rows[0].get("signoff") or {}
             await client.execute(
-                f"UPDATE {old_id} SET status = 'superseded'",
+                f"UPDATE {old_id} SET signoff = $s",
+                {"s": {
+                    **_old_signoff,
+                    "state": "superseded",
+                    "superseded_by": new_id,
+                    "superseded_at": _now_iso,
+                    "session_id": _session_id,
+                }},
             )
             old_status = "superseded"
 

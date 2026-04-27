@@ -40,8 +40,9 @@ When you build with an AI coding assistant, this disconnect accelerates:
                     ┌─────────────▼──────────────┐
                     │       Decision Ledger        │
                     │   what was said  ↔  code    │
-                    │  status: reflected | drifted │
-                    │          | gap | ungrounded  │
+                    │  status:  reflected | drifted │
+                    │           pending | ungrounded│
+                    │  signoff: proposed | ratified │
                     └─────────────────────────────┘
                                   │
               ┌───────────────────┼───────────────────┐
@@ -68,8 +69,8 @@ When you build with an AI coding assistant, this disconnect accelerates:
     src/handlers/webhook.ts:processEvent:80-92
     Drift evidence: switched to Date.now() in PR #287
 
-⚠ 1 unresolved open question:
-  • "Should we deduplicate by event.id or (account_id, event.id)?"
+~ 1 AI-surfaced question (no human source yet):
+  • Should we deduplicate by event.id or (account_id, event.id)?
     Source: Slack #payments 2026-03-20
 ```
 
@@ -120,18 +121,33 @@ Then restart your terminal and re-run the install command above.
 
 ## Core Concepts
 
-### Decision Status
+### Two Orthogonal Axes
 
-Every tracked decision has a status derived at query time — never stored. This makes Bicameral immune to rebase, squash, and cherry-pick.
+Every decision carries two independent signals:
 
-| Status | Meaning |
-|---|---|
-| **reflected** ✓ | Code was verified to implement this decision |
-| **drifted** ⚠ | Code changed since the decision was last verified |
-| **ungrounded** ○ | Decision tracked, but no matching code region found |
-| **pending** | Code region found, but not yet verified by the agent |
-| **gap** ◈ | Open question — a known unknown that needs an answer before the code can be correct |
-| **superseded** — | Replaced by a later decision |
+**Status** — what the codebase says (derived at query time, never stored):
+
+| | Symbol | Meaning |
+|---|---|---|
+| **reflected** | ✓ | Code was verified to implement this decision |
+| **drifted** | ⚠ | Code changed since the decision was last verified |
+| **pending** | … | Code region found, but not yet verified by the agent |
+| **ungrounded** | ○ | Decision tracked, but no matching code region found yet |
+
+**Signoff** — what humans decided (stored explicitly):
+
+| | Symbol | Meaning |
+|---|---|---|
+| **ratified** | ✓ date | A human confirmed this decision |
+| **proposed** | ○ | Ingested but not yet confirmed; drift tracking paused |
+| **AI-surfaced** | ~ | Surfaced by the agent, no human-stated source |
+| **rejected** | ✕ | Explicitly ruled out |
+| **needs context** | ⚑ | Business driver unclear — parked until answered |
+| **superseded** | — | Replaced by a later decision |
+
+The two axes are independent. The most important combination to watch for is **proposed × reflected**: the code already implements this decision cleanly, but a human hasn't signed off yet. That's the hero case for the dashboard — the PM sees it, ratifies, and drift tracking activates.
+
+Status is immune to rebase, squash, and cherry-pick because it's derived fresh at query time from content hashes, not stored as a flag.
 
 ### When Does `link_commit` Run?
 

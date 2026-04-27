@@ -368,9 +368,10 @@ async def test_hook_no_fire_still_syncs(alpha_env):
 @pytest.mark.phase3
 @pytest.mark.asyncio
 async def test_new_ingest_enters_as_proposal(alpha_env):
-    """v0.7 invariant: handle_ingest without explicit signoff creates
-    a 'proposal' decision. Proposals are drift-exempt — even after binding
-    and a drifted verdict, the status stays 'proposal'.
+    """v0.9+ invariant: handle_ingest without explicit signoff creates an
+    'ungrounded' decision with signoff.state='proposed'. Drift tracking is
+    deferred until ratified — the code-compliance status stays 'ungrounded'
+    until regions are bound and a compliance verdict is written.
     """
     ctx, _ = alpha_env
 
@@ -393,23 +394,24 @@ async def test_new_ingest_enters_as_proposal(alpha_env):
     assert ingest_resp.ingested
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    # Should be 'proposal', not 'ungrounded' or 'pending'.
+    # Code-compliance status is 'ungrounded' (no regions bound yet).
+    # Human-approval axis lives on signoff.state = 'proposed'.
     status = await _decision_status(ctx, decision_id)
-    assert status == "proposal", (
-        f"v0.7 invariant FAIL: expected 'proposal', got '{status}'"
+    assert status == "ungrounded", (
+        f"v0.9+ invariant FAIL: expected 'ungrounded', got '{status}'"
     )
 
-    # After ratification, it becomes eligible for drift checking.
+    # After ratification, it remains ungrounded (no code regions bound).
     from handlers.ratify import handle_ratify
     ratify_resp = await handle_ratify(ctx, decision_id=decision_id,
                                      signer="jacob@example.com")
     assert ratify_resp.was_new is True
     assert ratify_resp.signoff["state"] == "ratified"
 
-    # Ratified + no bindings → pending (not ungrounded, not proposal).
+    # Ratified + no bindings → still ungrounded on the code-compliance axis.
     status_after = await _decision_status(ctx, decision_id)
     assert status_after in ("pending", "ungrounded"), (
-        f"v0.7 invariant FAIL: after ratification expected pending/ungrounded, got '{status_after}'"
+        f"v0.9+ invariant FAIL: after ratification expected pending/ungrounded, got '{status_after}'"
     )
 
 

@@ -648,6 +648,228 @@ async def run_compliance_resolution_loop():
     section("Run 8 — pending_compliance_checks → resolve_compliance → reflected (skill gap fix)", body)
 
 
+# ── Run 9: signoff/status decoupling verification ───────────────────────────
+
+async def run_signoff_status_decoupling():
+    """
+    Verify the v0.9+ orthogonalization of status (code-compliance) and signoff (human-approval):
+
+    A. New ingest without explicit signoff → status='ungrounded', signoff.state='proposed'
+       (was: status='proposal' pre-v0.9)
+    B. Session-start banner detects stale proposals via signoff.state, not status value
+    C. resolve_collision supersede merges signoff dict — ratification record preserved
+    D. History shows superseded decisions with last code-compliance status + signoff_state
+    """
+    import subprocess, datetime as dt
+    tmpdir = tempfile.mkdtemp(prefix='bicam_signoff_test_')
+    try:
+        subprocess.run(['git', 'init', '-b', 'main'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(['git', 'config', 'user.email', 'test@test.com'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmpdir, check=True, capture_output=True)
+        (pathlib.Path(tmpdir) / 'app.py').write_text('def main(): pass\n')
+        subprocess.run(['git', 'add', 'app.py'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(['git', 'commit', '-m', 'init'], cwd=tmpdir, check=True, capture_output=True)
+
+        os.environ['SURREAL_URL'] = 'memory://'
+        os.environ['REPO_PATH'] = tmpdir
+        ledger = make_fresh_ledger()
+        await ledger.connect()
+        from adapters.code_locator import get_code_locator
+
+        class Ctx:
+            pass
+        ctx = Ctx()
+        ctx.repo_path = tmpdir
+        ctx.session_id = 'sim-signoff'
+        ctx.authoritative_ref = 'main'
+        ctx.authoritative_sha = ''
+        ctx.head_sha = ''
+        ctx.drift_analyzer = None
+        ctx._sync_state = {}
+        ctx.ledger = ledger
+        ctx.code_graph = get_code_locator()
+
+        results_a = []
+        results_b = []
+        results_c = []
+        results_d = []
+
+        # ── A: ingest without signoff → ungrounded + proposed ────────────────
+        from handlers.ingest import handle_ingest
+        from ledger.queries import project_decision_status
+
+        ingest_r = await handle_ingest(ctx, {
+            "repo": tmpdir,
+            "query": "signoff decoupling test",
+            "mappings": [{
+                "intent": "Feature flags must be documented before enabling in prod",
+                "feature_group": "Release",
+                "decision_level": "L2",
+                "span": {
+                    "text": "Feature flags must be documented before enabling in prod",
+                    "source_type": "slack",
+                    "source_ref": "eng-channel",
+                    "meeting_date": "2026-04-26",
+                    "speakers": ["Jin"],
+                },
+                # NOTE: no 'signoff' key — server stamps signoff.state='proposed'
+            }],
+        })
+        did = ingest_r.created_decisions[0].decision_id
+
+        inner = getattr(ledger, '_inner', ledger)
+        code_status = await project_decision_status(inner._client, did)
+
+        raw_rows = await inner._client.query(
+            f"SELECT signoff FROM {did} LIMIT 1"
+        )
+        raw_signoff = (raw_rows[0].get('signoff') or {}) if raw_rows else {}
+        signoff_state = raw_signoff.get('state', '?')
+        discovered = raw_signoff.get('discovered', '?')
+
+        a_pass = (code_status == 'ungrounded' and signoff_state == 'proposed')
+        results_a = [
+            f"  decision_id:    {did}",
+            f"  status:         {code_status}  (expected: ungrounded)",
+            f"  signoff.state:  {signoff_state}  (expected: proposed)",
+            f"  signoff.discovered: {discovered}",
+            f"  Result A: {'PASS' if a_pass else 'FAIL'}",
+        ]
+
+        # ── B: session-start banner detects stale proposal via signoff ────────
+        # Backdate the signoff to simulate 15-day-old proposal
+        stale_created = (
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=15)
+        ).isoformat()
+        await inner._client.execute(
+            f"UPDATE {did} SET signoff = $s",
+            {"s": {**raw_signoff, "created_at": stale_created}},
+        )
+
+        # Mock the ledger's get_decisions_by_status to return our stale-proposal row
+        from unittest.mock import AsyncMock, patch
+        stale_row = {
+            "decision_id": did,
+            "description": "Feature flags must be documented before enabling in prod",
+            "status": code_status,  # 'ungrounded' — NOT 'proposal'
+            "signoff": {**raw_signoff, "created_at": stale_created},
+            "source_ref": "eng-channel",
+        }
+        orig_ledger = ctx.ledger
+
+        class BannerCtx:
+            pass
+        bctx = BannerCtx()
+        bctx._sync_state = {}
+        mock_ledger = AsyncMock()
+        mock_ledger.get_decisions_by_status = AsyncMock(return_value=[stale_row])
+        bctx.ledger = mock_ledger
+
+        from handlers.sync_middleware import get_session_start_banner
+        banner = await get_session_start_banner(bctx)
+
+        b_pass = (
+            banner is not None
+            and banner.stale_proposal_count == 1
+            and banner.proposal_count == 1
+            and any(i.get('signoff_state') == 'proposed' for i in banner.items)
+            and 'stale proposal' in banner.message
+        )
+        results_b = [
+            f"  banner fired:           {banner is not None}",
+            f"  stale_proposal_count:   {getattr(banner, 'stale_proposal_count', 'n/a')}",
+            f"  proposal_count:         {getattr(banner, 'proposal_count', 'n/a')}",
+            f"  item.signoff_state:     {banner.items[0].get('signoff_state') if banner else 'n/a'}",
+            f"  item.status:            {banner.items[0].get('status') if banner else 'n/a'}  (ungrounded, not 'proposal')",
+            f"  message:                {getattr(banner, 'message', 'n/a')[:60]}",
+            f"  Result B: {'PASS' if b_pass else 'FAIL'}",
+        ]
+
+        # ── C: resolve_collision supersede merges signoff ─────────────────────
+        # Ratify the old decision first
+        from handlers.ratify import handle_ratify
+        rat = await handle_ratify(ctx, decision_id=did, signer="sim-run9")
+        old_signoff_after_ratify = rat.signoff
+
+        # Ingest a new superseding decision
+        ingest_new = await handle_ingest(ctx, {
+            "repo": tmpdir,
+            "query": "supersede test",
+            "mappings": [{
+                "intent": "Feature flags must be documented AND reviewed by two engineers before prod",
+                "feature_group": "Release",
+                "decision_level": "L2",
+                "span": {
+                    "text": "Feature flags must be documented AND reviewed by two engineers",
+                    "source_type": "slack",
+                    "source_ref": "eng-channel-v2",
+                    "meeting_date": "2026-04-26",
+                    "speakers": ["Jin"],
+                },
+            }],
+        })
+        new_did = ingest_new.created_decisions[0].decision_id
+
+        from handlers.resolve_collision import handle_resolve_collision
+        await handle_resolve_collision(ctx, new_id=new_did, old_id=did, action="supersede")
+
+        # Read the old decision's signoff after supersession
+        post_rows = await inner._client.query(f"SELECT signoff FROM {did} LIMIT 1")
+        post_signoff = (post_rows[0].get('signoff') or {}) if post_rows else {}
+
+        c_ratified_preserved = post_signoff.get('ratified_at') == old_signoff_after_ratify.get('ratified_at')
+        c_state_superseded = post_signoff.get('state') == 'superseded'
+        c_pass = c_state_superseded and c_ratified_preserved
+
+        results_c = [
+            f"  pre-supersede signoff:  state={old_signoff_after_ratify.get('state')}, ratified_at={str(old_signoff_after_ratify.get('ratified_at', '?'))[:20]}",
+            f"  post-supersede signoff: state={post_signoff.get('state')}",
+            f"  ratified_at preserved:  {c_ratified_preserved}  (expected: True)",
+            f"  superseded_by:          {post_signoff.get('superseded_by', 'n/a')[:30]}...",
+            f"  Result C: {'PASS' if c_pass else 'FAIL'}",
+        ]
+
+        # ── D: history shows superseded decisions with code-compliance status ─
+        from handlers.history import handle_history
+        hist = await handle_history(ctx)
+        superseded_decisions = [
+            d for fg in hist.features for d in fg.decisions
+            if d.signoff_state == 'superseded'
+        ]
+        d_pass = (
+            len(superseded_decisions) == 1
+            and superseded_decisions[0].status in ('ungrounded', 'pending', 'drifted', 'reflected')
+            and superseded_decisions[0].signoff_state == 'superseded'
+        )
+        results_d_dec = superseded_decisions[0] if superseded_decisions else None
+        results_d = [
+            f"  superseded decisions in history: {len(superseded_decisions)}",
+            f"  status:         {results_d_dec.status if results_d_dec else 'n/a'}  (code-compliance, not 'superseded')",
+            f"  signoff_state:  {results_d_dec.signoff_state if results_d_dec else 'n/a'}",
+            f"  Result D: {'PASS' if d_pass else 'FAIL'}",
+        ]
+
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        os.environ['SURREAL_URL'] = 'memory://'
+        os.environ['REPO_PATH'] = REPO
+
+    all_pass = a_pass and b_pass and c_pass and d_pass
+    body = (
+        "Testing v0.9+ status/signoff orthogonalization:\n\n"
+        "A — Ingest without signoff → status='ungrounded', signoff.state='proposed'\n"
+        + '\n'.join(results_a) + '\n\n'
+        "B — Session-start banner detects stale proposals via signoff.state (not status)\n"
+        + '\n'.join(results_b) + '\n\n'
+        "C — resolve_collision supersede merges signoff (preserves ratification record)\n"
+        + '\n'.join(results_c) + '\n\n'
+        "D — History surfaces superseded decisions with last code-compliance status\n"
+        + '\n'.join(results_d) + '\n\n'
+        f"Overall: {'PASS — all four orthogonalization invariants hold' if all_pass else 'PARTIAL PASS — see sub-results'}\n"
+    )
+    section("Run 9 — signoff/status decoupling verification (v0.9+)", body)
+
+
 # ── main ─────────────────────────────────────────────────────────────────────
 
 async def main():
@@ -666,6 +888,7 @@ async def main():
     await run_full_drift_loop()
     await run_search_persistent()
     await run_compliance_resolution_loop()
+    await run_signoff_status_decoupling()
 
     return RESULTS
 

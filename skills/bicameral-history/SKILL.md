@@ -51,9 +51,26 @@ Group decisions by `HistoryFeature`. For each group:
 
 1. **Header**: `FEATURE NAME  Nreflected  Ndrifted  Nungrounded  Nsuperseded`
    - Lead with features that have drifted or ungrounded decisions.
-2. **Decisions in the group** — one row per decision:
-   - `✓` = reflected, `⚠` = drifted, `○` = ungrounded, `~` = discovered, `—` = superseded
-   - Include `sources`, `fulfillment.file_path:start_line`, and `drift_evidence` when present.
+2. **Decisions in the group** — render as a tree, not a flat list:
+   - Use `parent_decision_id` to identify L2/L3 decisions. Render L1 roots first (sorted by status priority), then indent each L2 child under its L1 parent, and L3 children under their L2 parent.
+   - Indent L2 by 2 spaces + `[L2]` prefix. Indent L3 by 4 spaces + `[L3]` prefix. L1 decisions get an `[L1]` prefix.
+   - Left symbol = code status: `✓` reflected · `⚠` drifted · `○` ungrounded · `~` ungrounded + AI-surfaced
+   - Right symbol = signoff: `✓ date` ratified · `○` proposed · `~` AI-surfaced · `✕` rejected · `⚑` needs context · `—` superseded
+   - Include `sources`, `fulfillments[].file_path:start_line`, and `drift_evidence` when present.
+   - If `decision_level` is absent, treat the decision as L1 (flat/legacy).
+
+Example layout:
+```
+FEATURE NAME   3 reflected   1 drifted   2 ungrounded
+
+[L1] ✓ top-level decision                              ✓ 2026-04-20
+       file.py:42  Source: meeting-2026-04-01
+     [L2]   ✓ child decision (indented)                ✓ 2026-04-20
+             file.py:88
+     [L2]   ⚠ drifted child                            ✓ 2026-03-15
+             Drift: content changed since last sync
+[L1] ○ ungrounded top-level                            ○
+```
 
 When `truncated=True`, note "Showing 50 of N features — use `feature_filter` to drill in."
 
@@ -64,7 +81,7 @@ After the history table, scan the rendered decisions for any whose
 feature area and present a single ratify prompt:
 
 ```
-⚪ Unratified proposals in: <Feature A>, <Feature B>, <Feature C>
+○ Unratified proposals in: <Feature A>, <Feature B>, <Feature C>
    Drift tracking is paused on these until ratified.
    Ratify now? [Y/n or pick features: A C]  ›
 ```
@@ -82,16 +99,27 @@ This is the canonical ratification surface. `bicameral-ingest` and
 deliberately — history is where the user reviews and ratifies in
 bulk, rather than being asked at the end of every ingest.
 
-## Status badges
+## Badges
 
-| Status | Badge | Meaning |
-|---|---|---|
-| reflected | ✓ | Code matches the recorded decision |
-| drifted | ⚠ | Code diverged from the recorded decision |
-| ungrounded | ○ | Decision tracked but no code region found |
-| discovered | ~ | Code implies a decision that was never recorded |
-| superseded | — | Replaced by a later decision |
-| proposed | ⚪ | Ingested but not yet ratified; drift tracking paused |
+**Status** (code-compliance — left column):
+
+| Badge | Meaning |
+|---|---|
+| ✓ | reflected — code matches |
+| ⚠ | drifted — code diverged |
+| ○ | ungrounded — no code region yet |
+| ~ | ungrounded + AI-surfaced (`signoff.discovered=true`) |
+
+**Signoff** (human-approval — right column):
+
+| Badge | Meaning |
+|---|---|
+| ✓ date | ratified |
+| ○ | proposed (human-ingested) |
+| ~ | proposed, AI-surfaced |
+| ✕ | rejected |
+| ⚑ | needs context |
+| — | superseded |
 
 **Note on ephemeral commits**: when verdicts were recorded from a feature branch
 commit (not yet in the authoritative branch), they are tagged `ephemeral: true`.

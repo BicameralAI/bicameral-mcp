@@ -72,10 +72,12 @@ def raw_decisions_to_drift_entries(
         else:
             counts["ungrounded"] += 1
 
+        _signoff = d.get("signoff") or {}
         entries.append(DriftEntry(
             decision_id=d["decision_id"],
             description=d["description"],
             status=status,
+            signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
             symbol=region.get("symbol", ""),
             lines=tuple(region.get("lines", (0, 0))),
             drift_evidence=drift_evidence,

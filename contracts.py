@@ -60,7 +60,8 @@ class SourceCursorSummary(BaseModel):
 class DecisionStatusEntry(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    signoff_state: str | None = None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     source_type: str                  # transcript | notion | document | manual | implementation_choice
     source_ref: str                   # meeting ID, Notion page ID, etc.
     ingested_at: str                  # ISO datetime
@@ -86,7 +87,8 @@ class DecisionStatusResponse(BaseModel):
 class DecisionMatch(BaseModel):
     decision_id: str
     description: str                  # the original decision text
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    signoff_state: str | None = None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     confidence: float                 # BM25 match score (0–1)
     source_ref: str
     code_regions: list[CodeRegionSummary]
@@ -215,7 +217,8 @@ class SearchDecisionsResponse(BaseModel):
 class DriftEntry(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    signoff_state: str | None = None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     symbol: str
     lines: tuple[int, int]
     drift_evidence: str = ""
@@ -411,14 +414,16 @@ class IngestResponse(BaseModel):
     pending_grounding_decisions: list[dict] = []
     context_for_candidates: "list[ContextForCandidate]" = []
     source_cursor: SourceCursorSummary | None = None
-    judgment_payload: "GapJudgmentPayload | None" = None
+    judgment_payload: "GapJudgmentPayload | None" = None   # kept for backward compat
+    judgment_payloads: "list[GapJudgmentPayload]" = []     # one per feature_group topic
     sync_status: LinkCommitResponse | None = None
 
 
 class BriefDecision(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    signoff_state: str | None = None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     source_type: str = ""
     source_ref: str = ""
     code_regions: list[CodeRegionSummary] = []
@@ -523,7 +528,7 @@ class GapRubric(BaseModel):
 class GapJudgmentContextDecision(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending"]
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
     source_excerpt: str = ""
     source_ref: str = ""
     meeting_date: str = ""
@@ -551,7 +556,7 @@ class RatifyResponse(BaseModel):
     decision_id: str
     was_new: bool         # True if this call set the signoff; False if already set
     signoff: dict
-    projected_status: Literal["reflected", "drifted", "pending", "ungrounded", "proposal", "context_pending", "superseded"]
+    projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
 
 
 # ── Tool: bicameral.resolve_collision ────────────────────────────────────────
@@ -604,8 +609,9 @@ class HistoryDecision(BaseModel):
     id: str                       # decision_id
     summary: str                  # canonical decision text
     featureId: str
-    status: Literal["reflected", "drifted", "ungrounded", "superseded", "discovered", "gap"]
-    sources: list[HistorySource]          # 1+ input spans; empty for discovered/gap
+    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    signoff_state: str | None = None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
+    sources: list[HistorySource] = []   # 1+ input spans; empty for AI-discovered
     fulfillments: list[HistoryFulfillment] = []   # all bound code regions
     drift_evidence: str | None = None    # human-readable delta when drifted
     signoff: dict | None = None          # ratification record: state, signer, ratified_at
@@ -654,6 +660,20 @@ class BindResponse(BaseModel):
     """Response envelope for bicameral.bind."""
     bindings: list[BindResult]
     sync_metrics: SyncMetrics | None = None  # V1 A3 — write-barrier hold time
+
+
+# ── Session-start banner ─────────────────────────────────────────────
+
+
+class SessionStartBanner(BaseModel):
+    """Open-decision summary shown once per session at session start."""
+    drifted_count: int = 0
+    ungrounded_count: int = 0
+    proposal_count: int = 0
+    stale_proposal_count: int = 0
+    items: list[dict] = []
+    message: str = ""
+    truncated: bool = False
 
 
 # Forward references

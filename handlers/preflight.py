@@ -42,9 +42,8 @@ from contracts import (
     DecisionMatch,
     PreflightResponse,
 )
-from handlers.analysis import _detect_divergences, _extract_gaps, _to_brief_decision
+from handlers.analysis import _to_brief_decision
 from handlers.action_hints import generate_hints_from_findings
-from handlers.search_decisions import handle_search_decisions
 
 logger = logging.getLogger(__name__)
 
@@ -131,18 +130,6 @@ def _check_dedup(ctx, topic: str) -> bool:
     return False
 
 
-def _has_actionable_signal_in_search(matches: list) -> bool:
-    """Normal mode trust gate: surface only when there's something the
-    developer actually needs to know. Drifted decisions count, ungrounded
-    decisions count. Plain reflected matches don't.
-    """
-    return any(
-        m.status in ("drifted", "ungrounded")
-        for m in matches
-    )
-
-
-
 async def _region_anchored_preflight(
     ctx,
     file_paths: list[str],
@@ -195,10 +182,12 @@ async def _region_anchored_preflight(
         if status not in ("reflected", "drifted", "pending", "ungrounded"):
             status = "ungrounded" if not regions else "pending"
 
+        _sf = d.get("signoff") or {}
         matches.append(DecisionMatch(
             decision_id=d.get("decision_id", ""),
             description=d.get("description", ""),
             status=status,
+            signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
             confidence=0.9,
             source_ref=d.get("source_ref", ""),
             code_regions=regions,
@@ -211,28 +200,6 @@ async def _region_anchored_preflight(
 
     return matches
 
-
-def _merge_decision_matches(
-    region: list[DecisionMatch],
-    keyword: list[DecisionMatch],
-) -> list[DecisionMatch]:
-    """Union of region-anchored and ledger-keyword matches, deduplicated by decision_id.
-
-    Region-anchored results come first (direct pin = higher precision). Keyword
-    results fill in decisions that exist in the ledger but aren't yet pinned to
-    code regions.
-    """
-    seen: set[str] = set()
-    merged: list[DecisionMatch] = []
-    for m in region:
-        if m.decision_id not in seen:
-            seen.add(m.decision_id)
-            merged.append(m)
-    for m in keyword:
-        if m.decision_id not in seen:
-            seen.add(m.decision_id)
-            merged.append(m)
-    return merged
 
 
 async def handle_preflight(
@@ -252,17 +219,6 @@ async def handle_preflight(
             topic=topic,
             fired=False,
             reason="preflight_disabled",
-            guided_mode=guided_mode,
-        )
-
-    # Topic validation — deterministic guard. Failed validation =
-    # silent skip, no preflight call.
-    if not _validate_topic(topic):
-        logger.debug("[preflight] topic failed validation: %r", topic[:60])
-        return PreflightResponse(
-            topic=topic,
-            fired=False,
-            reason="topic_too_generic",
             guided_mode=guided_mode,
         )
 
@@ -288,10 +244,10 @@ async def handle_preflight(
 
     sources_chained: list[str] = []
 
-    # Step 1a — region-anchored lookup: caller-supplied file_paths → pinned decisions.
-    # The caller LLM (Claude Code etc.) has already scoped which files the proposed
-    # change will touch; preflight uses that directly. High-precision pin, not a
-    # keyword-overlap guess. Empty file_paths skips this arm silently.
+    # Region-anchored lookup: caller-supplied file_paths → decisions pinned to those files.
+    # High-precision direct pin — the caller LLM has scoped which files the task will touch.
+    # Topic-based keyword search is intentionally removed; the skill reads bicameral.history()
+    # directly and uses LLM reasoning to identify relevant feature groups.
     region_matches: list[DecisionMatch] = []
     if file_paths:
         try:
@@ -301,90 +257,10 @@ async def handle_preflight(
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 
-    # Step 1b — ledger keyword search on decision descriptions.
-    # Catches decisions not yet pinned to code regions (ungrounded), and decisions
-    # whose text happens to overlap with the topic vocabulary.
-    try:
-        search_resp = await handle_search_decisions(
-            ctx,
-            query=topic,
-            max_results=10,
-            min_confidence=0.4,
-        )
-        sources_chained.append("search")
-    except Exception as exc:
-        # Fail open — preflight never blocks on bicameral being unavailable.
-        logger.warning("[preflight] search failed, fail-open: %s", exc)
-        return PreflightResponse(
-            topic=topic,
-            fired=False,
-            reason="no_matches",
-            guided_mode=guided_mode,
-            sync_metrics=sync_metrics,
-        )
+    decisions = [_to_brief_decision(m) for m in region_matches]
+    drift_candidates = [_to_brief_decision(m) for m in region_matches if m.status == "drifted"]
 
-    # Merge: region-anchored results first (direct pin = high precision),
-    # BM25 fills in decisions that aren't yet pinned to any code region.
-    if region_matches:
-        merged = _merge_decision_matches(region_matches, search_resp.matches)
-        search_resp = search_resp.model_copy(update={"matches": merged})
-
-    if not search_resp.matches:
-        return PreflightResponse(
-            topic=topic,
-            fired=False,
-            reason="no_matches",
-            guided_mode=guided_mode,
-            sources_chained=sources_chained,
-            sync_metrics=sync_metrics,
-        )
-
-    # Search-level gate: in normal mode, require actionable signal.
-    search_actionable = _has_actionable_signal_in_search(search_resp.matches)
-
-    # Run divergence detection and gap extraction directly on search results.
-    # Pure functions — no extra IO, no duplicate link_commit or search call.
-    divergences = _detect_divergences(search_resp.matches)
-    gaps = _extract_gaps(search_resp.matches)
-    open_questions = [
-        g for g in gaps
-        if "open-question" in g.hint or "open question" in g.hint
-    ]
-    analysis_actionable = bool(divergences) or bool(open_questions)
-
-    # Final gate: normal mode fires only on actionable signal; guided fires on any match.
-    if guided_mode:
-        fired = True
-        reason = "fired"
-    elif search_actionable or analysis_actionable:
-        fired = True
-        reason = "fired"
-    else:
-        fired = False
-        reason = "no_actionable_signal"
-
-    if not fired:
-        return PreflightResponse(
-            topic=topic,
-            fired=False,
-            reason=reason,  # type: ignore[arg-type]
-            guided_mode=guided_mode,
-            sources_chained=sources_chained,
-            sync_metrics=sync_metrics,
-        )
-
-    decisions = [_to_brief_decision(m) for m in search_resp.matches]
-    drift_candidates = [
-        _to_brief_decision(m)
-        for m in search_resp.matches
-        if m.status == "drifted"
-    ]
-    action_hints = generate_hints_from_findings(
-        divergences, drift_candidates, gaps, guided_mode,
-    ) or search_resp.action_hints
-
-    # v0.8.0: HITL annotations — topic-independent ledger health checks.
-    # These fire on every preflight (when fired=True) regardless of topic.
+    # HITL annotations — topic-independent ledger health checks that fire regardless of topic.
     unresolved_collisions: list[BriefDecision] = []
     context_pending_ready: list[BriefDecision] = []
     try:
@@ -393,32 +269,39 @@ async def handle_preflight(
         client = inner._client
         coll_rows = await get_collision_pending_decisions(client)
         for r in coll_rows:
+            _sf = r.get("signoff") or {}
             unresolved_collisions.append(BriefDecision(
                 decision_id=r["decision_id"],
                 description=r["description"],
-                status="proposal",
+                status=r.get("status") or "ungrounded",
+                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
                 signoff=r.get("signoff"),
             ))
         ctx_rows = await get_context_for_ready_decisions(client)
         for r in ctx_rows:
+            _sf = r.get("signoff") or {}
             context_pending_ready.append(BriefDecision(
                 decision_id=r["decision_id"],
                 description=r["description"],
-                status="context_pending",
+                status=r.get("status") or "ungrounded",
+                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
                 signoff=r.get("signoff"),
             ))
     except Exception as exc:
         logger.debug("[preflight] HITL annotation queries failed: %s", exc)
 
+    fired = bool(region_matches or unresolved_collisions or context_pending_ready or guided_mode)
+    action_hints = generate_hints_from_findings([], drift_candidates, [], guided_mode)
+
     return PreflightResponse(
         topic=topic,
-        fired=True,
-        reason="fired",  # type: ignore[arg-type]
+        fired=fired,
+        reason="fired" if fired else "no_matches",  # type: ignore[arg-type]
         guided_mode=guided_mode,
         decisions=decisions,
         drift_candidates=drift_candidates,
-        divergences=divergences,
-        open_questions=open_questions,
+        divergences=[],
+        open_questions=[],
         action_hints=action_hints,
         sources_chained=sources_chained,
         unresolved_collisions=unresolved_collisions,

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -103,7 +103,7 @@ _TABLES = [
     "DEFINE FIELD meeting_date   ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD speakers       ON decision TYPE array<string> DEFAULT []",
     "DEFINE FIELD status         ON decision TYPE string DEFAULT 'ungrounded' "
-    "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded', 'proposal', 'superseded', 'context_pending']",
+    "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON decision TYPE datetime DEFAULT time::now()",
     # v0.4.13-style content-addressable dedup; same derivation, renamed type
     "DEFINE FIELD canonical_id   ON decision TYPE string DEFAULT ''",
@@ -506,10 +506,11 @@ async def _migrate_v6_to_v7(client: LedgerClient) -> None:
         "DEFINE FIELD created_at    ON graph_proposal TYPE datetime DEFAULT time::now()",
         "DEFINE FIELD reviewed_at   ON graph_proposal TYPE option<datetime> DEFAULT NONE",
 
-        # Expanded status ASSERT (additive — existing values remain valid)
+        # Expanded status ASSERT (v6→v7 era; narrowed again in v10)
         "DEFINE FIELD status ON decision TYPE string DEFAULT 'ungrounded' "
         "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded', "
         "'proposal', 'superseded', 'context_pending']",
+        # Note: v10 migration tightens this to ['reflected','drifted','pending','ungrounded']
     ]
     for sql in new_stmts:
         await _execute_define_idempotent(client, sql.strip())
@@ -555,6 +556,75 @@ async def _migrate_v8_to_v9(client: LedgerClient) -> None:
     logger.info("[migration] v8 → v9: decision_level and parent_decision_id added")
 
 
+async def _migrate_v9_to_v10(client: LedgerClient) -> None:
+    """v9 → v10: Decouple signoff state from status.
+
+    Before: status ∈ {reflected, drifted, pending, ungrounded, proposal,
+                      superseded, context_pending}
+    After:  status ∈ {reflected, drifted, pending, ungrounded}  (code-compliance only)
+            signoff.state carries: proposed | ratified | rejected | collision_pending
+                                   | context_pending | superseded
+
+    Migration steps:
+    1. Superseded decisions: write signoff.state='superseded' (these had no signoff
+       written by resolve_collision — it only set status). Then set status='ungrounded'
+       (retired from drift tracking).
+    2. Decisions whose status was 'proposal' or 'context_pending' (written by the old
+       project_decision_status short-circuits): reset to 'ungrounded'. Their correct
+       code-compliance status will be re-derived on the next drift sweep.
+    3. Tighten the ASSERT constraint on the status field.
+    """
+    from datetime import datetime, timezone
+    _now = datetime.now(timezone.utc).isoformat()
+
+    # Step 1: superseded decisions — move superseded into signoff
+    superseded_rows = await client.query(
+        "SELECT type::string(id) AS id, signoff FROM decision WHERE status = 'superseded'"
+    )
+    migrated_superseded = 0
+    for row in (superseded_rows or []):
+        decision_id = row.get("id", "")
+        existing_signoff = row.get("signoff") or {}
+        if not decision_id:
+            continue
+        # Only write if signoff.state isn't already superseded
+        if isinstance(existing_signoff, dict) and existing_signoff.get("state") == "superseded":
+            pass
+        else:
+            new_signoff = dict(existing_signoff) if isinstance(existing_signoff, dict) else {}
+            new_signoff["state"] = "superseded"
+            new_signoff["superseded_at"] = _now
+            await client.execute(
+                f"UPDATE {decision_id} SET signoff = $s",
+                {"s": new_signoff},
+            )
+        await client.execute(
+            f"UPDATE {decision_id} SET status = 'ungrounded'",
+        )
+        migrated_superseded += 1
+
+    # Step 2: reset 'proposal' and 'context_pending' status to 'ungrounded'
+    # (their signoff already carries the right state; the status field was a
+    # projection artifact of the old project_decision_status short-circuits)
+    await client.execute(
+        "UPDATE decision SET status = 'ungrounded' "
+        "WHERE status IN ['proposal', 'context_pending']"
+    )
+
+    # Step 3: tighten ASSERT
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD status ON decision TYPE string DEFAULT 'ungrounded' "
+        "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
+    )
+
+    logger.info(
+        "[migration] v9 → v10: signoff/status decoupled; "
+        "%d superseded decisions migrated; proposal/context_pending → ungrounded",
+        migrated_superseded,
+    )
+
+
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
@@ -563,6 +633,7 @@ _MIGRATIONS: dict[int, ...] = {
     7: _migrate_v6_to_v7,
     8: _migrate_v7_to_v8,
     9: _migrate_v8_to_v9,
+    10: _migrate_v9_to_v10,
 }
 
 

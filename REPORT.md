@@ -1,15 +1,28 @@
-# Bicameral MCP v0.9.3 — Simulation Report (v3)
+# Bicameral MCP v0.9.3 — Simulation Report (v4)
 
-**Date**: 2026-04-26  
+**Date**: 2026-04-27  
 **Target repo**: `../Accountable-App-3.0`  
 **Source data**: Slack `#accountable-tech` channel  
 **Script**: `scripts/sim_accountable.py`
 
 ---
 
-## Bugs fixed during this simulation
+## Bugs fixed during this simulation (v4, signoff/status decoupling)
 
-Four bugs were discovered and fixed while running this report:
+Four issues were identified and fixed during this session:
+
+| # | Bug | Fix |
+|---|-----|-----|
+| B5 | `get_session_start_banner` missing — imported in tests and alpha_flow but never implemented | Added to `handlers/sync_middleware.py` + `SessionStartBanner` contract in `contracts.py` |
+| B6 | Tests asserting `status == "proposal"` — stale pre-v0.9 status value no longer in Literal union | Updated `test_alpha_flow.py`, `test_sync_middleware.py`, `test_desync_scenarios.py` |
+| B7 | `resolve_collision` supersede overwrote entire signoff dict — ratification record lost | Read existing signoff via `SELECT signoff FROM {id} LIMIT 1` and merge with `{**old, state: "superseded", ...}` |
+| B8 | `SELECT signoff FROM ONLY {id}` returns `[]` in SurrealDB v2 embedded — `ONLY` broken for field selects | Changed to `SELECT signoff FROM {id} LIMIT 1` in `resolve_collision.py` and simulation script |
+
+**Previous bugs from v1–v3** (B1–B4) remain fixed and are not re-listed here.
+
+---
+
+## Bugs fixed during simulation (v3, Run 8)
 
 | # | Bug | Fix |
 |---|-----|-----|
@@ -29,17 +42,17 @@ Stats: 11 created, 0 grounded, 11 ungrounded
 
 created_decisions field: 11 entries (all decisions, grounded + ungrounded)
 
-  [L1] decision:p3dl0of44tao9wlwy8ak  "All code changes must go to staging first via PR..."
-  [L2] decision:2bvqinvcfkqi7odwqr17  "Staging environment mirrors prod with real integr..."
-  [L1] decision:zvigw6xuyjnc0rda4mgr  "Brian Borg acts as engineering quarterback..."
-  [L2] decision:5ijcfaavcb1rozdl62sv  "All high-value secrets live in Supabase secrets..."
-  [L1] decision:9z2v2z2s4fhwvl07ycjf  "Sentry auth token must be rotated and marked Sens..."
-  [L2] decision:z5wi72g765k1epiu14kv  "Assess Sentry vs PostHog — PostHog now captures..."
-  [L1] decision:50swds1osn6jmi624fwv  "Individual coaching portal for 1:1 clients..."
-  [L2] decision:p7r6uts6oylyxdtm5enu  "Weekly workshop module should be a repeatable..."
-  [L1] decision:g8sxxt5ayzqr601d43vf  "Users can view their daily check-in history..."
-  [L2] decision:1cnudj8v3d6167h48oz4  "Claude reasoning level should be task-appropriate..."
-  [L2] decision:vxts43osh9empepwien2  "Weekly community bulletin delivered as dynamic page..."
+  [L1] decision:qdyc9lnad3a9cce1msa7  "All code changes must go to staging first via PR targeting..."
+  [L2] decision:c3dh0pkl84hrc6l0amt6  "Staging environment mirrors prod with real integrations (e..."
+  [L1] decision:w4fwnb2sp2tnv8dgevid  "Brian Borg acts as engineering quarterback and coordinator..."
+  [L2] decision:2udmibksoh736l14i767  "All high-value secrets live in Supabase secrets — not in V..."
+  [L1] decision:up3xc3qyf1rg36no7lxb  "Sentry auth token must be rotated and marked Sensitive in ..."
+  [L2] decision:6qvgl5hl0xkknc4vvfk4  "Assess Sentry vs PostHog — PostHog now captures ~80% of Se..."
+  [L1] decision:ymday8te2yd4qgaun5wp  "Individual coaching portal for 1:1 clients to manage engag..."
+  [L2] decision:thdysob6sgzts69hap79  "Weekly workshop module should be a repeatable component — ..."
+  [L1] decision:yoqxqsymx91dwv2uqwha  "Users can view their daily check-in completion history and..."
+  [L2] decision:wa63t7u8klnw6w5knva8  "Claude reasoning level should be task-appropriate — start ..."
+  [L2] decision:ffkxspbe550wgmu3cjni  "Weekly community bulletin delivered as a dynamic page — em..."
 
 L1 filter: pending_grounding_decisions has 6 entries, 0 L1 — PASS
 ```
@@ -209,9 +222,61 @@ Result: PASS — status transitioned pending → reflected via resolve_complianc
 
 1. `pending_compliance_checks` requires a fresh `link_commit` sweep post-bind. Because `handle_bind` doesn't invalidate the in-process sync cache, the caller must advance HEAD (new commit) before `detect_drift` to force a fresh sweep. In production this happens naturally — bind is called during ingest, and drift checks run on later commits.
 
-2. `proposed` decisions are drift-exempt: `project_decision_status` short-circuits to `"proposal"` regardless of compliance verdicts. Ratification (`bicameral.ratify`) is the gate before `"reflected"` becomes reachable. This is intentional — ratification is the human acknowledgment that the decision entered the active drift tracking cycle.
+2. Ratified decisions gate the `"reflected"` path: `project_decision_status` checks signoff state — unratified decisions stay `"ungrounded"` regardless of compliance verdicts. Ratification (`bicameral.ratify`) is the human acknowledgment that the decision entered the active drift tracking cycle.
 
 3. The full V1 path is: `ingest` → `ratify` → `bind` → (new commit) → `detect_drift` → `resolve_compliance(verdict="compliant")` → `"reflected"`. No V2 C2 needed for the "reflected" case — only "drifted" requires `bicameral_judge_drift`.
+
+---
+
+## Run 9 — signoff/status decoupling verification (v0.9+)
+
+**Verified the four core invariants of the status/signoff orthogonalization.**
+
+The refactor completed in this session decouples two previously conflated axes:
+- `status` = code-compliance only (`reflected | drifted | pending | ungrounded`)
+- `signoff.state` = human-approval only (`proposed | ratified | rejected | collision_pending | context_pending | superseded`)
+
+Pre-v0.9, `"proposal"` appeared in the `status` column. Post-v0.9 it's gone — a freshly ingested decision gets `status = "ungrounded"` and `signoff.state = "proposed"`.
+
+```
+A — Ingest without signoff → status='ungrounded', signoff.state='proposed'
+  decision_id:    decision:o90gesqyxfw1dgcavywr
+  status:         ungrounded  (expected: ungrounded)
+  signoff.state:  proposed    (expected: proposed)
+  Result A: PASS
+
+B — Session-start banner detects stale proposals via signoff.state (not status field)
+  banner fired:           True
+  stale_proposal_count:   1
+  proposal_count:         1
+  item.signoff_state:     proposed
+  item.status:            ungrounded  (NOT 'proposal' — clean separation)
+  message:                Open decisions: 1 stale proposal
+  Result B: PASS
+
+C — resolve_collision supersede merges signoff (preserves ratification record)
+  pre-supersede signoff:  state=ratified, ratified_at=2026-04-27T05:49:06...
+  post-supersede signoff: state=superseded
+  ratified_at preserved:  True  (expected: True)
+  superseded_by:          decision:i1dkfur2rd1xytzo8lxt...
+  Result C: PASS
+
+D — History surfaces superseded decisions with last code-compliance status
+  superseded decisions in history: 1
+  status:         ungrounded  (code-compliance axis — NOT 'superseded')
+  signoff_state:  superseded  (human-approval axis carries the editorial fact)
+  Result D: PASS
+
+Overall: PASS — all four orthogonalization invariants hold
+```
+
+**What this unlocks — hero case confirmed:**
+
+A PM now sees `"proposed × ungrounded"` — decision captured but not yet grounded in code. After ratification and a compliant compliance verdict: `"ratified × reflected"`. If a ratified decision's code region later changes without a new verdict: `"ratified × pending"`. These are the first two axes of a genuine compliance matrix, not a single conflated status string.
+
+**SurrealDB v2 quirk noted during Run 9:**
+
+`SELECT signoff FROM ONLY {id}` returns `[]` (empty list) in the embedded Python SDK — the `ONLY` clause for field-level selects is broken. All queries using `ONLY` for signoff reads were switched to `SELECT ... FROM {id} LIMIT 1`. Additionally, `false` boolean values in nested signoff object fields may be silently dropped during retrieval (same family as `search::score()` returning 0.0). The `discovered` field in signoff is set correctly at write time but may not survive a round-trip query. This affects display only — no correctness impact since all signoff gates check `signoff.state`, not `discovered`.
 
 ---
 
@@ -227,17 +292,27 @@ Result: PASS — status transitioned pending → reflected via resolve_complianc
 | 6 | Full bind→modify→drift hash tracking loop | ✅ PASS (hash tracking verified; "drifted" status is V2) |
 | 7 | Search in surrealkv:// persistent mode | ⚠ SurrealDB v2 embedded FTS limitation confirmed |
 | 8 | pending_compliance_checks → resolve_compliance → reflected | ✅ PASS (skill gap fixed) |
+| 9 | signoff/status decoupling — 4 orthogonalization invariants | ✅ PASS (all 4 sub-tests) |
 
 ### Bugs found and fixed during simulation
 
-All four bugs (B1–B4) above were fixed. Tests: 288 passed after fixes.
+All eight bugs (B1–B8) above were fixed. Tests: **329 passed** after v4 fixes (up from 288 at v3).
 
-### Skill gaps fixed (v3)
+### Skill gaps fixed
 
 | Skill | Gap | Fix |
 |-------|-----|-----|
 | `bicameral-drift` | No `pending_compliance_checks` step — decisions stayed `"pending"` indefinitely | Added "After the call" section: read `sync_status.pending_compliance_checks`, call `resolve_compliance(phase="drift")` |
 | `bicameral-scan-branch` | Same gap | Same fix |
+
+### New test coverage added (v4 — signoff/status decoupling)
+
+| Test file | New/changed assertions | What they verify |
+|-----------|----------------------|------------------|
+| `test_sync_middleware.py` | `_proposal()` uses `status="ungrounded"`, query arg removes `"proposal"`, item check uses `signoff_state` | Banner detects proposals via signoff axis, not status |
+| `test_sync_middleware.py` | 10 banner tests all green (+ 1 pre-existing unrelated failure in `ensure_ledger_synced`) | `get_session_start_banner` full behavior |
+| `test_alpha_flow.py` | `test_new_ingest_enters_as_proposal` asserts `status == "ungrounded"` (was `"proposal"`) | v0.9+ ingest invariant |
+| `test_desync_scenarios.py` | Accepted status set is `{"pending", "drifted", "ungrounded"}` (removed `"proposal"`) | Status Literal is 4-value only |
 
 ### Open items
 
@@ -246,3 +321,7 @@ All four bugs (B1–B4) above were fixed. Tests: 288 passed after fixes.
 2. **"Drifted" status requires V2 C2** — `derive_status()` intentionally returns `"pending"` for hash-changed regions without an LLM verdict. `bicameral_judge_drift` (V2 C2) is the unblocking feature. The `"reflected"` case is fully unblocked in V1 via `resolve_compliance` (confirmed Run 8).
 
 3. **`handle_bind` does not invalidate sync cache** — after a bind, the next `detect_drift` call in the same MCP session will hit the stale pre-bind sync cache and miss the newly created region. In practice this is benign (bind and drift run in different sessions), but it's a latent issue for multi-step flows in the same session.
+
+4. **SurrealDB v2 `ONLY` keyword broken for field selects** — `SELECT field FROM ONLY id` returns `[]`. Use `SELECT field FROM id LIMIT 1` instead. All known call sites updated. (B8)
+
+5. **`signoff.discovered` may not round-trip through embedded SDK** — `false` bool values in nested object fields silently dropped on retrieval. No correctness impact (gates check `signoff.state`), but `discovered` is unreliable as a query predicate in embedded mode.

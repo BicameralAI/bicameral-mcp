@@ -54,7 +54,7 @@ def _proposal(decision_id="decision:3", description="Rate limit is 100 req/s",
         "decision_id": decision_id,
         "description": description,
         "source_ref": source_ref,
-        "status": "proposal",
+        "status": "ungrounded",  # code-compliance axis; "proposal" is gone post-decoupling
         "signoff": {"state": "proposed", "created_at": created_at},
     }
 
@@ -99,7 +99,7 @@ async def test_banner_includes_ungrounded_decisions():
 async def test_banner_queries_both_drifted_and_ungrounded_statuses():
     ctx = _make_ctx(open_rows=[_drifted()])
     await get_session_start_banner(ctx)
-    ctx.ledger.get_decisions_by_status.assert_called_once_with(["drifted", "ungrounded", "proposal", "context_pending"])
+    ctx.ledger.get_decisions_by_status.assert_called_once_with(["drifted", "ungrounded", "context_pending"])
 
 
 @pytest.mark.asyncio
@@ -213,7 +213,7 @@ async def test_banner_surfaces_stale_proposal():
     assert banner.stale_proposal_count == 1
     assert banner.proposal_count == 1
     assert "stale proposal" in banner.message
-    assert any(i["status"] == "proposal" for i in banner.items)
+    assert any(i.get("signoff_state") == "proposed" for i in banner.items)
 
 
 @pytest.mark.asyncio

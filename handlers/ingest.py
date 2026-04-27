@@ -68,16 +68,16 @@ def _normalize_payload(payload: dict) -> dict:
     # backwards compat but do not write them to the ledger.
 
     for q in validated.open_questions:
-        # Open questions are requirement gaps: a known unknown that is neither
-        # claimed (no source commitment) nor fulfilled (no code). They are stored
-        # with the "[Open Question]" prefix so the history handler can surface
-        # them as "gap" status entries rather than ordinary decisions.
-        text = f"[Open Question] {q}"
+        # Open questions are AI-surfaced requirement gaps: no human explicitly
+        # committed to them, no code implements them. signoff.discovered=true
+        # marks them as AI-discovered so consumers can distinguish them from
+        # explicitly ingested decisions without a description prefix hack.
         mappings.append({
-            "intent": text,
-            "span": {**source_meta, "text": text},
+            "intent": q,
+            "span": {**source_meta, "text": ""},
             "symbols": [],
             "code_regions": [],
+            "signoff": {"state": "proposed", "discovered": True},
         })
 
     if not mappings:
@@ -112,15 +112,28 @@ def _word_truncate(text: str, limit: int) -> str:
     return clipped
 
 
-def _derive_topic(payload: dict) -> str:
-    """Pick a topic string for the judge_gaps auto-chain.
+def _derive_topics(payload: dict) -> list[str]:
+    """Extract topics for the judge_gaps auto-chain.
 
-    Priority: payload.query → longest decision description → payload.title.
-    Returns empty string when nothing useful is found (skips chain).
+    Primary: distinct feature_group values from mappings (one topic per segment).
+    Fallback: payload.query → longest decision description → payload.title.
+    Returns empty list when nothing useful is found (skips chain).
     """
+    mappings = payload.get("mappings") or []
+    topics: list[str] = []
+    seen: set[str] = set()
+    for m in mappings:
+        fg = str(m.get("feature_group") or "").strip()
+        if fg and fg not in seen:
+            seen.add(fg)
+            topics.append(_word_truncate(fg, _TOPIC_MAX))
+    if topics:
+        return topics
+
+    # Fallback: single topic from query/description/title
     query = str(payload.get("query") or "").strip()
     if query:
-        return _word_truncate(query, _TOPIC_MAX)
+        return [_word_truncate(query, _TOPIC_MAX)]
 
     decisions = payload.get("decisions") or []
     decision_texts = [
@@ -130,13 +143,13 @@ def _derive_topic(payload: dict) -> str:
     ]
     decision_texts = [t for t in decision_texts if t]
     if decision_texts:
-        return _word_truncate(max(decision_texts, key=len), _TOPIC_MAX)
+        return [_word_truncate(max(decision_texts, key=len), _TOPIC_MAX)]
 
     title = str(payload.get("title") or "").strip()
     if title:
-        return _word_truncate(title, _TOPIC_MAX)
+        return [_word_truncate(title, _TOPIC_MAX)]
 
-    return ""
+    return []
 
 
 async def _find_context_for_candidates(
@@ -285,17 +298,20 @@ async def handle_ingest(
     except Exception as exc:
         logger.warning("[ingest] post-ingest link_commit failed: %s", exc)
 
-    # Auto-chain: fire judge_gaps on a derived topic so the caller gets a
-    # structured gap-judgment payload in the same response as ingest stats.
-    # Failures are swallowed — must not break the ingest itself.
-    judgment_payload = None
+    # Auto-chain: fire judge_gaps per feature_group topic so the caller gets
+    # one structured gap-judgment payload per segment. Failures are swallowed.
+    judgment_payloads: list = []
     try:
-        topic = _derive_topic(payload)
-        if topic:
+        topics = _derive_topics(payload)
+        if topics:
             from handlers.gap_judge import handle_judge_gaps
-            judgment_payload = await handle_judge_gaps(ctx, topic=topic)
+            for topic in topics:
+                jp = await handle_judge_gaps(ctx, topic=topic)
+                if jp is not None:
+                    judgment_payloads.append(jp)
     except Exception as exc:
         logger.warning("[ingest] post-ingest gap-judge chain failed: %s", exc)
+    judgment_payload = judgment_payloads[0] if judgment_payloads else None
 
     cursor_summary = None
     source_type = str(((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual"))
@@ -360,6 +376,7 @@ async def handle_ingest(
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
         judgment_payload=judgment_payload,
+        judgment_payloads=judgment_payloads,
         sync_status=sync_status,
     )
 

@@ -438,7 +438,7 @@ When the ingest response contains a non-null `judgment_payload`, chain
 into the `bicameral-judge-gaps` skill to render the rubric sections.
 
 The server attaches `judgment_payload` directly (via `handle_judge_gaps`)
-when BM25 search finds decisions that match the ingested topic. It is
+when keyword search finds decisions that match the ingested topic. It is
 populated independently of any other field — check it directly:
 
 ```python

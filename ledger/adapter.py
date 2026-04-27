@@ -433,6 +433,14 @@ class SurrealDBLedgerAdapter:
                 decision_id = str(decision.get("id", ""))
                 if not decision_id:
                     continue
+
+                # Superseded decisions are retired from code tracking.
+                # signoff.state='superseded' is written by resolve_collision and
+                # means a human explicitly replaced this decision with another.
+                _signoff = decision.get("signoff") or {}
+                if isinstance(_signoff, dict) and _signoff.get("state") == "superseded":
+                    continue
+
                 old_status = decision.get("status", "ungrounded")
 
                 # If symbol disappeared, emit a grounding check instead of compliance check.
@@ -641,6 +649,13 @@ class SurrealDBLedgerAdapter:
                     speakers=span.get("speakers", []),
                     meeting_date=span.get("meeting_date", ""),
                 )
+
+            # Stamp discovered on new decisions when signoff not explicitly provided.
+            # discovered=True: AI surfaced — agent_session source, or no verbatim human quote.
+            # discovered=False: human explicitly stated in a transcript/document/slack.
+            if signoff is None:
+                is_discovered = source_type == "agent_session" or not span_text
+                signoff = {"state": "proposed", "discovered": is_discovered}
 
             # Create decision node
             decision_id = await upsert_decision(

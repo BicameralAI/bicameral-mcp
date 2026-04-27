@@ -17,10 +17,11 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from contracts import LinkCommitResponse
+    from contracts import LinkCommitResponse, SessionStartBanner
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,103 @@ def _reset_repo_locks_for_tests() -> None:
     global _repo_locks_guard
     _repo_locks.clear()
     _repo_locks_guard = None
+
+
+_STALE_PROPOSAL_DAYS = 14
+_BANNER_MAX_ITEMS = 10
+
+
+async def get_session_start_banner(ctx) -> "SessionStartBanner | None":
+    """Return open-decision summary for session start, or None if nothing actionable.
+
+    Fires exactly once per session (keyed on ctx._sync_state["session_started"]).
+    Stale proposals (proposed + idle >14 days) are surfaced; fresh proposals are silent.
+    """
+    from contracts import SessionStartBanner
+
+    _sync_state = getattr(ctx, "_sync_state", None)
+    if _sync_state is None:
+        return None
+    if _sync_state.get("session_started"):
+        return None
+
+    try:
+        rows = await ctx.ledger.get_decisions_by_status(
+            ["drifted", "ungrounded", "context_pending"]
+        )
+    except Exception:
+        return None
+
+    now = datetime.now(timezone.utc)
+
+    drifted_rows = [r for r in rows if r.get("status") == "drifted"]
+    proposal_rows = [
+        r for r in rows
+        if (r.get("signoff") or {}).get("state") == "proposed"
+    ]
+    real_ungrounded_rows = [
+        r for r in rows
+        if r.get("status") == "ungrounded"
+        and (r.get("signoff") or {}).get("state") != "proposed"
+    ]
+
+    stale_proposals = []
+    for r in proposal_rows:
+        created_str = (r.get("signoff") or {}).get("created_at", "")
+        if created_str:
+            try:
+                created = datetime.fromisoformat(created_str)
+                if (now - created).days >= _STALE_PROPOSAL_DAYS:
+                    stale_proposals.append(r)
+            except (ValueError, TypeError):
+                pass
+
+    _sync_state["session_started"] = True
+
+    if not drifted_rows and not real_ungrounded_rows and not stale_proposals:
+        return None
+
+    drifted_count = len(drifted_rows)
+    ungrounded_count = len(real_ungrounded_rows)
+    proposal_count = len(proposal_rows)
+    stale_proposal_count = len(stale_proposals)
+
+    all_items = drifted_rows + real_ungrounded_rows + stale_proposals
+    truncated = len(all_items) > _BANNER_MAX_ITEMS
+    visible = all_items[:_BANNER_MAX_ITEMS]
+
+    items = []
+    for r in visible:
+        signoff = r.get("signoff") or {}
+        items.append({
+            "decision_id": r.get("decision_id", r.get("id", "")),
+            "description": r.get("description", ""),
+            "status": r.get("status", ""),
+            "signoff_state": signoff.get("state"),
+            "source_ref": r.get("source_ref", ""),
+        })
+
+    parts = []
+    if drifted_count:
+        parts.append(f"{drifted_count} drifted")
+    if ungrounded_count:
+        parts.append(f"{ungrounded_count} ungrounded")
+    if stale_proposal_count:
+        noun = "stale proposal" if stale_proposal_count == 1 else "stale proposals"
+        parts.append(f"{stale_proposal_count} {noun}")
+
+    suffix = f" — showing top {_BANNER_MAX_ITEMS}" if truncated else ""
+    message = f"Open decisions: {', '.join(parts)}{suffix}"
+
+    return SessionStartBanner(
+        drifted_count=drifted_count,
+        ungrounded_count=ungrounded_count,
+        proposal_count=proposal_count,
+        stale_proposal_count=stale_proposal_count,
+        items=items,
+        message=message,
+        truncated=truncated,
+    )
 
 
 async def ensure_ledger_synced(ctx) -> "LinkCommitResponse | None":

@@ -57,10 +57,12 @@ async def handle_search_decisions(
         if status in ("drifted", "pending"):
             suggested_review.append(m["decision_id"])
 
+        _signoff = m.get("signoff") or {}
         matches.append(DecisionMatch(
             decision_id=m["decision_id"],
             description=m["description"],
             status=status,
+            signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
             confidence=m.get("confidence", 0.5),
             source_ref=m.get("source_ref", ""),
             code_regions=regions,

@@ -928,7 +928,7 @@ async def get_regions_for_files(
         SELECT
             type::string(id) AS region_id,
             file_path, symbol_name, start_line, end_line, content_hash,
-            <-binds_to<-decision.{id, status, description} AS decisions
+            <-binds_to<-decision.{id, status, description, signoff, decision_level} AS decisions
         FROM code_region
         WHERE file_path IN $fps
         """,
@@ -1007,23 +1007,23 @@ async def project_decision_status(
     client: LedgerClient,
     decision_id: str,
 ) -> str:
-    """Derive decision.status from signoff + compliance verdict aggregation.
+    """Derive decision.status from compliance verdict aggregation (code-compliance axis).
 
-    Double-entry 2×2 + strict aggregation:
-    - signoff.state == 'proposed' → 'proposal' (drift-exempt, awaiting ratification)
-    - No binds_to AND signoff None → 'ungrounded'
-    - No binds_to AND signoff ratified → 'pending'
+    v0.9.4: signoff and status are orthogonal. signoff tracks human approval state;
+    status tracks code-compliance state. Neither gates the other.
+
+    Status values: ungrounded | pending | reflected | drifted
+
+    - No binds_to → 'ungrounded'
     - Any bound region with drifted verdict → 'drifted'
     - Any bound region with no verdict for current hash, prior compliant
       verdict existed → 'drifted' (was verified, code has since changed)
     - Any bound region with no verdict for current hash, no prior verdict
-      → 'pending' (first-time bind, awaiting initial verification)
-    - All bound regions compliant + signoff ratified → 'reflected'
-    - All bound regions compliant + signoff None → 'pending' (hero case)
+      → 'pending' (awaiting initial verification)
+    - All bound regions compliant → 'reflected'
 
-    DRIFTED always wins over signoff state — broken code is broken code.
-    Proposed decisions are drift-exempt: they never enter drifted/reflected
-    until ratified.
+    DRIFTED always wins. Superseded decisions (signoff.state='superseded') are
+    retired from tracking — callers must skip them before calling this function.
     """
     dec_rows = await client.query(
         f"SELECT signoff, status FROM {decision_id} LIMIT 1",
@@ -1031,28 +1031,13 @@ async def project_decision_status(
     if not dec_rows:
         return "ungrounded"
 
-    # Short-circuit: superseded is a terminal state written by HITL (resolve_collision).
-    # It is never re-derived from compliance — drift sweeps must not overwrite it.
-    if dec_rows[0].get("status") == "superseded":
-        return "superseded"
-
     signoff = dec_rows[0].get("signoff")
 
-    # Short-circuit: context_pending decisions need a business driver answer before
-    # they enter the normal drift/compliance cycle.
-    if signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending":
-        return "context_pending"
-
-    # Short-circuit: collision_pending decisions are held proposals awaiting HITL resolution
-    if signoff and isinstance(signoff, dict) and signoff.get("state") == "collision_pending":
-        return "proposal"
-
-    # Short-circuit: proposed decisions are drift-exempt
-    if signoff and isinstance(signoff, dict) and signoff.get("state") == "proposed":
-        return "proposal"
-
-    # For ratified decisions, use the same bool check as before
-    is_ratified = bool(signoff)
+    # Guard: superseded decisions are retired from code tracking.
+    # resolve_collision writes signoff.state='superseded' and this function
+    # must never overwrite that by re-deriving compliance status.
+    if isinstance(signoff, dict) and signoff.get("state") == "superseded":
+        return dec_rows[0].get("status") or "ungrounded"
 
     # Get all non-pruned bound regions + their current content_hash
     binding_rows = await client.query(
@@ -1064,7 +1049,7 @@ async def project_decision_status(
     )
 
     if not binding_rows:
-        return "pending" if is_ratified else "ungrounded"
+        return "ungrounded"
 
     all_compliant = True
     any_drifted = False
@@ -1101,7 +1086,7 @@ async def project_decision_status(
     if any_pending:
         return "pending"
     if all_compliant:
-        return "reflected" if is_ratified else "pending"
+        return "reflected"
     return "pending"
 
 
@@ -1286,7 +1271,7 @@ async def get_collision_pending_decisions(
             "decision_id": str(r.get("decision_id", "")),
             "description": str(r.get("description", "")),
             "signoff": r.get("signoff"),
-            "status": str(r.get("status", "proposal")),
+            "status": str(r.get("status", "ungrounded")),
         }
         for r in (rows or [])
         if r.get("decision_id")

@@ -69,7 +69,7 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
    Loop until the user confirms.
 
-5. **Fan out**: after confirmation, call `bicameral.ingest` **once per topic block**. Pass that topic's `title` as the `query` field. Derive each block's decisions from only its own source range. Each call goes through its own brief auto-chain + gap-judge attach.
+5. **Fan out**: after confirmation, call `bicameral.ingest` **once per topic block**. Pass the segment title as **both `query` and `title`** — `title` becomes the `source_ref` stored on every decision in that block, which is the grouping key for the history dashboard. Derive each block's decisions from only its own source range. Each call goes through its own brief auto-chain + gap-judge attach.
 
 6. **Roll up at the end**: after all ingests complete, present a single aggregate summary — total decisions ingested, total drifts flagged, total divergences, total gap-judgment findings — followed by per-topic highlights (the 1–2 most actionable findings per topic). Do NOT replay every brief; the user already saw the plan.
 
@@ -328,81 +328,6 @@ Apply level classification first. This is a feature spec — L1 extraction mode.
 
 **Anti-pattern caught**: the old filter would have dropped all 5 as "spec, not a decision" (Gate 2 fail — "any team would implement this"). With level classification, these are correctly routed as L1 product commitments that bypass Gate 2.
 
-### 1.5 Assign a feature group (stop-and-ask v0)
-
-After extracting candidate decisions and before resolving code regions,
-assign a **feature group** to each decision. A feature group is a short,
-canonical noun phrase (2–4 words, title-case, no verbs): e.g.
-`"Google Calendar"`, `"Checkout Flow"`, `"Auth Middleware"`.
-
-**Default rule — same source, same group.** When all decisions in this
-ingest come from a single source about a single coherent topic, assign
-the **same `feature_group` to every decision**. This is the common case:
-a Slack thread about "account status SSOT" produces 4 decisions that all
-belong to `"Account Status"`, not one group per decision. Only split into
-multiple groups when decisions clearly cover distinct, unrelated features.
-
-**Procedure:**
-
-1. **Name the feature group first** from the source title, query, or
-   dominant topic. Derive one candidate group name before examining
-   individual decisions. A short noun phrase (2–4 words, title-case):
-   `"Account Status"`, `"Email Dispatch"`, `"Checkout Flow"`.
-
-2. **Assign that group to every decision by default.** Only diverge for
-   a specific decision if it's clearly about a different, unrelated
-   feature — in which case go to step 4.
-
-3. **Prefer existing group names.** If `bicameral.history` was called
-   earlier in this session and its result is in context, match against
-   existing `HistoryFeature.name` values. Reuse verbatim if an existing
-   name shares ≥ 2 significant content words with the proposed group.
-
-4. **Stop-and-ask ONLY for cross-feature decisions.** If a specific
-   decision clearly spans or belongs to a different feature than the
-   dominant group, surface it before calling `bicameral.ingest`:
-
-   Call `AskUserQuestion`:
-   ```
-   AskUserQuestion({
-     question: "Which feature group does this decision belong to?\n  \"<decision text>\"",
-     header: "Feature group",
-     multiSelect: false,
-     options: [
-       { label: "<dominant group> (current)",
-         description: "Use the group assigned to all other decisions in this ingest." },
-       { label: "<existing group B>",
-         description: "An existing group in the ledger that matches this decision." },
-       { label: "<proposed different group> (new)",
-         description: "Create a new group for this decision." },
-       { label: "Other",
-         description: "Type a different group name." }
-     ]
-   })
-   ```
-
-   Do not ask for every decision — only the ones that genuinely don't fit the dominant group.
-
-5. **Pass `feature_group`** on each decision in the ingest payload.
-   For the internal format, add `feature_group` at the mapping level.
-   For the natural format, add it on each decision object:
-   ```
-   decisions: [
-     { "description": "...", "feature_group": "Account Status", ... }
-   ]
-   ```
-   For the internal format:
-   ```
-   mappings: [
-     { "intent": "...", "feature_group": "Account Status", ... }
-   ]
-   ```
-
-   **Never omit `feature_group`.** An unset `feature_group` causes the
-   decision to fall back to `source_ref` grouping — every decision ends
-   up in its own feature row in the dashboard. This is the primary cause
-   of the "5 decisions, 5 features" problem.
-
 ### 2. Resolve code regions yourself, then hand explicit pins to the server
 
 **This is where grounding quality is won or lost.** The server performs no
@@ -451,7 +376,16 @@ The response includes `created_decisions: [{decision_id, description, decision_l
 
 **Procedure:**
 
-1. Call `bicameral.history(feature_group=<group just ingested>)`. If the result is empty (new feature area, no prior decisions) or if all history entries appear in `created_decisions` (first ingest for this group), skip this step entirely.
+0. **Within-batch parent linking (always run — even on first ingest).** During Step 1 you classified each decision as L1/L2/L3 and identified which L2s belong under which L1s. Now that you have the actual `decision_id`s from `created_decisions`, wire up those relationships:
+   - For each L2 (or L3) in `created_decisions` that is a child of an L1 (or L2) **in the same batch**, call:
+     ```
+     bicameral_resolve_collision(new_id=<child_decision_id>, old_id=<parent_decision_id>, action='link_parent')
+     ```
+   - Match by description: use your extraction-step knowledge of which L2 belonged under which L1. Cross-reference against `created_decisions[].description` to get the right IDs.
+   - No human question needed — this is deterministic from your level-classification work in Step 1.
+   - Skip this sub-step only if the entire batch is flat (all L1, no L2/L3).
+
+1. Call `bicameral.history(feature_filter=<title used for this ingest>)`. If the result is empty (new feature area, no prior decisions) or if all history entries appear in `created_decisions` (first ingest for this group), skip steps 2–4 (cross-session conflict check only — step 0 still runs above).
 
 2. Compare each entry in `created_decisions` against the pre-existing decisions in the history response (i.e., decisions whose IDs are **not** in `created_decisions`). For each pair, classify:
    - **Cross-level** (new L2 child of existing L1, or new L3 child of existing L2): call `bicameral_resolve_collision(new_id=<child>, old_id=<parent>, action='link_parent')` automatically — no human question. The lower-level decision is always the child (`new_id`).
@@ -569,7 +503,7 @@ payload: {
   - `title` is accepted as a synonym; `text` is tolerated as an alias. At least one must be non-empty or the decision is silently dropped.
 - **`decisions[].source_excerpt`** (natural format) / **`mappings[].span.text`** (internal format) must carry the **verbatim quote** from the source — what was actually said or written. This is stored separately in the ledger as `input_span.text` and surfaces as the source quote in the dashboard. **Never leave it empty and never copy `description` into it** — if the source is a transcript, quote the speaker directly; if a PRD, quote the relevant sentence. If no clean verbatim quote exists, write a 1-sentence paraphrase of what was said, enclosed in brackets: `"[Paraphrase: team agreed to use Redis to meet the scale commitment]"`.
 - **`action_items[].action`** is the canonical text field. `text` is tolerated as an alias (v0.4.16+). `owner` defaults to `"unassigned"`. `due` is an optional ISO date.
-- **`query`** is load-bearing: it's the topic the post-ingest auto-brief and gap-judge chain fire on. If you omit it, the handler falls through to the longest decision description as a topic guess — usable but less focused. **When fanning out from the boundary-detection flow (step 0), always pass each segment's title as `query`.**
+- **`query`** and **`title`** are both load-bearing. `query` drives the post-ingest auto-brief and gap-judge chain. `title` becomes the `source_ref` stored on every decision in the batch — it is the grouping key that determines which feature section decisions land under in the history dashboard. **When fanning out from the boundary-detection flow (step 0), always pass each segment's title as both `query` and `title`.** If you omit `title`, decisions fall back to "Uncategorized" on the dashboard.
 - **`participants`** (natural format) or **`span.speakers`** (internal format) records the meeting attendees.
 - Do NOT include `open_questions` unless they have direct implementation implications — they're accepted as `list[str]` but clutter the ledger with non-code entries.
 

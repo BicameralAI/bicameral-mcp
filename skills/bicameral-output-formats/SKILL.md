@@ -63,22 +63,22 @@ Reference catalog of every rendered output template produced by bicameral skills
 
 **Trigger condition**: `bicameral.history`. Truncation note shown when `truncated=True`.
 
-**Symbols**: `✓` (reflected), `⚠` (drifted), `○` (ungrounded), `~` (discovered), `—` (superseded), `⚪` (proposed)
-
 **Template**:
 
 ```
-FEATURE NAME  ✓ N reflected  ⚠ N drifted  ○ N ungrounded  N superseded
+FEATURE NAME  ✓ N reflected  ⚠ N drifted  ○ N ungrounded
 
-  ✓ <decision description>
+  ✓ <decision description>          ✓ 2026-04-20
     <file_path>:<start_line>  Source: <source_ref>
-  ⚠ <drifted decision>
+  ⚠ <drifted decision>              ✓ 2026-03-15
     Drift evidence: <drift_evidence verbatim>
-  ○ <ungrounded decision>
-  ~ <discovered decision>
-  — <superseded decision>
+  ○ <ungrounded decision>           ○
+  ~ <ungrounded, AI-surfaced>       ~
+  — <superseded decision>           —
 
 (showing top 50 of X — use feature_filter to drill in)
+─ status: ✓ reflected · ⚠ drifted · ○ ungrounded · ~ ungrounded + AI-surfaced
+  signoff: ✓ date ratified · ○ proposed · ~ AI-surfaced · ✕ rejected · ⚑ needs context · — superseded
 ```
 
 **Notes**:
@@ -94,16 +94,14 @@ FEATURE NAME  ✓ N reflected  ⚠ N drifted  ○ N ungrounded  N superseded
 
 **Trigger condition**: After `bicameral.ingest` — always. After `bicameral.history` — only when decisions with `signoff.state == "proposed"` exist. Silent when no proposals.
 
-**Symbols**: `⚪` (unratified)
-
 **Template**:
 
 ```
 Captured N decisions as proposals — drift tracking is paused until ratified.
 
-  1  <decision description>
-  2  <decision description>
-  3  <decision description>
+  1  ○ <decision description>
+  2  ○ <decision description>
+  3  ~ <AI-surfaced decision>
 
 Ratify all N? [Y/n or pick: 1 3]  ›
 ```
@@ -111,7 +109,7 @@ Ratify all N? [Y/n or pick: 1 3]  ›
 **Notes**:
 - If ≤ 5 decisions: show the full list, hint is `[Y/n or pick: 1 3]`.
 - If > 5 decisions: default hint to `[all / pick: 1 3 5 / none]`.
-- In `bicameral-history`, the variant prompt is: `⚪ Unratified proposals in: <Feature A>, <Feature B> — Drift tracking is paused. Ratify now? [Y/n or pick features: A C]  ›`
+- In `bicameral-history`, the variant prompt is: `○ Unratified proposals in: <Feature A>, <Feature B> — Drift tracking is paused. Ratify now? [Y/n or pick features: A C]  ›`
 - Never silently skip the ratify step — if the user says "don't ask", make the skip explicit.
 
 ---

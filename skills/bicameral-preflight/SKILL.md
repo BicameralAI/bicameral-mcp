@@ -61,58 +61,51 @@ relevant is found. The cost of a false fire is one silent no-op.
 
 ## Steps
 
-### 1. Extract a 1-line topic
+### 1. Read the full decision ledger
 
-Before calling the tool, extract a topic string from the user's
-prompt. The topic should capture the feature area in 4-12 words. Use
-conversation context if the prompt is indirect.
+Call `bicameral.history()` with no filters to get the complete picture:
 
-Examples:
+```
+bicameral.history()
+```
 
-| User prompt | Extracted topic |
-|---|---|
-| "Add Stripe webhook handler for payment_intent.succeeded" | `Stripe webhook payment_intent succeeded` |
-| "Refactor the rate limiting middleware to use sliding window" | `rate limiting middleware sliding window` |
-| "Continue what we started yesterday on the email queue" | `email queue retention nudge` *(infer from prior turn)* |
-| "Build the audit log feature Brian asked for" | `audit log feature` (with `participants=["Brian"]`) |
+This returns all decisions grouped by feature area, each with its current status
+(`reflected`, `drifted`, `pending`, `ungrounded`) and signoff state. Scan the
+returned `features` list and **identify which feature groups are relevant to the
+current implementation task** using your own judgment — name overlap, decision
+descriptions, or both. A feature group is relevant when at least one of its
+decisions describes behavior the current task will touch or depend on.
 
-The handler validates the topic deterministically. If your topic
-fails validation, the handler returns `fired=false` with
-`reason="topic_too_generic"` — that's the silent skip path. Don't
-worry about getting validation perfect; the handler is forgiving on
-the happy path.
+**This replaces keyword search.** The LLM reads the full ledger and reasons about
+relevance — no BM25 approximation.
 
-### 2. Call `bicameral.preflight`
+Skip this step only if the ledger is empty (history returns 0 features) — in that
+case proceed directly to step 2.
+
+### 2. Call `bicameral.preflight` for region-anchored and HITL state
 
 ```
 bicameral.preflight(
   topic="<the 1-line topic>",
-  file_paths=["<repo-relative path>", ...],  # optional — see below
-  participants=[<names if user mentioned specific people>],  # optional
+  file_paths=["<repo-relative path>", ...],  # include if you've scoped the files
 )
 ```
 
-**About `file_paths`** — if you've already Grep/Read/Globbed to scope
-which files the task will touch, pass them here. The server looks up
-decisions pinned to those exact files (region-anchored, high precision)
-and merges them with the topic-keyword matches. When you haven't scoped
-yet, omit `file_paths` — the handler falls back to topic-only keyword
-search and still surfaces drifted / ungrounded decisions whose
-descriptions match the topic.
+This call handles two things the history read cannot:
+- **Region-anchored lookup**: if you know which files the task will touch, the
+  handler returns decisions pinned to those exact files (higher precision than
+  feature-name matching).
+- **HITL state**: returns any unresolved collision-pending or context-pending
+  decisions that need attention regardless of topic.
 
-Rule of thumb: if you're about to edit specific files, name them.
-If the user is asking "how should I approach X?" and you haven't
-looked at the code yet, omit `file_paths` and let the topic do the work.
+The response carries `fired: bool`. When `fired=false`, skip to step 3 (you
+already have context from history). When `fired=true` with region matches, merge
+those into your in-scope set.
 
-The handler runs `bicameral.search` internally, gates on the user's
-`guided_mode` setting, conditionally chains to `bicameral.brief`, and
-returns a `PreflightResponse` with a `fired: bool` field.
+The response also carries an optional `sync_metrics` field — skip rendering it.
 
-The response also carries an optional `sync_metrics`
-(`{sync_catchup_ms, barrier_held_ms}`) observability field for the
-catch-up time spent in `ensure_ledger_synced`. **Skip rendering it** —
-these are server-side latency numbers, not user-visible signal. Log
-them if you're profiling, otherwise ignore.
+**Omit `file_paths`** if you haven't scoped the files yet (early "how should I
+approach X?" queries). The handler still runs sync and HITL checks.
 
 ### 2.5 Render session-start banner if present
 
@@ -132,18 +125,19 @@ compliance verdicts. **Proceed immediately — do not wait for user input:**
 
 ### 3. Decide whether to render
 
-Look at `response.fired`:
+Combine what you have from steps 1 and 2:
 
-- **`fired == false`** → produce **NO OUTPUT** about the preflight.
-  Do not say "I checked bicameral and found nothing." Do not say "no
-  relevant context." Just proceed silently with the user's original
-  request. The `reason` field tells you why — useful for debugging,
-  never user-facing. Possible reasons: `no_matches`,
-  `no_actionable_signal` (normal mode only, no drift/divergence),
-  `topic_too_generic` (failed deterministic topic validation),
-  `recently_checked` (per-session dedup — same topic checked recently),
-  `guided_mode_off` (hit signal but guided mode disabled and nothing
-  actionable), `preflight_disabled` (explicit env override mute).
+- **In-scope decisions** = relevant feature groups from history + region-anchored decisions from preflight (deduplicated by `decision_id`)
+- **Actionable signal** = any in-scope decision with `status=drifted`, `status=ungrounded`, or with an open question; plus any HITL issues from preflight response
+
+**If no in-scope decisions and no HITL issues** → produce **NO OUTPUT** about the preflight.
+Do not say "I checked bicameral and found nothing." Just proceed silently.
+
+**If `fired == false` and no relevant features from history** → same: silent skip.
+
+The `reason` field on the preflight response is for debugging, never user-facing.
+Possible reasons: `recently_checked` (same topic checked in last 5 min),
+`preflight_disabled` (env override mute).
 
 **Note on ephemeral commits**: when `bicameral.link_commit` is called on a
 feature branch commit (one not yet in the authoritative branch), the response

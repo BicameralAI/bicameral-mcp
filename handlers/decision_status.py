@@ -49,10 +49,12 @@ async def handle_decision_status(
             for r in d.get("code_regions", [])
         ]
 
+        _signoff = d.get("signoff") or {}
         entries.append(DecisionStatusEntry(
             decision_id=d["decision_id"],
             description=d["description"],
             status=status,
+            signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
             source_type=d.get("source_type", ""),
             source_ref=d.get("source_ref", ""),
             ingested_at=d.get("ingested_at", ""),
