@@ -164,85 +164,111 @@ gaps as informational findings without the batched gate.
 
 ## Output contract
 
-- **One section per category, in rubric order.** Each section starts
-  with the category `title` as a header (e.g. `### Missing acceptance criteria`).
-- **Every bullet / row / checklist item MUST cite** a `source_ref` +
-  `meeting_date` from the payload. v0.4.19 dropped all codebase
-  citations — this rubric does not use filesystem tools. An uncited
-  item is a bug. Do not emit uncited findings.
-- **If a category produces no findings**, emit exactly this single
-  line under its header: `✓ no gaps found`. Do not skip the header —
-  the user needs to see the category was applied.
-- **Surface VERBATIM.** Quote `source_excerpt` directly. Never
-  paraphrase the rubric prompts. Never editorialize. Never add
-  hedges like "as an AI…" or "it seems that…".
-- **Do not reorder categories.** Rubric order is load-bearing — the
-  user learns to scan in the order `acceptance → edge cases → infra
-  commitments → integration → data policy`.
-- **Do not add categories** that aren't in the rubric. If you notice
-  something interesting that doesn't fit any of the 5, mention it in
-  a plain-text postscript under a clearly-labelled `## Observations
-  outside the rubric` section — never in a fake rubric category.
-- **Start the whole section with a roll-up line**: something like
-  *"Gap judgment for `<topic>` — 5 categories, N findings total."*
-  Helps the reader know what to expect.
+**Render ask-gaps as ASCII diagrams, not prose.** The visual templates
+are in `skills/gap_visualization/SKILL.md`. Each gap type maps to a
+specific diagram style:
+- `underdefined_edge_cases` → Railway diagram (happy path `═══` vs
+  missing path `─ ─ ─`), or State Machine variant for lifecycle gaps
+- `infrastructure_gap` → Dependency Radar (new dependency + affected services)
+- `missing_data_requirements` → Data Flow (pipeline with `x x x x` gap markers)
+- `missing_acceptance_criteria` and `underspecified_integration` → text only
+  (no ASCII diagram; render as a concise bullet list under a header)
+
+**Category ordering** — always strict: acceptance criteria → edge cases →
+infra commitments → integration → data policy.
+
+**Skip empty categories entirely** — no header, no `✓ no gaps found`.
+Only categories with ask-findings appear in the output.
+
+**Citation rule**: every diagram or bullet must cite `source_ref` +
+`meeting_date` from the payload. An uncited item is a bug. Quote
+`source_excerpt` verbatim in diagram SOURCE lines — never paraphrase.
+
+**Cap**: max 3 diagrams/bullets per category. If more ask-gaps exist,
+surface the batched gate after the third:
+```
+Bicameral flagged N more ambiguous gaps not listed individually.
+A. Proceed — treat all as acknowledged, noted for next planning cycle
+B. Review them now — list all and you decide each
+RECOMMENDATION: Choose A if these are non-blocking; B if any touch
+a near-term compliance or vendor commitment.
+```
+
+**Roll-up line** — end the whole section with:
+```
+N actionable gap(s) — M of 5 categories had findings.
+```
+Omit when N = 0.
+
+**Do not add categories** outside the rubric. If you notice something
+that doesn't fit any of the 5, put it in a plain-text postscript under
+`## Observations outside the rubric` — never as a fake rubric category.
 
 ## Anti-patterns — reject these
 
+- Rendering prose bullet lists for gap types that have diagram templates
+- Rendering a diagram for a mechanical gap (resolve inline, no diagram)
+- Emitting a header or `✓ no gaps found` for empty categories
 - Emitting findings without citations
 - Reordering rubric categories based on severity
-- Editorialising ("this is concerning", "the team should…")
+- Editorializing ("this is concerning", "the team should…")
 - Using hedges ("might be", "possibly", "it seems")
-- Paraphrasing `source_excerpt` instead of quoting it
+- Paraphrasing `source_excerpt` instead of quoting it verbatim
 - **Surfacing engineering gaps** — retry logic, SMTP failure modes,
   Dockerfile absence, schema migration scripts, wire protocol choice,
-  auth scheme, race conditions, index choices. These are out of
-  scope for this rubric. If you see one, suppress it.
-- Fabricating commitments, providers, or policy implications the
-  decision did not state or clearly imply
-- Skipping a category header because it's empty — always emit the
-  header with `✓ no gaps found`
-- Crawling the codebase — v0.4.19 removed the filesystem step; every
-  finding cites the payload, not files
+  auth scheme, race conditions, index choices. Out of scope; suppress.
+- Fabricating service names, states, or flow steps the decision didn't
+  name — use `<?>` for genuinely unknown parts
+- Crawling the codebase — this rubric cites the payload, not files
 
 ## Example output structure
 
 ```
-Gap judgment for `onboarding email flow` — 5 categories, 6 findings total.
+2 actionable gap(s) — 2 of 5 categories had findings.
 
-### Missing acceptance criteria
-- Decision "Send onboarding email after first login" — source_excerpt says
-  "mirrors the welcome-email anti-ghost rule" (brainstorm-2026-04-15 ·
-  2026-04-15) but does not define a stakeholder-observable success
-  condition (open rate, click rate, drop-off threshold, "user returns
-  within 48h" — none specified).
+┌─────────────────────────────────────────────────────────────┐
+│ Edge Case Gap: no reactivation path after account close     │
+├─────────────────────────────────────────────────────────────┤
+│ Decision: "Win-back flow for churned users"                 │
+│           (brainstorm-2026-04-15 · 2026-04-15)              │
+│                                                             │
+│  ══════════════════════════════════════ Specified           │
+│  ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ Not addressed      │
+│                                                             │
+│  [user churn event]                                         │
+│       │                                                     │
+│       ├════════▶ ACTIVE → PAST_DUE → CANCELED               │
+│       │                                                     │
+│       └─ ─ ─ ─▶ CANCELED → <win-back??>                     │
+│                     │                                       │
+│                     ▼                                       │
+│               [not defined]  ← no reactivation path        │
+│                                                             │
+│ SOURCE: "win-back flow for churned users"                   │
+└─────────────────────────────────────────────────────────────┘
 
-### Happy path specified, sad path deferred
-| Happy path (specified) | Missing sad path (business edge deferred) |
-|---|---|
-| "Send onboarding email after first login" (brainstorm-2026-04-15 · 2026-04-15) | What if user signed up via team invite vs self-serve? — user state boundary not addressed |
-| same | What if user is on a paid trial vs free tier? — policy exception not addressed |
-
-### Implied infrastructure commitments not signed off
-- ○ Decision implies new email-provider SaaS dependency → cost
-  center / procurement not discussed
-  "Send onboarding email after first login" (brainstorm-2026-04-15 ·
-  2026-04-15) assumes an email sending provider exists; neither cost
-  tier nor vendor was named.
-
-### Vendor / provider choices not settled
-- ○ Category: email / transactional-mail provider → implied but
-  provider category never named (SendGrid? Postmark? SES?)
-  (brainstorm-2026-04-15 · 2026-04-15)
-
-### Data policy gaps (PII, retention, consent, audit)
-- ○ Decision implies capturing "first login" timestamp → retention
-  policy not addressed
-  "Send onboarding email after first login" (brainstorm-2026-04-15 ·
-  2026-04-15) implies storing a login-time signal per user; how long
-  it's kept and whether it's deleted on account close is not stated.
-- ○ Decision implies sending email to user address → consent /
-  opt-in moment not addressed (same source)
+┌─────────────────────────────────────────────────────────────┐
+│ Data Policy Gap: consent / opt-in moment                    │
+├─────────────────────────────────────────────────────────────┤
+│ Decision: "Send onboarding email after first login"         │
+│           (brainstorm-2026-04-15 · 2026-04-15)              │
+│                                                             │
+│  DATA FLOW (implied by decision):                           │
+│                                                             │
+│  [first login] ──▶ [auth service] ──▶ [store: email addr]   │
+│                          │                                  │
+│                          │     x x x x x x x x              │
+│                          │     (no consent policy defined)  │
+│                          ▼                                  │
+│                   [email sender]                            │
+│                                                             │
+│  POLICY NEEDED:                                             │
+│  - consent: at what moment was opt-in captured?             │
+│  - retention: how long is the email stored?                 │
+│                                                             │
+│ ○ no policy stated                                          │
+│ SOURCE: "send onboarding email after first login"           │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Arguments

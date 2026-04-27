@@ -252,37 +252,36 @@ Ingest all? [Y/n or pick: 1 3]  ›
 
 **Trigger condition**: `bicameral.ingest` auto-chains `bicameral.judge_gaps`; the ingest response contains a non-null `judgment_payload`. The caller LLM applies the 5-category rubric using its own session context.
 
-**Symbols**: `○` (gap/not-addressed), `✓` (no gaps found), `|` (table separator)
+**Visual style**: ASCII diagrams from `skills/gap_visualization/SKILL.md`. Gap types map to diagram styles:
+- `underdefined_edge_cases` → Railway diagram (happy `═══` vs missing `─ ─ ─`) or State Machine variant
+- `infrastructure_gap` → Dependency Radar (new dependency + affected services)
+- `missing_data_requirements` → Data Flow (pipeline with `x x x x` gap markers)
+- `missing_acceptance_criteria`, `underspecified_integration` → concise bullet list (no diagram)
+
+**Actionability filter**: Only ask-gaps render. Empty categories are skipped entirely — no header, no `✓ no gaps found`. Max 3 visuals per category.
 
 **Template**:
 
 ```
-Gap judgment for `<feature area>` — 5 categories, N findings total.
+N actionable gap(s) — M of 5 categories had findings.
 
-### Missing acceptance criteria
-• Decision "<description>" — source says "..." (<source_ref> · <date>)
-  but does not define <what's missing>.
+┌─────────────────────────────────────────────────────────────┐
+│ Edge Case Gap: <scenario not addressed>                     │
+├─────────────────────────────────────────────────────────────┤
+│ Decision: "<description>"  (<source_ref> · <date>)          │
+│  ══════════════════════════════════════ Specified           │
+│       ├════════▶ <happy path> ════▶ <outcome>               │
+│       └─ ─ ─ ─▶ <unaddressed scenario>                      │
+│                     ▼                                       │
+│               [not defined]  ← <gap>                        │
+│ SOURCE: "<source_excerpt verbatim>"                         │
+└─────────────────────────────────────────────────────────────┘
 
-### Happy path specified, sad path deferred
-| Happy path (specified)            | Missing sad path                          |
-|-----------------------------------|-------------------------------------------|
-| "..." (<source_ref> · <date>)     | What if <scenario>? — not addressed       |
-
-### Implied infrastructure commitments not signed off
-○ Decision implies <commitment> → cost / consequence not discussed
-
-### Vendor / provider choices not settled
-○ Category: <category> → implied but provider never named (options?)
-
-### Data policy gaps (PII, retention, consent, audit)
-○ Decision implies <policy area> → not addressed
-
-(empty category renders as:  ✓ no gaps found)
+(other gap types use their own diagram shape — see gap_visualization)
 ```
 
 **Notes**:
-- Output one section per category, in rubric order.
-- Every bullet/row/item must cite a `source_ref` + `meeting_date` OR a `file:line` from a codebase crawl.
-- Surface `source_excerpt` verbatim — never paraphrase.
-- Honest empty path: if a category produces no findings, emit `✓ no gaps found` under its header. Never skip the header.
+- Every diagram SOURCE line cites `source_ref` + `meeting_date` verbatim. Uncited = bug.
+- Categories with zero findings produce no output at all.
 - Full rendering contract is in `skills/bicameral-judge-gaps/SKILL.md`.
+- Diagram templates are in `skills/gap_visualization/SKILL.md`.

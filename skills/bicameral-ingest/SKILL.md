@@ -629,87 +629,50 @@ Handle the response:
 
 `bicameral.ingest` auto-fires `bicameral.brief` on a topic derived from the
 payload and returns the brief inside `IngestResponse.brief`. When `brief`
-is non-null, present it immediately after the ingest summary using the
-presentation contract below.
+is non-null, surface **only divergences and drifts** using the visual box
+format defined in `skills/gap_visualization/SKILL.md`. All other brief
+fields (`decisions`, `gaps`, `suggested_questions`) are **suppressed** —
+they are either already visible from the ingest summary or will be handled
+more precisely by the gap-judge rubric in step 6.
 
-**Presentation order** — always strict, skip empty buckets silently:
+**Rendering order** — always strict:
 
-1. **`divergences` — ALWAYS FIRST if non-empty.** Two contradictory
-   decisions on the same symbol is the highest-stakes signal the brief
-   can carry. The meeting's first agenda item should be picking which one
-   wins. Surface each divergence as a bold warning with the symbol, file,
-   and summary line.
-2. **`drift_candidates`** — decisions whose code diverged from recorded
-   intent. Present each with status badge (`⚠ DRIFTED`), file:line, and
-   drift evidence.
-3. **`decisions`** — the full set of in-scope decisions, grouped by status.
-   Skip any that already appear in `drift_candidates` to avoid duplication.
-4. **`gaps`** — open questions and ungrounded decisions. Present as a
-   bulleted list.
-5. **`suggested_questions`** — **Surface these VERBATIM**, never paraphrase.
-   They're templated to be neutral-voice; paraphrasing reintroduces the
-   "me vs you" framing the tool exists to remove.
+1. **`divergences` — ALWAYS FIRST if non-empty.** Render each as a
+   `⚡ DIVERGENCE` box (template #4 in `gap_visualization`). Two contradicting
+   decisions on the same symbol is the highest-stakes signal — stop and
+   resolve before continuing.
+2. **`drift_candidates`** — render as the `⚠ DRIFTED` callout (template #5).
+   No diagram — just name each drifted decision, cite file:line, and point
+   to `bicameral.dashboard` for details. Skip any already in divergences.
 
-**Action hints** — the brief response includes `action_hints`. Two intensities,
-controlled by `guided: bool` in `.bicameral/config.yaml` or the
-`BICAMERAL_GUIDED_MODE=1` env override:
-
-- **Normal mode** (`guided: false`, default) — hints fire with `blocking: false`
-  and advisory tone. Mention the hint in one line and continue.
-- **Guided mode** (`guided: true`) — hints fire with `blocking: true` and
-  imperative tone. **Address each blocking hint before any write operation**
-  (file edit, commit, PR, `bicameral_ingest`).
-
-Hint kinds that can fire on brief responses:
-- **`resolve_divergence`** — two non-superseded decisions contradict on the
-  same symbol. Highest-stakes signal.
-- **`review_drift`** — one or more decisions in scope have drifted.
-- **`answer_open_questions`** — gap extraction found open-question-shaped gaps.
+**Action hints** — surface `action_hints` from the brief verbatim after
+the boxes. Two intensities, controlled by `guided: bool`:
+- **Normal mode** (`guided: false`, default) — hints fire with `blocking: false`.
+  Mention each hint in one line and continue.
+- **Guided mode** (`guided: true`) — hints fire with `blocking: true`.
+  **Address each blocking hint before any write operation.**
 
 **Never paraphrase a hint's `message` field** — surface it verbatim.
 
-When `brief` is `null` (the payload had no derivable topic or the chained
-brief call failed), skip this step silently. The ingest summary from step 4
-is sufficient on its own.
+When `brief` is `null` (no derivable topic or chain failed), skip silently.
 
 ### 6. Apply the gap-judge rubric (v0.4.16+)
 
-When the ingest response contains a non-null `judgment_payload`, chain
-into the `bicameral-judge-gaps` skill to render the rubric sections.
+When the ingest response contains a non-null `judgment_payload`, apply the
+`bicameral-judge-gaps` rubric using the visual format from
+`skills/gap_visualization/SKILL.md`. Full contract is in
+`skills/bicameral-judge-gaps/SKILL.md`.
 
-- The `judgment_payload` is only attached by the ingest → brief auto-chain
-  (never by standalone `bicameral.brief` calls). If you see it, it means
-  the brief produced at least one decision and the server built a context
-  pack for caller-session reasoning.
-- **Apply the rubric in your own session**. The server has already
-  shipped you the decisions (with source excerpts), the rubric (5
-  categories, fixed order), and the `judgment_prompt`. Your job is to
-  reason over the pack using your own LLM context and, for the
-  `infrastructure_gap` category, use your Glob / Read / Grep tools to
-  verify implied infrastructure against the category's `canonical_paths`.
-- **Output one section per category, in rubric order**. Each section
-  starts with the category's `title` as a header. The body uses the
-  category's `output_shape`:
-  - `bullet_list` → a plain bulleted list
-  - `happy_sad_table` → a two-column table (Happy path specified ↔ Missing sad path)
-  - `checklist` → `✓ / ○ / ?` prefixed items
-  - `absence_matrix` → a checkbox grid
-  - `dependency_radar` → a system-by-system list with ✓ discussed / ○ not discussed
-- **Cite everything**. Every bullet / row / checklist item must reference
-  either a `source_ref` + `meeting_date` from the payload OR a `file:line`
-  from your codebase crawl. An uncited item is a bug in your output.
-- **Surface VERBATIM**. Quote `source_excerpt` directly. Never paraphrase
-  the rubric prompts, never editorialize, never add "as an AI…" hedges.
-- **Honest empty path**. If a category produces no findings for this
-  pack, emit exactly this single line under its header: `✓ no gaps found`.
-  Do not skip the header — the user needs to see that the category was
-  applied and found nothing, which itself is information.
+**Key rendering rules for this flow:**
+- Render each ask-gap as its corresponding box template (templates #1–#5).
+- **Skip empty categories entirely** — no header, no `✓ no gaps found`.
+  The user only sees boxes for actual findings.
+- End with the roll-up line: `N actionable gap(s) — M of 5 categories had findings.`
+  Omit the roll-up entirely when N = 0.
+- Max 3 boxes per category; if more exist, surface the batched gate from
+  `bicameral-judge-gaps` for the remainder.
 
-The full rendering contract is in `skills/bicameral-judge-gaps/SKILL.md`.
-This step is a delegation pointer.
-
-When `judgment_payload` is `null` (the brief had no decisions, or the
-chain failed), skip this step silently.
+When `judgment_payload` is `null` (no decisions or chain failed), skip silently.
 
 ### 7. Ratify proposals (v0.7.0+)
 
