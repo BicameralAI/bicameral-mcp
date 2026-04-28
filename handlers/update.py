@@ -89,6 +89,80 @@ def get_update_notice(current_version: str) -> dict | None:
     }
 
 
+_MIGRATION_SCRIPT = """
+import asyncio, json, sys
+
+async def main():
+    repo = sys.argv[1] if len(sys.argv) > 1 else "."
+    try:
+        from ledger.adapter import SurrealDBLedgerAdapter
+        adapter = SurrealDBLedgerAdapter()
+        await adapter.connect()
+        if not getattr(adapter, "_pending_destructive", None):
+            print(json.dumps({"migrated": False}))
+            return
+        from handlers.reset import _get_cursors, _wipe_all
+        cursors = await _get_cursors(adapter, repo)
+        replay_plan = [
+            {
+                "source_type": str(c.get("source_type", "")),
+                "source_scope": str(c.get("source_scope", "")),
+                "last_source_ref": str(c.get("last_source_ref", "")),
+            }
+            for c in cursors
+        ]
+        await adapter.force_migrate()
+        await _wipe_all(adapter, repo)
+        print(json.dumps({"migrated": True, "cursors_wiped": len(cursors), "replay_plan": replay_plan}))
+    except Exception as exc:
+        print(json.dumps({"migrated": False, "error": str(exc)}))
+
+asyncio.run(main())
+"""
+
+
+def _apply_pending_migration(repo_path: str) -> dict:
+    """Run in a subprocess using the newly-installed binary.
+
+    Connects to the ledger, detects whether a destructive migration is
+    pending, and if so applies it (schema DDL + data wipe) and returns
+    the replay plan so the caller can surface it to the agent.
+
+    Returns a dict with keys:
+      migrated: bool
+      cursors_wiped: int          (only when migrated=True)
+      replay_plan: list[dict]     (only when migrated=True)
+      error: str                  (only on failure)
+    """
+    import tempfile, os
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False
+        ) as f:
+            f.write(_MIGRATION_SCRIPT)
+            tmp = f.name
+        result = subprocess.run(
+            [sys.executable, tmp, repo_path or "."],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout.strip())
+        logger.debug("[update] migration subprocess failed: %s", result.stderr.strip())
+        return {"migrated": False, "error": result.stderr.strip() or "unknown error"}
+    except Exception as exc:
+        logger.debug("[update] migration subprocess error: %s", exc)
+        return {"migrated": False, "error": str(exc)}
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except Exception:
+                pass
+
+
 def _reinstall_skills(repo_path: str) -> int:
     """Re-copy skill SKILL.md files and hooks from the newly-installed package.
 
@@ -169,21 +243,44 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                     if skills_updated
                     else ""
                 )
+
+                # Auto-apply any pending destructive migration using the new binary.
+                migration_result = _apply_pending_migration(repo_path) if repo_path else {"migrated": False}
+                if migration_result.get("migrated"):
+                    cursors_wiped = migration_result.get("cursors_wiped", 0)
+                    replay_plan = migration_result.get("replay_plan", [])
+                    replay_note = (
+                        f" Schema migration applied automatically — {cursors_wiped} source(s) cleared."
+                        f" Re-ingest each entry in migration_replay_plan to restore the ledger."
+                        if cursors_wiped
+                        else " Schema migration applied automatically — ledger was empty, nothing to replay."
+                    )
+                    return {
+                        "status": "upgraded",
+                        "from_version": current_version,
+                        "to_version": recommended,
+                        "skills_updated": skills_updated,
+                        "migration_applied": True,
+                        "migration_replay_plan": replay_plan,
+                        "message": (
+                            f"Upgraded to v{recommended}.{skills_note}{replay_note}"
+                            f" Restart the MCP server to use the new version."
+                        ),
+                    }
+
+                migration_error = migration_result.get("error")
                 migration_warning = (
-                    "\n\n"
-                    "⚠️  MIGRATION WARNING — READ BEFORE RESTARTING\n"
-                    "If the server fails to start after this upgrade (schema migration required),\n"
-                    "the ledger database at ~/.bicameral/ledger.db WILL BE CLEARED.\n"
-                    "Your source data (event logs at <repo>/.bicameral/events/) is NEVER deleted —\n"
-                    "the ledger is always rebuildable from events.\n"
-                    "To clear manually: call bicameral.reset or delete ~/.bicameral/ledger.db.\n"
-                    "The server will auto-rebuild the ledger from your event logs on next start."
+                    f"\n\n⚠️  Auto-migration failed ({migration_error}) — "
+                    "if the server fails to start, call bicameral.reset(confirm=True) to apply manually."
+                    if migration_error
+                    else ""
                 )
                 return {
                     "status": "upgraded",
                     "from_version": current_version,
                     "to_version": recommended,
                     "skills_updated": skills_updated,
+                    "migration_applied": False,
                     "message": (
                         f"Upgraded to v{recommended}.{skills_note} "
                         f"Restart the MCP server to use the new version.{migration_warning}"

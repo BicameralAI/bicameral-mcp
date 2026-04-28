@@ -3,6 +3,18 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.10.4 — auto-migration on upgrade
+
+`bicameral.update apply` now automatically applies any pending destructive
+schema migration immediately after pip install, without requiring a manual
+`bicameral.reset`. After pip install, a subprocess using the new binary
+connects to the ledger, detects `DestructiveMigrationRequired`, runs
+`force_migrate` (schema DDL), wipes scoped data, and returns a
+`migration_replay_plan` in the update response. The agent can then
+re-ingest each entry to restore the ledger. If auto-migration fails, the
+response falls back to the previous advisory warning directing the user to
+call `bicameral.reset(confirm=True)` manually.
+
 ## v0.10.3 — post-commit sync + ephemeral branch-delta display
 
 ### Added — `bicameral-sync` skill
