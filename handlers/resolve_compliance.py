@@ -173,6 +173,12 @@ async def handle_resolve_compliance(
         phase, len(accepted), len(rejected), (commit_hash or "")[:8] or "n/a",
     )
 
+    try:
+        from dashboard.server import notify_dashboard
+        await notify_dashboard(ctx)
+    except Exception:
+        pass
+
     return ResolveComplianceResponse(
         phase=phase,
         accepted=accepted,
