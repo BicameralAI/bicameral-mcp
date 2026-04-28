@@ -134,10 +134,12 @@ Tick as work lands. Items are independent capabilities — order is suggestive, 
 - [ ] Eval row for FF4 (HITL fires regardless of topic — assert intentional, document)
 
 **Skill-layer eval (§A skill rows + FF1, FF3 — phase 2):**
-- [ ] LLM-in-the-loop eval scaffold (fixed model + prompt + temperature)
-- [ ] Synthetic feature-group set with vocabulary-mismatch traps (M1, M2, M3, M4)
-- [ ] FF1 / FF3 false-positive set
-- [ ] Cost-per-eval-run measurement (so the eval doesn't itself become a token sink)
+- [x] LLM-in-the-loop eval scaffold (fixed model + prompt + temperature) — `tests/eval/_skill_judge.py` + `run_preflight_skill_eval.py`, Sonnet 4.6, temp 0, fixture replay keyed on (model, SKILL.md SHA, input SHA)
+- [x] Synthetic feature-group set with vocabulary-mismatch traps — initial 3 rows: M1 (vocab mismatch), M4 (ungrounded), FF1 (irrelevant drilling). Add M2, M3, FF3 incrementally.
+- [x] FF1 false-positive set — covered by FF1_irrelevant_drilling
+- [ ] FF3 false-positive set (drifted-but-irrelevant)
+- [ ] M2, M3 vocab traps
+- [x] Cost-per-eval-run measurement — fixture-replay keeps CI cost at ~$0 unless SKILL.md or dataset changes; cache miss on a 3-row dataset = ~$0.05 with Sonnet 4.6
 
 **Telemetry capture (§D):**
 - [ ] Telemetry opt-in via `BICAMERAL_PREFLIGHT_TELEMETRY=1` (default off)
