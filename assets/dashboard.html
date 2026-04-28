@@ -212,6 +212,16 @@ body {
 .fs-pending    { background: var(--canvas);              color: var(--text-dim); }
 .fs-ungrounded { background: rgba(0,0,0,0.02);           color: var(--text-light); }
 
+/* branch-delta badge — shown when status was determined by a feature-branch commit */
+.branch-badge {
+  display: inline-block;
+  margin-left: 5px;
+  font-size: 10px;
+  opacity: 0.65;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+
 /* ── RATIFIED PILL (L1 section headers only) ──────────────── */
 .rat-pill {
   display: inline-flex; align-items: center; gap: 5px;
@@ -432,7 +442,10 @@ function renderStateCell(d) {
   };
   const c = conf[d.status] || conf.ungrounded;
   const tip = d.status === 'drifted' && d.drift_evidence ? ` data-tip="${esc(d.drift_evidence)}"` : '';
-  return `<div class="d-state-col ${c.cls}"${tip}>${c.text}</div>`;
+  const branchBadge = d.ephemeral
+    ? `<span class="branch-badge" title="Status from feature branch — not yet verified on main">⎇</span>`
+    : '';
+  return `<div class="d-state-col ${c.cls}"${tip}>${c.text}${branchBadge}</div>`;
 }
 
 // ── decision tree helpers ─────────────────────────────────────

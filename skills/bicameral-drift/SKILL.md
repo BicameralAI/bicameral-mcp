@@ -27,8 +27,8 @@ Use `bicameral-scan-branch` instead for multi-file scope or when the user says
                               # false for PR review: compare against HEAD
    )
    ```
-3. **Resolve pending compliance checks** if `sync_status.pending_compliance_checks`
-   is non-empty (see section below).
+3. **Resolve pending compliance checks** using the `bicameral-sync` flow
+   (see below) if `sync_status.pending_compliance_checks` is non-empty.
 4. Present the results:
    - **Drifted**: code has changed since the decision was recorded — needs review
    - **Pending**: decision exists but no code written yet
@@ -37,44 +37,35 @@ Use `bicameral-scan-branch` instead for multi-file scope or when the user says
 
 ## After the call: resolve pending compliance checks
 
-If `sync_status.pending_compliance_checks` is non-empty, the server found regions
-with a new content hash but no cached compliance verdict. **Without your verdict,
-those decisions stay `"pending"` indefinitely — the caller-LLM verdict is the only
-path to `"reflected"` or `"drifted"` status.**
+This is the `bicameral-sync` compliance resolution flow. If
+`sync_status.pending_compliance_checks` is non-empty, resolve all checks
+before presenting results — **this is the only path to authoritative
+`reflected`/`drifted` status.**
 
-For each `PendingComplianceCheck` in the list:
+For each check: read `file_path` (use `code_body` preview; read file directly if
+truncated), evaluate whether the code functionally implements `decision_description`,
+then batch all verdicts into one call:
 
-1. **Read the code.** `code_body` is pre-extracted by the server (capped at ~200 lines).
-   If it looks truncated, read `file_path` directly for full context.
+```
+bicameral.resolve_compliance(
+  phase="drift",
+  flow_id="<sync_status.flow_id>",
+  verdicts=[{
+    decision_id:  "<check.decision_id>",
+    region_id:    "<check.region_id>",
+    content_hash: "<check.content_hash — echo exactly>",
+    verdict:      "compliant" | "drifted" | "not_relevant",
+    confidence:   "high" | "medium" | "low",
+    explanation:  "<one sentence>"
+  }, ...]
+)
+```
 
-2. **Compare** `decision_description` against `code_body`. Ask: does this code
-   *functionally implement* the decision, or just share keywords?
-   - `"compliant"` — code implements the decision correctly
-   - `"drifted"` — code has diverged (threshold changed, behavior removed, etc.)
-   - `"not_relevant"` — retrieval made a mistake; this region is unrelated to the
-     decision (server will prune the `binds_to` edge)
+Verdicts: `"compliant"` = implements correctly · `"drifted"` = diverged ·
+`"not_relevant"` = server retrieval mismatch (server prunes the binding).
+Echo `content_hash` exactly — it's a CAS guard.
 
-3. **Batch all verdicts into one call:**
-   ```
-   bicameral.resolve_compliance(
-     phase="drift",
-     flow_id="<sync_status.flow_id>",
-     verdicts=[{
-       decision_id: "<check.decision_id>",
-       region_id: "<check.region_id>",
-       content_hash: "<check.content_hash — echo exactly>",
-       verdict: "compliant" | "drifted" | "not_relevant",
-       confidence: "high" | "medium" | "low",
-       explanation: "<one sentence: why this code does/doesn't match the decision>"
-     }, ...]
-   )
-   ```
-
-   The `content_hash` is a compare-and-set guard — echo it exactly from the check.
-   If the file changed between the drift call and your read, the server rejects the
-   verdict and the region stays `"pending"` until the next sweep.
-
-Skip this step when `pending_compliance_checks` is empty.
+Skip when `pending_compliance_checks` is empty.
 
 ## Arguments
 

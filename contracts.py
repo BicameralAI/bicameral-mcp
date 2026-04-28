@@ -617,6 +617,7 @@ class HistoryDecision(BaseModel):
     signoff: dict | None = None          # ratification record: state, signer, ratified_at
     decision_level: str | None = None   # L1 | L2 | L3 — for balance-sheet display
     parent_decision_id: str | None = None
+    ephemeral: bool = False             # True when current status was determined by a feature-branch commit not yet in authoritative ref
 
 
 class HistoryFeature(BaseModel):

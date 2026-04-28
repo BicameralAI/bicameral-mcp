@@ -550,46 +550,31 @@ When the ingest response contains `sync_status.pending_compliance_checks`
 candidate code region actually implements its decision. **This is how
 decisions earn REFLECTED status — without your verdict, they stay PENDING.**
 
-For each `PendingComplianceCheck` in the list:
+Use the `bicameral-sync` compliance resolution flow: for each check, read
+`file_path` (use `code_body` preview; read file directly if truncated),
+evaluate whether the code functionally implements `decision_description`
+(functional match, not keyword match), then batch all verdicts:
 
-1. **Read the code** at `file_path` lines `start_line`–`end_line` (the
-   `code_body` field contains a preview, but read the actual file for
-   full context if the snippet is truncated).
+```
+bicameral.resolve_compliance(
+  phase="<from the pending check>",
+  flow_id="<sync_status.flow_id>",
+  verdicts=[{
+    decision_id:  "<check.decision_id>",
+    region_id:    "<check.region_id>",
+    content_hash: "<check.content_hash — echo exactly>",
+    verdict:      "compliant" | "drifted" | "not_relevant",
+    confidence:   "high" | "medium" | "low",
+    explanation:  "<one sentence>"
+  }, ...]
+)
+```
 
-2. **Compare** the code against `intent_description`. Ask yourself:
-   does this code **functionally implement** the decision, or does it
-   just share keywords? A `PaymentProviderService` class that handles
-   payment authorization IS a match for "add timeout to payment provider
-   authorize calls". A `Payment` model that merely defines a data type
-   is NOT.
+Verdicts: `"compliant"` = implements correctly · `"drifted"` = diverged ·
+`"not_relevant"` = server retrieval mismatch (server prunes the binding).
+Echo `content_hash` exactly — it's a CAS guard. One call for all verdicts.
 
-3. **Write your verdict** by calling `bicameral.resolve_compliance`:
-   ```
-   bicameral.resolve_compliance({
-     phase: "<from the pending check>",
-     verdicts: [
-       {
-         intent_id: "<from check>",
-         region_id: "<from check>",
-         content_hash: "<from check — MUST echo this back>",
-         compliant: true/false,
-         confidence: "high"/"medium"/"low",
-         explanation: "<1 sentence: why this code does/doesn't implement the decision>"
-       }
-     ]
-   })
-   ```
-
-**Batch all verdicts into one `resolve_compliance` call** — the tool
-accepts an array. This is a single round-trip, not N calls.
-
-**The `content_hash` is a compare-and-set guard**: you MUST echo back
-the exact `content_hash` from the pending check. If the file changed
-between the ingest and your read, the server will reject the verdict
-and the region stays PENDING until the next drift sweep.
-
-**Skip this step** when `pending_compliance_checks` is empty (all
-regions had cached verdicts from prior runs).
+**Skip** when `pending_compliance_checks` is empty.
 
 ### 4. Report results
 

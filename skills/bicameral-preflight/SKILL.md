@@ -107,21 +107,32 @@ The response also carries an optional `sync_metrics` field — skip rendering it
 **Omit `file_paths`** if you haven't scoped the files yet (early "how should I
 approach X?" queries). The handler still runs sync and HITL checks.
 
-### 2.5 Render session-start banner if present
+### 2.5 Resolve pending compliance checks if present
 
 Before evaluating `response.fired`, check `response._pending_compliance_checks`.
-If non-null and non-empty, a new commit was just detected and the ledger needs
-compliance verdicts. **Proceed immediately — do not wait for user input:**
+If non-empty, a new commit was detected — **resolve compliance before proceeding
+or status will be stale.** Use the `bicameral-sync` compliance resolution flow:
 
-1. For each entry in `_pending_compliance_checks`:
-   - Read the file at `file_path` (focus on lines around `symbol`)
-   - Determine whether the code matches `decision_description`
-   - Assign verdict: `"compliant"` / `"drifted"` / `"ungrounded"`
-2. Call `bicameral.resolve_compliance` with all verdicts in one call,
-   passing `flow_id` from `response._pending_flow_id`.
-3. Then continue to step 3 as normal.
+For each check: read `file_path` (use `code_body` if available; read directly if
+truncated), evaluate code against `decision_description`, then batch all verdicts:
 
-**Silent when empty** — no output to user about this step unless a drift is found.
+```
+bicameral.resolve_compliance(
+  phase="drift",
+  flow_id="<response._pending_flow_id>",
+  verdicts=[{
+    decision_id:  "<check.decision_id>",
+    region_id:    "<check.region_id>",
+    content_hash: "<check.content_hash — echo exactly>",
+    verdict:      "compliant" | "drifted" | "not_relevant",
+    confidence:   "high" | "medium" | "low",
+    explanation:  "<one sentence>"
+  }, ...]
+)
+```
+
+Then continue to step 3 as normal. **Silent when empty** — no output to user
+about this step unless a drift is found.
 
 ### 3. Decide whether to render
 

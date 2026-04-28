@@ -345,17 +345,16 @@ _BICAMERAL_SESSION_END_COMMAND = (
 )
 
 # Fires after every Bash tool use. When the command is a git write-op
-# (commit / merge / pull / rebase --continue), prints a one-line reminder so
-# the agent calls bicameral.link_commit in the same turn — keeping the ledger
-# current without waiting for the next preflight/history call.
+# (commit / merge / pull / rebase --continue), prints a trigger line that
+# causes the agent to invoke /bicameral:sync — running the full
+# link_commit → compliance check flow so status is authoritative immediately.
 _BICAMERAL_POST_COMMIT_COMMAND = (
     "python3 -c \""
     "import json,sys; "
     "d=json.load(sys.stdin); "
     "c=d.get('tool_input',{}).get('command',''); "
     "ops=('git commit','git merge ','git pull','git rebase --continue'); "
-    "[print('bicameral: new commit detected — call bicameral.link_commit"
-    "(commit_hash=\\'HEAD\\') to sync the ledger') "
+    "[print('bicameral: new commit detected — run /bicameral:sync to resolve compliance and get authoritative reflected/drifted status') "
     "for _ in [1] if any(op in c for op in ops)]\""
 )
 
@@ -427,6 +426,44 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     return wrote_anything
 
 
+_GIT_POST_COMMIT_HOOK = """\
+#!/bin/sh
+# Bicameral MCP — post-commit hook (installed by bicameral-mcp setup, Guided mode)
+# Syncs the decision ledger after every commit so drift status is current immediately.
+# Silent on failure; only runs when .bicameral/ exists.
+[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>&1 || true
+"""
+
+
+def _install_git_post_commit_hook(repo_path: Path) -> bool:
+    """Install a git post-commit hook that calls bicameral-mcp link_commit HEAD.
+
+    Only installed for Guided mode. Idempotent — if a hook already exists and
+    already contains a bicameral call, leaves it untouched. If an existing hook
+    lacks a bicameral call, appends one rather than overwriting.
+
+    Returns True if anything was written.
+    """
+    git_root = _find_git_root(repo_path)
+    if git_root is None:
+        return False
+
+    hook_path = git_root / ".git" / "hooks" / "post-commit"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if hook_path.exists():
+        existing = hook_path.read_text()
+        if "bicameral" in existing:
+            return False  # already present
+        # Append to existing hook
+        hook_path.write_text(existing.rstrip("\n") + "\n" + _GIT_POST_COMMIT_HOOK)
+    else:
+        hook_path.write_text(_GIT_POST_COMMIT_HOOK)
+
+    hook_path.chmod(0o755)
+    return True
+
+
 def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
     skills_src = Path(__file__).parent / "skills"
@@ -480,8 +517,11 @@ def _select_guided_mode() -> bool:
     result = questionary.select(
         "Interaction intensity:",
         choices=[
-            questionary.Choice("Guided  — bicameral stops you when it detects discrepancies", value=True),
-            questionary.Choice("Normal  — bicameral flags discrepancies as advisory hints", value=False),
+            questionary.Choice(
+                "Guided  — blocking hints + git post-commit hook (status updates after every commit)",
+                value=True,
+            ),
+            questionary.Choice("Normal  — advisory hints only", value=False),
         ],
         default=True,
     ).ask()
@@ -669,6 +709,13 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
             print(f"  Claude Code: installed {num_skills} slash commands")
         if _install_claude_hooks(repo_path):
             print("  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end")
+
+    # Step 7: Git post-commit hook (Guided mode only)
+    if guided:
+        if _install_git_post_commit_hook(repo_path):
+            print("  Git: installed post-commit hook → bicameral-mcp link_commit HEAD after every commit")
+        else:
+            print("  Git: post-commit hook already present — skipped")
 
     # Summary
     agent_names = ", ".join(AGENTS[a]["name"] for a in agents)

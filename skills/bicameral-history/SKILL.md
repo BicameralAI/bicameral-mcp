@@ -36,12 +36,27 @@ bicameral.history(
 
 ## Before rendering — handle pending compliance checks
 
-Check `response._pending_compliance_checks`. If non-empty, a new commit was just
-detected. **Proceed immediately without user input:**
+Check `response._pending_compliance_checks`. If non-empty, a new commit was
+detected and compliance is unresolved — **status will be wrong until you resolve
+it.** Use the `bicameral-sync` compliance resolution flow:
 
-1. Read each `file_path` / `symbol` in the list
-2. Verify whether the code matches `decision_description`
-3. Call `bicameral.resolve_compliance` with verdicts and `flow_id` from `response._pending_flow_id`
+For each check: read `file_path`, evaluate code against `decision_description`,
+batch all verdicts into one call:
+
+```
+bicameral.resolve_compliance(
+  phase="drift",
+  flow_id="<response._pending_flow_id>",
+  verdicts=[{
+    decision_id:  "<check.decision_id>",
+    region_id:    "<check.region_id>",
+    content_hash: "<check.content_hash — echo exactly>",
+    verdict:      "compliant" | "drifted" | "not_relevant",
+    confidence:   "high" | "medium" | "low",
+    explanation:  "<one sentence>"
+  }, ...]
+)
+```
 
 Then render the history table as normal.
 
@@ -121,7 +136,9 @@ bulk, rather than being asked at the end of every ingest.
 | ⚑ | needs context |
 | — | superseded |
 
-**Note on ephemeral commits**: when verdicts were recorded from a feature branch
-commit (not yet in the authoritative branch), they are tagged `ephemeral: true`.
-Status (`drifted`/`reflected`) is still computed from these verdicts — they represent
-the live branch state. The dashboard shows them with a branch-delta indicator.
+**Note on ephemeral commits**: when a decision's current status was determined by a
+feature-branch commit (not yet in the authoritative branch), `ephemeral: true` is set
+on the `HistoryDecision`. Status (`drifted`/`reflected`) is still valid — it represents
+the live branch state. The dashboard renders a `⎇` badge in the state cell with tooltip
+"Status from feature branch — not yet verified on main". In your text rendering, append
+`⎇` after the status badge for ephemeral decisions.

@@ -19,7 +19,7 @@ The fail-safe valve. When the user sees a clearly wrong anchor, a polluted drift
 - **Never fire automatically.** The user must explicitly ask for a reset.
 - Individual bad decisions should be removed via `bicameral_forget` (coming in a later release), NOT a full wipe.
 - If only one ingest looks bad, suggest re-running THAT ingest against the current ledger rather than wiping everything.
-- Drift reports that look wrong are usually a symptom of stale baselines — try `bicameral.link_commit` first and only escalate to `bicameral.reset` if that doesn't help.
+- Drift reports that look wrong are usually a symptom of stale baselines — run `/bicameral:sync` first (full link_commit + compliance check) and only escalate to `bicameral.reset` if that doesn't help.
 
 ## The two-call pattern
 

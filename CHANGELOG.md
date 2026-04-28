@@ -3,6 +3,56 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.10.3 — post-commit sync + ephemeral branch-delta display
+
+### Added — `bicameral-sync` skill
+
+New canonical skill for the full `link_commit → resolve_compliance` loop.
+Fires when the PostToolUse hook emits "bicameral: new commit detected" or
+when `_sync_guidance` appears in any tool response. Without this skill,
+compliance checks remain `pending` after a commit and status never becomes
+authoritative `reflected`/`drifted`. All existing skills that previously
+inlined the compliance resolution rubric now reference `bicameral-sync` for
+that step, with a compact canonical `resolve_compliance` call block in place
+of the duplicated evaluation prose.
+
+### Added — git post-commit hook (Guided mode)
+
+`bicameral-mcp setup` now installs a `.git/hooks/post-commit` hook when the
+user selects Guided mode. The hook calls `bicameral-mcp link_commit HEAD`
+after every commit (hash-level sync) so the ledger is never stale even for
+terminal commits outside Claude Code. The guided mode choice label in the
+setup wizard explicitly states this will happen. Idempotent: appends to an
+existing hook if one exists without overwriting it.
+
+The Claude Code `PostToolUse` hook message was updated to say "run
+`/bicameral:sync`" (full semantic sync) rather than "call
+`bicameral.link_commit`" (hash-level only).
+
+### Added — ephemeral branch-delta indicator in dashboard and history
+
+`HistoryDecision.ephemeral: bool` is now set to `True` when a decision's
+current `reflected`/`drifted` status was determined by a feature-branch
+commit not yet in the authoritative ref. `handle_history` runs a single bulk
+query against `compliance_check WHERE ephemeral = true AND pruned = false`
+after building the feature list, then marks matching decisions.
+
+The dashboard renders a `⎇` badge in the state cell with tooltip "Status
+from feature branch — not yet verified on main". `bicameral-history/SKILL.md`
+instructs text-rendering agents to append `⎇` after the status for ephemeral
+decisions.
+
+### Fixed — stale field names in `bicameral-ingest/SKILL.md`
+
+The compliance verification step (Step 3b) used `intent_id` and `compliant:
+bool` — field names from the v0.4.x API. Updated to the current contract:
+`decision_id` and `verdict: "compliant" | "drifted" | "not_relevant"`.
+
+### Fixed — stale `intent_id` references in `bicameral-scan-branch/SKILL.md`
+
+Action hints `refs` arrays were documented as containing `intent_id`s;
+corrected to `decision_id`s to match `handlers/action_hints.py`.
+
 ## v0.9.2 — desync optimization V1 — measurement + read-path advisory
 
 V1 of a two-part desync-correctness initiative. V1 ships measurement

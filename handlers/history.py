@@ -219,6 +219,31 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
     return rows
 
 
+async def _fetch_ephemeral_decision_ids(ledger, decision_ids: list[str]) -> set[str]:
+    """Return the subset of decision_ids that have at least one non-pruned ephemeral
+    compliance check — meaning their current status was determined by a feature-branch
+    commit not yet in the authoritative ref.
+
+    Single bulk query; returns empty set on any error so callers degrade gracefully.
+    """
+    if not decision_ids:
+        return set()
+    inner = getattr(ledger, "_inner", ledger)
+    if not hasattr(inner, "_client"):
+        return set()
+    try:
+        await inner._ensure_connected()
+        rows = await inner._client.query(
+            "SELECT decision_id FROM compliance_check "
+            "WHERE decision_id IN $dids AND pruned = false AND ephemeral = true",
+            {"dids": decision_ids},
+        )
+        return {str(r["decision_id"]) for r in rows if r.get("decision_id")}
+    except Exception as exc:
+        logger.debug("[history] ephemeral lookup failed: %s", exc)
+        return set()
+
+
 def _feature_key_for_row(row: dict) -> str:
     """Determine the feature group key for a decision row.
 
@@ -322,6 +347,19 @@ async def handle_history(
     if len(features) > _MAX_FEATURES:
         features = features[:_MAX_FEATURES]
         truncated = True
+
+    # Mark decisions whose current compliance verdict came from a feature-branch commit.
+    # Only meaningful for decisions that have a status verdict (reflected/drifted).
+    verifiable_ids = [
+        d.id for f in features for d in f.decisions
+        if d.status in ("reflected", "drifted")
+    ]
+    ephemeral_ids = await _fetch_ephemeral_decision_ids(ledger, verifiable_ids)
+    if ephemeral_ids:
+        for feature in features:
+            for decision in feature.decisions:
+                if decision.id in ephemeral_ids:
+                    decision.ephemeral = True
 
     return HistoryResponse(
         features=features,
