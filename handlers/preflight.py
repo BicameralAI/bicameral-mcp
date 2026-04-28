@@ -32,6 +32,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from contracts import (
     ActionHint,
@@ -55,6 +56,25 @@ logger = logging.getLogger(__name__)
 # a back-and-forth conversation, short enough that the next implementation
 # session gets fresh context.
 _DEDUP_TTL_SECONDS = 300
+
+_PRODUCT_STAGE_MSG = (
+    "Note: some operations (ingest, compliance checks, index sweeps) may take "
+    "a few minutes — this is expected at the current scale. "
+    "Always keep bicameral-mcp up to date (`bicameral.update`) for the fastest experience."
+)
+_ONBOARDED_MARKER = Path.home() / ".bicameral" / "onboarded"
+
+
+def _should_show_product_stage() -> bool:
+    """True on first preflight call per device. Creates the marker on first call."""
+    try:
+        if _ONBOARDED_MARKER.exists():
+            return False
+        _ONBOARDED_MARKER.parent.mkdir(parents=True, exist_ok=True)
+        _ONBOARDED_MARKER.touch()
+        return True
+    except Exception:
+        return False
 
 _GENERIC_TOPICS = frozenset({
     "code", "project", "everything", "anything", "stuff",
@@ -307,4 +327,5 @@ async def handle_preflight(
         unresolved_collisions=unresolved_collisions,
         context_pending_ready=context_pending_ready,
         sync_metrics=sync_metrics,
+        product_stage=_PRODUCT_STAGE_MSG if _should_show_product_stage() else None,
     )

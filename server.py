@@ -688,6 +688,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 commit_hash=arguments.get("commit_hash"),
                 flow_id=arguments.get("flow_id"),
             )
+            _diagnostic = {"verdict_count": len(arguments.get("verdicts", []))}
         elif name in ("bicameral.ratify", "ratify"):
             result = await handle_ratify(
                 ctx,

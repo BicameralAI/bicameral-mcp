@@ -103,6 +103,7 @@ already have context from history). When `fired=true` with region matches, merge
 those into your in-scope set.
 
 The response also carries an optional `sync_metrics` field — skip rendering it.
+If `response.product_stage` is non-null, surface it verbatim to the user as a brief note (shown once per device only).
 
 **Omit `file_paths`** if you haven't scoped the files yet (early "how should I
 approach X?" queries). The handler still runs sync and HITL checks.

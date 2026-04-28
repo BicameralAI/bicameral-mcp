@@ -494,6 +494,7 @@ class PreflightResponse(BaseModel):
     unresolved_collisions: list[BriefDecision] = []   # collision_pending from prior sessions
     context_pending_ready: list[BriefDecision] = []   # context_pending with ≥1 confirmed context_for
     sync_metrics: SyncMetrics | None = None  # V1 A3 — catch-up wall times
+    product_stage: str | None = None  # shown once per device; wait-time expectation-setting
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────

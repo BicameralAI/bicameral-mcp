@@ -3,6 +3,24 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.10.6 — wait-time disclaimer + resolve_compliance latency telemetry
+
+### Added — one-time product stage note on first preflight
+
+On the first `bicameral.preflight` call per device, the response now includes
+a `product_stage` field with a plain-English note: "some operations may take
+a few minutes — this is expected." The note is shown once (gated by
+`~/.bicameral/onboarded` marker file) and surfaced verbatim by the preflight
+skill. Sets wait-time expectations before users hit a slow ingest or compliance
+sweep for the first time.
+
+### Added — `verdict_count` diagnostic on `resolve_compliance`
+
+`bicameral.resolve_compliance` now emits a `verdict_count` integer in its
+PostHog diagnostic alongside the already-recorded `duration_ms`. Enables
+segmenting slow calls (was the latency from 1 verdict or 20?) without any
+user-visible change.
+
 ## v0.10.5 — hook replace strategy + bicameral-config skill
 
 ### Fixed — `_install_claude_hooks` replace-not-skip strategy
