@@ -38,6 +38,7 @@ from ledger.queries import (
     project_decision_status,
     region_exists,
     update_decision_status,
+    update_region_hash,
     upsert_compliance_check,
 )
 
@@ -161,6 +162,19 @@ async def handle_resolve_compliance(
             phase=phase,
             verdict=v.verdict,
         ))
+
+    # Sync code_region.content_hash to the verdict hash for every accepted verdict.
+    # project_decision_status looks up verdicts by (decision_id, region_id,
+    # code_region.content_hash). When link_commit ran on a non-authoritative branch
+    # it skipped update_region_hash, leaving code_region.content_hash stale (often
+    # ""). Without this sync the verdict lookup returns None → status stays pending.
+    for v in parsed:
+        if not v.region_id or not v.content_hash:
+            continue
+        try:
+            await update_region_hash(client, v.region_id, v.content_hash)
+        except Exception as exc:
+            logger.warning("[resolve_compliance] update_region_hash failed for %s: %s", v.region_id, exc)
 
     # v0.5.0: holistic status projection after the full batch is written.
     # Replaces the per-verdict last-verdict-wins update from v0.4.x.
