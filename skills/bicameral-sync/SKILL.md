@@ -42,6 +42,21 @@ checks directly).
 If `pending_compliance_checks` is non-empty (from the `link_commit` response or
 from `_pending_compliance_checks` in an auto-sync injection):
 
+> **Phase 3 (#60) — `enhance_drift` mode.** When the
+> `BICAMERAL_CODEGENOME_ENHANCE_DRIFT` flag is on, `link_commit` runs the
+> per-region continuity matcher BEFORE you see this list. Auto-resolved
+> regions (symbol moved or renamed; binding redirected to the new
+> location) are stripped from `pending_compliance_checks` — you don't
+> need to evaluate them. They appear instead in
+> `link_commit_response.continuity_resolutions` with `semantic_status` ∈
+> `{identity_moved, identity_renamed, needs_review}`. The `needs_review`
+> resolutions are advisory: confidence in [0.50, 0.75], a candidate new
+> location is included, but the binding was NOT redirected — treat
+> them like any other pending check (read the candidate's code and
+> decide). With `enhance_drift` off (the default),
+> `continuity_resolutions` is always empty and the pre-Phase-3
+> behaviour is preserved.
+
 For each entry in the list:
 
 1. **Read the code.** `code_body` is pre-extracted (capped at ~200 lines).

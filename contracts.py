@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 # ── Shared sub-types ─────────────────────────────────────────────────
@@ -172,14 +172,14 @@ class ContinuityResolution(BaseModel):
     Emitted in ``LinkCommitResponse.continuity_resolutions`` when
     ``codegenome.enhance_drift`` is enabled. ``identity_moved`` /
     ``identity_renamed`` indicate auto-resolution (the binding was
-    redirected); ``needs_review`` indicates a 0.50–0.75 confidence
+    redirected); ``needs_review`` indicates a 0.50-0.75 confidence
     candidate the caller LLM should evaluate.
     """
     decision_id: str
     old_code_region_id: str
     new_code_region_id: str | None = None
     semantic_status: Literal["identity_moved", "identity_renamed", "needs_review"]
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)  # PR #73: bound to probability range
     old_location: CodeRegionSummary
     new_location: CodeRegionSummary | None = None
     rationale: str

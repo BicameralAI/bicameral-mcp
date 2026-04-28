@@ -3,6 +3,61 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.12.0 — CodeGenome Phase 3 (#60) — continuity evaluation in `link_commit` — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Second PR in the three-phase CodeGenome rollout (issues #59 / #60 / #61).
+Adds the per-region continuity matcher: when a drifted region's identity
+moved or was renamed, the bind is auto-redirected to the new location
+before the caller LLM is asked for a verdict. Default behavior is
+**unchanged** unless callers opt in via the new `BICAMERAL_CODEGENOME_ENHANCE_DRIFT`
+flag.
+
+### Added
+
+- **Continuity matcher** (`codegenome/continuity.py`,
+  `codegenome/continuity_service.py`) — deterministic 4-signal scoring
+  (signature_hash, neighbors Jaccard, name match, kind) with
+  per-region resolution and 7-step ledger write sequence
+  (compute_identity → upsert_code_region → upsert_subject_identity
+  → write_subject_version → relate_has_version → write_identity_supersedes
+  → update_binds_to_region).
+- **Schema v12** — new `subject_version` table; `identity_supersedes`
+  edge; `subject_identity.neighbors_at_bind` field. Additive migration
+  (`_migrate_v11_to_v12`).
+- **`LinkCommitResponse.continuity_resolutions`** — additive optional
+  field; populated when `enhance_drift` is enabled.
+- **9 new ledger queries** + adapter wrappers:
+  `relate_has_version`, `write_subject_version`, `write_identity_supersedes`,
+  `update_binds_to_region`, `create_code_region`, `get_region_metadata`,
+  expanded `link_decision_to_subject` (now carries `region_id`),
+  `find_subject_identities_for_decision`.
+- **PR #73 review hardening** (CodeRabbit + Devin):
+  - Fixed silent `AttributeError` in `_resolve_symbol_id_for_span`
+    (`sqlite_db_path` typo) that made neighbor signal permanently zero
+    in production.
+  - Reused `self._db` handle in neighbor lookup (no per-call
+    SQLite open/leak).
+  - Wrapped `update_binds_to_region` DELETE+RELATE in BEGIN/COMMIT
+    transaction.
+  - Added partial-bind rollback on edge-write failure in
+    `_persist_subject_and_identity`.
+  - `link_decision_to_subject` now carries originating `region_id` on
+    the `about` edge so multi-region decisions don't flatten subjects.
+  - Replaced the `upsert_code_region` adapter wrapper with a
+    `create_code_region`-backed implementation so continuity redirects
+    always target a distinct new region id (no in-place clobber).
+  - `DriftContext` now seeded with the bound region's actual span +
+    identity_type via `get_region_metadata` (was hardcoded to
+    `"unknown"`/`0,0`, dropping 20% of the continuity score).
+  - Pydantic `confidence: float` constrained to `[0.0, 1.0]` via
+    `Field(ge=0.0, le=1.0)`.
+
+### Schema compatibility
+
+- v11 → v12 (additive); rolling upgrade safe.
+
+---
+
 ## v0.11.0 — CodeGenome Phase 1+2 (#59) — adapter boundary + identity records — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Foundation PR for the three-phase CodeGenome rollout (issues #59 / #60 / #61).

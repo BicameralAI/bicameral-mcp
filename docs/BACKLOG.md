@@ -21,8 +21,8 @@
       `queries_write.py` / `queries_sync.py` indicate prior work; status
       of the split-vs-monolith strategy is unclear and should be
       reconciled.
-- [ ] [B2] Issue #60 — CodeGenome Phase 3 continuity evaluation in
-      `link_commit`. Depends on #59. Plan due after #59 merges.
+- [x] [B2] Issue #60 — CodeGenome Phase 3 continuity evaluation in
+      `link_commit` completed in PR #73 (stacked on #71, retargeted to dev).
 - [ ] [B3] Issue #61 — CodeGenome Phase 4 semantic drift evaluation in
       `resolve_compliance`. Depends on #59; recommended after #60.
 

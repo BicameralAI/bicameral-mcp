@@ -246,11 +246,36 @@ async def _run_continuity_pass(ctx, pending: list[PendingComplianceCheck]) -> li
 
     resolutions: list = []
     for p in pending:
+        # PR #73 review (CodeRabbit MAJOR handlers/link_commit.py:255):
+        # the prior code seeded DriftContext with old_symbol_kind="unknown"
+        # and 0,0 line numbers — permanently dropping the kind signal
+        # from continuity scoring (20% of the weighted score) and
+        # reporting ContinuityResolution.old_location as ":0-0". Load
+        # the bound region's actual span + identity_type via the new
+        # ledger.queries.get_region_metadata helper. Lookup failure
+        # falls back to the previous "unknown"/0,0 behaviour so the
+        # response shape is preserved when the region row is missing
+        # (which would itself indicate a deeper inconsistency).
+        meta = None
+        try:
+            if hasattr(ctx.ledger, "get_region_metadata"):
+                meta = await ctx.ledger.get_region_metadata(p.region_id)
+        except Exception as exc:
+            logger.debug(
+                "[link_commit] region metadata lookup failed for %s: %s",
+                p.region_id, exc,
+            )
+        if meta:
+            old_kind = str(meta.get("identity_type") or "unknown")
+            old_start = int(meta.get("start_line") or 0)
+            old_end = int(meta.get("end_line") or 0)
+        else:
+            old_kind, old_start, old_end = "unknown", 0, 0
         drift = DriftContext(
             decision_id=p.decision_id, region_id=p.region_id,
             old_file_path=p.file_path, old_symbol_name=p.symbol,
-            old_symbol_kind="unknown",
-            old_start_line=0, old_end_line=0,
+            old_symbol_kind=old_kind,
+            old_start_line=old_start, old_end_line=old_end,
             repo_ref=getattr(ctx, "authoritative_sha", "") or "HEAD",
             repo_path=ctx.repo_path,
         )

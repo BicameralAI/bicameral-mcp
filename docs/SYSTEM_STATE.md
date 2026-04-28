@@ -8,7 +8,7 @@
 
 ## Files added across the project DNA chain (Phases 1-2-3)
 
-```
+```text
 codegenome/
 ├── __init__.py
 ├── adapter.py                   # CodeGenomeAdapter ABC + 5 dataclasses
@@ -50,7 +50,7 @@ plan-codegenome-phase-3.md       # PASS audit, sealing now
 
 ## Files modified across phases
 
-```
+```text
 ledger/schema.py                 # 10 → 11 → 12; +6 tables, +5 edges, +3 migrations
 ledger/queries.py                # +9 codegenome queries, _validated_record_id helper
 ledger/adapter.py                # +9 thin async wrappers + import additions

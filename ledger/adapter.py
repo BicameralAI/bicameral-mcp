@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .client import LedgerClient
 from .queries import (
+    create_code_region,
     decision_exists,
     delete_binds_to_edge,
     find_subject_identities_for_decision,
@@ -24,6 +25,7 @@ from .queries import (
     get_decisions_for_file,
     get_decisions_for_files,
     get_pending_decisions_with_regions,
+    get_region_metadata,
     get_regions_for_files,
     get_regions_without_hash,
     get_source_cursor,
@@ -322,12 +324,28 @@ class SurrealDBLedgerAdapter:
         self,
         decision_id: str,
         code_subject_id: str,
+        region_id: str | None = None,
         confidence: float = 0.8,
     ) -> None:
+        """decision → about → code_subject. Pass ``region_id`` to preserve
+        the originating region on the edge (PR #73 review:
+        link_decision_to_subject must carry per-region disambiguation
+        so multi-region decisions don't flatten subjects across regions).
+        """
         await self._ensure_connected()
         await link_decision_to_subject(
-            self._client, decision_id, code_subject_id, confidence=confidence,
+            self._client, decision_id, code_subject_id,
+            region_id=region_id, confidence=confidence,
         )
+
+    async def get_region_metadata(self, region_id: str) -> dict | None:
+        """Phase 3 (#60) — load span + linked-identity kind for a region.
+
+        See ``ledger.queries.get_region_metadata``. Returns ``None`` if
+        the region doesn't exist.
+        """
+        await self._ensure_connected()
+        return await get_region_metadata(self._client, region_id)
 
     async def find_subject_identities_for_decision(
         self,
@@ -348,16 +366,31 @@ class SurrealDBLedgerAdapter:
         repo: str = "",
         content_hash: str = "",
     ) -> str:
-        """Upsert a ``code_region`` row, return its id.
+        """Always create a NEW ``code_region`` row, return its id.
 
-        Thin wrapper used by Phase 3's continuity-resolution sequence to
-        create the new region that ``update_binds_to_region`` redirects
-        the binding to. Existing direct callers (``bind_decision``,
-        ``ingest_payload``) call ``upsert_code_region`` from the queries
-        module directly.
+        Phase 3 (#60) continuity-resolution wrapper. PR #73 review
+        (CodeRabbit MAJOR ledger/adapter.py:365): the prior implementation
+        delegated to ``queries.upsert_code_region`` which keys on
+        ``(file_path, symbol_name)`` and silently reused IDs across
+        same-file moves. That broke the redirect contract — when a
+        symbol moved within the same file, ``update_binds_to_region``
+        couldn't tell old from new because both resolved to the same
+        region id and the old span was overwritten in place.
+
+        This wrapper now calls ``create_code_region`` (create-only) so
+        every continuity redirect targets a distinct new id.
+
+        Existing direct callers (``bind_decision``, ``ingest_payload``)
+        still call ``upsert_code_region`` from the queries module
+        directly when upsert semantics are appropriate; this adapter
+        method is the continuity-flow entry point only.
+
+        Method name retained for caller stability — the name describes
+        the role in the larger flow ("ensure a region exists for the
+        new bind target"), not the underlying CRUD verb.
         """
         await self._ensure_connected()
-        return await upsert_code_region(
+        return await create_code_region(
             self._client,
             file_path=file_path, symbol_name=symbol_name,
             start_line=start_line, end_line=end_line,

@@ -724,6 +724,40 @@ async def upsert_code_region(
     return str(rows[0].get("id", "")) if rows else ""
 
 
+async def create_code_region(
+    client: LedgerClient,
+    file_path: str,
+    symbol_name: str,
+    start_line: int,
+    end_line: int,
+    purpose: str = "",
+    repo: str = "",
+    content_hash: str = "",
+) -> str:
+    """Phase 3 (#60) — create a NEW code_region row, never upsert.
+
+    Unlike ``upsert_code_region`` (which keys on ``(file_path, symbol_name)``
+    and silently reuses the same row for same-file relocations or
+    line-shifts), this helper always creates a fresh region. Required
+    by the continuity-redirect path: when a symbol moves within the
+    same file, the old and new regions must have distinct IDs so
+    ``update_binds_to_region`` can redirect the binding without
+    overwriting the old span. PR #73 review, CodeRabbit MAJOR
+    ledger/adapter.py:365.
+    """
+    rows = await client.query(
+        "CREATE code_region SET "
+        "file_path=$fp, symbol_name=$s, start_line=$sl, end_line=$el, "
+        "purpose=$p, repo=$r, content_hash=$h",
+        {
+            "fp": file_path, "s": symbol_name,
+            "sl": start_line, "el": end_line,
+            "p": purpose, "r": repo, "h": content_hash,
+        },
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
 async def upsert_compliance_check(
     client: LedgerClient,
     decision_id: str,
@@ -1554,17 +1588,73 @@ async def link_decision_to_subject(
     client: LedgerClient,
     decision_id: str,
     code_subject_id: str,
+    region_id: str | None = None,
     confidence: float = 0.8,
 ) -> None:
-    """decision → about → code_subject. Idempotent."""
+    """decision → about → code_subject. Idempotent.
+
+    PR #73 review (CodeRabbit MAJOR ledger/queries.py:1567):
+    a decision can bind multiple regions; the ``about`` edge carries
+    the originating ``region_id`` so the per-region continuity pass
+    can disambiguate which stored identity belongs to a given drifted
+    region. ``region_id`` is optional for backward-compatibility with
+    callers that don't have a specific region in scope.
+    """
     did = _validated_record_id(decision_id, "decision")
     csid = _validated_record_id(code_subject_id, "code_subject")
-    await _execute_idempotent_edge(
-        client,
-        f"RELATE {did}->about->{csid} "
-        "SET confidence=$c, created_at=time::now()",
-        {"c": confidence},
+    if region_id:
+        rid = _validated_record_id(region_id, "code_region")
+        await _execute_idempotent_edge(
+            client,
+            f"RELATE {did}->about->{csid} "
+            "SET confidence=$c, region_id=$r, created_at=time::now()",
+            {"c": confidence, "r": rid},
+        )
+    else:
+        await _execute_idempotent_edge(
+            client,
+            f"RELATE {did}->about->{csid} "
+            "SET confidence=$c, created_at=time::now()",
+            {"c": confidence},
+        )
+
+
+async def get_region_metadata(
+    client: LedgerClient, region_id: str,
+) -> dict | None:
+    """Phase 3 (#60) — load span + linked-identity kind for a region.
+
+    Returns ``{file_path, symbol_name, start_line, end_line, identity_type}``
+    where ``identity_type`` falls back to ``"unknown"`` when no
+    ``subject_identity`` is reachable from this region's decision.
+
+    PR #73 review (CodeRabbit MAJOR handlers/link_commit.py:255):
+    callers were seeding ``DriftContext`` with ``kind="unknown"`` and
+    ``0,0`` line numbers, permanently dropping the kind signal from
+    the Phase 3 score and reporting ``ContinuityResolution.old_location``
+    as ``:0-0``. This helper closes both gaps with a single query.
+    """
+    rid = _validated_record_id(region_id, "code_region")
+    rows = await client.query(
+        f"""
+        SELECT
+            file_path, symbol_name, start_line, end_line,
+            (<-binds_to<-decision->about->code_subject<-has_identity
+                <-subject_identity.identity_type)[0] AS identity_type
+        FROM {rid}
+        LIMIT 1
+        """,
     )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "file_path": row.get("file_path", ""),
+        "symbol_name": row.get("symbol_name", ""),
+        "start_line": int(row.get("start_line") or 0),
+        "end_line": int(row.get("end_line") or 0),
+        "identity_type": row.get("identity_type") or "unknown",
+    }
 
 
 async def update_binds_to_region(
@@ -1577,29 +1667,69 @@ async def update_binds_to_region(
 ) -> None:
     """Phase 3 (#60): redirect a decision's binds_to from old to new region.
 
-    Deletes the old ``decision -binds_to-> old_region`` edge and creates a
-    fresh edge to ``new_region`` with ``provenance.method = "continuity_resolved"``.
-    The old binding's audit trail lives in the parallel ``identity_supersedes``
-    edge written by ``write_identity_supersedes``.
+    Atomically deletes the old ``decision -binds_to-> old_region`` edge
+    and creates a fresh edge to ``new_region`` with
+    ``provenance.method = "continuity_resolved"``. Wrapped in a single
+    SurrealQL transaction so a failure on the second statement leaves
+    the original binding intact rather than orphaning the decision
+    (PR #73 review, CodeRabbit MAJOR ledger/queries.py:1602).
+
+    The old binding's audit trail lives in the parallel
+    ``identity_supersedes`` edge written by ``write_identity_supersedes``.
     """
     did = _validated_record_id(decision_id, "decision")
     old_id = _validated_record_id(old_region_id, "code_region")
     new_id = _validated_record_id(new_region_id, "code_region")
-    await client.execute(
-        f"DELETE FROM binds_to WHERE in = {did} AND out = {old_id}",
-    )
     # Embed provenance as a SurrealQL object literal — passing it via
-    # the ``$p`` parameter silently drops nested dicts to ``{}`` under
-    # surrealdb-py 2.0.0. The literal value is internal-only (no caller
-    # input interpolated).
-    await _execute_idempotent_edge(
-        client,
-        f"RELATE {did}->binds_to->{new_id} "
-        "SET confidence=$c, "
-        "provenance={method: 'continuity_resolved'}, "
-        "created_at=time::now()",
-        {"c": confidence},
+    # ``$p`` silently drops nested dicts to ``{}`` under surrealdb-py
+    # 2.0.0. The literal value is internal-only (no caller input
+    # interpolated). The whole DELETE+RELATE pair is wrapped in a
+    # transaction so a partial migration cannot leave a decision
+    # ungrounded.
+    #
+    # Idempotency: a repeat call (same decision_id / old_region_id /
+    # new_region_id) finds the old edge already gone and the new edge
+    # already present. The RELATE then hits UNIQUE(in, out) and the
+    # transaction rolls back with "already contains". We catch that
+    # specific error and treat it as success — the desired end state
+    # is already in place.
+    # Idempotency: when a repeat call finds the old edge already gone
+    # and the new edge already present, the transaction's RELATE hits
+    # UNIQUE(in, out) and rolls back. Pre-flight by checking whether
+    # the desired end state is already in place; if so, no-op.
+    existing = await client.query(
+        f"SELECT id FROM binds_to WHERE in = {did} AND out = {new_id} LIMIT 1",
     )
+    if existing:
+        # Desired edge already exists. Ensure the old edge is gone
+        # (covers the partial-failure recovery case where a prior
+        # transaction succeeded the RELATE but failed the DELETE).
+        await client.execute(
+            f"DELETE FROM binds_to WHERE in = {did} AND out = {old_id}",
+        )
+        return
+    try:
+        await client.execute(
+            f"""
+            BEGIN TRANSACTION;
+            DELETE FROM binds_to WHERE in = {did} AND out = {old_id};
+            RELATE {did}->binds_to->{new_id}
+                SET confidence = $c,
+                    provenance = {{method: 'continuity_resolved'}},
+                    created_at = time::now();
+            COMMIT TRANSACTION;
+            """,
+            {"c": confidence},
+        )
+    except LedgerError as exc:
+        msg = str(exc)
+        # SurrealDB v2 wraps UNIQUE violations inside transactions as
+        # "failed transaction" without exposing the underlying cause.
+        # Treat both forms as idempotent if we got past the pre-flight
+        # without finding the new edge but the transaction still
+        # collided (race condition).
+        if "already contains" not in msg and "failed transaction" not in msg:
+            raise
 
 
 async def write_identity_supersedes(

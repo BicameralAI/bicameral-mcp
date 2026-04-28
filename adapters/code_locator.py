@@ -123,16 +123,25 @@ class RealCodeLocatorAdapter:
     ) -> int | None:
         """Look up the symbol_id whose span contains the given line range.
 
-        Uses ``SymbolDB.lookup_by_file`` to fetch all symbols in the file,
-        then picks the smallest enclosing one (most specific match). Returns
-        ``None`` if no symbol's span covers the requested range — caller
-        treats this as "no neighbors known" and the matcher's Jaccard
-        signal contributes zero.
-        """
-        from code_locator.indexing.sqlite_store import SymbolDB
+        Uses the already-initialized ``self._db`` (set up in
+        ``_ensure_initialized``) via ``lookup_by_file``, then picks the
+        smallest enclosing symbol (most specific match). Returns
+        ``None`` if no symbol's span covers the requested range —
+        caller treats this as "no neighbors known" and the matcher's
+        Jaccard signal contributes zero.
 
-        db = SymbolDB(self._validate_tool.config.sqlite_db_path)
-        rows = db.lookup_by_file(file_path)
+        PR #73 review history:
+        - Earlier draft opened a fresh ``SymbolDB(...)`` per call,
+          leaking SQLite handles (CodeRabbit MAJOR adapters/code_locator.py:136).
+        - It also referenced ``config.sqlite_db_path``, which doesn't
+          exist on ``CodeLocatorConfig`` — the real attribute is
+          ``sqlite_db``. The ``AttributeError`` was silently swallowed
+          by ``neighbors_for``'s broad ``except``, so the method
+          always returned ``()`` and the continuity Jaccard signal
+          was permanently zero in production (Devin CRITICAL).
+        Both fixed by reusing ``self._db``.
+        """
+        rows = self._db.lookup_by_file(file_path)
         best_id: int | None = None
         best_span: int = 1 << 30
         for r in rows:

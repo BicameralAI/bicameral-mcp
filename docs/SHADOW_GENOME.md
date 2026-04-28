@@ -126,8 +126,8 @@ intentional* — same checkbox, different scale (data flow rather than
 module flow).
 
 ### Remediation Attempted
-Plan to be edited per AUDIT_REPORT.md required remediations #1, #2,
-#3: extend `evaluate_continuity_for_drift` description with the
+Plan to be edited per AUDIT_REPORT.md required remediations `#1`, `#2`,
+and `#3`: extend `evaluate_continuity_for_drift` description with the
 7-step sequence (compute_identity → upsert_code_region →
 upsert_subject_identity → write_subject_version → relate_has_version
 → write_identity_supersedes → update_binds_to_region); add the
