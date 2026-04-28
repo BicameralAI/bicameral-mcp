@@ -1049,6 +1049,12 @@ def cli_main(argv: list[str] | None = None) -> int:
     parser = ArgumentParser(description="Bicameral MCP server")
     subparsers = parser.add_subparsers(dest="command")
 
+    # reset subcommand
+    subparsers.add_parser(
+        "reset",
+        help="interactive ledger reset — wipes state with confirmation",
+    )
+
     # setup subcommand
     setup_parser = subparsers.add_parser(
         "setup",
@@ -1078,6 +1084,10 @@ def cli_main(argv: list[str] | None = None) -> int:
         version=f"%(prog)s {SERVER_VERSION}",
     )
     args = parser.parse_args(argv)
+
+    if args.command == "reset":
+        from setup_wizard import run_reset_wizard
+        return run_reset_wizard()
 
     if args.command == "setup":
         from setup_wizard import run_setup

@@ -731,3 +731,96 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     print()
 
     return 0
+
+
+def run_reset_wizard() -> int:
+    """Interactive CLI wizard for bicameral.reset.
+
+    Asks the user which wipe mode they want, shows a dry-run summary,
+    then asks for explicit confirmation before wiping.
+    """
+    import asyncio
+    import questionary
+
+    print()
+    print("  ┌─────────────────────────────────────────┐")
+    print("  │  Bicameral MCP — Reset                   │")
+    print("  └─────────────────────────────────────────┘")
+    print()
+
+    # Step 1: choose mode
+    wipe_mode = questionary.select(
+        "What do you want to reset?",
+        choices=[
+            questionary.Choice(
+                "Ledger only  — wipe materialized DB rows, keep config and event files (safe default)",
+                value="ledger",
+            ),
+            questionary.Choice(
+                "Full reset   — delete the entire .bicameral/ directory including config and event history (nuclear)",
+                value="full",
+            ),
+        ],
+    ).ask()
+
+    if wipe_mode is None:
+        print("  Cancelled.")
+        return 0
+
+    # Step 2: dry-run
+    import os
+    from context import BicameralContext
+    from handlers.reset import handle_reset
+
+    repo_path = os.environ.get("REPO_PATH", ".")
+    os.environ["REPO_PATH"] = repo_path
+    ctx = BicameralContext.from_env()
+
+    print()
+    print("  Running dry-run…")
+    dry = asyncio.run(handle_reset(ctx, confirm=False, wipe_mode=wipe_mode))
+
+    print()
+    print(f"  Wipe mode    : {dry.wipe_mode}")
+    print(f"  Cursors      : {dry.cursors_before} source_cursor row(s) would be wiped")
+    if dry.wipe_mode == "full" and dry.bicameral_dir:
+        print(f"  Directory    : {dry.bicameral_dir}")
+        print()
+        print("  ⚠️  WARNING: this will delete the entire .bicameral/ directory,")
+        print("     including config.yaml and all team event history. There is no undo.")
+
+    if dry.replay_plan:
+        print()
+        print("  Replay plan (re-ingest these after reset):")
+        for entry in dry.replay_plan:
+            print(f"    {entry.source_type}  {entry.source_scope}  →  {entry.last_source_ref}")
+    else:
+        print("  Replay plan  : empty — nothing to re-ingest")
+
+    # Step 3: confirm
+    print()
+    confirm_label = "yes, full reset" if wipe_mode == "full" else "yes, reset"
+    confirmed = questionary.confirm(
+        f"Proceed? (type '{confirm_label}' to confirm)",
+        default=False,
+    ).ask()
+
+    if not confirmed:
+        print()
+        print("  Cancelled — nothing was wiped.")
+        return 0
+
+    # Step 4: wipe
+    print()
+    print("  Wiping…")
+    result = asyncio.run(handle_reset(ctx, confirm=True, wipe_mode=wipe_mode))
+
+    if result.wiped:
+        print(f"  Done. {result.cursors_before} cursor(s) wiped.")
+        if result.replay_plan:
+            print("  Re-ingest the sources listed above to restore the ledger.")
+    else:
+        print("  Wipe did not complete — check the error above.")
+
+    print()
+    return 0
