@@ -3,6 +3,100 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.11.0 — CodeGenome Phase 1+2 (#59) — adapter boundary + identity records — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Foundation PR for the three-phase CodeGenome rollout (issues #59 / #60 / #61).
+Adds a stable adapter boundary, deterministic identity computation, and
+side-effect-only identity-record writes at bind time. Default behavior is
+**unchanged** unless callers opt in via two environment variables.
+
+### Added
+
+- **CodeGenome adapter package** (`codegenome/`) — abstract
+  `CodeGenomeAdapter` ABC with four methods (`resolve_subjects`,
+  `compute_identity`, `evaluate_drift`, `build_evidence_packet`); only
+  `compute_identity` ships in this release. Concrete
+  `DeterministicCodeGenomeAdapter` implements the v1 location-based
+  identity (no LLM, no embeddings) reusing the existing tree-sitter +
+  `ledger.status.hash_lines` stack.
+- **Pydantic boundary contracts** (`codegenome/contracts.py`):
+  `SubjectCandidateModel`, `EvidenceRecordModel`, `EvidencePacketModel`.
+- **Confidence helpers** (`codegenome/confidence.py`): `noisy_or` and
+  `weighted_average` plus `DEFAULT_CONFIDENCE_WEIGHTS` constants
+  consumed by future phase-3/phase-4 callers.
+- **Feature flags** (`codegenome/config.py`,
+  `BicameralContext.codegenome_config`) — every flag defaults `False`.
+  New environment variables, all opt-in:
+  - `BICAMERAL_CODEGENOME_ENABLED`
+  - `BICAMERAL_CODEGENOME_WRITE_IDENTITY_RECORDS`
+  - `BICAMERAL_CODEGENOME_ENHANCE_DRIFT` *(reserved for #60)*
+  - `BICAMERAL_CODEGENOME_ENHANCE_SEARCH` *(reserved)*
+  - `BICAMERAL_CODEGENOME_EXPOSE_EVIDENCE_PACKETS` *(reserved)*
+  - `BICAMERAL_CODEGENOME_CHAMBER_EVALUATIONS` *(reserved)*
+  - `BICAMERAL_CODEGENOME_BENCHMARK_MODE` *(reserved)*
+- **Adapter factory** (`adapters/codegenome.py::get_codegenome()`),
+  parallel to `get_ledger`, `get_code_locator`, `get_drift_analyzer`.
+- **SurrealDB schema v10 → v11 migration** (`_migrate_v10_to_v11`,
+  additive only):
+  - Tables: `code_subject`, `subject_identity`, `subject_version`.
+  - Relations: `has_identity` (subject→identity), `has_version`
+    (subject→version), `about` (decision→subject).
+  - Migration writes nothing to the new tables; identity records are
+    only created when the flags above are set.
+- **Bind-time identity write** (`handlers/bind.py` +
+  `codegenome/bind_service.py::write_codegenome_identity`) — a
+  side-effect that runs after `ledger.bind_decision()` succeeds when
+  `codegenome.identity_writes_active()` is `True`. Failure inside the
+  identity write is caught and logged; the `BindResponse` /
+  `BindResult` shape is unchanged. Identity records are queryable via
+  `ledger.find_subject_identities_for_decision(decision_id)`.
+- **L1 exemption guard** (`handlers/bind.py` +
+  `ledger.queries.get_decision_level`) — only decisions explicitly
+  tagged `decision_level = "L2"` enter the codegenome identity graph.
+  L1 decisions (behavioral commitments evaluated against evidence, not
+  code regions) are intentionally ungrounded at the identity layer; L3
+  is never tracked; `NULL` (unclassified) is treated as L3 by the
+  tolerant policy — preserves backward-compat for existing ingest
+  payloads, classification can be added later without re-binding. Per
+  the "L1/L2: Claim/Identity" spec-governance proposal §4.2.
+
+### Identity model (deterministic_location_v1)
+
+```text
+structural_signature = f"{file_path}:{start_line}:{end_line}"
+signature_hash       = blake2b(structural_signature, digest_size=32)
+address              = f"cg:{signature_hash}"
+content_hash         = ledger.status.hash_lines(body, start, end)
+                       (sha256 with whitespace normalization, identical
+                        to code_region.content_hash by construction)
+confidence           = 0.65
+identity_type        = "deterministic_location_v1"
+model_version        = "deterministic-location-v1"
+```
+
+`content_hash` reuses the existing ledger hash function rather than the
+literal `blake2b(body)` from the issue spec so that
+`subject_identity.content_hash` and `code_region.content_hash` compare
+byte-for-byte equal at bind time — required by the issue's exit criterion.
+
+### Migration notes
+
+- Schema migrates automatically on next connect via the existing migration
+  runner. Migration is **additive** (no existing tables touched). No data
+  loss; rollback to v10 requires a manual `bicameral_reset(confirm=True)`.
+- `SCHEMA_COMPATIBILITY[11]` ships pinned to `"0.11.0"` as a sourced
+  placeholder. Release-engineering pins the final value at PR merge.
+
+### Tests
+
+- 49 codegenome unit + integration tests, all passing:
+  `tests/test_codegenome_{adapter,confidence,config,bind_integration}.py`.
+- Zero regressions against the existing test suite.
+
+---
+
+---
+
 ## v0.10.8 — ephemeral/authoritative V2
 
 ### Fixed — drift detection on feature branches

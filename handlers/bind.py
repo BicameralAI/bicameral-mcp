@@ -116,6 +116,60 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
         region_id = bind_result["region_id"]
         content_hash = bind_result["content_hash"]
 
+        # CodeGenome identity write (#59) — side-effect only, off by
+        # default. Failure here must not change the bind response
+        # contract; caller behavior is identical whether the flag is on
+        # or off.
+        #
+        # L1 exemption (Jin's spec-governance proposal §4.2): only
+        # decisions explicitly tagged ``"L2"`` enter the codegenome
+        # identity graph. ``"L1"`` decisions are intentionally
+        # ungrounded at the identity layer (PMs evaluate them via
+        # claims/evidence, not code regions). ``"L3"`` is never
+        # tracked. ``None`` (unclassified) is treated as L3 by the
+        # tolerant policy — the row is safe by default; classification
+        # can be added later without re-binding.
+        cg_config = getattr(ctx, "codegenome_config", None)
+        cg_adapter = getattr(ctx, "codegenome", None)
+        if (
+            cg_config is not None
+            and cg_adapter is not None
+            and getattr(cg_config, "identity_writes_active", lambda: False)()
+        ):
+            try:
+                level = await ledger.get_decision_level(decision_id)
+            except Exception as exc:
+                logger.warning(
+                    "[bind] decision_level lookup failed for %s: %s — skipping codegenome write",
+                    decision_id, exc,
+                )
+                level = None  # treat lookup failure as "skip" — safer than over-writing
+            if level == "L2":
+                from codegenome.bind_service import write_codegenome_identity
+                try:
+                    await write_codegenome_identity(
+                        ledger=ledger,
+                        codegenome=cg_adapter,
+                        decision_id=decision_id,
+                        file_path=file_path,
+                        symbol_name=symbol_name,
+                        symbol_kind="unknown",
+                        start_line=int(start_line),
+                        end_line=int(end_line),
+                        repo_ref=authoritative_sha,
+                        code_region_content_hash=content_hash,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[bind] codegenome identity write failed for %s: %s",
+                        decision_id, exc,
+                    )
+            else:
+                logger.debug(
+                    "[bind] L1 exemption — skipping codegenome write for %s (decision_level=%r)",
+                    decision_id, level,
+                )
+
         pending_check = None
         if content_hash:
             try:

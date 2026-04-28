@@ -61,6 +61,14 @@ class BicameralContext:
     ledger: object
     code_graph: object
     drift_analyzer: object
+    # CodeGenome adapter + config (#59). ``codegenome`` is a
+    # ``CodeGenomeAdapter`` instance from ``adapters/codegenome.py``;
+    # ``codegenome_config`` is a ``CodeGenomeConfig`` carrying the feature
+    # flags. Both are populated by ``from_env()``; tests construct them
+    # explicitly. Defaults are ``None`` so older test contexts that
+    # haven't been updated keep working — handlers null-check both.
+    codegenome: object | None = None
+    codegenome_config: object | None = None
     authoritative_ref: str = "main"
     authoritative_sha: str = ""
     # v0.4.10: guided mode dials up the intensity of ``action_hints`` emitted
@@ -83,8 +91,10 @@ class BicameralContext:
     @classmethod
     def from_env(cls) -> BicameralContext:
         from adapters.code_locator import get_code_locator
+        from adapters.codegenome import get_codegenome
         from adapters.ledger import get_drift_analyzer, get_ledger
         from code_locator_runtime import detect_authoritative_ref, get_repo_index_state, resolve_ref_sha
+        from codegenome.config import CodeGenomeConfig
 
         repo_path = os.getenv("REPO_PATH", ".")
         state = get_repo_index_state(repo_path)
@@ -98,6 +108,8 @@ class BicameralContext:
             ledger=get_ledger(),
             code_graph=get_code_locator(),
             drift_analyzer=get_drift_analyzer(),
+            codegenome=get_codegenome(),
+            codegenome_config=CodeGenomeConfig.from_env(),
             authoritative_ref=authoritative_ref,
             authoritative_sha=authoritative_sha,
             guided_mode=guided_mode,

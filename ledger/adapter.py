@@ -17,7 +17,9 @@ from .client import LedgerClient
 from .queries import (
     decision_exists,
     delete_binds_to_edge,
+    find_subject_identities_for_decision,
     get_all_decisions,
+    get_decision_level,
     get_compliance_verdict,
     get_decisions_for_file,
     get_decisions_for_files,
@@ -28,20 +30,24 @@ from .queries import (
     get_sync_state,
     get_undocumented_symbols,
     has_prior_compliant_verdict,
+    link_decision_to_subject,
     lookup_vocab_cache,
     project_decision_status,
     promote_ephemeral_verdict,
     region_exists,
     relate_binds_to,
+    relate_has_identity,
     relate_locates,
     relate_yields,
     search_by_bm25,
     update_decision_status,
     update_region_hash,
     upsert_code_region,
+    upsert_code_subject,
     upsert_decision,
     upsert_input_span,
     upsert_source_cursor,
+    upsert_subject_identity,
     upsert_symbol,
     upsert_sync_state,
     upsert_vocab_cache,
@@ -206,6 +212,12 @@ class SurrealDBLedgerAdapter:
         rows = await self._client.query(f"SELECT description FROM {decision_id} LIMIT 1")
         return str((rows or [{}])[0].get("description", "")) if rows else ""
 
+    async def get_decision_level(self, decision_id: str) -> str | None:
+        """Return the decision's ``decision_level`` (``"L1"``/``"L2"``/``"L3"``)
+        or ``None`` if unset. Used by the bind handler's L1 exemption."""
+        await self._ensure_connected()
+        return await get_decision_level(self._client, decision_id)
+
     async def bind_decision(
         self,
         decision_id: str,
@@ -247,6 +259,72 @@ class SurrealDBLedgerAdapter:
         await update_decision_status(self._client, decision_id, "pending")
 
         return {"region_id": region_id, "content_hash": content_hash}
+
+    # ── CodeGenome (v11, Phase 1+2 / #59) ─────────────────────────────
+    # Thin wrappers around ledger.queries helpers. Used only when
+    # codegenome.write_identity_records is enabled at the handler boundary.
+    # The ledger module duck-types ``SubjectIdentity`` from codegenome to
+    # keep the import direction one-way (codegenome → ledger).
+
+    async def upsert_code_subject(
+        self,
+        kind: str,
+        canonical_name: str,
+        current_confidence: float,
+        repo_ref: str | None = None,
+    ) -> str:
+        await self._ensure_connected()
+        return await upsert_code_subject(
+            self._client,
+            kind=kind,
+            canonical_name=canonical_name,
+            current_confidence=current_confidence,
+            repo_ref=repo_ref,
+        )
+
+    async def upsert_subject_identity(self, identity) -> str:
+        """Persist a ``codegenome.adapter.SubjectIdentity`` and return its id."""
+        await self._ensure_connected()
+        return await upsert_subject_identity(
+            self._client,
+            address=identity.address,
+            identity_type=identity.identity_type,
+            structural_signature=identity.structural_signature,
+            behavioral_signature=identity.behavioral_signature,
+            signature_hash=identity.signature_hash,
+            content_hash=identity.content_hash,
+            confidence=identity.confidence,
+            model_version=identity.model_version,
+        )
+
+    async def relate_has_identity(
+        self,
+        code_subject_id: str,
+        subject_identity_id: str,
+        confidence: float = 0.9,
+    ) -> None:
+        await self._ensure_connected()
+        await relate_has_identity(
+            self._client, code_subject_id, subject_identity_id, confidence=confidence,
+        )
+
+    async def link_decision_to_subject(
+        self,
+        decision_id: str,
+        code_subject_id: str,
+        confidence: float = 0.8,
+    ) -> None:
+        await self._ensure_connected()
+        await link_decision_to_subject(
+            self._client, decision_id, code_subject_id, confidence=confidence,
+        )
+
+    async def find_subject_identities_for_decision(
+        self,
+        decision_id: str,
+    ) -> list[dict]:
+        await self._ensure_connected()
+        return await find_subject_identities_for_decision(self._client, decision_id)
 
     async def lookup_vocab_cache(
         self,

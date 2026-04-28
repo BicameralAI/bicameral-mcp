@@ -799,6 +799,25 @@ async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
     return bool(rows)
 
 
+async def get_decision_level(client: LedgerClient, decision_id: str) -> str | None:
+    """Return ``decision.decision_level`` (one of ``"L1"``, ``"L2"``, ``"L3"``)
+    or ``None`` if the row does not exist or the field is unset.
+
+    Phase 1+2 (#59) callers use this to enforce the L1 exemption: only
+    decisions explicitly tagged ``"L2"`` should enter the codegenome
+    identity graph. ``None``-valued (unclassified) and ``"L1"`` /
+    ``"L3"`` rows are intentionally ungrounded at the identity layer
+    and produce no ``code_subject`` / ``subject_identity`` writes.
+    """
+    rows = await client.query(
+        f"SELECT decision_level FROM {decision_id} LIMIT 1",
+    )
+    if not rows:
+        return None
+    val = rows[0].get("decision_level")
+    return str(val) if val else None
+
+
 async def region_exists(client: LedgerClient, region_id: str) -> bool:
     """Return True iff a code_region row exists with the given record id."""
     rows = await client.query(f"SELECT id FROM {region_id} LIMIT 1")
@@ -1362,4 +1381,221 @@ async def get_context_for_ready_decisions(
         }
         for r in (rows or [])
         if r.get("decision_id") and int(r.get("confirmed_ctx_count") or 0) > 0
+    ]
+
+
+# ── CodeGenome queries (v11, Phase 1+2 / #59) ─────────────────────────────
+#
+# All writes are gated by ``codegenome.write_identity_records=True`` at the
+# handler boundary. These functions never run unless the flag is on, so
+# they cannot regress existing behavior when disabled.
+#
+# Record-ID validation: callers may receive ``decision_id`` and other
+# IDs from MCP handler input or from upsert returns. The helpers below
+# build SurrealQL via f-string interpolation (the codebase's existing
+# pattern), so any ID that reaches a RELATE/SELECT must match the
+# canonical ``table:id`` shape. ``_validated_record_id`` enforces that
+# shape and raises ``LedgerError`` on mismatch — a single choke point
+# per call instead of trusting upstream callers.
+
+import re as _re
+
+_RECORD_ID_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z0-9_\-]+$")
+
+
+def _validated_record_id(value: str, expected_table: str | None = None) -> str:
+    """Return ``value`` if it is a well-formed ``table:id`` SurrealDB record id.
+
+    Raises ``LedgerError`` if empty, malformed, or (when
+    ``expected_table`` is given) targets a different table.
+    """
+    v = str(value or "")
+    if not _RECORD_ID_RE.fullmatch(v):
+        raise LedgerError(f"Invalid record id: {v!r}")
+    if expected_table and not v.startswith(f"{expected_table}:"):
+        raise LedgerError(f"Expected {expected_table} id, got: {v!r}")
+    return v
+
+
+async def upsert_code_subject(
+    client: LedgerClient,
+    kind: str,
+    canonical_name: str,
+    current_confidence: float,
+    repo_ref: str | None = None,
+) -> str:
+    """Create or update a code_subject node, returning the record ID.
+
+    Keyed on (kind, canonical_name) UNIQUE — repeated calls for the same
+    logical subject return the same id and refresh ``current_confidence``
+    and ``updated_at``.
+    """
+    rows = await client.query(
+        """
+        UPSERT code_subject SET
+            kind               = $kind,
+            canonical_name     = $name,
+            repo_ref           = $repo_ref,
+            current_confidence = $conf,
+            updated_at         = time::now()
+        WHERE kind = $kind AND canonical_name = $name
+        """,
+        {
+            "kind": kind, "name": canonical_name,
+            "repo_ref": repo_ref, "conf": current_confidence,
+        },
+    )
+    if rows:
+        return str(rows[0].get("id", ""))
+    rows = await client.query(
+        "CREATE code_subject SET kind=$kind, canonical_name=$name, "
+        "repo_ref=$repo_ref, current_confidence=$conf",
+        {
+            "kind": kind, "name": canonical_name,
+            "repo_ref": repo_ref, "conf": current_confidence,
+        },
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
+async def upsert_subject_identity(
+    client: LedgerClient,
+    *,
+    address: str,
+    identity_type: str,
+    structural_signature: str | None,
+    behavioral_signature: str | None,
+    signature_hash: str | None,
+    content_hash: str | None,
+    confidence: float,
+    model_version: str,
+) -> str:
+    """Create-or-fetch a subject_identity row by ``address`` (UNIQUE).
+
+    Address is content-addressable (blake2b of structural signature for
+    deterministic_location_v1) so duplicate writes for the same logical
+    identity collapse to a single row. Returns the record id.
+
+    Race-safe under concurrent writers: if two callers race past the
+    SELECT and both attempt CREATE, the loser hits the UNIQUE(address)
+    index and SurrealDB returns "already contains"; we re-SELECT and
+    return the winning row's id rather than propagating the conflict.
+    """
+    rows = await client.query(
+        "SELECT id FROM subject_identity WHERE address = $a LIMIT 1",
+        {"a": address},
+    )
+    if rows:
+        return str(rows[0].get("id", ""))
+
+    create_args = {
+        "address": address,
+        "identity_type": identity_type,
+        "structural_signature": structural_signature,
+        "behavioral_signature": behavioral_signature,
+        "signature_hash": signature_hash,
+        "content_hash": content_hash,
+        "confidence": confidence,
+        "model_version": model_version,
+    }
+    try:
+        rows = await client.query(
+            """
+            CREATE subject_identity SET
+                address              = $address,
+                identity_type        = $identity_type,
+                structural_signature = $structural_signature,
+                behavioral_signature = $behavioral_signature,
+                signature_hash       = $signature_hash,
+                content_hash         = $content_hash,
+                confidence           = $confidence,
+                model_version        = $model_version
+            """,
+            create_args,
+        )
+        return str(rows[0].get("id", "")) if rows else ""
+    except LedgerError as exc:
+        if "already contains" not in str(exc):
+            raise
+        rows = await client.query(
+            "SELECT id FROM subject_identity WHERE address = $a LIMIT 1",
+            {"a": address},
+        )
+        return str(rows[0].get("id", "")) if rows else ""
+
+
+async def relate_has_identity(
+    client: LedgerClient,
+    code_subject_id: str,
+    subject_identity_id: str,
+    confidence: float = 0.9,
+) -> None:
+    """code_subject → has_identity → subject_identity. Idempotent."""
+    csid = _validated_record_id(code_subject_id, "code_subject")
+    siid = _validated_record_id(subject_identity_id, "subject_identity")
+    await _execute_idempotent_edge(
+        client,
+        f"RELATE {csid}->has_identity->{siid} "
+        "SET confidence=$c, created_at=time::now()",
+        {"c": confidence},
+    )
+
+
+async def link_decision_to_subject(
+    client: LedgerClient,
+    decision_id: str,
+    code_subject_id: str,
+    confidence: float = 0.8,
+) -> None:
+    """decision → about → code_subject. Idempotent."""
+    did = _validated_record_id(decision_id, "decision")
+    csid = _validated_record_id(code_subject_id, "code_subject")
+    await _execute_idempotent_edge(
+        client,
+        f"RELATE {did}->about->{csid} "
+        "SET confidence=$c, created_at=time::now()",
+        {"c": confidence},
+    )
+
+
+async def find_subject_identities_for_decision(
+    client: LedgerClient,
+    decision_id: str,
+) -> list[dict]:
+    """Two-hop walk: decision → about → code_subject → has_identity → subject_identity.
+
+    Returns a list of dicts with the identity fields needed by Phase 3
+    continuity matching. Empty list if the decision has no linked subjects
+    (i.e. identity writes were disabled at bind).
+    """
+    did = _validated_record_id(decision_id, "decision")
+    rows = await client.query(
+        f"""
+        SELECT
+            type::string(id)     AS identity_id,
+            address,
+            identity_type,
+            structural_signature,
+            behavioral_signature,
+            signature_hash,
+            content_hash,
+            confidence,
+            model_version
+        FROM {did}->about->code_subject->has_identity->subject_identity
+        """,
+    )
+    return [
+        {
+            "identity_id": str(r.get("identity_id", "")),
+            "address": str(r.get("address", "")),
+            "identity_type": str(r.get("identity_type", "")),
+            "structural_signature": r.get("structural_signature"),
+            "behavioral_signature": r.get("behavioral_signature"),
+            "signature_hash": r.get("signature_hash"),
+            "content_hash": r.get("content_hash"),
+            "confidence": float(r.get("confidence") or 0.0),
+            "model_version": str(r.get("model_version", "")),
+        }
+        for r in (rows or [])
+        if r.get("identity_id")
     ]

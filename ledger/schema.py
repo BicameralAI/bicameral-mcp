@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -38,6 +38,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     7: "0.8.0",
     8: "0.9.0",
     9: "0.9.3",
+    11: "0.11.0",   # placeholder; release-eng pins final value at PR merge
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -219,6 +220,58 @@ _TABLES = [
     "DEFINE FIELD session_id    ON graph_proposal TYPE string DEFAULT ''",
     "DEFINE FIELD created_at    ON graph_proposal TYPE datetime DEFAULT time::now()",
     "DEFINE FIELD reviewed_at   ON graph_proposal TYPE option<datetime> DEFAULT NONE",
+
+    # ── CodeGenome tier (v11, additive — Phase 1+2 / #59) ───────────────
+    # All writes are gated by codegenome.write_identity_records=True at the
+    # handler boundary. Tables exist unconditionally so toggling the flag
+    # mid-deployment does not require a migration.
+
+    # code_subject — a conceptual code target (function, class, module…)
+    # that can survive movement across files. Distinct from `symbol`,
+    # which is keyed on name+kind at one point in time.
+    "DEFINE TABLE code_subject SCHEMAFULL",
+    "DEFINE FIELD kind               ON code_subject TYPE string",
+    "DEFINE FIELD canonical_name     ON code_subject TYPE string",
+    "DEFINE FIELD repo_ref           ON code_subject TYPE option<string>",
+    "DEFINE FIELD current_confidence ON code_subject TYPE float "
+    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD created_at         ON code_subject TYPE datetime DEFAULT time::now()",
+    "DEFINE FIELD updated_at         ON code_subject TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_code_subject_canonical "
+    "ON code_subject FIELDS kind, canonical_name UNIQUE",
+
+    # subject_identity — durable fingerprint for one observation of a
+    # code_subject. Phase 3 (#60) will add a supersedes edge between
+    # identities; not defined yet.
+    "DEFINE TABLE subject_identity SCHEMAFULL",
+    "DEFINE FIELD address              ON subject_identity TYPE string",
+    "DEFINE FIELD identity_type        ON subject_identity TYPE string",
+    "DEFINE FIELD structural_signature ON subject_identity TYPE option<string>",
+    "DEFINE FIELD behavioral_signature ON subject_identity TYPE option<string>",
+    "DEFINE FIELD signature_hash       ON subject_identity TYPE option<string>",
+    "DEFINE FIELD content_hash         ON subject_identity TYPE option<string>",
+    "DEFINE FIELD confidence           ON subject_identity TYPE float "
+    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD model_version        ON subject_identity TYPE string",
+    "DEFINE FIELD created_at           ON subject_identity TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_subject_identity_address ON subject_identity FIELDS address UNIQUE",
+
+    # subject_version — concrete location/symbol observation at one
+    # repo_ref. Phase 3 (#60) will write versions when a continuity match
+    # resolves a relocation; Phase 1+2 only defines the table (foundation
+    # so the schema migration fires once, not twice).
+    "DEFINE TABLE subject_version SCHEMAFULL",
+    "DEFINE FIELD repo_ref       ON subject_version TYPE string",
+    "DEFINE FIELD file_path      ON subject_version TYPE string",
+    "DEFINE FIELD start_line     ON subject_version TYPE int",
+    "DEFINE FIELD end_line       ON subject_version TYPE int",
+    "DEFINE FIELD symbol_name    ON subject_version TYPE option<string>",
+    "DEFINE FIELD symbol_kind    ON subject_version TYPE option<string>",
+    "DEFINE FIELD content_hash   ON subject_version TYPE option<string>",
+    "DEFINE FIELD signature_hash ON subject_version TYPE option<string>",
+    "DEFINE FIELD created_at     ON subject_version TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_subject_version_loc "
+    "ON subject_version FIELDS repo_ref, file_path, start_line, end_line",
 ]
 
 # Edge tables — all with UNIQUE(in, out) for team-mode replay idempotency
@@ -273,6 +326,30 @@ _EDGES = [
     "DEFINE FIELD edge_type  ON depends_on TYPE string",
     "DEFINE FIELD created_at ON depends_on TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_depends_on_unique ON depends_on FIELDS in, out, edge_type UNIQUE",
+
+    # ── CodeGenome edges (v11, additive — Phase 1+2 / #59) ──────────────
+
+    # code_subject → has_identity → subject_identity
+    "DEFINE TABLE has_identity SCHEMAFULL TYPE RELATION IN code_subject OUT subject_identity",
+    "DEFINE FIELD confidence ON has_identity TYPE float "
+    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD created_at ON has_identity TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_has_identity_unique ON has_identity FIELDS in, out UNIQUE",
+
+    # code_subject → has_version → subject_version
+    "DEFINE TABLE has_version SCHEMAFULL TYPE RELATION IN code_subject OUT subject_version",
+    "DEFINE FIELD confidence ON has_version TYPE float "
+    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD created_at ON has_version TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_has_version_unique ON has_version FIELDS in, out UNIQUE",
+
+    # decision → about → code_subject (used by find_subject_identities_for_decision
+    # to walk decision → subject → identity in two hops)
+    "DEFINE TABLE about SCHEMAFULL TYPE RELATION IN decision OUT code_subject",
+    "DEFINE FIELD confidence ON about TYPE float "
+    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD created_at ON about TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_about_unique ON about FIELDS in, out UNIQUE",
 ]
 
 # Schema version tracking
@@ -625,6 +702,79 @@ async def _migrate_v9_to_v10(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v10_to_v11(client: LedgerClient) -> None:
+    """v10 → v11: Add CodeGenome identity tables and edges (#59).
+
+    Additive only — no data loss. Defines new tables (``code_subject``,
+    ``subject_identity``, ``subject_version``) and edges (``has_identity``,
+    ``has_version``, ``about``). Writes to these tables are gated by the
+    ``codegenome.write_identity_records`` feature flag at the handler
+    boundary, so toggling the flag does not require another migration.
+    """
+    new_stmts = [
+        # Tables
+        "DEFINE TABLE code_subject SCHEMAFULL",
+        "DEFINE FIELD kind               ON code_subject TYPE string",
+        "DEFINE FIELD canonical_name     ON code_subject TYPE string",
+        "DEFINE FIELD repo_ref           ON code_subject TYPE option<string>",
+        "DEFINE FIELD current_confidence ON code_subject TYPE float "
+        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD created_at         ON code_subject TYPE datetime DEFAULT time::now()",
+        "DEFINE FIELD updated_at         ON code_subject TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_code_subject_canonical "
+        "ON code_subject FIELDS kind, canonical_name UNIQUE",
+
+        "DEFINE TABLE subject_identity SCHEMAFULL",
+        "DEFINE FIELD address              ON subject_identity TYPE string",
+        "DEFINE FIELD identity_type        ON subject_identity TYPE string",
+        "DEFINE FIELD structural_signature ON subject_identity TYPE option<string>",
+        "DEFINE FIELD behavioral_signature ON subject_identity TYPE option<string>",
+        "DEFINE FIELD signature_hash       ON subject_identity TYPE option<string>",
+        "DEFINE FIELD content_hash         ON subject_identity TYPE option<string>",
+        "DEFINE FIELD confidence           ON subject_identity TYPE float "
+        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD model_version        ON subject_identity TYPE string",
+        "DEFINE FIELD created_at           ON subject_identity TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_subject_identity_address "
+        "ON subject_identity FIELDS address UNIQUE",
+
+        "DEFINE TABLE subject_version SCHEMAFULL",
+        "DEFINE FIELD repo_ref       ON subject_version TYPE string",
+        "DEFINE FIELD file_path      ON subject_version TYPE string",
+        "DEFINE FIELD start_line     ON subject_version TYPE int",
+        "DEFINE FIELD end_line       ON subject_version TYPE int",
+        "DEFINE FIELD symbol_name    ON subject_version TYPE option<string>",
+        "DEFINE FIELD symbol_kind    ON subject_version TYPE option<string>",
+        "DEFINE FIELD content_hash   ON subject_version TYPE option<string>",
+        "DEFINE FIELD signature_hash ON subject_version TYPE option<string>",
+        "DEFINE FIELD created_at     ON subject_version TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_subject_version_loc "
+        "ON subject_version FIELDS repo_ref, file_path, start_line, end_line",
+
+        # Edges
+        "DEFINE TABLE has_identity SCHEMAFULL TYPE RELATION IN code_subject OUT subject_identity",
+        "DEFINE FIELD confidence ON has_identity TYPE float "
+        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD created_at ON has_identity TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_has_identity_unique ON has_identity FIELDS in, out UNIQUE",
+
+        "DEFINE TABLE has_version SCHEMAFULL TYPE RELATION IN code_subject OUT subject_version",
+        "DEFINE FIELD confidence ON has_version TYPE float "
+        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD created_at ON has_version TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_has_version_unique ON has_version FIELDS in, out UNIQUE",
+
+        "DEFINE TABLE about SCHEMAFULL TYPE RELATION IN decision OUT code_subject",
+        "DEFINE FIELD confidence ON about TYPE float "
+        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD created_at ON about TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_about_unique ON about FIELDS in, out UNIQUE",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, sql.strip())
+    logger.info("[migration] v10 → v11: CodeGenome identity tables and edges defined")
+
+
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
@@ -634,6 +784,7 @@ _MIGRATIONS: dict[int, ...] = {
     8: _migrate_v7_to_v8,
     9: _migrate_v8_to_v9,
     10: _migrate_v9_to_v10,
+    11: _migrate_v10_to_v11,
 }
 
 

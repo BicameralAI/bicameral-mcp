@@ -18,3 +18,10 @@ test-results/
 
 # Bicameral MCP local data (history stored in parent repo)
 .bicameral/
+
+# QOR governance (process-only — not part of the published artifact)
+.agent/
+.failsafe/
+.qor/
+.cursor/
+.windsurf/
