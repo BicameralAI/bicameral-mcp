@@ -217,6 +217,14 @@ async def handle_ingest(
 
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
+    # Issue #67: ``ledger.ingest_payload`` reads ``payload.get("repo", "")``
+    # internally and falls back to subprocess.run(cwd=Path("").resolve()).
+    # On Linux that picks up the test runner's CWD (often a git repo, so
+    # the call appears to "work" with the wrong SHA). On Windows it
+    # produces a path the OS rejects with WinError 267. Inject the
+    # resolved repo path so the adapter never sees an empty value.
+    if not payload.get("repo"):
+        payload = {**payload, "repo": repo}
 
     # For agent_session / manual ingests (gap answers, inline resolutions),
     # backfill the git user email as the speaker when speakers is empty.

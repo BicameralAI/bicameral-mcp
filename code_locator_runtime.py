@@ -51,15 +51,31 @@ def ensure_runtime_env() -> None:
 
 
 def _git_stdout(repo_path: str, *args: str) -> str:
+    """Run ``git <args>`` in ``repo_path`` and return stdout (or "" on failure).
+
+    Issue #67: ``cwd`` must point at an existing directory or
+    ``subprocess.run`` raises ``NotADirectoryError`` on Windows
+    (WinError 267) — POSIX is more permissive and tends to silently
+    fall back to the parent process's CWD, which is its own bug class.
+    Validate the path before invoking subprocess.
+    """
+    if not repo_path:
+        return ""
+    try:
+        resolved = Path(repo_path).resolve()
+    except (OSError, RuntimeError):
+        return ""
+    if not resolved.is_dir():
+        return ""
     try:
         result = subprocess.run(
             ["git", *args],
-            cwd=repo_path,
+            cwd=resolved,
             capture_output=True,
             text=True,
             timeout=5,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    except (FileNotFoundError, subprocess.TimeoutExpired, NotADirectoryError):
         return ""
     if result.returncode != 0:
         return ""

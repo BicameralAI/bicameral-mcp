@@ -331,7 +331,7 @@ class SurrealDBLedgerAdapter:
                     timeout=5,
                 )
                 current_branch = result.stdout.strip() if result.returncode == 0 else ""
-            except (subprocess.TimeoutExpired, FileNotFoundError):
+            except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError):
                 current_branch = ""
             if current_branch and current_branch != "HEAD" and current_branch != authoritative_ref:
                 is_authoritative = False
@@ -709,10 +709,20 @@ class SurrealDBLedgerAdapter:
         """
         await self._ensure_connected()
 
-        repo = payload.get("repo", "")
+        # Issue #67: an empty ``repo`` causes ``resolve_head("")`` to call
+        # ``subprocess.run(cwd=Path("").resolve())`` which silently picks
+        # the test runner's CWD on POSIX (wrong git repo, garbage SHA)
+        # and crashes with WinError 267 on Windows. Fall back through:
+        #   payload.repo  →  ctx.repo_path  →  "" (last resort)
+        # The handler layer (handlers.ingest) already injects ctx.repo_path
+        # into the payload; this is a defensive belt for any other caller
+        # that constructs a payload directly.
+        repo = payload.get("repo", "") or (
+            getattr(ctx, "repo_path", "") if ctx is not None else ""
+        )
         commit_hash = payload.get("commit_hash", "")
         authoritative_sha = getattr(ctx, "authoritative_sha", "") if ctx is not None else ""
-        effective_ref = commit_hash or authoritative_sha or resolve_head(repo) or "HEAD"
+        effective_ref = commit_hash or authoritative_sha or (resolve_head(repo) if repo else None) or "HEAD"
         decisions_created = 0
         symbols_mapped = 0
         regions_linked = 0
