@@ -21,7 +21,7 @@ DEFAULT_CONFIDENCE_WEIGHTS: dict[str, float] = {
 def noisy_or(confidences: Iterable[float]) -> float:
     """Fuse independent supporting confidences via noisy-OR.
 
-    Each input clamped to [0, 1]. Result is ``1 − ∏(1 − cᵢ)`` — the
+    Each input clamped to [0, 1]. Result is ``1 - ∏(1 - cᵢ)`` — the
     probability at least one independent signal is correct.
 
     Examples:

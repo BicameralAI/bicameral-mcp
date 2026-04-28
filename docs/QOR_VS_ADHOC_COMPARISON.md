@@ -112,7 +112,7 @@ orchestration).
 **Four of the five branch-level quality differences are process-driven,
 not base-driven.** Only the schema-version delta would evaporate on
 rebase. The other four — factory pattern, scope discipline, razor
-compliance, and audit auditability — persist. They are exactly the
+compliance, and auditability — persist. They are exactly the
 defects that careful single-pass implementation does not reliably
 catch, because each requires a specific check that no inner-loop test
 performs.

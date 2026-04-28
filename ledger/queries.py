@@ -1337,6 +1337,32 @@ async def get_context_for_ready_decisions(
 # All writes are gated by ``codegenome.write_identity_records=True`` at the
 # handler boundary. These functions never run unless the flag is on, so
 # they cannot regress existing behavior when disabled.
+#
+# Record-ID validation: callers may receive ``decision_id`` and other
+# IDs from MCP handler input or from upsert returns. The helpers below
+# build SurrealQL via f-string interpolation (the codebase's existing
+# pattern), so any ID that reaches a RELATE/SELECT must match the
+# canonical ``table:id`` shape. ``_validated_record_id`` enforces that
+# shape and raises ``LedgerError`` on mismatch — a single choke point
+# per call instead of trusting upstream callers.
+
+import re as _re
+
+_RECORD_ID_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z0-9_\-]+$")
+
+
+def _validated_record_id(value: str, expected_table: str | None = None) -> str:
+    """Return ``value`` if it is a well-formed ``table:id`` SurrealDB record id.
+
+    Raises ``LedgerError`` if empty, malformed, or (when
+    ``expected_table`` is given) targets a different table.
+    """
+    v = str(value or "")
+    if not _RECORD_ID_RE.fullmatch(v):
+        raise LedgerError(f"Invalid record id: {v!r}")
+    if expected_table and not v.startswith(f"{expected_table}:"):
+        raise LedgerError(f"Expected {expected_table} id, got: {v!r}")
+    return v
 
 
 async def upsert_code_subject(
@@ -1397,6 +1423,11 @@ async def upsert_subject_identity(
     Address is content-addressable (blake2b of structural signature for
     deterministic_location_v1) so duplicate writes for the same logical
     identity collapse to a single row. Returns the record id.
+
+    Race-safe under concurrent writers: if two callers race past the
+    SELECT and both attempt CREATE, the loser hits the UNIQUE(address)
+    index and SurrealDB returns "already contains"; we re-SELECT and
+    return the winning row's id rather than propagating the conflict.
     """
     rows = await client.query(
         "SELECT id FROM subject_identity WHERE address = $a LIMIT 1",
@@ -1405,30 +1436,40 @@ async def upsert_subject_identity(
     if rows:
         return str(rows[0].get("id", ""))
 
-    rows = await client.query(
-        """
-        CREATE subject_identity SET
-            address              = $address,
-            identity_type        = $identity_type,
-            structural_signature = $structural_signature,
-            behavioral_signature = $behavioral_signature,
-            signature_hash       = $signature_hash,
-            content_hash         = $content_hash,
-            confidence           = $confidence,
-            model_version        = $model_version
-        """,
-        {
-            "address": address,
-            "identity_type": identity_type,
-            "structural_signature": structural_signature,
-            "behavioral_signature": behavioral_signature,
-            "signature_hash": signature_hash,
-            "content_hash": content_hash,
-            "confidence": confidence,
-            "model_version": model_version,
-        },
-    )
-    return str(rows[0].get("id", "")) if rows else ""
+    create_args = {
+        "address": address,
+        "identity_type": identity_type,
+        "structural_signature": structural_signature,
+        "behavioral_signature": behavioral_signature,
+        "signature_hash": signature_hash,
+        "content_hash": content_hash,
+        "confidence": confidence,
+        "model_version": model_version,
+    }
+    try:
+        rows = await client.query(
+            """
+            CREATE subject_identity SET
+                address              = $address,
+                identity_type        = $identity_type,
+                structural_signature = $structural_signature,
+                behavioral_signature = $behavioral_signature,
+                signature_hash       = $signature_hash,
+                content_hash         = $content_hash,
+                confidence           = $confidence,
+                model_version        = $model_version
+            """,
+            create_args,
+        )
+        return str(rows[0].get("id", "")) if rows else ""
+    except LedgerError as exc:
+        if "already contains" not in str(exc):
+            raise
+        rows = await client.query(
+            "SELECT id FROM subject_identity WHERE address = $a LIMIT 1",
+            {"a": address},
+        )
+        return str(rows[0].get("id", "")) if rows else ""
 
 
 async def relate_has_identity(
@@ -1438,9 +1479,11 @@ async def relate_has_identity(
     confidence: float = 0.9,
 ) -> None:
     """code_subject → has_identity → subject_identity. Idempotent."""
+    csid = _validated_record_id(code_subject_id, "code_subject")
+    siid = _validated_record_id(subject_identity_id, "subject_identity")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {code_subject_id}->has_identity->{subject_identity_id} "
+        f"RELATE {csid}->has_identity->{siid} "
         "SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
@@ -1453,9 +1496,11 @@ async def link_decision_to_subject(
     confidence: float = 0.8,
 ) -> None:
     """decision → about → code_subject. Idempotent."""
+    did = _validated_record_id(decision_id, "decision")
+    csid = _validated_record_id(code_subject_id, "code_subject")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {decision_id}->about->{code_subject_id} "
+        f"RELATE {did}->about->{csid} "
         "SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
@@ -1471,6 +1516,7 @@ async def find_subject_identities_for_decision(
     continuity matching. Empty list if the decision has no linked subjects
     (i.e. identity writes were disabled at bind).
     """
+    did = _validated_record_id(decision_id, "decision")
     rows = await client.query(
         f"""
         SELECT
@@ -1483,7 +1529,7 @@ async def find_subject_identities_for_decision(
             content_hash,
             confidence,
             model_version
-        FROM {decision_id}->about->code_subject->has_identity->subject_identity
+        FROM {did}->about->code_subject->has_identity->subject_identity
         """,
     )
     return [

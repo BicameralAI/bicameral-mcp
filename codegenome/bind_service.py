@@ -93,7 +93,13 @@ async def write_codegenome_identity(
     repo_ref: str = "HEAD",
     code_region_content_hash: str = "",
 ) -> SubjectIdentity | None:
-    """Compute identity for the bound region and write the v11 records."""
+    """Compute identity for the bound region and write the v11 records.
+
+    Returns the persisted ``SubjectIdentity`` on success, or ``None`` if
+    the underlying ledger writes did not complete (empty IDs from the
+    upserts). The identity is computed regardless; the return shape
+    distinguishes "computed and persisted" from "computed only".
+    """
     identity = codegenome.compute_identity(
         file_path=file_path,
         start_line=start_line,
@@ -104,7 +110,7 @@ async def write_codegenome_identity(
         identity, code_region_content_hash,
         decision_id, file_path, start_line, end_line,
     )
-    await _persist_subject_and_identity(
+    persisted = await _persist_subject_and_identity(
         ledger=ledger,
         identity=identity,
         kind=symbol_kind or "unknown",
@@ -112,4 +118,4 @@ async def write_codegenome_identity(
         decision_id=decision_id,
         repo_ref=repo_ref,
     )
-    return identity
+    return identity if persisted else None

@@ -15,7 +15,7 @@ all feature work touching the ledger, handlers, retrieval, or schema.
 
 ## File Tree (The Contract)
 
-```
+```text
 bicameral-mcp/                  (repo root, flat layout — no `bicameral/` package)
 ├── server.py                   MCP entrypoint; tool registry; stdio loop
 ├── context.py                  request-scoped BicameralContext (frozen dataclass)
@@ -82,7 +82,7 @@ bicameral-mcp/                  (repo root, flat layout — no `bicameral/` pack
 
 ## Data Flow
 
-```
+```text
 caller LLM (Claude/IDE)
    ↓ MCP stdio
 server.py → tool_definitions → handlers/<tool>.py

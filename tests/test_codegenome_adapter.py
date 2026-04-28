@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 from unittest.mock import patch
 
@@ -56,7 +57,7 @@ def test_subject_identity_is_frozen():
         confidence=0.65,
         model_version=MODEL_VERSION_V1,
     )
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         identity.confidence = 0.99  # type: ignore[misc]
 
 
