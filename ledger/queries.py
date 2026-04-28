@@ -770,6 +770,8 @@ async def upsert_compliance_check(
     commit_hash: str = "",
     pruned: bool = False,
     ephemeral: bool = False,
+    semantic_status: str | None = None,
+    evidence_refs: list[str] | None = None,
 ) -> bool:
     """Write a compliance_check row keyed on (decision_id, region_id, content_hash).
 
@@ -777,13 +779,21 @@ async def upsert_compliance_check(
     verdict must be one of: 'compliant', 'drifted', 'not_relevant'.
     ephemeral=True marks the verdict as from a WIP/fixup commit; downstream
     queries filter these out when computing decision status and drift scoring.
+
+    Phase 4 (#61) — additive optional fields:
+      semantic_status: 'semantically_preserved' | 'semantic_change' | None
+                       Records whether the auto-classifier or caller-LLM
+                       judged the change cosmetic vs meaningful.
+      evidence_refs:   list of free-form audit-trail strings, e.g.
+                       ['signature:1.00', 'neighbors:0.97'].
     """
+    refs = evidence_refs or []
     try:
         await client.execute(
             "CREATE compliance_check SET decision_id = $d, region_id = $r, "
             "content_hash = $h, verdict = $v, confidence = $cf, "
             "explanation = $e, phase = $p, commit_hash = $cm, pruned = $pr, "
-            "ephemeral = $ep",
+            "ephemeral = $ep, semantic_status = $ss, evidence_refs = $er",
             {
                 "d": decision_id,
                 "r": region_id,
@@ -795,6 +805,8 @@ async def upsert_compliance_check(
                 "cm": commit_hash,
                 "pr": pruned,
                 "ep": ephemeral,
+                "ss": semantic_status,
+                "er": refs,
             },
         )
         return True

@@ -391,6 +391,77 @@ regression caught and remediated at seal time; no new violations
 introduced.
 
 ---
-*Chain integrity: VALID (10 entries)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff`*
-*Next required action: amend razor-fix into commit + push + open PR #60 stacked on PR #71*
+
+## Entry #11 — GATE TRIBUNAL (VETO) — Phase 4 plan
+
+**Date:** 2026-04-28
+**Phase:** AUDIT
+**Persona:** Judge
+**Subject:** `plan-codegenome-phase-4.md` (CodeGenome Phase 4, Issue #61)
+**Risk Grade:** L2
+
+**Verdict:** **VETO**
+
+**Findings (5 blocking):**
+- F1 (V2): falsified CHANGEFEED mitigation — `compliance_check` table has no changefeed; the silent-overwrite risk has no actual audit trail.
+- F2 (V2): dead enum value — `pre_classification_hint` listed in `semantic_status` ASSERT but never written by any code path.
+- F3 (V2): language-name mismatch — plan uses `csharp`, `code_locator` uses `c_sharp`. Multi-language promise silently broken for C#.
+- F4 (V1): orphan macro-arch — `_signal_no_new_calls` references a non-existent `extract_calls` API on `code_locator.indexing.symbol_extractor`.
+- F5 (V2): scope inconsistency — Q2=B (multi-language) chosen, but no uncertain-band fixtures for non-Python; Java + C# get zero fixtures.
+
+**Non-blocking observations (5):** O1 hidden contract change, O2 enhance_drift flag policy, O3 razor margin thin on diff_categorizer.py, O4 mocks/README acknowledgement, O5 evaluate_drift_classification razor margin tight.
+
+**Plan content hash:** `sha256:927ff046977631b17883ec0f11dc20edf087b71d00b0da60bc017db44373dbf6`
+**Audit-report content hash:** `sha256:b68749de8d96f23ae50843076754384ad14e50ee707be3d3fd29dc6a35c78d37`
+
+**Previous chain hash:** `89cac7ff99a689b211955e68c6a688508287d3325df3737958556c41070237e2` (Entry #10, Phase 3 SEAL)
+
+**Merkle seal:**
+SHA256(audit_content_hash + previous_chain_hash) = **`231fe5f1a6ab1b57b5b49761c56b69063a7507a2f164d01f80df12179462450a`**
+
+**Decision:** Plan does not pass adversarial review. Implementation gate held closed. Governor must address F1–F5 in `/qor-plan` revision and re-audit before `/qor-implement` is permitted.
+
+**Next required action:** `/qor-plan` (revision) → re-`/qor-audit`.
+
+---
+
+## Entry #12 — GATE TRIBUNAL (PASS) — Phase 4 plan, re-audit v2
+
+**Date:** 2026-04-28
+**Phase:** AUDIT (re-run)
+**Persona:** Judge
+**Subject:** `plan-codegenome-phase-4.md` v2 (CodeGenome Phase 4, Issue #61)
+**Risk Grade:** L2
+
+**Verdict:** **PASS**
+
+**Remediation summary:**
+- F1 (CHANGEFEED): table-level `CHANGEFEED 30d INCLUDE ORIGINAL` added; 3 regression tests planned. ✓
+- F2 (dead enum): `pre_classification_hint` removed from schema ASSERT and Pydantic Literal types. ✓
+- F3 (csharp): all references normalized to `c_sharp`; parity test enforces `_SUPPORTED_LANGUAGES == _LANG_PACKAGE_MAP.keys()`. ✓
+- F4 (orphan API): new sibling module `code_locator/indexing/call_site_extractor.py` (~150 LOC) replaces the invented `extract_calls` API on `symbol_extractor.py`. ✓
+- F5 (corpus): expanded to 30 fixtures; Java + C# get full cosmetic/semantic/uncertain triples; every non-Python language has uncertain coverage. ✓
+- O1–O5 all addressed.
+
+**Grounding sweep (per SG-PLAN-GROUNDING-DRIFT countermeasure, Failure Entry #3):** every API/schema reference verified against codebase. `_LANG_PACKAGE_MAP` (line 57), `_get_parser` (line 97), `CHANGEFEED` syntax (already in use on `decision` and `code_region` tables) all confirmed.
+
+**Non-blocking observations carried into implementation:**
+- Obs-V2-1: `SHOW CHANGES FOR TABLE` syntax not yet used in this codebase; if unreliable in v2 embedded, implementer should find an alternative verification path for the F1 regression test and document the limitation.
+- Obs-V2-2: `_LANG_PACKAGE_MAP` is defined inside `if not _USE_LEGACY`; F3 parity test should guard with `_USE_LEGACY` check or `pytest.importorskip`.
+
+**Plan content hash (v2):** `sha256:efdf0477f01ffe38e7262b8b995655b77aeff44f6747f8943741306d8f81054d`
+**Audit-report content hash:** `sha256:dcf28287420c07f03a34ece5866582da74430addde6a37bdebaf8cc8fb5aba73`
+
+**Previous chain hash:** `231fe5f1a6ab1b57b5b49761c56b69063a7507a2f164d01f80df12179462450a` (Entry #11, v1 VETO)
+
+**Merkle seal:**
+SHA256(audit_content_hash + previous_chain_hash) = **`332c72b23d0d64ec77979f64147e5d4df4a9fa130f9c110be6217e5331b66f14`**
+
+**Decision:** Plan passes adversarial review. Implementation gate **OPENS**. Governor advances to `/qor-implement`.
+
+**Next required action:** `/qor-implement` (Phase-by-phase TDD per the v2 plan).
+
+---
+*Chain integrity: VALID (12 entries)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2`*
+*Next required action: `/qor-implement`*

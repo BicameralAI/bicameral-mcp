@@ -136,3 +136,96 @@ update integration-test fixture-setup descriptions to verify the
 prerequisite rows. Re-submission for `/qor-audit` follows.
 
 ---
+
+## Failure Entry #3
+
+**Date:** 2026-04-28
+**Phase:** AUDIT (Phase 4 / Issue #61)
+**Persona:** Judge
+
+### What Failed
+
+`plan-codegenome-phase-4.md` received VETO with five blocking findings.
+The Governor's plan invoked **non-existent infrastructure** (CHANGEFEED
+on `compliance_check`, `extract_calls` API on `symbol_extractor`),
+introduced a **dead enum value** (`pre_classification_hint` in the
+`semantic_status` ASSERT with no writer), used a **wrong language
+identifier** (`csharp` vs `c_sharp`), and the M3 benchmark corpus
+**did not honour the multi-language scope** chosen at planning time
+(Q2=B): no uncertain-band fixtures for non-Python; Java + C# got zero
+fixtures of any kind.
+
+### Why It Failed
+
+**Root cause:** the plan was written from architectural intuition
+without grounding the API references and schema claims against the
+actual code. Every one of F1–F4 collapsed under direct file read:
+
+- F1 was contradicted by `ledger/schema.py:186` (no CHANGEFEED on
+  `compliance_check`).
+- F3 was contradicted by `code_locator/indexing/symbol_extractor.py:64`
+  (`c_sharp`, not `csharp`).
+- F4 was contradicted by the public-function listing of
+  `symbol_extractor.py` (only `extract_symbols*` — no `extract_calls`).
+
+The plan trusted memory of how the code "ought to" work rather than
+re-reading. When the plan was forwarded to `/qor-audit` without that
+ground-check pass, the audit caught the gap — but the cost was a full
+plan-revision cycle.
+
+F2 (dead enum) and F5 (test corpus scope mismatch) are different in
+kind: they're **internal inconsistencies** within the plan itself.
+F2 lists a value the plan never writes; F5 promises multi-language
+coverage in the deliverables but only delivers Python coverage in the
+fixture inventory. These are catchable by re-reading the plan against
+itself before submission.
+
+### Pattern to Avoid
+
+**SG-PLAN-GROUNDING-DRIFT.** When writing a plan that references an
+existing API (function, schema field, language identifier, table
+property), the Governor must:
+
+1. Open the referenced file.
+2. Verify the symbol exists and matches the spelling used in the plan.
+3. If the plan asserts a property of the schema/code (e.g. "table X has
+   CHANGEFEED Y"), grep for the property and confirm.
+
+Plans that skip this step ship invented infrastructure that the audit
+must catch. Each invention is a V1 (orphan) or V2 (broken contract)
+violation. The grounding cost (~5 minutes of greps) is far less than
+a re-plan cycle (~hours of rewrite + re-audit).
+
+**SG-PLAN-INTERNAL-INCONSISTENCY.** When a plan picks a scope
+(multi-language, additive-only schema, etc.) it must be honoured in
+EVERY section that references that scope:
+
+- Affected-files lists.
+- Test plan.
+- Fixture inventory.
+- Razor pre-check.
+- Risk table.
+
+A scope that lives only in the §Open-Questions or §Composition-Principles
+sections but degrades silently in §Test-Plan or §Phase-N is the same
+class of failure as F5. Internal consistency is a precondition for
+submission to `/qor-audit`.
+
+### Remediation Attempted
+
+VETO issued. Governor must revise the plan addressing F1–F5 and
+resubmit for `/qor-audit`. Recommended remediation paths are listed
+in each finding's "Required remediation" section of the audit report.
+
+The five non-blocking observations (O1–O5) should also be addressed
+in the revision pass for plan hygiene, but do not on their own block
+re-audit PASS.
+
+### Auto-counter on resubmission
+
+When the revised plan is submitted, the Judge will specifically
+ground-check every API reference and schema claim against the
+codebase before issuing PASS. The grounding sweep is non-optional
+for L2 plans that touch schema or extend an existing module API.
+
+---
