@@ -105,18 +105,21 @@ def _signal_no_new_calls(
     old_body: str, new_body: str, language: str,
 ) -> float:
     """1.0 if call set in ``new`` ⊆ call set in ``old`` (no new
-    callees introduced); 0.0 if a new callee appears. 0.5 when either
-    extraction returns empty on non-empty input (parser unavailable
-    or extraction failed) — the classifier downgrades to 'uncertain'
-    rather than asserting cosmetic."""
+    callees introduced, including the trivial ``set() ⊆ set()`` case
+    when both functions make no calls).
+
+    0.0 if a new callee appears in ``new`` that wasn't in ``old``.
+
+    0.5 when the language is unsupported (extractor returns empty for
+    both sides regardless of content) — the classifier downgrades to
+    'uncertain' rather than asserting cosmetic on extraction failure.
+    """
+    if language not in (
+        "python", "javascript", "typescript", "go", "rust", "java", "c_sharp",
+    ):
+        return 0.5
     new_calls = extract_call_sites(new_body, language)
     old_calls = extract_call_sites(old_body, language)
-    if not old_calls and new_body.strip():
-        # Old body is non-trivial but produced no calls — extraction
-        # likely failed. Don't claim "no new calls".
-        if not new_calls:
-            return 0.5
-        return 0.0
     return 1.0 if new_calls.issubset(old_calls) else 0.0
 
 
