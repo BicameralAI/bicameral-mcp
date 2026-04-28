@@ -1,6 +1,6 @@
 ---
 name: bicameral-sync
-description: Full ledger sync after a git commit — runs bicameral.link_commit then semantically evaluates every pending compliance check to write verdicts. This is the only path from hash-level drift detection to authoritative reflected/drifted status. AUTO-TRIGGER when the PostToolUse hook prints "bicameral: new commit detected" OR when _sync_guidance appears in any tool response. Also fire explicitly after any git commit, merge, pull, or rebase --continue.
+description: Full ledger sync after a git COMMIT — runs bicameral.link_commit then evaluates pending compliance checks to write reflected/drifted verdicts. ONLY for post-commit ledger sync. DO NOT trigger for "update", "upgrade", or "new version" requests — those belong to /bicameral:update (binary upgrade). Trigger on: PostToolUse hook "bicameral: new commit detected", _sync_guidance in any tool response, or explicit "sync", "check compliance", "reflect this commit".
 ---
 
 # Bicameral Sync
@@ -19,6 +19,9 @@ reads each changed region, evaluates it against the stored decision, and writes 
 - **`_sync_guidance` field** in any bicameral tool response (injected by `ensure_ledger_synced`)
 - After any `git commit`, `git merge`, `git pull`, or `git rebase --continue`
 - Explicitly: *"sync the ledger"*, *"check compliance after that commit"*, *"what's the status now?"*
+
+**Never fire for**: "update", "upgrade", "new version", "install update" — those are binary
+upgrade requests; use `/bicameral:update` instead.
 
 ## Steps
 

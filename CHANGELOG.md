@@ -3,6 +3,16 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.10.7 — fix update/sync skill confusion
+
+### Fixed — `bicameral update` no longer triggers `/bicameral:sync`
+
+Added a dedicated `/bicameral:update` skill so "update", "upgrade", and
+"new version" requests route to the binary upgrade flow rather than the
+post-commit ledger sync. The `bicameral-sync` skill description now
+explicitly lists "update/upgrade/new version" as **never-fire** triggers
+and cross-references `/bicameral:update`.
+
 ## v0.10.6 — wait-time disclaimer + resolve_compliance latency telemetry
 
 ### Added — one-time product stage note on first preflight
