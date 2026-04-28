@@ -138,6 +138,19 @@ class TeamWriteAdapter:
             purpose=purpose,
         )
 
+    async def wipe_all_rows(self, repo: str) -> None:
+        """Wipe the DB then reset the event watermark.
+
+        The event files themselves (.bicameral/events/{email}.jsonl) are the
+        source of truth and are NOT deleted. Resetting the watermark causes
+        the next connect() to re-materialize from all peer events, giving a
+        clean DB that reflects current peer state.
+        """
+        await self._ensure_ready()
+        await self._inner.wipe_all_rows(repo)
+        self._materializer._watermark_path.write_text("{}", encoding="utf-8")
+        logger.info("[team_reset] DB wiped and watermark reset for repo=%s", repo)
+
     def __getattr__(self, name: str):
         """Passthrough to inner adapter for any method not explicitly overridden."""
         return getattr(self._inner, name)

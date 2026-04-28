@@ -1021,100 +1021,20 @@ class SurrealDBLedgerAdapter:
         return out
 
     async def wipe_all_rows(self, repo: str) -> None:
-        """Delete every row belonging to repo across every bicameral table.
+        """Wipe the ledger by closing and deleting the DB, then reconnecting.
 
-        v0.5.0 update: traversals use binds_to (decision tier) instead of
-        maps_to + implements. Scoping strategy unchanged from v0.4.x.
+        For surrealkv://, the directory on disk is removed entirely.
+        For memory://, closing and reconnecting gives a fresh empty DB.
+        init_schema() runs automatically inside connect(), so the adapter is
+        immediately ready for use after this call returns.
         """
+        import shutil
         await self._ensure_connected()
-
-        decision_ids: set[str] = set()
-
-        # (a) Graph traversal from code_regions belonging to this repo.
-        try:
-            rows = await self._client.query(
-                """
-                SELECT <-binds_to<-decision AS decisions
-                FROM code_region
-                WHERE repo = $repo
-                """,
-                {"repo": repo},
-            )
-            for row in rows or []:
-                decisions_field = row.get("decisions") or []
-                if isinstance(decisions_field, list):
-                    for nested in decisions_field:
-                        if isinstance(nested, list):
-                            for item in nested:
-                                if item:
-                                    decision_ids.add(str(item))
-                        elif nested:
-                            decision_ids.add(str(nested))
-        except Exception as exc:
-            logger.warning("[wipe_all_rows] code_region → decision traversal failed: %s", exc)
-
-        # (b) source_cursor audit-log matching for ungrounded decisions.
-        try:
-            cursor_rows = await self._client.query(
-                "SELECT source_type, source_scope, last_source_ref FROM source_cursor WHERE repo = $repo",
-                {"repo": repo},
-            )
-            for c in cursor_rows or []:
-                src_ref = c.get("last_source_ref", "")
-                src_type = c.get("source_type", "")
-                if not src_ref or not src_type:
-                    continue
-                matching = await self._client.query(
-                    "SELECT type::string(id) AS id FROM decision WHERE source_ref = $r AND source_type = $t",
-                    {"r": src_ref, "t": src_type},
-                )
-                for m in matching or []:
-                    if m.get("id"):
-                        decision_ids.add(str(m["id"]))
-        except Exception as exc:
-            logger.warning("[wipe_all_rows] source_cursor → decision matching failed: %s", exc)
-
-        # Gather input_span IDs yielding those decisions.
-        input_span_ids: set[str] = set()
-        if decision_ids:
-            try:
-                rows = await self._client.query("SELECT type::string(in) AS in FROM yields")
-                for row in rows or []:
-                    _in = row.get("in")
-                    if _in:
-                        input_span_ids.add(str(_in))
-            except Exception as exc:
-                logger.debug("[wipe_all_rows] input_span traversal failed: %s", exc)
-
-        # Delete scoped-by-column tables.
-        for table in ("code_region", "source_cursor", "vocab_cache"):
-            try:
-                await self._client.execute(
-                    f"DELETE FROM {table} WHERE repo = $repo",
-                    {"repo": repo},
-                )
-            except Exception as exc:
-                logger.warning("[wipe_all_rows] %s scoped delete failed: %s", table, exc)
-
-        # Delete enumerated decisions by id.
-        for decision_id in decision_ids:
-            try:
-                await self._client.execute(f"DELETE {decision_id}")
-            except Exception as exc:
-                logger.debug("[wipe_all_rows] decision %s delete failed: %s", decision_id, exc)
-
-        # Delete enumerated input_spans by id.
-        for span_id in input_span_ids:
-            try:
-                await self._client.execute(f"DELETE {span_id}")
-            except Exception as exc:
-                logger.debug("[wipe_all_rows] input_span %s delete failed: %s", span_id, exc)
-
-        # ledger_sync is per-repo.
-        try:
-            await self._client.execute(
-                "DELETE FROM ledger_sync WHERE repo = $repo",
-                {"repo": repo},
-            )
-        except Exception as exc:
-            logger.warning("[wipe_all_rows] ledger_sync delete failed: %s", exc)
+        await self._client.close()
+        self._connected = False
+        url = self._url
+        if url.startswith("surrealkv://"):
+            db_path = url[len("surrealkv://"):]
+            if db_path:
+                shutil.rmtree(db_path, ignore_errors=True)
+        await self._ensure_connected()

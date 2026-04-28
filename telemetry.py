@@ -4,12 +4,22 @@ Events are sent to a Cloudflare Worker relay (telemetry-relay/) which validates
 the schema, rate-limits per device, and forwards to PostHog using a server-side
 secret. The PostHog API key is never in this file or any client code.
 
+## Relay contract (stable — never changes)
+
+The relay enforces exactly two invariants and passes everything else through:
+  1. `distinct_id` must be present and a string.
+  2. `version` must be present and a string.
+  3. `diagnostic` values, if present, must be numeric (int/float/bool) — no strings.
+
+Any other top-level field flows through to PostHog as-is. Adding new event types
+or new properties never requires a relay redeploy.
+
+## Privacy invariants (enforced client-side before sending)
+
 What IS collected:
-  - Tool name         ("bicameral.ingest")
-  - Server version    ("0.5.3")
-  - Call duration     (integer milliseconds)
-  - Error flag        (boolean)
-  - Aggregate counts  (integers only — grounded_count, ungrounded_count, etc.)
+  - Any string field explicitly added by the caller (e.g. skill name, event type)
+  - Server version
+  - Numeric/boolean metrics (duration, counts, flags)
 
 What is NEVER collected:
   - Decision descriptions, transcript text, or any user-supplied text
@@ -83,37 +93,55 @@ def _send_bg(payload: dict) -> None:
         logger.debug("[telemetry] relay POST failed (non-fatal): %s", exc)
 
 
-def record_event(
-    tool_name: str,
-    duration_ms: int,
-    errored: bool,
-    version: str,
-    diagnostic: dict | None = None,
-) -> None:
-    """Queue a tool-call event to the relay. Fire-and-forget. Never raises.
+def send_event(version: str, diagnostic: dict | None = None, **properties: str | int | float | bool) -> None:
+    """Send a telemetry event. Fire-and-forget. Never raises.
 
-    diagnostic values must be integers or floats — strings are silently dropped
-    to ensure no user content leaks through this path.
+    The relay only requires `distinct_id` and `version` — all other kwargs are
+    forwarded to PostHog as-is. Add new event types and fields freely without
+    touching the relay.
+
+    String kwargs (e.g. skill="bicameral-ingest") are allowed at the top level.
+    diagnostic values must be int/float/bool — strings are silently dropped to
+    prevent user content from leaking through this path.
+
+    Example:
+        send_event(version, skill="bicameral-ingest", session_id=sid,
+                   duration_ms=412, errored=False,
+                   diagnostic={"decisions_ingested": 3})
     """
     if not _is_enabled():
         return
     try:
         payload: dict = {
             "distinct_id": _get_device_id(),
-            "tool": tool_name,
             "version": version,
-            "duration_ms": duration_ms,
-            "errored": errored,
+            **properties,
         }
         if diagnostic:
-            safe_diag = {
-                k: v for k, v in diagnostic.items()
-                if isinstance(v, (int, float, bool))
-            }
+            safe_diag = {k: v for k, v in diagnostic.items() if isinstance(v, (int, float, bool))}
             if safe_diag:
                 payload["diagnostic"] = safe_diag
 
         t = threading.Thread(target=_send_bg, args=(payload,), daemon=True)
         t.start()
     except Exception as exc:
-        logger.debug("[telemetry] record_event failed (non-fatal): %s", exc)
+        logger.debug("[telemetry] send_event failed (non-fatal): %s", exc)
+
+
+def record_skill_event(
+    skill_name: str,
+    session_id: str,
+    duration_ms: int,
+    errored: bool,
+    version: str,
+    diagnostic: dict | None = None,
+) -> None:
+    """Convenience wrapper for skill-level timing events."""
+    send_event(
+        version,
+        diagnostic=diagnostic,
+        skill=skill_name,
+        session_id=session_id,
+        duration_ms=duration_ms,
+        errored=errored,
+    )

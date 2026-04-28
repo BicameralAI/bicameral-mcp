@@ -52,6 +52,10 @@ from dashboard.server import get_dashboard_server
 
 SERVER_NAME = "bicameral-mcp"
 
+# In-process map of session_id → start monotonic time for skill timing.
+# Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
+_skill_sessions: dict[str, float] = {}
+
 
 def _resolve_server_version() -> str:
     """Return the version of the code actually running.
@@ -94,6 +98,8 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.resolve_collision",
     "bicameral.history",
     "bicameral.dashboard",
+    "bicameral.skill_begin",
+    "bicameral.skill_end",
     "validate_symbols",
     "get_neighbors",
     "extract_symbols",
@@ -222,12 +228,15 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="bicameral.reset",
             description=(
-                "Fail-safe valve for a polluted ledger. Wipes every row scoped to the current repo "
-                "and returns a replay plan listing the source_cursors that existed before the wipe, "
-                "so the caller can re-run the original bicameral_ingest calls. "
+                "Fail-safe valve for a polluted or stale ledger. Returns a replay plan and, "
+                "if confirmed, wipes state according to wipe_mode. "
+                "wipe_mode='ledger' (default): wipes only the materialized SurrealDB rows — "
+                "config and event files are preserved. Safe for bug recovery; server stays live. "
+                "wipe_mode='full': deletes the entire .bicameral/ directory (ledger + config.yaml "
+                "+ team event files). Nuclear restart. Always show the dry-run warning to the user "
+                "before confirming full mode. "
                 "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
-                "Pass confirm=true to actually wipe. Scoped by repo, so multi-repo ledger "
-                "instances stay isolated. "
+                "Pass confirm=true to actually wipe. "
                 "Slash alias: /bicameral:reset"
             ),
             inputSchema={
@@ -242,6 +251,18 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "default": True,
                         "description": "When true, include the replay plan alongside the wipe summary",
+                    },
+                    "wipe_mode": {
+                        "type": "string",
+                        "enum": ["ledger", "full"],
+                        "default": "ledger",
+                        "description": (
+                            "'ledger' (default): wipe materialized DB rows only — config and event "
+                            "files are preserved, server stays live. Use for bug/pollution recovery. "
+                            "'full': delete the entire .bicameral/ directory. Nuclear option — "
+                            "removes config, team event history, and all data. Always confirm "
+                            "with the user after showing the dry-run warning."
+                        ),
                     },
                 },
             },
@@ -556,6 +577,62 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        # ── Skill telemetry bookends ──────────────────────────────────
+        Tool(
+            name="bicameral.skill_begin",
+            description=(
+                "Mark the start of a skill invocation for telemetry. Call this as the very "
+                "first step of any bicameral skill. Returns the session_id to pass to "
+                "bicameral.skill_end when the skill completes. No ledger writes — purely "
+                "a timing bookmark. Skill authors: pass a freshly generated UUID as session_id."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The skill being invoked (e.g. 'bicameral-ingest')",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Caller-generated UUID that correlates this begin with the matching skill_end",
+                    },
+                },
+                "required": ["skill_name", "session_id"],
+            },
+        ),
+        Tool(
+            name="bicameral.skill_end",
+            description=(
+                "Mark the end of a skill invocation and emit the skill-level telemetry event. "
+                "Call this as the very last step of any bicameral skill, passing the same "
+                "session_id returned by bicameral.skill_begin. Returns duration_ms for the "
+                "full skill wall-clock time. No ledger writes."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The skill being completed (must match skill_begin)",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "The session_id from the matching bicameral.skill_begin call",
+                    },
+                    "errored": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "True if the skill exited due to an error or user-abort",
+                    },
+                    "diagnostic": {
+                        "type": "object",
+                        "description": "Optional integer/float metrics (e.g. {decisions_ingested: 3}). Strings are dropped.",
+                    },
+                },
+                "required": ["skill_name", "session_id"],
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -619,12 +696,33 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     import json
     import time
 
-    from telemetry import record_event
-
     ctx = BicameralContext.from_env()
-    _t0 = time.monotonic()
-    _errored = False
-    _diagnostic: dict | None = None
+
+    # ── Skill telemetry bookends (no ledger, no sync) ─────────────────
+    if name == "bicameral.skill_begin":
+        session_id = arguments["session_id"]
+        _skill_sessions[session_id] = time.monotonic()
+        return [TextContent(type="text", text=json.dumps({
+            "session_id": session_id,
+            "skill": arguments["skill_name"],
+            "status": "started",
+        }))]
+
+    if name == "bicameral.skill_end":
+        from telemetry import record_skill_event
+        session_id = arguments["session_id"]
+        skill_name = arguments["skill_name"]
+        errored = arguments.get("errored", False)
+        diagnostic = arguments.get("diagnostic")
+        t0 = _skill_sessions.pop(session_id, None)
+        duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
+        record_skill_event(skill_name, session_id, duration_ms, errored, SERVER_VERSION, diagnostic)
+        return [TextContent(type="text", text=json.dumps({
+            "session_id": session_id,
+            "skill": skill_name,
+            "duration_ms": duration_ms,
+            "status": "recorded",
+        }))]
 
     # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
     # Returns the LinkCommitResponse when a new commit was just processed so we
@@ -636,6 +734,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     try:
         if name in ("bicameral.link_commit", "link_commit"):
+
             result = await handle_link_commit(
                 ctx,
                 commit_hash=arguments.get("commit_hash", "HEAD"),
@@ -659,6 +758,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 ctx,
                 confirm=arguments.get("confirm", False),
                 replay=arguments.get("replay", True),
+                wipe_mode=arguments.get("wipe_mode", "ledger"),
             )
         elif name in ("bicameral.preflight", "preflight"):
             result = await handle_preflight(
@@ -688,7 +788,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 commit_hash=arguments.get("commit_hash"),
                 flow_id=arguments.get("flow_id"),
             )
-            _diagnostic = {"verdict_count": len(arguments.get("verdicts", []))}
         elif name in ("bicameral.ratify", "ratify"):
             result = await handle_ratify(
                 ctx,
@@ -779,11 +878,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if created > 0:
                 grounded = stats.get("grounded", 0)
                 ungrounded = stats.get("ungrounded", 0)
-                _diagnostic = {
-                    "grounded_count": grounded,
-                    "ungrounded_count": ungrounded,
-                    "decisions_created": created,
-                }
                 payload["_guidance"] = (
                     f"Ingest complete: {created} decision(s) extracted "
                     f"({grounded} grounded to code, {ungrounded} ungrounded). "
@@ -812,7 +906,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
     except (DestructiveMigrationRequired, SchemaVersionTooNew) as exc:
-        _errored = True
         action = (
             "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
             if isinstance(exc, DestructiveMigrationRequired)
@@ -822,12 +915,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             type="text",
             text=json.dumps({"error": str(exc), "action": action}, indent=2),
         )]
-    except Exception:
-        _errored = True
-        raise
-    finally:
-        _duration_ms = int((time.monotonic() - _t0) * 1000)
-        record_event(name, _duration_ms, _errored, SERVER_VERSION, _diagnostic)
 
 
 async def run_smoke_test() -> dict[str, object]:

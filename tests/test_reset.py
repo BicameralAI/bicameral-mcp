@@ -148,8 +148,12 @@ async def test_reset_confirm_actually_wipes(monkeypatch, surreal_url):
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_reset_multi_repo_isolation(monkeypatch, surreal_url):
-    """Wiping repo A must NOT affect repo B's rows in the same SurrealDB."""
+async def test_reset_wipes_entire_db(monkeypatch, surreal_url):
+    """confirm=True must wipe ALL data — not just the repo passed in.
+
+    Each DB instance is single-repo; the reset contract is a complete wipe
+    followed by a re-init of the schema (ready for fresh ingestion).
+    """
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", surreal_url)
     reset_ledger_singleton()
@@ -160,24 +164,15 @@ async def test_reset_multi_repo_isolation(monkeypatch, surreal_url):
     await _seed_repo_with_cursors(ledger, repo="repo-A", count=2, source_type="slack")
     await _seed_repo_with_cursors(ledger, repo="repo-B", count=3, source_type="notion")
 
-    pre_a = await ledger.get_all_source_cursors("repo-A")
-    pre_b = await ledger.get_all_source_cursors("repo-B")
-    assert len(pre_a) == 2
-    assert len(pre_b) == 3
-
     ctx = _ctx(repo_path="repo-A")
     result = await handle_reset(ctx, confirm=True)
     assert result.wiped is True
 
-    post_a = await ledger.get_all_source_cursors("repo-A")
-    post_b = await ledger.get_all_source_cursors("repo-B")
+    post_cursors = await ledger.get_all_source_cursors("repo-A")
+    assert post_cursors == [], f"wipe left cursors for repo-A: {post_cursors}"
 
-    assert post_a == [], f"repo-A wipe left cursors: {post_a}"
-    assert len(post_b) == 3, (
-        f"repo-A wipe leaked into repo-B: {len(post_b)} cursors remain "
-        f"(expected 3). THIS IS A SAFETY REGRESSION — multi-repo isolation "
-        f"is a hard guarantee of the reset tool."
-    )
+    post_decisions = await ledger.get_all_decisions()
+    assert post_decisions == [], f"wipe left decisions in DB: {post_decisions}"
 
     reset_ledger_singleton()
 
@@ -208,3 +203,52 @@ async def test_reset_replay_plan_preserves_source_refs(monkeypatch, surreal_url)
         assert entry.source_type == "slack"
 
     reset_ledger_singleton()
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_reset_full_wipe_deletes_bicameral_dir(monkeypatch, tmp_path):
+    """wipe_mode='full' must delete the entire .bicameral/ directory and
+    leave the server in a usable state (schema reinitialised).
+    """
+    from adapters.ledger import reset_ledger_singleton as _reset
+
+    bicameral_dir = tmp_path / ".bicameral"
+    bicameral_dir.mkdir()
+    (bicameral_dir / "config.yaml").write_text("guided: false\n")
+    events_dir = bicameral_dir / "events"
+    events_dir.mkdir()
+    (events_dir / "test.jsonl").write_text('{"event":"test"}\n')
+
+    ledger_path = str(bicameral_dir / "ledger.db")
+    monkeypatch.setenv("USE_REAL_LEDGER", "1")
+    monkeypatch.setenv("SURREAL_URL", f"surrealkv://{ledger_path}")
+    _reset()
+
+    ledger = get_ledger()
+    await ledger.connect()
+    await _seed_repo_with_cursors(ledger, repo="repo-full", count=2, source_type="notion")
+
+    ctx = _ctx(repo_path="repo-full")
+
+    # Dry run must surface the directory in the warning without deleting.
+    dry = await handle_reset(ctx, confirm=False, wipe_mode="full")
+    assert dry.wiped is False
+    assert dry.wipe_mode == "full"
+    assert str(bicameral_dir) in dry.bicameral_dir
+    assert bicameral_dir.exists(), "dry run must not delete the directory"
+
+    # Confirm=True must wipe the .bicameral/ dir.
+    result = await handle_reset(ctx, confirm=True, wipe_mode="full")
+    assert result.wiped is True
+    assert result.wipe_mode == "full"
+    assert result.cursors_before == 2
+    # SurrealKV recreates its parent dir on reconnect, but config and events must be gone.
+    assert not (bicameral_dir / "config.yaml").exists(), "config.yaml must be deleted"
+    assert not (bicameral_dir / "events").exists(), "events/ dir must be deleted"
+
+    # Server must be usable immediately after (schema reinitialised).
+    post_cursors = await ledger.get_all_source_cursors("repo-full")
+    assert post_cursors == []
+
+    _reset()

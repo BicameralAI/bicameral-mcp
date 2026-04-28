@@ -461,7 +461,9 @@ class ResetReplayEntry(BaseModel):
 
 class ResetResponse(BaseModel):
     wiped: bool
+    wipe_mode: str = "ledger"
     ledger_url: str
+    bicameral_dir: str = ""
     repo: str
     cursors_before: int
     replay_plan: list[ResetReplayEntry] = []
