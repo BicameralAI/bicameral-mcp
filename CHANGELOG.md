@@ -3,6 +3,31 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.10.8 — ephemeral/authoritative V2
+
+### Fixed — drift detection on feature branches
+
+`link_commit` now correctly flags drift when code on a feature branch diverges
+from a previously-verified decision, even before the branch is merged to main.
+A new branch-delta sweep (`git diff auth...HEAD --name-only`) covers all files
+touched across the entire feature branch, not just the latest commit — earlier
+commits in a long-running branch are no longer missed. `sweep_scope` gains a
+new `"branch_delta"` value in the response.
+
+### Fixed — stale "compliant" status across branch switches
+
+Switching from one feature branch to another no longer leaves false `reflected`
+statuses behind. Feature branches now derive status locally by comparing
+`actual_hash` vs `stored_hash` without mutating `code_region.content_hash`
+(pollution guard preserved).
+
+### Added — ephemeral verdict promotion
+
+Verdicts written on a feature branch are marked `ephemeral=True`. When the
+same content hash lands on the authoritative branch (via `ingest_commit` or
+`resolve_compliance`), the row is promoted to `ephemeral=False` automatically —
+no duplicate compliance work required.
+
 ## v0.10.7 — fix update/sync skill confusion
 
 ### Fixed — `bicameral update` no longer triggers `/bicameral:sync`
