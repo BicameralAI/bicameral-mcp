@@ -246,7 +246,7 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
         target = f"bicameral-mcp=={recommended}"
         try:
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", target, "--quiet"],
+                [sys.executable, "-m", "pip", "install", target, "--quiet", "--no-cache-dir"],
                 capture_output=True,
                 text=True,
                 timeout=120,
