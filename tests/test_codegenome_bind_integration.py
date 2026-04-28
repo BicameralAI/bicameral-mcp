@@ -23,11 +23,21 @@ async def _fresh_client(db_suffix):
     return c
 
 
-async def _seed_decision(client, description):
-    rows = await client.query(
-        "CREATE decision SET description = $d, source_type = 'manual', status = 'ungrounded'",
-        {"d": description},
-    )
+async def _seed_decision(client, description, level="L2"):
+    """Seed a decision; defaults to ``decision_level="L2"`` so the
+    codegenome write path runs (L1 is intentionally exempted by
+    ``handlers/bind.py`` per the spec-governance proposal §4.2)."""
+    if level is None:
+        rows = await client.query(
+            "CREATE decision SET description = $d, source_type = 'manual', status = 'ungrounded'",
+            {"d": description},
+        )
+    else:
+        rows = await client.query(
+            "CREATE decision SET description = $d, source_type = 'manual', "
+            "status = 'ungrounded', decision_level = $l",
+            {"d": description, "l": level},
+        )
     return str(rows[0]["id"])
 
 

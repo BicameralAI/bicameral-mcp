@@ -50,6 +50,15 @@ side-effect-only identity-record writes at bind time. Default behavior is
   identity write is caught and logged; the `BindResponse` /
   `BindResult` shape is unchanged. Identity records are queryable via
   `ledger.find_subject_identities_for_decision(decision_id)`.
+- **L1 exemption guard** (`handlers/bind.py` +
+  `ledger.queries.get_decision_level`) — only decisions explicitly
+  tagged `decision_level = "L2"` enter the codegenome identity graph.
+  L1 decisions (behavioral commitments evaluated against evidence, not
+  code regions) are intentionally ungrounded at the identity layer; L3
+  is never tracked; `NULL` (unclassified) is treated as L3 by the
+  tolerant policy — preserves backward-compat for existing ingest
+  payloads, classification can be added later without re-binding. Per
+  the "L1/L2: Claim/Identity" spec-governance proposal §4.2.
 
 ### Identity model (deterministic_location_v1)
 

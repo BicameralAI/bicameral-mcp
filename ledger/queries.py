@@ -799,6 +799,25 @@ async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
     return bool(rows)
 
 
+async def get_decision_level(client: LedgerClient, decision_id: str) -> str | None:
+    """Return ``decision.decision_level`` (one of ``"L1"``, ``"L2"``, ``"L3"``)
+    or ``None`` if the row does not exist or the field is unset.
+
+    Phase 1+2 (#59) callers use this to enforce the L1 exemption: only
+    decisions explicitly tagged ``"L2"`` should enter the codegenome
+    identity graph. ``None``-valued (unclassified) and ``"L1"`` /
+    ``"L3"`` rows are intentionally ungrounded at the identity layer
+    and produce no ``code_subject`` / ``subject_identity`` writes.
+    """
+    rows = await client.query(
+        f"SELECT decision_level FROM {decision_id} LIMIT 1",
+    )
+    if not rows:
+        return None
+    val = rows[0].get("decision_level")
+    return str(val) if val else None
+
+
 async def region_exists(client: LedgerClient, region_id: str) -> bool:
     """Return True iff a code_region row exists with the given record id."""
     rows = await client.query(f"SELECT id FROM {region_id} LIMIT 1")

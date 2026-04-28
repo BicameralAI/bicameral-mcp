@@ -19,6 +19,7 @@ from .queries import (
     delete_binds_to_edge,
     find_subject_identities_for_decision,
     get_all_decisions,
+    get_decision_level,
     get_compliance_verdict,
     get_decisions_for_file,
     get_decisions_for_files,
@@ -210,6 +211,12 @@ class SurrealDBLedgerAdapter:
         await self._ensure_connected()
         rows = await self._client.query(f"SELECT description FROM {decision_id} LIMIT 1")
         return str((rows or [{}])[0].get("description", "")) if rows else ""
+
+    async def get_decision_level(self, decision_id: str) -> str | None:
+        """Return the decision's ``decision_level`` (``"L1"``/``"L2"``/``"L3"``)
+        or ``None`` if unset. Used by the bind handler's L1 exemption."""
+        await self._ensure_connected()
+        return await get_decision_level(self._client, decision_id)
 
     async def bind_decision(
         self,
