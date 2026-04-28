@@ -245,8 +245,16 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
 
         target = f"bicameral-mcp=={recommended}"
         try:
+            # Prefer pipx (the standard install path) — it manages its own venv
+            # and handles externally-managed-environment restrictions on macOS.
+            # Fall back to pip for venv/dev installs.
+            import shutil
+            if shutil.which("pipx"):
+                cmd = ["pipx", "install", target, "--force"]
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", target, "--quiet"]
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", target, "--quiet", "--no-cache-dir"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=120,
