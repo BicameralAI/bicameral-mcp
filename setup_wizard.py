@@ -386,39 +386,30 @@ def _install_claude_hooks(repo_path: Path) -> bool:
 
     # ── PostToolUse / Bash — git write-op reminder ───────────────────
     post_tool_use: list = hooks.setdefault("PostToolUse", [])
-    post_hook_present = any(
-        "bicameral" in h.get("command", "")
-        for entry in post_tool_use
-        if entry.get("matcher") == "Bash"
-        for h in entry.get("hooks", [])
+    bash_entry = next(
+        (e for e in post_tool_use if e.get("matcher") == "Bash"), None
     )
-    if not post_hook_present:
-        bash_entry = next(
-            (e for e in post_tool_use if e.get("matcher") == "Bash"), None
-        )
-        if bash_entry is None:
-            bash_entry = {"matcher": "Bash", "hooks": []}
-            post_tool_use.append(bash_entry)
-        bash_entry["hooks"].append({
-            "type": "command",
-            "command": _BICAMERAL_POST_COMMIT_COMMAND,
-        })
+    if bash_entry is None:
+        bash_entry = {"matcher": "Bash", "hooks": []}
+        post_tool_use.append(bash_entry)
+    # Remove any stale bicameral hooks, then write the current command.
+    old_hooks = bash_entry.get("hooks", [])
+    non_bic = [h for h in old_hooks if "bicameral" not in h.get("command", "")]
+    new_post_hook = {"type": "command", "command": _BICAMERAL_POST_COMMIT_COMMAND}
+    if non_bic != old_hooks or new_post_hook not in old_hooks:
+        bash_entry["hooks"] = non_bic + [new_post_hook]
         wrote_anything = True
 
     # ── SessionEnd — capture uningested corrections ──────────────────
     session_end: list = hooks.setdefault("SessionEnd", [])
-    session_end_present = any(
-        "bicameral" in h.get("command", "")
-        for entry in session_end
-        for h in entry.get("hooks", [])
-    )
-    if not session_end_present:
-        session_end.append({
-            "hooks": [{
-                "type": "command",
-                "command": _BICAMERAL_SESSION_END_COMMAND,
-            }]
-        })
+    # Remove any stale bicameral SessionEnd entries, then write current.
+    non_bic_se = [
+        e for e in session_end
+        if not any("bicameral" in h.get("command", "") for h in e.get("hooks", []))
+    ]
+    new_se_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}]}
+    if non_bic_se != session_end or new_se_entry not in session_end:
+        hooks["SessionEnd"] = non_bic_se + [new_se_entry]
         wrote_anything = True
 
     if wrote_anything:

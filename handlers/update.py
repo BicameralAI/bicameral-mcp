@@ -163,6 +163,20 @@ def _apply_pending_migration(repo_path: str) -> dict:
                 pass
 
 
+def _read_guided_from_config(repo_path: str) -> bool:
+    """Return the guided: flag from .bicameral/config.yaml, defaulting to False."""
+    try:
+        import re
+        config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+        if not config_path.exists():
+            return False
+        text = config_path.read_text()
+        m = re.search(r"^guided:\s*(true|false)", text, re.MULTILINE)
+        return m.group(1) == "true" if m else False
+    except Exception:
+        return False
+
+
 def _reinstall_skills(repo_path: str) -> int:
     """Re-copy skill SKILL.md files and hooks from the newly-installed package.
 
@@ -170,12 +184,15 @@ def _reinstall_skills(repo_path: str) -> int:
     the current process has the old version cached in sys.modules.
     """
     try:
+        guided = _read_guided_from_config(repo_path)
         script = (
-            "from setup_wizard import _install_skills, _install_claude_hooks; "
+            "from setup_wizard import _install_skills, _install_claude_hooks, _install_git_post_commit_hook; "
             "from pathlib import Path; "
-            f"n = _install_skills(Path(r'{repo_path}')); "
-            f"_install_claude_hooks(Path(r'{repo_path}')); "
-            "print(n)"
+            f"rp = Path(r'{repo_path}'); "
+            f"n = _install_skills(rp); "
+            f"_install_claude_hooks(rp); "
+            + (f"_install_git_post_commit_hook(rp); " if guided else "")
+            + "print(n)"
         )
         result = subprocess.run(
             [sys.executable, "-c", script],

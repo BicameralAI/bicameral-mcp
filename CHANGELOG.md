@@ -3,6 +3,34 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.10.5 — hook replace strategy + bicameral-config skill
+
+### Fixed — `_install_claude_hooks` replace-not-skip strategy
+
+`bicameral.update apply` and `bicameral-mcp setup` previously skipped hook
+installation entirely when any "bicameral" hook was already present in
+`.claude/settings.json`. This meant updated hook commands (e.g. the
+`bicameral-sync` PostToolUse trigger added in v0.10.3) never reached existing
+installs. The function now removes all stale bicameral-tagged hook entries
+and writes the current `_BICAMERAL_POST_COMMIT_COMMAND` and
+`_BICAMERAL_SESSION_END_COMMAND` on every run, making hook updates idempotent
+and self-healing.
+
+### Fixed — `_reinstall_skills` installs git post-commit hook for guided users
+
+`_reinstall_skills` (called during `bicameral.update apply`) now reads the
+`guided:` flag from `.bicameral/config.yaml` and calls
+`_install_git_post_commit_hook` when guided mode is active, closing the gap
+where the git hook was never updated during upgrades.
+
+### Added — `bicameral-config` skill
+
+New `/bicameral:config` skill provides a fully interactive configuration
+walkthrough: reads the current `config.yaml`, walks through collaboration
+mode / guided mode / telemetry settings one-by-one, writes the updated config,
+reinstalls skills and hooks via subprocess (using the new binary's code), and
+reports exactly what changed.
+
 ## v0.10.4 — auto-migration on upgrade
 
 `bicameral.update apply` now automatically applies any pending destructive
