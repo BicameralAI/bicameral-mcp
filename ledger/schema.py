@@ -112,8 +112,18 @@ _TABLES = [
     # from compliance_check aggregation at read time via project_decision_status.
     # Shape: {state: 'proposed'|'ratified', session_id, created_at/ratified_at, signer?, note?}
     "DEFINE FIELD signoff ON decision FLEXIBLE TYPE option<object> DEFAULT NONE",
-    # v0.9.3 — hierarchical decision model (CodeGenome-aligned)
-    # L1 = product commitment (claim layer), L2 = architecture (identity layer), L3 = detail (rarely tracked)
+    # v0.9.3 — hierarchical decision model (CodeGenome-aligned).
+    # See docs/decision-level.md for the full reference, including the
+    # tolerant-NULL policy and codegenome-write semantics per level.
+    #
+    # Quick reference (full doc covers nuance + examples):
+    #   L1   = behavioural / product claim   → no codegenome identity write
+    #   L2   = implementation identity       → codegenome identity write enabled
+    #   L3   = glue / infrastructure detail  → no codegenome identity write
+    #   NONE = unclassified (legacy rows)    → treated as L3 (skip), tolerant policy
+    #
+    # Enforced by handlers/bind.py L1-exemption guard; the ASSERT below
+    # is the only schema-level constraint.
     "DEFINE FIELD decision_level     ON decision TYPE option<string> DEFAULT NONE "
     "ASSERT $value = NONE OR $value IN ['L1', 'L2', 'L3']",
     "DEFINE FIELD parent_decision_id ON decision TYPE option<string> DEFAULT NONE",
