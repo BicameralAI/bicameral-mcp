@@ -227,6 +227,114 @@ def invalidate_sync_cache(ctx) -> None:
         sync_state.pop("pending_flow_id", None)
 
 
+async def _run_drift_classification_pass(
+    ctx, pending: list[PendingComplianceCheck], *, commit_hash: str,
+) -> tuple[list[PendingComplianceCheck], int]:
+    """Phase 4 (#61): per-region cosmetic-vs-semantic classification.
+
+    Returns ``(surviving_pending, auto_resolved_count)``. Auto-resolved
+    cosmetic checks are stripped from the output AND have a
+    ``compliance_check`` row written by ``drift_service``. Uncertain
+    checks remain in the output with a ``pre_classification`` hint
+    attached.
+
+    Gated on the same ``cg_config.enhance_drift`` flag as
+    ``_run_continuity_pass`` (one feature, one toggle). Failure-
+    isolated at every layer: any exception falls through to the
+    original pending list with no hint and no auto-resolve.
+    """
+    cg_config = getattr(ctx, "codegenome_config", None)
+    cg_adapter = getattr(ctx, "codegenome", None)
+    if cg_config is None or cg_adapter is None:
+        return pending, 0
+    if not (
+        getattr(cg_config, "enabled", False)
+        and getattr(cg_config, "enhance_drift", False)
+    ):
+        return pending, 0
+    if not pending:
+        return pending, 0
+    from codegenome.drift_service import (
+        DriftClassificationContext,
+        evaluate_drift_classification,
+    )
+    from ledger.status import get_git_content
+
+    survivors: list[PendingComplianceCheck] = []
+    auto_resolved = 0
+    repo_ref = getattr(ctx, "authoritative_sha", "") or "HEAD"
+    for p in pending:
+        outcome = await _classify_one(
+            ctx, p, cg_adapter, repo_ref, commit_hash,
+            DriftClassificationContext, evaluate_drift_classification,
+            get_git_content,
+        )
+        if outcome is None:
+            survivors.append(p)
+            continue
+        if outcome.auto_resolved:
+            auto_resolved += 1
+            continue
+        if outcome.pre_classification_hint is not None:
+            p = p.model_copy(
+                update={"pre_classification": outcome.pre_classification_hint},
+            )
+        survivors.append(p)
+    return survivors, auto_resolved
+
+
+async def _classify_one(
+    ctx, p: PendingComplianceCheck,
+    cg_adapter, repo_ref: str, commit_hash: str,
+    DriftClassificationContext, evaluate_drift_classification,
+    get_git_content,
+):
+    """Run drift classification for a single pending check.
+    Failure-isolated — returns ``None`` on any exception so the
+    caller leaves the pending unchanged."""
+    try:
+        meta = None
+        if hasattr(ctx.ledger, "get_region_metadata"):
+            meta = await ctx.ledger.get_region_metadata(p.region_id)
+        if not meta:
+            return None
+        old_body = get_git_content(
+            p.file_path, meta["start_line"], meta["end_line"],
+            ctx.repo_path, ref=repo_ref,
+        )
+        new_body = get_git_content(
+            p.file_path, meta["start_line"], meta["end_line"],
+            ctx.repo_path, ref=commit_hash,
+        )
+        if old_body is None or new_body is None:
+            return None
+        from code_locator.indexing.symbol_extractor import EXTENSION_LANGUAGE
+        ext = "." + p.file_path.rsplit(".", 1)[-1] if "." in p.file_path else ""
+        language = EXTENSION_LANGUAGE.get(ext, "")
+        if not language:
+            return None
+        ctx_dc = DriftClassificationContext(
+            decision_id=p.decision_id, region_id=p.region_id,
+            content_hash=p.content_hash, commit_hash=commit_hash,
+            file_path=p.file_path, symbol_name=p.symbol,
+            old_body=old_body, new_body=new_body, language=language,
+        )
+        return await evaluate_drift_classification(
+            ledger=ctx.ledger, codegenome=cg_adapter,
+            code_locator=getattr(ctx, "code_graph", None),
+            ctx=ctx_dc,
+            new_start_line=int(meta["start_line"]),
+            new_end_line=int(meta["end_line"]),
+            repo_ref=repo_ref,
+        )
+    except Exception as exc:  # noqa: BLE001 — failure-isolated by design
+        logger.warning(
+            "[link_commit] drift classification failed for region %s: %s",
+            p.region_id, exc,
+        )
+        return None
+
+
 async def _run_continuity_pass(ctx, pending: list[PendingComplianceCheck]) -> list:
     """Phase 3 (#60): per-region continuity resolution. Returns the list
     of ``ContinuityResolution`` objects (empty when the flag is off, no
@@ -351,6 +459,16 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         if resolved_region_ids:
             pending = [p for p in pending if p.region_id not in resolved_region_ids]
 
+    # Phase 4 (#61): cosmetic-vs-semantic classification pass. Runs on
+    # the surviving pending list AFTER continuity. Same enhance_drift
+    # flag (one feature, one toggle). Auto-resolved cosmetic checks
+    # are stripped from `pending` AND a compliance_check row is
+    # written by the service. Uncertain pendings get a
+    # ``pre_classification`` hint attached. Failure-isolated.
+    pending, auto_resolved_count = await _run_drift_classification_pass(
+        ctx, pending, commit_hash=result["commit_hash"],
+    )
+
     pending_grounding_raw = result.get("pending_grounding_checks", []) or []
 
     has_action_items = bool(pending) or bool(pending_grounding_raw)
@@ -388,6 +506,7 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
         flow_id=flow_id,
         ephemeral=is_ephemeral,
         continuity_resolutions=continuity_resolutions,
+        auto_resolved_count=auto_resolved_count,
     )
     _store_sync_cache(ctx, commit_hash, response)
 
