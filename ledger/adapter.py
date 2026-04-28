@@ -52,6 +52,7 @@ from .status import (
     get_changed_files_in_range,
     get_git_content,
     resolve_head,
+    resolve_ref,
 )
 
 
@@ -531,32 +532,27 @@ class SurrealDBLedgerAdapter:
         try:
             already_covered = {c["region_id"] for c in pending_checks}
             stale_pending = await get_pending_decisions_with_regions(self._client)
-            for d in stale_pending:
-                desc = str(d.get("description", ""))
-                d_id = str(d.get("decision_id", ""))
-                for region in (d.get("regions") or []):
-                    if not isinstance(region, dict):
-                        continue
-                    region_id = str(region.get("region_id", ""))
-                    if not region_id or region_id in already_covered:
-                        continue
-                    fp = region.get("file_path", "")
-                    sl = region.get("start_line", 0)
-                    el = region.get("end_line", 0)
-                    current_hash = compute_content_hash(fp, sl, el, repo_path, ref=commit_hash)
-                    if not current_hash:
-                        continue
-                    code_body = _extract_code_body(fp, sl, el, repo_path, ref=commit_hash)
-                    pending_checks.append({
-                        "phase": "drift",
-                        "decision_id": d_id,
-                        "region_id": region_id,
-                        "decision_description": desc,
-                        "file_path": fp,
-                        "symbol": region.get("symbol_name", ""),
-                        "content_hash": current_hash,
-                        "code_body": code_body,
-                    })
+            for row in stale_pending:
+                region_id = str(row.get("region_id", ""))
+                if not region_id or region_id in already_covered:
+                    continue
+                fp = row.get("file_path", "")
+                sl = row.get("start_line", 0)
+                el = row.get("end_line", 0)
+                current_hash = compute_content_hash(fp, sl, el, repo_path, ref=commit_hash)
+                if not current_hash:
+                    continue
+                code_body = _extract_code_body(fp, sl, el, repo_path, ref=commit_hash)
+                pending_checks.append({
+                    "phase": "drift",
+                    "decision_id": str(row.get("decision_id", "")),
+                    "region_id": region_id,
+                    "decision_description": str(row.get("description", "")),
+                    "file_path": fp,
+                    "symbol": row.get("symbol_name", ""),
+                    "content_hash": current_hash,
+                    "code_body": code_body,
+                })
         except Exception as exc:
             logger.warning("[link_commit] could not surface stale pending decisions: %s", exc)
 
@@ -740,17 +736,37 @@ class SurrealDBLedgerAdapter:
                 end_line = region_data.get("end_line", 0)
                 content_hash = ""
                 if repo:
-                    _computed = compute_content_hash(
-                        file_path, start_line, end_line, repo, ref=effective_ref
+                    # The hallucinated-file guard only fires when we can actually
+                    # validate file existence — i.e. ``repo`` is a directory on
+                    # disk AND ``effective_ref`` resolves to a real commit.
+                    # ``compute_content_hash`` returns None whenever ``git show``
+                    # fails, which happens in three distinct cases:
+                    #   1. repo path doesn't exist (synthetic / test fixture)
+                    #   2. repo exists but ref doesn't resolve (synthetic ref)
+                    #   3. repo + ref both real, file genuinely missing at ref
+                    # Only case 3 is a hallucinated-file signal and warrants
+                    # rejecting the region. Cases 1 and 2 are unverifiable
+                    # contexts — fall through with empty hash so the decision
+                    # is created as ungrounded (matches pre-v0.10.7 behavior).
+                    repo_on_disk = Path(repo).resolve().is_dir()
+                    ref_resolves = (
+                        repo_on_disk
+                        and (effective_ref == "working_tree"
+                             or resolve_ref(effective_ref, repo) is not None)
                     )
-                    if _computed is None:
-                        logger.warning(
-                            "[ingest] skipping region: file '%s' not found at %s"
-                            " — only bind to existing code, never hypothetical files",
-                            file_path, effective_ref,
+                    if repo_on_disk and ref_resolves:
+                        _computed = compute_content_hash(
+                            file_path, start_line, end_line, repo, ref=effective_ref
                         )
-                        continue
-                    content_hash = _computed
+                        if _computed is None:
+                            logger.warning(
+                                "[ingest] skipping region: file '%s' not found at %s in %s"
+                                " — only bind to existing code, never hypothetical files",
+                                file_path, effective_ref, repo,
+                            )
+                            continue
+                        content_hash = _computed
+                    # else: unverifiable context — fall through with empty hash.
 
                 # Create / update symbol node (retrieval tier)
                 symbol_id = await upsert_symbol(
