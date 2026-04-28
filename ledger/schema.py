@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -40,6 +40,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     9: "0.9.3",
     11: "0.11.0",   # placeholder; release-eng pins final value at PR merge
     12: "0.12.0",   # placeholder; release-eng pins final value at PR merge
+    13: "0.12.1",   # provenance FLEXIBLE on binds_to (#72)
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -309,7 +310,11 @@ _EDGES = [
     # decision → code_region (direct binding — decision tier only)
     "DEFINE TABLE binds_to SCHEMAFULL TYPE RELATION IN decision OUT code_region",
     "DEFINE FIELD confidence ON binds_to TYPE float ASSERT $value >= 0 AND $value <= 1",
-    "DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}",
+    # FLEXIBLE is required for provenance: callers attach nested
+    # objects (e.g. {"caller_llm": {...}, "search_hint": {...}}) and
+    # SurrealDB v2 silently strips nested keys for plain ``TYPE object``
+    # without FLEXIBLE. See issue #72.
+    "DEFINE FIELD provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}",
     "DEFINE FIELD created_at ON binds_to TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_binds_to_unique ON binds_to FIELDS in, out UNIQUE",
 
@@ -838,6 +843,38 @@ async def _migrate_v11_to_v12(client: LedgerClient) -> None:
     logger.info("[migration] v11 → v12: identity_supersedes edge + neighbors_at_bind field defined")
 
 
+async def _migrate_v12_to_v13(client: LedgerClient) -> None:
+    """v12 → v13: Add FLEXIBLE to binds_to.provenance (#72).
+
+    Before: ``DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}``
+    After:  ``DEFINE FIELD provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}``
+
+    Without FLEXIBLE, SurrealDB v2 silently strips nested keys from the
+    object on insert/update. Callers attach structured provenance like
+    ``{"caller_llm": {...}, "search_hint": {...}}`` — those nested
+    objects were being dropped, leaving only top-level scalar keys.
+
+    The schema redefinition is handled automatically by ``init_schema``
+    on next connect (every DEFINE statement gets OVERWRITE injected),
+    so this migration body is a no-op acknowledging that the DB has
+    been touched. We do NOT attempt to recover stripped provenance on
+    existing rows — that data is gone. Future writes will preserve
+    nested keys correctly.
+
+    Originally targeted v10→v11 but Phase 1+2 (#71) and Phase 3 (#73)
+    claimed v11 and v12 first; this migration is now v12→v13.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}",
+    )
+    logger.info(
+        "[migration] v12 → v13: binds_to.provenance redefined as FLEXIBLE "
+        "(existing stripped rows are NOT recovered — future writes will "
+        "preserve nested keys)"
+    )
+
+
 _MIGRATIONS: dict[int, ...] = {
     5: _migrate_v4_to_v5,
     6: _migrate_v5_to_v6,
@@ -847,6 +884,7 @@ _MIGRATIONS: dict[int, ...] = {
     10: _migrate_v9_to_v10,
     11: _migrate_v10_to_v11,
     12: _migrate_v11_to_v12,
+    13: _migrate_v12_to_v13,
 }
 
 
