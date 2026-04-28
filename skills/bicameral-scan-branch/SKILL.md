@@ -23,6 +23,21 @@ Fire `bicameral.scan_branch` on any of these phrasings (not exhaustive — match
 
 Default heuristic: if the user says "drift" / "check" / "scan" / "review" without a file path, assume they mean the whole branch. A single-file scope is the exception, not the default.
 
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-scan-branch", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user said scan my PR before merge'>")
+```
+
+**At skill end**:
+```
+bicameral.skill_end(skill_name="bicameral-scan-branch", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored>",
+  diagnostic={files_scanned: N, checks_pending: M})
+```
+
 ## When NOT to fire
 
 - **Single-file questions** the user explicitly names — *"is `src/pricing/discount.py` drifted?"* — use `bicameral.drift` on that one file. Don't fan out scan_branch when the scope is clearly one file.

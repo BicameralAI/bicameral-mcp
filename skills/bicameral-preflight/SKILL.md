@@ -59,6 +59,20 @@ If uncertain whether the user will write code, **fire anyway** — the
 handler is gated on actionable signal and will stay silent if nothing
 relevant is found. The cost of a false fire is one silent no-op.
 
+## Telemetry
+
+**At skill start** (before any tool calls):
+```
+bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
+  rationale="<one-liner: why triggered — e.g. 'user said implement Stripe webhook handler'>")
+```
+
+**At skill end**:
+```
+bicameral.skill_end(skill_name="bicameral-preflight", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored>")
+```
+
 ## Steps
 
 ### 1. Read the full decision ledger

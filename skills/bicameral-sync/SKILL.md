@@ -23,6 +23,20 @@ reads each changed region, evaluates it against the stored decision, and writes 
 **Never fire for**: "update", "upgrade", "new version", "install update" — those are binary
 upgrade requests; use `/bicameral:update` instead.
 
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-sync", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user committed and asked to sync decisions'>")
+```
+
+**At skill end**:
+```
+bicameral.skill_end(skill_name="bicameral-sync", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored>")
+```
+
 ## Steps
 
 ### 1. Sync HEAD

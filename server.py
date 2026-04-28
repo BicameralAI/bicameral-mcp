@@ -52,9 +52,9 @@ from dashboard.server import get_dashboard_server
 
 SERVER_NAME = "bicameral-mcp"
 
-# In-process map of session_id → start monotonic time for skill timing.
+# In-process map of session_id → {t0, rationale} for skill timing.
 # Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
-_skill_sessions: dict[str, float] = {}
+_skill_sessions: dict[str, dict] = {}
 
 
 def _resolve_server_version() -> str:
@@ -100,6 +100,7 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.dashboard",
     "bicameral.skill_begin",
     "bicameral.skill_end",
+    "bicameral.feedback",
     "validate_symbols",
     "get_neighbors",
     "extract_symbols",
@@ -597,6 +598,10 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Caller-generated UUID that correlates this begin with the matching skill_end",
                     },
+                    "rationale": {
+                        "type": "string",
+                        "description": "One-liner for why this skill was triggered (e.g. 'user pasted transcript and said track this'). Used for quality feedback analysis.",
+                    },
                 },
                 "required": ["skill_name", "session_id"],
             },
@@ -625,12 +630,59 @@ async def list_tools() -> list[Tool]:
                         "default": False,
                         "description": "True if the skill exited due to an error or user-abort",
                     },
+                    "error_class": {
+                        "type": "string",
+                        "enum": [
+                            "symbol_not_found",
+                            "collision_unresolved",
+                            "drift_mislabeled",
+                            "low_confidence_verdict",
+                            "ledger_empty",
+                            "grounding_failed",
+                            "user_abort",
+                            "other",
+                        ],
+                        "description": "Structured failure category when errored=true. Maps to desync catalog entries for prioritization.",
+                    },
                     "diagnostic": {
                         "type": "object",
                         "description": "Optional integer/float metrics (e.g. {decisions_ingested: 3}). Strings are dropped.",
                     },
                 },
                 "required": ["skill_name", "session_id"],
+            },
+        ),
+        Tool(
+            name="bicameral.feedback",
+            description=(
+                "Call this when the skill gets stuck or encounters an unexpected failure. "
+                "Records structured feedback that maps directly onto the desync scenario catalog: "
+                "what you were trying to do, what you attempted, and where you got blocked. "
+                "This feeds into the quality feedback loop — use it to report any failure that "
+                "doesn't fit neatly into an error_class. Do NOT call with vague feedback like "
+                "'it felt slow' or 'it didn't work' — the value is in the specific blocked step."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "description": "The skill that encountered the issue (e.g. 'bicameral-preflight')",
+                    },
+                    "trying_to": {
+                        "type": "string",
+                        "description": "What the skill was trying to accomplish at the point of failure",
+                    },
+                    "attempted": {
+                        "type": "string",
+                        "description": "What steps were taken before hitting the block",
+                    },
+                    "stuck_on": {
+                        "type": "string",
+                        "description": "The specific obstacle — maps to a desync scenario catalog row",
+                    },
+                },
+                "required": ["skill", "trying_to", "attempted", "stuck_on"],
             },
         ),
         # ── Code locator tools (MCP-native) ──────────────────────────
@@ -701,7 +753,10 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # ── Skill telemetry bookends (no ledger, no sync) ─────────────────
     if name == "bicameral.skill_begin":
         session_id = arguments["session_id"]
-        _skill_sessions[session_id] = time.monotonic()
+        _skill_sessions[session_id] = {
+            "t0": time.monotonic(),
+            "rationale": arguments.get("rationale", ""),
+        }
         return [TextContent(type="text", text=json.dumps({
             "session_id": session_id,
             "skill": arguments["skill_name"],
@@ -713,16 +768,34 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         session_id = arguments["session_id"]
         skill_name = arguments["skill_name"]
         errored = arguments.get("errored", False)
+        error_class = arguments.get("error_class")
         diagnostic = arguments.get("diagnostic")
-        t0 = _skill_sessions.pop(session_id, None)
+        session_data = _skill_sessions.pop(session_id, None)
+        t0 = session_data["t0"] if session_data else None
+        rationale = session_data.get("rationale") if session_data else None
         duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
-        record_skill_event(skill_name, session_id, duration_ms, errored, SERVER_VERSION, diagnostic)
+        record_skill_event(
+            skill_name, session_id, duration_ms, errored, SERVER_VERSION,
+            diagnostic=diagnostic, error_class=error_class, rationale=rationale,
+        )
         return [TextContent(type="text", text=json.dumps({
             "session_id": session_id,
             "skill": skill_name,
             "duration_ms": duration_ms,
             "status": "recorded",
         }))]
+
+    if name == "bicameral.feedback":
+        from telemetry import send_event
+        send_event(
+            SERVER_VERSION,
+            event_type="agent_feedback",
+            skill=arguments.get("skill", ""),
+            trying_to=arguments.get("trying_to", ""),
+            attempted=arguments.get("attempted", ""),
+            stuck_on=arguments.get("stuck_on", ""),
+        )
+        return [TextContent(type="text", text=json.dumps({"recorded": True}))]
 
     # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
     # Returns the LinkCommitResponse when a new commit was just processed so we

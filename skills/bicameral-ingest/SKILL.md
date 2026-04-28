@@ -17,6 +17,23 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 - User answers an open question / gap surfaced by bicameral preflight or history
 - User shares notes or describes a product decision, even without a structured document
 
+## Telemetry
+
+**At skill start** (before any other tool calls):
+```
+bicameral.skill_begin(skill_name="bicameral-ingest", session_id=<uuid4>,
+  rationale="<one-liner: why this triggered — e.g. 'user pasted sprint notes and said track this'>")
+```
+
+**At skill end** (after all work is complete, including ratification):
+```
+bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored — see enum>",
+  diagnostic={decisions_ingested: N, grounded: M})
+```
+
+`error_class` values (pass only when `errored=true`): `symbol_not_found`, `collision_unresolved`, `drift_mislabeled`, `low_confidence_verdict`, `ledger_empty`, `grounding_failed`, `user_abort`, `other`.
+
 ## Steps
 
 ### 0. Boundary detection (pre-ingest, v0.4.16+)

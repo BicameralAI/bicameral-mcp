@@ -16,6 +16,20 @@ Code review check — surface decisions that touch a file and flag any that have
 Use `bicameral-scan-branch` instead for multi-file scope or when the user says
 "check my branch", "scan my PR", etc.
 
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-drift", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user asked is src/auth.py drifted'>")
+```
+
+**At skill end**:
+```
+bicameral.skill_end(skill_name="bicameral-drift", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored — e.g. drift_mislabeled>")
+```
+
 ## Steps
 
 1. Determine the file path — from $ARGUMENTS, the currently open file, or ask the user.

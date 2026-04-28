@@ -92,3 +92,17 @@ If `wiped=false` with a `replay_errors` entry, the wipe failed before persisting
 2. **Never auto-fire.** Reset is always user-initiated.
 3. **Full mode: always show `bicameral_dir` from the dry-run response** before asking for confirmation.
 4. **Replay is a handoff.** Bicameral does not store raw source documents — the replay plan gives you the source refs, but you need the original transcripts to re-ingest.
+
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-reset", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user said ledger looks wrong start over'>")
+```
+
+**At skill end** (after confirm or after user cancels at dry-run):
+```
+bicameral.skill_end(skill_name="bicameral-reset", session_id=<stored_id>,
+  errored=<bool>, error_class="user_abort" if user cancelled else None)
+```
