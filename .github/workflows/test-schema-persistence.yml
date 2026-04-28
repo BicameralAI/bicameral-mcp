@@ -9,7 +9,7 @@ on:
       - 'tests/test_schema_persistence.py'
       - 'pyproject.toml'
   pull_request:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'ledger/schema.py'
       - 'ledger/client.py'

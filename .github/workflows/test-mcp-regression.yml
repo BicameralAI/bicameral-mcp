@@ -2,7 +2,7 @@ name: MCP Regression Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
 
 env:
   PYTHON_VERSION: '3.11'
