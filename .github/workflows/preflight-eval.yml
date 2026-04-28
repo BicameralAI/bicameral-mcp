@@ -82,7 +82,7 @@ jobs:
         if: always()
         uses: test-summary/action@v2
         with:
-          paths: test-results/preflight-eval.xml,test-results/preflight-skill-eval.xml
+          paths: "test-results/*.xml"
           show: fail, skip
 
       - name: Upload eval artifacts
