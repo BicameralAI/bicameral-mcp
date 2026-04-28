@@ -86,6 +86,13 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             start_line, end_line = resolved
         else:
             start_line, end_line = int(start_line), int(end_line)
+            from ledger.status import get_git_content
+            if get_git_content(file_path, 1, 1, repo, ref=authoritative_sha) is None:
+                results.append(BindResult(
+                    decision_id=decision_id, region_id="", content_hash="",
+                    error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
+                ))
+                continue
 
         try:
             bind_result = await ledger.bind_decision(

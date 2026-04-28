@@ -957,6 +957,28 @@ async def get_regions_without_hash(
     return filtered
 
 
+async def get_pending_decisions_with_regions(client: LedgerClient) -> list[dict]:
+    """Return all decision+region pairs where decision status is 'pending'.
+
+    Used by ingest_commit to surface stale pending checks that were left
+    unresolved from an aborted sync run.
+    """
+    rows = await client.query(
+        """
+        SELECT
+            type::string(id) AS decision_id,
+            description,
+            ->binds_to->code_region.{
+                type::string(id) AS region_id,
+                file_path, symbol_name, start_line, end_line, content_hash
+            } AS regions
+        FROM decision
+        WHERE status = 'pending'
+        """,
+    )
+    return rows or []
+
+
 async def delete_binds_to_edge(
     client: LedgerClient,
     decision_id: str,

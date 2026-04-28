@@ -21,6 +21,7 @@ from .queries import (
     get_compliance_verdict,
     get_decisions_for_file,
     get_decisions_for_files,
+    get_pending_decisions_with_regions,
     get_regions_for_files,
     get_regions_without_hash,
     get_source_cursor,
@@ -524,6 +525,41 @@ class SurrealDBLedgerAdapter:
         except Exception as exc:
             logger.warning("[link_commit] could not query ungrounded decisions: %s", exc)
 
+        # Surface stale pending decisions left over from an aborted sync.
+        # These had content_hash written but were never compliance-evaluated.
+        # Include them in pending_checks so the current sync resolves them.
+        try:
+            already_covered = {c["region_id"] for c in pending_checks}
+            stale_pending = await get_pending_decisions_with_regions(self._client)
+            for d in stale_pending:
+                desc = str(d.get("description", ""))
+                d_id = str(d.get("decision_id", ""))
+                for region in (d.get("regions") or []):
+                    if not isinstance(region, dict):
+                        continue
+                    region_id = str(region.get("region_id", ""))
+                    if not region_id or region_id in already_covered:
+                        continue
+                    fp = region.get("file_path", "")
+                    sl = region.get("start_line", 0)
+                    el = region.get("end_line", 0)
+                    current_hash = compute_content_hash(fp, sl, el, repo_path, ref=commit_hash)
+                    if not current_hash:
+                        continue
+                    code_body = _extract_code_body(fp, sl, el, repo_path, ref=commit_hash)
+                    pending_checks.append({
+                        "phase": "drift",
+                        "decision_id": d_id,
+                        "region_id": region_id,
+                        "decision_description": desc,
+                        "file_path": fp,
+                        "symbol": region.get("symbol_name", ""),
+                        "content_hash": current_hash,
+                        "code_body": code_body,
+                    })
+        except Exception as exc:
+            logger.warning("[link_commit] could not surface stale pending decisions: %s", exc)
+
         if is_authoritative:
             await upsert_sync_state(self._client, repo_path, commit_hash)
 
@@ -704,9 +740,17 @@ class SurrealDBLedgerAdapter:
                 end_line = region_data.get("end_line", 0)
                 content_hash = ""
                 if repo:
-                    content_hash = compute_content_hash(
+                    _computed = compute_content_hash(
                         file_path, start_line, end_line, repo, ref=effective_ref
-                    ) or ""
+                    )
+                    if _computed is None:
+                        logger.warning(
+                            "[ingest] skipping region: file '%s' not found at %s"
+                            " — only bind to existing code, never hypothetical files",
+                            file_path, effective_ref,
+                        )
+                        continue
+                    content_hash = _computed
 
                 # Create / update symbol node (retrieval tier)
                 symbol_id = await upsert_symbol(
