@@ -78,6 +78,21 @@ jobs:
             -v --tb=short \
             --junitxml=test-results/preflight-skill-eval.xml
 
+      # Phase 3: §C cost/latency baseline. Asymmetric ±20% regression rule
+      # against committed baselines in tests/eval/cost_baseline.jsonl, with
+      # noise floors (10 tokens / 0.5ms) below which deltas are dismissed
+      # as measurement variance. Cleanly skips per-platform when no
+      # baseline row exists (e.g. first Linux run with Darwin-only
+      # baselines committed); record locally with
+      # BICAMERAL_EVAL_RECORD_BASELINE=1 and commit the row.
+      - name: Phase 3 — cost/latency baseline
+        id: phase3
+        continue-on-error: true
+        run: |
+          pytest tests/eval/run_preflight_cost_eval.py \
+            -v --tb=short \
+            --junitxml=test-results/preflight-cost-eval.xml
+
       - name: Surface results in step summary
         if: always()
         uses: test-summary/action@v2
