@@ -3,6 +3,72 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.14.0 — Local-only telemetry counters + usage summary + first-boot consent — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Privacy-first observability foundation. Adds a local-only counter sink
+that runs alongside (not replacing) the existing network relay, a new
+`bicameral.usage_summary` MCP tool that aggregates ledger and counter
+state into actionable percentages, and a non-blocking first-boot notice
+so users upgrading to this binary see the telemetry policy before any
+data flows.
+
+### Added
+
+- **`local_counters.py`** (#39) — append-only JSONL sink at
+  `~/.bicameral/counters.jsonl`. Records only `{tool_name, delta=1, ts}`
+  per call. Mode `0o600` on POSIX; thread-safe; no network egress.
+  Always-on regardless of network telemetry consent — counters are
+  local introspection, distinct from the relay. Kill-switch:
+  `BICAMERAL_LOCAL_COUNTERS=0`. API: `increment(tool_name)` and
+  `read_counters() -> dict[str, int]`.
+- **`consent.py`** (#39) — owns `~/.bicameral/consent.json`,
+  `telemetry_allowed()` predicate, and `notify_if_first_run()`. Marker
+  shape: `{telemetry, policy_version, acknowledged_at, acknowledged_via}`
+  with `acknowledged_via` distinguishing `"wizard"` (explicit choice)
+  from `"first_boot_notice"` (passive ack). `POLICY_VERSION` constant
+  re-fires the notice for everyone once when telemetry policy changes.
+- **`bicameral.usage_summary`** MCP tool (#42) — aggregate readout over
+  the last N days (default 7). Returns ingest/bind call counts (from
+  the local counters file), decision counts by status (from ledger),
+  reflected/drift percentages, cosmetic-drift percentage (from
+  compliance_check verdicts), and error rate. Privacy-preserving:
+  aggregate counts and floats only.
+- **First-boot consent notice** — non-blocking, fires once per
+  `policy_version` via stderr (always) and MCP `notifications/message`
+  (when an active session is available). Server keeps running; if
+  marker write fails, notice is logged at debug and the server
+  continues. Test escape hatch: `BICAMERAL_SKIP_CONSENT_NOTICE=1`.
+
+### Changed
+
+- **`telemetry.send_event` now uses `consent.telemetry_allowed()`** as
+  the single gating predicate. Behavior preserved for users without a
+  marker (default-on); newly opted-out users (marker says `disabled`
+  via the wizard) suppress the relay even when env var is unset.
+- **`telemetry.send_event` always increments the local counter** before
+  the relay path — never raises, wrapped in try/except. Counter
+  failure cannot affect the caller; relay path runs independently.
+- **`setup_wizard._select_telemetry`** now calls
+  `consent.write_consent(via="wizard")` after the user's choice. Hard
+  fails (raises `OSError`) if the marker cannot be written — guarantees
+  a "no" answer never silently leaves telemetry on.
+- **`server.serve_stdio`** calls `consent.notify_if_first_run()` once
+  during startup. Wrapped in try/except — startup is never blocked by
+  notice machinery.
+
+### CI
+
+- `BICAMERAL_SKIP_CONSENT_NOTICE: "1"` added to the test job env in
+  `.github/workflows/test-mcp-regression.yml` so test runs do not emit
+  notices into job logs.
+- `tests/conftest.py` adds a session-scoped autouse fixture that
+  reroutes `~/.bicameral/` to a per-session tmp dir and sets the skip
+  env var. Stdlib only — no third-party fixture plugin.
+
+### Closes
+
+#39, #42.
+
 ## v0.13.0 — CodeGenome Phase 4 (#61) — semantic drift evaluation in `resolve_compliance` (M3) — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Final PR in the three-phase CodeGenome rollout (issues #59 / #60 /
