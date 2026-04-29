@@ -58,10 +58,12 @@ FORBIDDEN_TERMS = [
 
 
 def _all_skill_files() -> list[Path]:
-    return sorted([
-        *_MCP_ROOT.glob("skills/**/SKILL.md"),
-        *_MCP_ROOT.glob(".claude/skills/**/SKILL.md"),
-    ])
+    return sorted(
+        [
+            *_MCP_ROOT.glob("skills/**/SKILL.md"),
+            *_MCP_ROOT.glob(".claude/skills/**/SKILL.md"),
+        ]
+    )
 
 
 def _compile_patterns() -> list[tuple[str, re.Pattern]]:
@@ -97,10 +99,7 @@ def test_no_backend_jargon_in_skill_files():
             for match in pattern.finditer(body):
                 # Find the line number for a useful error message
                 line_no = body.count("\n", 0, match.start()) + 1
-                offenders.append(
-                    f"{rel}:{line_no}: "
-                    f"'{match.group()}' (term: '{term}')"
-                )
+                offenders.append(f"{rel}:{line_no}: '{match.group()}' (term: '{term}')")
     assert not offenders, (
         "Backend jargon found in user-facing skill files:\n"
         + "\n".join(f"  - {o}" for o in offenders)
@@ -129,9 +128,8 @@ def test_no_backend_jargon_in_tool_descriptions():
             continue
         # Match Tool(...) — plain Name or attribute reference
         func = node.func
-        is_tool = (
-            (isinstance(func, ast.Name) and func.id == "Tool")
-            or (isinstance(func, ast.Attribute) and func.attr == "Tool")
+        is_tool = (isinstance(func, ast.Name) and func.id == "Tool") or (
+            isinstance(func, ast.Attribute) and func.attr == "Tool"
         )
         if not is_tool:
             continue
@@ -152,13 +150,10 @@ def test_no_backend_jargon_in_tool_descriptions():
 
         for term, pattern in patterns:
             for match in pattern.finditer(desc_text):
-                offenders.append(
-                    f"Tool '{tool_name}': '{match.group()}' (term: '{term}')"
-                )
+                offenders.append(f"Tool '{tool_name}': '{match.group()}' (term: '{term}')")
 
-    assert not offenders, (
-        "Backend jargon found in Tool descriptions:\n"
-        + "\n".join(f"  - {o}" for o in offenders)
+    assert not offenders, "Backend jargon found in Tool descriptions:\n" + "\n".join(
+        f"  - {o}" for o in offenders
     )
 
 

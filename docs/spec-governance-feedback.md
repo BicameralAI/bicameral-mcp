@@ -113,11 +113,12 @@ While resolving #71 review feedback and rebasing #73, these surfaced as legitima
 | `binds_to.provenance` declared `TYPE object` (not `FLEXIBLE`) silently strips nested keys | bug | already filed as #72 |
 | `events/writer.py:16` does top-level `import fcntl` (Unix-only) — breaks 17 ephemeral_authoritative tests on Windows | portability bug | already filed as #74 |
 | 81 pre-existing Windows test failures (non-codegenome) | platform | already filed as #67–70 |
-| Document `decision_level` field on `decision` table in `ARCHITECTURE_PLAN.md` | docs gap | new — file as docs issue |
+| Document `decision_level` field on `decision` table | docs gap | filed as #75 — addressed in `docs/decision-level.md` |
 | `INFO FOR TABLE` returns empty in v2 embedded — schema introspection tooling needs to use `schema.py` | already documented in CLAUDE.md | no action |
 | `count() AS n` requires `GROUP ALL` in v2 embedded — caught during continuity_ledger tests | already documented (added to v2 quirks list) | no action |
-| Dashboard should surface `decision_level` and an "unclassified" badge | feature | new — file once Q2 ships |
-| Bulk-classify utility for legacy `NULL` rows | feature | new — gated on dashboard surfacing |
+| Dashboard should surface `decision_level` and an "unclassified" badge | feature | filed as #76 |
+| Bulk-classify utility for legacy `NULL` rows | feature | filed as #77 |
+| `claim_evaluator` persistence shape design | design | filed as #78 (deferred, gated on first concrete evaluator) |
 
 ## §7 — Summary
 

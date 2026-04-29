@@ -93,6 +93,7 @@ def build_index(repo_path: str, db_path: str) -> IndexStats:
 
     # Build dependency graph edges
     from .graph_builder import build_graph
+
     stats.edges_created = build_graph(db, repo_path)
 
     db.close()

@@ -56,6 +56,36 @@ checks directly).
 If `pending_compliance_checks` is non-empty (from the `link_commit` response or
 from `_pending_compliance_checks` in an auto-sync injection):
 
+> **Phase 3+4 (#60+#61) — `enhance_drift` mode.** When the
+> `BICAMERAL_CODEGENOME_ENHANCE_DRIFT` flag is on, `link_commit` runs
+> two pre-passes BEFORE you see this list:
+>
+> 1. **Continuity matcher** — auto-redirects bindings whose symbol
+>    moved or was renamed. Stripped regions appear in
+>    `link_commit_response.continuity_resolutions` with
+>    `semantic_status` ∈ `{identity_moved, identity_renamed,
+>    needs_review}`. `needs_review` (confidence 0.50–0.75) is
+>    advisory — the binding was NOT redirected; treat as a normal
+>    pending check.
+>
+> 2. **Cosmetic-vs-semantic classifier** — auto-resolves regions
+>    whose change is structurally cosmetic (docstring/comment/import
+>    re-order/whitespace, with same signature + neighbors). Stripped
+>    regions get a `compliance_check` row written by the server with
+>    `verdict="compliant", semantic_status="semantically_preserved"`,
+>    `evidence_refs=[…]`. The count is reported as
+>    `link_commit_response.auto_resolved_count`.
+>
+> Pendings that survive both passes may carry a typed
+> `pre_classification: PreClassificationHint | None` field when the
+> classifier scored the change in the uncertain band [0.30, 0.80).
+> The hint includes `verdict` ("uncertain"), `confidence`, per-signal
+> contributions, and `evidence_refs`. Use it as advisory evidence
+> when reasoning about your verdict — your decision still wins.
+>
+> With `enhance_drift` off (the default), both passes are no-ops and
+> the pre-Phase-3 behaviour is preserved.
+
 For each entry in the list:
 
 1. **Read the code.** `code_body` is pre-extracted (capped at ~200 lines).
@@ -75,12 +105,17 @@ bicameral.resolve_compliance(
   phase="drift",
   flow_id="<from link_commit response or _pending_flow_id>",
   verdicts=[{
-    decision_id: "<check.decision_id>",
-    region_id:   "<check.region_id>",
-    content_hash: "<check.content_hash — echo exactly>",
-    verdict:     "compliant" | "drifted" | "not_relevant",
-    confidence:  "high" | "medium" | "low",
-    explanation: "<one sentence: why this code does/doesn't match the decision>"
+    decision_id:    "<check.decision_id>",
+    region_id:      "<check.region_id>",
+    content_hash:   "<check.content_hash — echo exactly>",
+    verdict:        "compliant" | "drifted" | "not_relevant",
+    confidence:     "high" | "medium" | "low",
+    explanation:    "<one sentence: why this code does/doesn't match the decision>",
+
+    # Phase 4 (#61) — optional. Pass when you want to claim the
+    # cosmetic-vs-semantic axis explicitly. Both default to None / [].
+    semantic_status: "semantically_preserved" | "semantic_change" | None,
+    evidence_refs:  ["any:audit-trail-string", ...],
   }, ...]
 )
 ```

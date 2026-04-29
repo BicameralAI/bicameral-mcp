@@ -36,19 +36,19 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
-from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
+from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
 from handlers.gap_judge import handle_judge_gaps
+from handlers.history import handle_history
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
-from handlers.reset import handle_reset
 from handlers.ratify import handle_ratify
+from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
-from handlers.history import handle_history
 from handlers.update import get_update_notice, handle_update
-from dashboard.server import get_dashboard_server
+from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
 
@@ -71,14 +71,13 @@ def _resolve_server_version() -> str:
     for candidate in (here, here.parent):
         toml = candidate / "pyproject.toml"
         if toml.exists():
-            m = re.search(
-                r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE
-            )
+            m = re.search(r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE)
             if m:
                 return m.group(1)
 
     try:
         from importlib.metadata import version as _pkg_version
+
         return _pkg_version("bicameral-mcp")
     except Exception:
         return "0.1.0"
@@ -131,6 +130,15 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "default": "HEAD",
                         "description": "Git commit hash or ref to sync (default: HEAD)",
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call. "
+                            "When supplied, the local preflight-telemetry capture loop "
+                            "(#65, opt-in via BICAMERAL_PREFLIGHT_TELEMETRY=1) attributes "
+                            "this engagement to that preflight."
+                        ),
                     },
                 },
             },
@@ -193,15 +201,39 @@ async def list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "decision_id": {"type": "string", "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)"},
-                                "file_path": {"type": "string", "description": "Repo-relative path to the file"},
-                                "symbol_name": {"type": "string", "description": "Function/class/method name"},
-                                "start_line": {"type": "integer", "description": "1-indexed start line (optional — omit to auto-resolve automatically)"},
-                                "end_line": {"type": "integer", "description": "1-indexed end line (optional)"},
-                                "purpose": {"type": "string", "description": "Optional one-line description for display"},
+                                "decision_id": {
+                                    "type": "string",
+                                    "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)",
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Repo-relative path to the file",
+                                },
+                                "symbol_name": {
+                                    "type": "string",
+                                    "description": "Function/class/method name",
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": "1-indexed start line (optional — omit to auto-resolve automatically)",
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": "1-indexed end line (optional)",
+                                },
+                                "purpose": {
+                                    "type": "string",
+                                    "description": "Optional one-line description for display",
+                                },
                             },
                             "required": ["decision_id", "file_path", "symbol_name"],
                         },
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
                     },
                 },
                 "required": ["bindings"],
@@ -222,6 +254,12 @@ async def list_tools() -> list[Tool]:
                         "enum": ["check", "apply"],
                         "description": "'check' to see if an update is available, 'apply' to install it",
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
+                    },
                 },
                 "required": ["action"],
             },
@@ -231,7 +269,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Fail-safe valve for a polluted or stale ledger. Returns a replay plan and, "
                 "if confirmed, wipes state according to wipe_mode. "
-                "wipe_mode='ledger' (default): wipes only the materialized SurrealDB rows — "
+                "wipe_mode='ledger' (default): wipes only the materialized decision ledger — "
                 "config and event files are preserved. Safe for bug recovery; server stays live. "
                 "wipe_mode='full': deletes the entire .bicameral/ directory (ledger + config.yaml "
                 "+ team event files). Nuclear restart. Always show the dry-run warning to the user "
@@ -312,6 +350,14 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional list of teammates the user mentioned — used by the chained brief call",
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Reserved for future symmetry; bicameral.preflight currently "
+                            "generates the preflight_id itself when telemetry is enabled "
+                            "(#65)."
+                        ),
                     },
                 },
                 "required": ["topic"],
@@ -471,6 +517,12 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "default": "",
                         "description": "Optional rationale or context for the sign-off (for audit)",
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
                     },
                 },
                 "required": ["decision_id", "signer"],
@@ -701,6 +753,26 @@ async def list_tools() -> list[Tool]:
                 "required": ["skill", "trying_to", "attempted", "stuck_on"],
             },
         ),
+        Tool(
+            name="bicameral.usage_summary",
+            description=(
+                "Aggregate operational readout — counts and percentages over the last N days. "
+                "Returns ingest_calls, bind_calls_total, decision counts by status, "
+                "reflected/drift/cosmetic_drift percentages, and error_rate. "
+                "Privacy-preserving: aggregates only, no event rows, no user content. "
+                "Read-only over the local ledger plus the local-only counters file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Window size in days (default 7). Pass 0 for tool-call counts only.",
+                        "default": 7,
+                    },
+                },
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -773,16 +845,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "t0": time.monotonic(),
             "rationale": arguments.get("rationale", ""),
         }
-        return [TextContent(type="text", text=json.dumps({
-            "session_id": session_id,
-            "skill": arguments["skill_name"],
-            "status": "started",
-        }))]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "session_id": session_id,
+                        "skill": arguments["skill_name"],
+                        "status": "started",
+                    }
+                ),
+            )
+        ]
 
     if name == "bicameral.skill_end":
         from pydantic import ValidationError
-        from telemetry import record_skill_event
+
         from contracts import SKILL_DIAGNOSTIC_MODELS
+        from telemetry import record_skill_event
+
         session_id = arguments["session_id"]
         skill_name = arguments["skill_name"]
         errored = arguments.get("errored", False)
@@ -804,8 +885,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 diagnostic = validated.model_dump()
             except ValidationError as exc:
                 unknown_fields = [
-                    e["loc"][0] for e in exc.errors()
-                    if e["type"] == "extra_forbidden" and e["loc"]
+                    e["loc"][0] for e in exc.errors() if e["type"] == "extra_forbidden" and e["loc"]
                 ]
                 # Strip unknowns and validate the remaining known fields.
                 known_raw = {k: v for k, v in raw_diagnostic.items() if k not in unknown_fields}
@@ -818,8 +898,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             diagnostic = raw_diagnostic or None
 
         record_skill_event(
-            skill_name, session_id, duration_ms, errored, SERVER_VERSION,
-            diagnostic=diagnostic, error_class=error_class, rationale=rationale,
+            skill_name,
+            session_id,
+            duration_ms,
+            errored,
+            SERVER_VERSION,
+            diagnostic=diagnostic,
+            error_class=error_class,
+            rationale=rationale,
         )
         response: dict = {
             "session_id": session_id,
@@ -836,6 +922,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if name == "bicameral.feedback":
         from telemetry import send_event
+
         send_event(
             SERVER_VERSION,
             event_type="agent_feedback",
@@ -846,20 +933,27 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         )
         return [TextContent(type="text", text=json.dumps({"recorded": True}))]
 
+    if name == "bicameral.usage_summary":
+        from handlers.usage_summary import handle_usage_summary
+
+        data = await handle_usage_summary(ctx, days=int(arguments.get("days", 7)))
+        return [TextContent(type="text", text=json.dumps(data, indent=2))]
+
     # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
     # Returns the LinkCommitResponse when a new commit was just processed so we
     # can surface pending_compliance_checks in the outer tool response.
     _sync_result = None
     if name not in ("bicameral.link_commit", "link_commit", "bicameral.update", "update"):
         from handlers.sync_middleware import ensure_ledger_synced
+
         _sync_result = await ensure_ledger_synced(ctx)
 
     try:
         if name in ("bicameral.link_commit", "link_commit"):
-
             result = await handle_link_commit(
                 ctx,
                 commit_hash=arguments.get("commit_hash", "HEAD"),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.ingest", "ingest"):
             result = await handle_ingest(
@@ -873,6 +967,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 action=arguments["action"],
                 current_version=SERVER_VERSION,
                 repo_path=str(ctx.repo_path),
+                preflight_id=arguments.get("preflight_id"),
             )
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         elif name in ("bicameral.reset", "reset"):
@@ -898,10 +993,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # Honest empty path — handler returns None when no matches.
             # Emit an empty envelope the agent can detect and skip on.
             if result is None:
-                return [TextContent(
-                    type="text",
-                    text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
-                )]
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
+                    )
+                ]
         elif name in ("bicameral.resolve_compliance", "resolve_compliance"):
             result = await handle_resolve_compliance(
                 ctx,
@@ -917,6 +1014,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 signer=arguments["signer"],
                 note=arguments.get("note", ""),
                 action=arguments.get("action", "ratify"),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.resolve_collision", "resolve_collision"):
             result = await handle_resolve_collision(
@@ -932,6 +1030,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await handle_bind(
                 ctx,
                 bindings=arguments.get("bindings", []),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.history", "history"):
             result = await handle_history(
@@ -957,6 +1056,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse
+
             srv = get_dashboard_server()
             if not srv.running:
                 await srv.start(ctx_factory=BicameralContext.from_env)
@@ -1033,10 +1133,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if isinstance(exc, DestructiveMigrationRequired)
             else "upgrade your binary: pipx upgrade bicameral-mcp"
         )
-        return [TextContent(
-            type="text",
-            text=json.dumps({"error": str(exc), "action": action}, indent=2),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": str(exc), "action": action}, indent=2),
+            )
+        ]
 
 
 async def run_smoke_test() -> dict[str, object]:
@@ -1078,6 +1180,16 @@ async def serve_stdio() -> None:
     # It binds to a free port and stays running for the session.
     dashboard_srv = get_dashboard_server()
     await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
+
+    # First-boot telemetry consent notice (non-blocking, fires once per
+    # policy_version). Stderr-only here; MCP-channel surfacing happens
+    # below once the session is live.
+    try:
+        from consent import notify_if_first_run
+
+        notify_if_first_run()
+    except Exception:
+        pass
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
@@ -1142,14 +1254,17 @@ def cli_main(argv: list[str] | None = None) -> int:
 
     if args.command == "config":
         from setup_wizard import run_config_wizard
+
         return run_config_wizard()
 
     if args.command == "reset":
         from setup_wizard import run_reset_wizard
+
         return run_reset_wizard()
 
     if args.command == "setup":
         from setup_wizard import run_setup
+
         return run_setup(args.repo_path, args.history_path)
 
     if args.smoke_test:

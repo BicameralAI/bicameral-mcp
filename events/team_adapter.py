@@ -8,7 +8,6 @@ All read operations pass through directly.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 from .materializer import EventMaterializer
 from .writer import EventFileWriter
@@ -120,13 +119,16 @@ class TeamWriteAdapter:
     ) -> dict:
         """Emit bind event, then delegate to inner adapter."""
         await self._ensure_ready()
-        self._writer.write("bind_decision.completed", {
-            "decision_id": decision_id,
-            "file_path": file_path,
-            "symbol_name": symbol_name,
-            "start_line": start_line,
-            "end_line": end_line,
-        })
+        self._writer.write(
+            "bind_decision.completed",
+            {
+                "decision_id": decision_id,
+                "file_path": file_path,
+                "symbol_name": symbol_name,
+                "start_line": start_line,
+                "end_line": end_line,
+            },
+        )
         return await self._inner.bind_decision(
             decision_id=decision_id,
             file_path=file_path,

@@ -30,13 +30,16 @@ from context import BicameralContext
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
 
-
 # ── Tiny git repo fixture with main + feature branch ─────────────────
 
 
 def _git(cwd: Path, *args: str, check: bool = True) -> str:
     result = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=check,
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=check,
     )
     return result.stdout.strip()
 
@@ -133,7 +136,9 @@ def _payload(repo: Path) -> dict:
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_ingest_on_branch_stamps_main_baseline(
-    monkeypatch, branched_repo, surreal_url,
+    monkeypatch,
+    branched_repo,
+    surreal_url,
 ):
     """Bug 3 (F1a) — ``handle_ingest`` from a feature branch must stamp
     baseline hashes against the authoritative ref (main), not the branch.
@@ -168,20 +173,27 @@ async def test_ingest_on_branch_stamps_main_baseline(
     # Query the ledger directly for the stamped content_hash
     ledger = get_ledger()
     client = ledger._client
-    rows = await client.query(
-        "SELECT content_hash FROM code_region WHERE file_path = 'pricing.py'"
-    )
+    rows = await client.query("SELECT content_hash FROM code_region WHERE file_path = 'pricing.py'")
     assert len(rows) >= 1, "code_region not created"
     stamped_hash = rows[0].get("content_hash", "")
     assert stamped_hash, "content_hash is empty — pollution guard failed upstream"
 
     # Compute what main's content hash SHOULD be
     from ledger.status import compute_content_hash
+
     main_hash = compute_content_hash(
-        "pricing.py", 1, 4, str(branched_repo), ref=ctx.authoritative_sha,
+        "pricing.py",
+        1,
+        4,
+        str(branched_repo),
+        ref=ctx.authoritative_sha,
     )
     branch_hash = compute_content_hash(
-        "pricing.py", 1, 4, str(branched_repo), ref="HEAD",
+        "pricing.py",
+        1,
+        4,
+        str(branched_repo),
+        ref="HEAD",
     )
 
     assert main_hash != branch_hash, "test setup broken: branch and main have the same hash"
@@ -196,7 +208,9 @@ async def test_ingest_on_branch_stamps_main_baseline(
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_link_commit_on_branch_runs_read_only(
-    monkeypatch, branched_repo, surreal_url,
+    monkeypatch,
+    branched_repo,
+    surreal_url,
 ):
     """Bug 1 (F1) — ``handle_link_commit`` on a branch must not update
     stored baseline hashes. Drift is computed for reporting, but the

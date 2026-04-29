@@ -20,6 +20,7 @@ Authorization: Bearer but Anthropic's public Messages API rejects
 them with "OAuth authentication is currently not supported" (401).
 Standard API keys (sk-ant-api03...) authenticate via x-api-key.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -148,7 +149,7 @@ def _extract_step1_excerpt(skill_md: str) -> str:
 
     next_header = _STEP_HEADER_RE.search(body, step1_match.end())
     end = next_header.start() if next_header else len(body)
-    return body[step1_match.start():end].strip()
+    return body[step1_match.start() : end].strip()
 
 
 def _cache_path(skill_sha: str, transcript_sha: str, model: str) -> Path:

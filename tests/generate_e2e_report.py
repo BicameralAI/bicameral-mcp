@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 E2E_DIR = Path(__file__).parent.parent / "test-results" / "e2e"
@@ -112,11 +112,12 @@ def _render_json(data: dict, max_lines: int = 40) -> str:
         text += f"\n... ({len(raw.split(chr(10))) - max_lines} more lines)"
     # Basic syntax coloring
     import re
+
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = re.sub(r'"([^"]*)"(?=\s*:)', r'<span style="color:#a88af0">"\1"</span>', text)
     text = re.sub(r':\s*"([^"]*)"', r': <span style="color:#6af0a0">"\1"</span>', text)
-    text = re.sub(r':\s*(\d+\.?\d*)', r': <span style="color:#4af0c4">\1</span>', text)
-    text = re.sub(r':\s*(true|false|null)', r': <span style="color:#f0b94a">\1</span>', text)
+    text = re.sub(r":\s*(\d+\.?\d*)", r': <span style="color:#4af0c4">\1</span>', text)
+    text = re.sub(r":\s*(true|false|null)", r': <span style="color:#f0b94a">\1</span>', text)
     return text
 
 
@@ -141,19 +142,23 @@ def _render_graph_section(graph: dict) -> str:
         nid = str(intent.get("id", ""))
         desc = str(intent.get("description", ""))[:50]
         status = intent.get("cached_status", "—")
-        cy_elements.append({
-            "data": {"id": nid, "label": desc, "status": status, "type": "intent"},
-            "classes": "intent",
-        })
+        cy_elements.append(
+            {
+                "data": {"id": nid, "label": desc, "status": status, "type": "intent"},
+                "classes": "intent",
+            }
+        )
         node_id_set.add(nid)
 
     for symbol in nodes.get("symbols", []):
         nid = str(symbol.get("id", ""))
         name = str(symbol.get("name", nid))
-        cy_elements.append({
-            "data": {"id": nid, "label": name, "type": "symbol"},
-            "classes": "symbol",
-        })
+        cy_elements.append(
+            {
+                "data": {"id": nid, "label": name, "type": "symbol"},
+                "classes": "symbol",
+            }
+        )
         node_id_set.add(nid)
 
     for region in nodes.get("code_regions", []):
@@ -161,10 +166,12 @@ def _render_graph_section(graph: dict) -> str:
         fp = str(region.get("file_path", "?"))
         sym = str(region.get("symbol", ""))
         label = f"{sym}\n{fp.split('/')[-1]}" if sym else fp.split("/")[-1]
-        cy_elements.append({
-            "data": {"id": nid, "label": label, "file": fp, "type": "code_region"},
-            "classes": "code_region",
-        })
+        cy_elements.append(
+            {
+                "data": {"id": nid, "label": label, "file": fp, "type": "code_region"},
+                "classes": "code_region",
+            }
+        )
         node_id_set.add(nid)
 
     for edge_type, edge_list in edges.items():
@@ -174,14 +181,16 @@ def _render_graph_section(graph: dict) -> str:
             src = str(edge.get("out", ""))
             tgt = str(edge.get("in", ""))
             if src in node_id_set and tgt in node_id_set:
-                cy_elements.append({
-                    "data": {
-                        "id": f"e_{edge_type}_{i}_{_graph_counter}",
-                        "source": src,
-                        "target": tgt,
-                        "label": edge_type,
-                    },
-                })
+                cy_elements.append(
+                    {
+                        "data": {
+                            "id": f"e_{edge_type}_{i}_{_graph_counter}",
+                            "source": src,
+                            "target": tgt,
+                            "label": edge_type,
+                        },
+                    }
+                )
 
     elements_json = json.dumps(cy_elements, default=str)
 
@@ -196,25 +205,30 @@ def _render_graph_section(graph: dict) -> str:
     for intent in nodes.get("intents", []):
         desc = str(intent.get("description", ""))[:80]
         status = intent.get("cached_status", "—")
-        color = {"reflected": "#6af0a0", "drifted": "#f06a6a", "pending": "#f0b94a", "ungrounded": "#4ab8f0"}.get(status, "#6b7699")
+        color = {
+            "reflected": "#6af0a0",
+            "drifted": "#f06a6a",
+            "pending": "#f0b94a",
+            "ungrounded": "#4ab8f0",
+        }.get(status, "#6b7699")
         intent_rows += f'<tr><td class="mono">{str(intent.get("id", "?"))[-12:]}</td><td>{desc}</td><td style="color:{color};font-weight:600">{status}</td></tr>\n'
 
     region_rows = ""
     for region in nodes.get("code_regions", []):
         fp = str(region.get("file_path", "?"))
         sym = str(region.get("symbol", "?"))
-        lines = f'{region.get("start_line", "?")}-{region.get("end_line", "?")}'
+        lines = f"{region.get('start_line', '?')}-{region.get('end_line', '?')}"
         region_rows += f'<tr><td class="mono">{fp}</td><td>{sym}</td><td>{lines}</td></tr>\n'
 
     tables_html = ""
     if intent_rows:
-        tables_html += f'''<h4 style="color:#a88af0;margin:12px 0 6px">Intents</h4>
+        tables_html += f"""<h4 style="color:#a88af0;margin:12px 0 6px">Intents</h4>
 <table class="data-table"><tr><th>ID</th><th>Description</th><th>Status</th></tr>
-{intent_rows}</table>'''
+{intent_rows}</table>"""
     if region_rows:
-        tables_html += f'''<h4 style="color:#4af0c4;margin:12px 0 6px">Code Regions</h4>
+        tables_html += f"""<h4 style="color:#4af0c4;margin:12px 0 6px">Code Regions</h4>
 <table class="data-table"><tr><th>File</th><th>Symbol</th><th>Lines</th></tr>
-{region_rows}</table>'''
+{region_rows}</table>"""
 
     return f'''
 <div class="graph-summary">{summary}</div>
@@ -317,7 +331,7 @@ def _render_graph_section(graph: dict) -> str:
 def generate() -> str:
     global _graph_counter
     _graph_counter = 0
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
     sections_html = ""
     total_artifacts = 0
@@ -330,37 +344,37 @@ def generate() -> str:
         response_panels = ""
         for resp in responses:
             rendered = _render_json(resp["data"])
-            response_panels += f'''
+            response_panels += f"""
 <details class="artifact-panel">
   <summary>{resp["name"].replace("_", " ").title()}</summary>
   <pre class="json-output">{rendered}</pre>
-</details>'''
+</details>"""
 
         # Graph panels
         graph_panels = ""
         for graph in graphs:
             graph_html = _render_graph_section(graph["data"])
             c = graph["data"].get("counts", {})
-            graph_panels += f'''
+            graph_panels += f"""
 <div class="artifact-panel graph-panel" style="padding:14px;">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
     <span style="color:var(--accent);font-weight:600;font-size:13px;">Knowledge Graph — {c.get("intents", 0)} intents, {c.get("symbols", 0)} symbols, {c.get("code_regions", 0)} regions</span>
     <div class="cy-legend"><span class="lg-intent">intent</span><span class="lg-symbol">symbol</span><span class="lg-region">code_region</span></div>
   </div>
   {graph_html}
-</div>'''
+</div>"""
 
         has_content = responses or graphs
-        sections_html += f'''
+        sections_html += f"""
 <div class="sdlc-section" style="border-left-color:{section["color"]}">
   <div class="sdlc-badge" style="color:{section["color"]}">{section["sdlc"]}</div>
   <h3>{section["title"]}</h3>
   <p class="sdlc-desc">{section["description"]}</p>
   <div class="tools-used">Tools: <span class="mono">{section["tools"]}</span></div>
   {"<div class='artifacts'>" + response_panels + graph_panels + "</div>" if has_content else '<p class="no-artifacts">No artifacts generated — test may not have run.</p>'}
-</div>'''
+</div>"""
 
-    return f'''<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -445,7 +459,7 @@ h4 {{ font-size: 13px; font-weight: 600; }}
 
 </div>
 </body>
-</html>'''
+</html>"""
 
 
 def main():

@@ -1,7 +1,8 @@
 """Tests for sync_middleware — session-start banner and ledger catch-up (v0.6.1)."""
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -47,9 +48,13 @@ def _ungrounded(decision_id="decision:2", description="Billing uses Stripe", sou
     }
 
 
-def _proposal(decision_id="decision:3", description="Rate limit is 100 req/s",
-              source_ref="sprint-notes", days_old=15):
-    created_at = (datetime.now(timezone.utc) - timedelta(days=days_old)).isoformat()
+def _proposal(
+    decision_id="decision:3",
+    description="Rate limit is 100 req/s",
+    source_ref="sprint-notes",
+    days_old=15,
+):
+    created_at = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
     return {
         "decision_id": decision_id,
         "description": description,
@@ -99,25 +104,28 @@ async def test_banner_includes_ungrounded_decisions():
 async def test_banner_queries_both_drifted_and_ungrounded_statuses():
     ctx = _make_ctx(open_rows=[_drifted()])
     await get_session_start_banner(ctx)
-    ctx.ledger.get_decisions_by_status.assert_called_once_with(["drifted", "ungrounded", "context_pending"])
+    ctx.ledger.get_decisions_by_status.assert_called_once_with(
+        ["drifted", "ungrounded", "context_pending"]
+    )
 
 
 @pytest.mark.asyncio
 async def test_banner_truncates_at_10_items_with_drifted_prioritized():
     # 12 open items: 3 drifted + 9 ungrounded. Truncated view should keep
     # all 3 drifted first, then fill with ungrounded up to the 10-item cap.
-    rows = [_drifted(decision_id=f"decision:d{i}") for i in range(3)] + \
-           [_ungrounded(decision_id=f"decision:u{i}") for i in range(9)]
+    rows = [_drifted(decision_id=f"decision:d{i}") for i in range(3)] + [
+        _ungrounded(decision_id=f"decision:u{i}") for i in range(9)
+    ]
     ctx = _make_ctx(open_rows=rows)
     banner = await get_session_start_banner(ctx)
     assert banner is not None
-    assert banner.drifted_count == 3        # full count, not truncated
+    assert banner.drifted_count == 3  # full count, not truncated
     assert banner.ungrounded_count == 9
-    assert len(banner.items) == 10          # list is capped
+    assert len(banner.items) == 10  # list is capped
     assert banner.truncated is True
     # All 3 drifted must be present in the truncated view
     assert sum(1 for i in banner.items if i["status"] == "drifted") == 3
-    assert f"top 10" in banner.message
+    assert "top 10" in banner.message
 
 
 @pytest.mark.asyncio
@@ -180,8 +188,9 @@ async def test_ensure_calls_link_commit_when_head_advanced():
 
 
 @pytest.mark.asyncio
-async def test_ensure_skips_link_commit_when_already_synced():
-    ctx = _make_ctx(last_sync_sha="current_sha")
+async def test_ensure_skips_link_commit_when_already_synced(monkeypatch):
+    monkeypatch.setattr("handlers.sync_middleware._LAST_SYNCED_SHA", "current_sha")
+    ctx = _make_ctx()
 
     with (
         patch("handlers.link_commit._read_current_head_sha", return_value="current_sha"),
@@ -232,6 +241,7 @@ def _reset_locks():
     """Drop the per-repo lock registry before and after each test so lock
     identity is deterministic across tests in the same process."""
     from handlers.sync_middleware import _reset_repo_locks_for_tests
+
     _reset_repo_locks_for_tests()
     yield
     _reset_repo_locks_for_tests()
@@ -251,6 +261,7 @@ async def test_repo_write_barrier_serializes_same_repo(_reset_locks):
     bind call cannot observe the ledger while the first is mid-write.
     """
     import asyncio
+
     from handlers.sync_middleware import repo_write_barrier
 
     events: list[str] = []
@@ -272,6 +283,7 @@ async def test_repo_write_barrier_serializes_same_repo(_reset_locks):
 async def test_repo_write_barrier_allows_different_repos_concurrently(_reset_locks):
     """Different repos use different locks and MUST run in parallel."""
     import asyncio
+
     from handlers.sync_middleware import repo_write_barrier
 
     events: list[str] = []
@@ -295,6 +307,7 @@ async def test_repo_write_barrier_allows_different_repos_concurrently(_reset_loc
 async def test_repo_write_barrier_releases_on_exception(_reset_locks):
     """If the body raises, the lock must still release so the next caller proceeds."""
     import asyncio
+
     from handlers.sync_middleware import repo_write_barrier
 
     ctx = _barrier_ctx("/repo/a")
@@ -315,6 +328,7 @@ async def test_repo_write_barrier_releases_on_exception(_reset_locks):
 async def test_repo_write_barrier_falls_back_when_repo_path_missing(_reset_locks):
     """Missing ctx.repo_path falls back to a default key and still serializes."""
     import asyncio
+
     from handlers.sync_middleware import repo_write_barrier
 
     class _Bare:
@@ -343,6 +357,7 @@ async def test_repo_write_barrier_falls_back_when_repo_path_missing(_reset_locks
 async def test_repo_write_barrier_reports_held_ms(_reset_locks):
     """BarrierTiming.held_ms is populated on exit and is non-negative."""
     import asyncio
+
     from handlers.sync_middleware import repo_write_barrier
 
     ctx = _barrier_ctx("/repo/a")

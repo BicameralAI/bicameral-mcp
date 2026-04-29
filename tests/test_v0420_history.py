@@ -24,7 +24,6 @@ from adapters.ledger import get_ledger, reset_ledger_singleton
 from context import BicameralContext
 from handlers.history import handle_history
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -105,20 +104,27 @@ async def test_empty_ledger(ctx):
 async def test_single_source_reflected(ctx):
     """One decision with a code region → one feature, one decision, status reflected or ungrounded."""
     ledger = get_ledger()
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Use tree-sitter for symbol extraction",
-            source_type="transcript",
-            source_ref="sprint-1",
-            code_regions=[{
-                "file_path": "server.py",
-                "symbol": "validate_symbols",
-                "type": "function",
-                "start_line": 10,
-                "end_line": 30,
-            }],
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Use tree-sitter for symbol extraction",
+                    source_type="transcript",
+                    source_ref="sprint-1",
+                    code_regions=[
+                        {
+                            "file_path": "server.py",
+                            "symbol": "validate_symbols",
+                            "type": "function",
+                            "start_line": 10,
+                            "end_line": 30,
+                        }
+                    ],
+                )
+            ]
+        ),
+    )
 
     response = await handle_history(ctx)
 
@@ -137,9 +143,9 @@ async def test_single_source_reflected(ctx):
     # Status should be ungrounded (no real file) or reflected if hash matched
     assert dec.status in ("reflected", "ungrounded", "discovered")
     # fulfillment populated since we passed code_regions
-    assert dec.fulfillment is not None
-    assert dec.fulfillment.file_path == "server.py"
-    assert dec.fulfillment.symbol == "validate_symbols"
+    assert dec.fulfillments
+    assert dec.fulfillments[0].file_path == "server.py"
+    assert dec.fulfillments[0].symbol == "validate_symbols"
 
 
 @pytest.mark.phase2
@@ -157,10 +163,7 @@ async def test_multi_source_same_decision(ctx):
     response = await handle_history(ctx)
 
     # Count matching decisions across all features
-    matching = [
-        d for f in response.features for d in f.decisions
-        if "Cache sessions" in d.summary
-    ]
+    matching = [d for f in response.features for d in f.decisions if "Cache sessions" in d.summary]
     # With dedup, should be exactly 1
     assert len(matching) == 1, (
         f"Expected 1 deduped decision, got {len(matching)}: {[d.summary for d in matching]}"
@@ -172,14 +175,19 @@ async def test_multi_source_same_decision(ctx):
 async def test_ungrounded_no_fulfillment(ctx):
     """Decision with no code regions → fulfillment is None, status ungrounded or discovered."""
     ledger = get_ledger()
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Implement SOC2 audit logging",
-            source_type="document",
-            source_ref="compliance-doc",
-            code_regions=[],  # no grounding
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Implement SOC2 audit logging",
+                    source_type="document",
+                    source_ref="compliance-doc",
+                    code_regions=[],  # no grounding
+                )
+            ]
+        ),
+    )
 
     response = await handle_history(ctx)
 
@@ -187,7 +195,7 @@ async def test_ungrounded_no_fulfillment(ctx):
     assert len(matching) >= 1
 
     dec = matching[0]
-    assert dec.fulfillment is None
+    assert len(dec.fulfillments) == 0
     assert dec.status in ("ungrounded", "discovered")
 
 
@@ -196,13 +204,18 @@ async def test_ungrounded_no_fulfillment(ctx):
 async def test_agent_session_source_type(ctx):
     """source_type='agent_session' round-trips through history correctly."""
     ledger = get_ledger()
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Use event.id for deduplication, not account_id",
-            source_type="agent_session",
-            source_ref="preflight-resolution-stripe-webhook",
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Use event.id for deduplication, not account_id",
+                    source_type="agent_session",
+                    source_ref="preflight-resolution-stripe-webhook",
+                )
+            ]
+        ),
+    )
 
     response = await handle_history(ctx)
 
@@ -226,28 +239,43 @@ async def test_feature_group_grouping(ctx):
     ledger = get_ledger()
 
     # Two separate ingests, same feature_group
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Stripe webhook uses SETNX for idempotency",
-            source_ref="sprint-5",
-            feature_group="Stripe Webhooks",
-        )
-    ]))
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Stripe webhook retries use exponential backoff",
-            source_ref="sprint-5",
-            feature_group="Stripe Webhooks",
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Stripe webhook uses SETNX for idempotency",
+                    source_ref="sprint-5",
+                    feature_group="Stripe Webhooks",
+                )
+            ]
+        ),
+    )
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Stripe webhook retries use exponential backoff",
+                    source_ref="sprint-5",
+                    feature_group="Stripe Webhooks",
+                )
+            ]
+        ),
+    )
     # Different feature group
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Google Calendar syncs via OAuth2",
-            source_ref="sprint-6",
-            feature_group="Google Calendar",
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Google Calendar syncs via OAuth2",
+                    source_ref="sprint-6",
+                    feature_group="Google Calendar",
+                )
+            ]
+        ),
+    )
 
     response = await handle_history(ctx)
 
@@ -280,25 +308,27 @@ async def test_feature_group_fallback_to_query(ctx):
     ledger = get_ledger()
 
     # Ingest without feature_group (pre-v0.5.1 style)
-    await ledger.ingest_payload({
-        "repo": "test-repo",
-        "query": "auth middleware",
-        "mappings": [
-            {
-                "intent": "JWT tokens expire after 24 hours",
-                "span": {
-                    "text": "JWT tokens expire after 24 hours",
-                    "source_type": "transcript",
-                    "source_ref": "auth-sync-2026-04",
-                    "speakers": [],
-                    "meeting_date": "2026-04-01",
-                },
-                "symbols": [],
-                "code_regions": [],
-                # no feature_group
-            }
-        ],
-    })
+    await ledger.ingest_payload(
+        {
+            "repo": "test-repo",
+            "query": "auth middleware",
+            "mappings": [
+                {
+                    "intent": "JWT tokens expire after 24 hours",
+                    "span": {
+                        "text": "JWT tokens expire after 24 hours",
+                        "source_type": "transcript",
+                        "source_ref": "auth-sync-2026-04",
+                        "speakers": [],
+                        "meeting_date": "2026-04-01",
+                    },
+                    "symbols": [],
+                    "code_regions": [],
+                    # no feature_group
+                }
+            ],
+        }
+    )
 
     response = await handle_history(ctx)
 
@@ -323,13 +353,18 @@ async def test_truncation_at_50_features(ctx):
 
     # Create 51 decisions with distinct feature_groups
     for i in range(51):
-        await _ingest(ledger, _payload([
-            _mapping(
-                description=f"Decision for feature area {i}",
-                source_ref=f"ref-{i}",
-                feature_group=f"Feature Area {i:03d}",
-            )
-        ]))
+        await _ingest(
+            ledger,
+            _payload(
+                [
+                    _mapping(
+                        description=f"Decision for feature area {i}",
+                        source_ref=f"ref-{i}",
+                        feature_group=f"Feature Area {i:03d}",
+                    )
+                ]
+            ),
+        )
 
     response = await handle_history(ctx)
 
@@ -347,20 +382,30 @@ async def test_feature_filter(ctx):
     ledger = get_ledger()
 
     # Create two distinct feature groups
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Checkout uses Stripe payment intents",
-            source_ref="ref-checkout",
-            feature_group="Checkout Flow",
-        )
-    ]))
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Auth uses JWT with 24h expiry",
-            source_ref="ref-auth",
-            feature_group="Auth Middleware",
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Checkout uses Stripe payment intents",
+                    source_ref="ref-checkout",
+                    feature_group="Checkout Flow",
+                )
+            ]
+        ),
+    )
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Auth uses JWT with 24h expiry",
+                    source_ref="ref-auth",
+                    feature_group="Auth Middleware",
+                )
+            ]
+        ),
+    )
 
     response = await handle_history(ctx, feature_filter="checkout")
 
@@ -380,13 +425,18 @@ async def test_feature_filter(ctx):
 async def test_include_superseded_false(ctx):
     """include_superseded=False excludes superseded decisions from response."""
     ledger = get_ledger()
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Use Redis for session caching",
-            source_ref="sprint-1",
-            feature_group="Session Management",
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Use Redis for session caching",
+                    source_ref="sprint-1",
+                    feature_group="Session Management",
+                )
+            ]
+        ),
+    )
 
     # All decisions will be ungrounded (not superseded) in this test,
     # so we just verify the parameter is accepted and response is valid.
@@ -403,13 +453,18 @@ async def test_include_superseded_false(ctx):
 async def test_response_structure(ctx):
     """HistoryResponse has the correct structure and types."""
     ledger = get_ledger()
-    await _ingest(ledger, _payload([
-        _mapping(
-            description="Rate limit API calls to 1000 req/min per tenant",
-            source_ref="sprint-3",
-            feature_group="Rate Limiting",
-        )
-    ]))
+    await _ingest(
+        ledger,
+        _payload(
+            [
+                _mapping(
+                    description="Rate limit API calls to 1000 req/min per tenant",
+                    source_ref="sprint-3",
+                    feature_group="Rate Limiting",
+                )
+            ]
+        ),
+    )
 
     response = await handle_history(ctx)
 

@@ -42,8 +42,7 @@ from __future__ import annotations
 import json
 import re
 import unicodedata
-from uuid import NAMESPACE_URL, UUID, uuid5
-
+from uuid import NAMESPACE_URL, uuid5
 
 # Stable namespace UUID for bicameral canonical IDs. Derived from a
 # bicameral-specific URL via UUIDv5(NAMESPACE_URL, "https://bicameral.dev/v0.4.13/canonical").

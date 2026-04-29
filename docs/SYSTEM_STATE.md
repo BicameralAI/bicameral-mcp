@@ -1,95 +1,127 @@
-# System State — post-substantiation snapshot
+# System State — post-Phase-4-substantiation snapshot
 
-**Generated**: 2026-04-28
-**HEAD**: `51ff53f` (rebased onto `upstream/main` `7796ab9`)
-**Branch**: `claude/codegenome-phase-1-2-qor`
-**Tracked PR**: [BicameralAI/bicameral-mcp#71](https://github.com/BicameralAI/bicameral-mcp/pull/71)
+**Generated**: 2026-04-29
+**HEAD**: `09f30a8` (Phase 4 / #61 sealed; rebased on `dev` after #71/#73/#79–#84 merged)
+**Branch**: `claude/codegenome-phase-4-qor`
+**Tracked PR**: targets `BicameralAI/dev` (Phase 4 / Issue #61); aggregate `dev → main` PR is downstream
 **Genesis hash**: `29dfd085...`
+**Phase 4 seal**: `0ebcf69b...`
 
-## Files added by this session
+## Phase 4 (#61) implementation — 27 files, ~2515 LOC, 73 new tests, 189/189 regression
 
-```
+| Phase | Files | New tests | Commit |
+|---|---|---|---|
+| 1 — Schema v14 + contracts | 3 modified, 1 new test | 9 | `066a209` |
+| 2 — Drift classifier + 7-lang categorizers + call_site_extractor | 12 new + 2 new tests | 35 | `7a79dc5` |
+| 3 — Drift classification service | 2 new | 8 | `3a0fc8c` |
+| 4 — Handler integration (link_commit + resolve_compliance) | 2 modified + 2 new tests | 14 | `6bbc687` |
+| 5 — M3 benchmark corpus (30 cases × 7 languages) | 3 new | 7 | `09f30a8` |
+
+Schema renumbered v13 → v14 during /qor-substantiate per Obs-V3-1: PR #81 (provenance FLEXIBLE) merged claiming v13 first; this Phase 4 migration shifted to v14 (compliance_check CHANGEFEED + semantic_status + evidence_refs). Plan deviation: §Phase 5 collapsed 30 paired files to a single ``cases.py`` data module — same coverage, far less file-system noise; documented in `tests/fixtures/m3_benchmark/__init__.py`.
+
+---
+
+## Phase 3 (#60) seal preserved below
+
+
+
+## Files added across the project DNA chain (Phases 1-2-3)
+
+```text
 codegenome/
 ├── __init__.py
-├── adapter.py                   # CodeGenomeAdapter ABC + 5 dataclasses + 2 type aliases
+├── adapter.py                   # CodeGenomeAdapter ABC + 5 dataclasses
+│                                # + neighbors_at_bind on SubjectIdentity (Phase 3)
 ├── contracts.py                 # 3 issue-mandated Pydantic models
 ├── confidence.py                # noisy_or, weighted_average, DEFAULT_CONFIDENCE_WEIGHTS
 ├── config.py                    # CodeGenomeConfig (7 flags, all default False)
-├── deterministic_adapter.py     # DeterministicCodeGenomeAdapter.compute_identity (deterministic_location_v1)
-└── bind_service.py              # write_codegenome_identity + 2 internal helpers (Section 4 razor split)
+├── deterministic_adapter.py     # DeterministicCodeGenomeAdapter (Phase 1+2 + Phase 3 neighbor variant)
+├── bind_service.py              # write_codegenome_identity + 3 helpers (Section 4 razor split)
+├── continuity.py                # Phase 3 matcher (deterministic v1 weights)
+└── continuity_service.py        # Phase 3 7-step orchestrator + DriftContext
 
 adapters/
-└── codegenome.py                # get_codegenome() factory parallel to get_ledger / get_code_locator / get_drift_analyzer
+├── codegenome.py                # get_codegenome() factory
+└── code_locator.py              # +neighbors_for(file, start, end) Phase 3 protocol
 
 tests/
-├── test_codegenome_adapter.py            # ABC + dataclass + compute_identity coverage
-├── test_codegenome_bind_integration.py   # full handler-path integration (#59 exit criteria)
-├── test_codegenome_confidence.py         # noisy_or + weighted_average property tests
-└── test_codegenome_config.py             # env-loaded flag matrix
+├── test_codegenome_adapter.py            # ABC + dataclass + compute_identity[_with_neighbors]
+├── test_codegenome_bind_integration.py   # bind path; #59 exit criteria
+├── test_codegenome_confidence.py         # noisy_or + weighted_average
+├── test_codegenome_config.py             # env-flag matrix
+├── test_codegenome_continuity.py         # matcher (18 tests)
+├── test_codegenome_continuity_ledger.py  # 4 ledger queries (8 tests)
+└── test_codegenome_continuity_service.py # 7-step orchestrator (5 tests)
 
 docs/
-├── CONCEPT.md                   # Why / Vibe / Anti-Goals — project DNA
-├── ARCHITECTURE_PLAN.md         # Risk grade L2 + file tree + interface contracts
-├── META_LEDGER.md               # 5-entry Merkle chain (will gain Entry #6 from this seal)
-├── BACKLOG.md                   # 1 security blocker, 1 dev blocker, 3 backlog, 2 wishlist
-├── SHADOW_GENOME.md             # 2 recorded failure modes from pre-PASS audit
-├── QOR_VS_ADHOC_COMPARISON.md   # Side-by-side QOR-process vs ad-hoc reference build
+├── CONCEPT.md                   # project DNA Why/Vibe/Anti-Goals
+├── ARCHITECTURE_PLAN.md         # L2 risk grade + flat layout map
+├── META_LEDGER.md               # 9-entry chain (about to gain Entry #10 from this seal)
+├── BACKLOG.md                   # +B4: M5 fixture corpus (deferred Phase 3 sub-deliverable)
+├── SHADOW_GENOME.md             # 3 recorded failure modes from prior audits
+├── QOR_VS_ADHOC_COMPARISON.md   # Phase 1+2 process comparison artifact
 └── SYSTEM_STATE.md              # this file
 
 (repo root)
-plan-codegenome-phase-1-2.md     # Audit-passed implementation plan
+plan-codegenome-phase-1-2.md     # PASS audit, sealed at 509b411d
+plan-codegenome-phase-3.md       # PASS audit, sealing now
 ```
 
-## Files modified by this session
+## Files modified across phases
 
+```text
+ledger/schema.py                 # 10 → 11 → 12; +6 tables, +5 edges, +3 migrations
+ledger/queries.py                # +9 codegenome queries, _validated_record_id helper
+ledger/adapter.py                # +9 thin async wrappers + import additions
+context.py                       # +codegenome / codegenome_config on BicameralContext
+handlers/bind.py                 # +codegenome hook (Phase 1+2; passes code_locator in Phase 3)
+handlers/link_commit.py          # +_run_continuity_pass (Phase 3)
+contracts.py                     # +ContinuityResolution + LinkCommitResponse field (Phase 3)
+.gitignore                       # +AI-governance directories
+CHANGELOG.md                     # v0.11.0 entry; v0.12.0 entry to follow at PR-merge time
 ```
-ledger/schema.py                 # SCHEMA_VERSION 10 → 11 + 3 tables + 3 edges + _migrate_v10_to_v11
-ledger/queries.py                # +5 codegenome queries (upsert_code_subject, upsert_subject_identity, relate_has_identity, link_decision_to_subject, find_subject_identities_for_decision)
-ledger/adapter.py                # +5 thin async wrappers + 5 query imports
-context.py                       # +codegenome and codegenome_config fields on BicameralContext, populated in from_env()
-handlers/bind.py                 # +side-effect identity-write hook (gated by ctx.codegenome_config.identity_writes_active())
-.gitignore                       # +AI-governance directories (.agent/, .failsafe/, .qor/, .cursor/, .windsurf/)
-CHANGELOG.md                     # +v0.11.0 entry (header notes "built via QorLogic SDLC")
-```
 
-## Schema state
+## Schema state (final)
 
-- `SCHEMA_VERSION = 11`
-- `SCHEMA_COMPATIBILITY[11] = "0.11.0"` (placeholder, release-eng pin at PR merge)
-- New tables: `code_subject`, `subject_identity`, `subject_version`
-- New edges: `has_identity` (subject→identity), `has_version` (subject→version), `about` (decision→subject)
-- Migration: `_migrate_v10_to_v11` (additive only, no existing tables touched)
-- Tables exist unconditionally; writes gated by `codegenome.write_identity_records=True` at handler boundary
+- `SCHEMA_VERSION = 12`
+- `SCHEMA_COMPATIBILITY[11] = "0.11.0"`, `SCHEMA_COMPATIBILITY[12] = "0.12.0"`
+  (placeholders; release-eng pins at PR merge)
+- New tables (Phase 1+2): `code_subject`, `subject_identity`, `subject_version`
+- New edges (Phase 1+2): `has_identity`, `has_version`, `about`
+- New edge (Phase 3): `identity_supersedes`
+- Subject_identity gained `neighbors_at_bind` field in v12 (additive; Phase-1+2 rows have `NULL`)
+- Migrations: `_migrate_v10_to_v11`, `_migrate_v11_to_v12` (additive only, no destructive)
+- All writes gated at handler boundary by feature flags (`enabled` + `write_identity_records`
+  for Phase 1+2; `enabled` + `enhance_drift` for Phase 3)
 
-## Test state
+## Test state (final)
 
-- **Codegenome**: 49 unit + integration tests, 49/49 PASS
-- **Pre-existing failures on upstream/main**: 81 (all environmental — Windows subprocess, surrealkv URL, missing symbol; filed as upstream issues #67, #68, #69, #70). Zero introduced by this session.
-- **Section 4 razor**: PASS (all new functions ≤ 40 lines, all new files ≤ 250 lines)
+- **Codegenome**: 85 unit + integration tests; 85 passing.
+- **Pre-existing failures on upstream/main**: 81 (filed as #67, #68, #69, #70).
+  Zero introduced by this session across both #59 and #60.
+- **Section 4 razor**: PASS; mid-implement violations caught twice
+  (`write_codegenome_identity` in #59, `evaluate_continuity_for_drift` and
+  `write_codegenome_identity` regrowth in #60) and remediated by extracting
+  helpers + bundling args into dataclass.
+- **Razor regression after Phase 3 plumbing**: caught at substantiation
+  Step 5; remediated by extracting `_compute_identity_for_bind` helper
+  and tightening `write_codegenome_identity` docstring.
 
-## Capability shortfalls observed during this session
+## Capability shortfalls (carried across all phases)
 
-These were logged at each phase but not actioned (out of scope for #59):
+1. `qor/scripts/` runtime helpers absent — gate-chain artifacts at
+   `.qor/gates/<session_id>/<phase>.json` not written. File-based
+   META_LEDGER chain is the canonical record.
+2. `qor/reliability/` enforcement scripts absent — Step 4.6 sweep
+   skipped (intent-lock, skill-admission, gate-skill-matrix).
+3. `agent-teams` capability not declared — sequential mode.
+4. `codex-plugin` capability not declared — solo audit mode.
 
-1. `qor/scripts/` runtime helpers (`gate_chain`, `session`, `shadow_process`,
-   `governance_helpers`, `qor_audit_runtime`) absent — gate-chain artifacts
-   at `.qor/gates/<session_id>/<phase>.json` were not written. Skill
-   protocols treat these as advisory wiring; the file-based META_LEDGER
-   chain is the canonical record.
-2. `qor/reliability/` enforcement scripts (`intent-lock`, `skill-admission`,
-   `gate-skill-matrix`) absent — Step 4.6 reliability sweep skipped.
-3. `agent-teams` capability not declared on Claude Code host — Step 1.a
-   parallel-mode disabled; ran sequential.
-4. `codex-plugin` capability not declared — Step 1.a adversarial
-   audit-mode disabled; ran solo.
-5. `AUDIT_REPORT.md` lives at `.agent/staging/` rather than the skill's
-   default `.failsafe/governance/`. Path divergence noted; chain
-   integrity preserved.
+## Outstanding upstream issues filed across this session
 
-## Outstanding upstream issues filed
-
-- [BicameralAI/bicameral-mcp#67](https://github.com/BicameralAI/bicameral-mcp/issues/67) — Windows subprocess `NotADirectoryError` (38 tests)
-- [BicameralAI/bicameral-mcp#68](https://github.com/BicameralAI/bicameral-mcp/issues/68) — surrealkv URL parsing on Windows (5 tests)
-- [BicameralAI/bicameral-mcp#69](https://github.com/BicameralAI/bicameral-mcp/issues/69) — missing `_merge_decision_matches` symbol (3 tests)
-- [BicameralAI/bicameral-mcp#70](https://github.com/BicameralAI/bicameral-mcp/issues/70) — AssertionError cluster umbrella (~20 tests)
-- [MythologIQ-Labs-LLC/Qor-logic#18](https://github.com/MythologIQ-Labs-LLC/Qor-logic/issues/18) — convention proposal: commit-trailer attribution for QorLogic SDLC work
+- BicameralAI/bicameral-mcp#67 — Windows subprocess `NotADirectoryError` (38 tests)
+- BicameralAI/bicameral-mcp#68 — surrealkv URL parsing on Windows (5 tests)
+- BicameralAI/bicameral-mcp#69 — missing `_merge_decision_matches` (3 tests)
+- BicameralAI/bicameral-mcp#70 — AssertionError cluster umbrella (~20 tests)
+- BicameralAI/bicameral-mcp#72 — `binds_to.provenance` schema needs FLEXIBLE keyword
+- MythologIQ-Labs-LLC/Qor-logic#18 — convention proposal: commit-trailer attribution

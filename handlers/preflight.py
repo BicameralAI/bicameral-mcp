@@ -31,20 +31,21 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from contracts import (
-    ActionHint,
     BriefDecision,
-    BriefDivergence,
-    BriefGap,
     CodeRegionSummary,
     DecisionMatch,
     PreflightResponse,
 )
-from handlers.analysis import _to_brief_decision
 from handlers.action_hints import generate_hints_from_findings
+from handlers.analysis import _to_brief_decision
+from preflight_telemetry import (
+    new_preflight_id,
+    telemetry_enabled,
+    write_preflight_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,22 +77,86 @@ def _should_show_product_stage() -> bool:
     except Exception:
         return False
 
-_GENERIC_TOPICS = frozenset({
-    "code", "project", "everything", "anything", "stuff",
-    "thing", "things", "feature", "features", "system",
-    "module", "function", "method",
-})
 
-_STOPWORDS = frozenset({
-    "the", "and", "for", "that", "this", "with", "are", "from", "have",
-    "will", "when", "then", "been", "also", "into", "about", "should",
-    "must", "need", "each", "they", "their", "there", "which", "where",
-    "what", "than", "some", "more", "such", "only", "very", "just",
-    "like", "make", "made", "use", "used", "using", "after", "before",
-    "over", "under", "between", "through", "against", "implement",
-    "build", "create", "modify", "refactor", "update", "change", "fix",
-    "edit", "remove", "delete",
-})
+_GENERIC_TOPICS = frozenset(
+    {
+        "code",
+        "project",
+        "everything",
+        "anything",
+        "stuff",
+        "thing",
+        "things",
+        "feature",
+        "features",
+        "system",
+        "module",
+        "function",
+        "method",
+    }
+)
+
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "are",
+        "from",
+        "have",
+        "will",
+        "when",
+        "then",
+        "been",
+        "also",
+        "into",
+        "about",
+        "should",
+        "must",
+        "need",
+        "each",
+        "they",
+        "their",
+        "there",
+        "which",
+        "where",
+        "what",
+        "than",
+        "some",
+        "more",
+        "such",
+        "only",
+        "very",
+        "just",
+        "like",
+        "make",
+        "made",
+        "use",
+        "used",
+        "using",
+        "after",
+        "before",
+        "over",
+        "under",
+        "between",
+        "through",
+        "against",
+        "implement",
+        "build",
+        "create",
+        "modify",
+        "refactor",
+        "update",
+        "change",
+        "fix",
+        "edit",
+        "remove",
+        "delete",
+    }
+)
 
 
 def _content_tokens(text: str) -> set[str]:
@@ -99,6 +164,7 @@ def _content_tokens(text: str) -> set[str]:
     shape but with implementation verbs added to the stopword set so
     'implement Stripe webhook' yields ['stripe', 'webhook']."""
     import re
+
     raw = re.findall(r"[A-Za-z]{4,}", text or "")
     return {t.lower() for t in raw if t.lower() not in _STOPWORDS}
 
@@ -191,35 +257,38 @@ async def _region_anchored_preflight(
         region_dict = d.get("code_region")
         regions = []
         if region_dict:
-            regions = [CodeRegionSummary(
-                file_path=region_dict.get("file_path", ""),
-                symbol=region_dict.get("symbol", ""),
-                lines=tuple(region_dict.get("lines", (0, 0))),
-                purpose=region_dict.get("purpose", ""),
-            )]
+            regions = [
+                CodeRegionSummary(
+                    file_path=region_dict.get("file_path", ""),
+                    symbol=region_dict.get("symbol", ""),
+                    lines=tuple(region_dict.get("lines", (0, 0))),
+                    purpose=region_dict.get("purpose", ""),
+                )
+            ]
 
         status = str(d.get("status") or "ungrounded")
         if status not in ("reflected", "drifted", "pending", "ungrounded"):
             status = "ungrounded" if not regions else "pending"
 
         _sf = d.get("signoff") or {}
-        matches.append(DecisionMatch(
-            decision_id=d.get("decision_id", ""),
-            description=d.get("description", ""),
-            status=status,
-            signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-            confidence=0.9,
-            source_ref=d.get("source_ref", ""),
-            code_regions=regions,
-            drift_evidence="",
-            related_constraints=[],
-            source_excerpt=d.get("source_excerpt", ""),
-            meeting_date=d.get("meeting_date", ""),
-            signoff=d.get("signoff"),
-        ))
+        matches.append(
+            DecisionMatch(
+                decision_id=d.get("decision_id", ""),
+                description=d.get("description", ""),
+                status=status,
+                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
+                confidence=0.9,
+                source_ref=d.get("source_ref", ""),
+                code_regions=regions,
+                drift_evidence="",
+                related_constraints=[],
+                source_excerpt=d.get("source_excerpt", ""),
+                meeting_date=d.get("meeting_date", ""),
+                signoff=d.get("signoff"),
+            )
+        )
 
     return matches
-
 
 
 async def handle_preflight(
@@ -231,36 +300,66 @@ async def handle_preflight(
     """Pre-flight context check. Gates output by ``ctx.guided_mode``."""
     guided_mode = bool(getattr(ctx, "guided_mode", False))
 
+    # #65 — generate the per-call preflight_id once, when telemetry is enabled.
+    # Stable across the preflight → downstream-tool engagement chain.
+    pid: str | None = new_preflight_id() if telemetry_enabled() else None
+    session_id = str(getattr(ctx, "session_id", "unknown") or "unknown")
+
     # Explicit mute via env var — one-line off-switch for the session.
     if os.getenv("BICAMERAL_PREFLIGHT_MUTE", "").strip().lower() in (
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     ):
+        if pid is not None:
+            write_preflight_event(
+                session_id=session_id,
+                preflight_id=pid,
+                topic=topic,
+                file_paths=file_paths or [],
+                fired=False,
+                surfaced_ids=[],
+                reason="preflight_disabled",
+            )
         return PreflightResponse(
             topic=topic,
             fired=False,
             reason="preflight_disabled",
             guided_mode=guided_mode,
+            preflight_id=pid,
         )
 
     # Per-session dedup — same topic within 5 min is silenced.
     if _check_dedup(ctx, topic):
         logger.debug("[preflight] dedup hit for topic: %r", topic[:60])
+        if pid is not None:
+            write_preflight_event(
+                session_id=session_id,
+                preflight_id=pid,
+                topic=topic,
+                file_paths=file_paths or [],
+                fired=False,
+                surfaced_ids=[],
+                reason="recently_checked",
+            )
         return PreflightResponse(
             topic=topic,
             fired=False,
             reason="recently_checked",
             guided_mode=guided_mode,
+            preflight_id=pid,
         )
 
     # V1 A3: time the call locally so the metric reflects THIS handler's catch-up.
     import time as _time
-    from handlers.sync_middleware import ensure_ledger_synced
+
     from contracts import SyncMetrics
+    from handlers.sync_middleware import ensure_ledger_synced
+
     _t0 = _time.perf_counter()
     await ensure_ledger_synced(ctx)
-    sync_metrics = SyncMetrics(
-        sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3)
-    )
+    sync_metrics = SyncMetrics(sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3))
 
     sources_chained: list[str] = []
 
@@ -285,35 +384,40 @@ async def handle_preflight(
     context_pending_ready: list[BriefDecision] = []
     try:
         from ledger.queries import get_collision_pending_decisions, get_context_for_ready_decisions
+
         inner = getattr(ctx.ledger, "_inner", ctx.ledger)
         client = inner._client
         coll_rows = await get_collision_pending_decisions(client)
         for r in coll_rows:
             _sf = r.get("signoff") or {}
-            unresolved_collisions.append(BriefDecision(
-                decision_id=r["decision_id"],
-                description=r["description"],
-                status=r.get("status") or "ungrounded",
-                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-                signoff=r.get("signoff"),
-            ))
+            unresolved_collisions.append(
+                BriefDecision(
+                    decision_id=r["decision_id"],
+                    description=r["description"],
+                    status=r.get("status") or "ungrounded",
+                    signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
+                    signoff=r.get("signoff"),
+                )
+            )
         ctx_rows = await get_context_for_ready_decisions(client)
         for r in ctx_rows:
             _sf = r.get("signoff") or {}
-            context_pending_ready.append(BriefDecision(
-                decision_id=r["decision_id"],
-                description=r["description"],
-                status=r.get("status") or "ungrounded",
-                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-                signoff=r.get("signoff"),
-            ))
+            context_pending_ready.append(
+                BriefDecision(
+                    decision_id=r["decision_id"],
+                    description=r["description"],
+                    status=r.get("status") or "ungrounded",
+                    signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
+                    signoff=r.get("signoff"),
+                )
+            )
     except Exception as exc:
         logger.debug("[preflight] HITL annotation queries failed: %s", exc)
 
     fired = bool(region_matches or unresolved_collisions or context_pending_ready or guided_mode)
     action_hints = generate_hints_from_findings([], drift_candidates, [], guided_mode)
 
-    return PreflightResponse(
+    response = PreflightResponse(
         topic=topic,
         fired=fired,
         reason="fired" if fired else "no_matches",  # type: ignore[arg-type]
@@ -328,4 +432,30 @@ async def handle_preflight(
         context_pending_ready=context_pending_ready,
         sync_metrics=sync_metrics,
         product_stage=_PRODUCT_STAGE_MSG if _should_show_product_stage() else None,
+        preflight_id=pid,
     )
+
+    # #65 — capture-loop event. surfaced_ids is the union of decision_ids the
+    # response is steering the agent toward, used for triage joins.
+    if pid is not None:
+        surfaced_ids: list[str] = []
+        for d in decisions:
+            if d.decision_id:
+                surfaced_ids.append(d.decision_id)
+        for d in unresolved_collisions:
+            if d.decision_id and d.decision_id not in surfaced_ids:
+                surfaced_ids.append(d.decision_id)
+        for d in context_pending_ready:
+            if d.decision_id and d.decision_id not in surfaced_ids:
+                surfaced_ids.append(d.decision_id)
+        write_preflight_event(
+            session_id=session_id,
+            preflight_id=pid,
+            topic=topic,
+            file_paths=file_paths or [],
+            fired=fired,
+            surfaced_ids=surfaced_ids,
+            reason=response.reason,
+        )
+
+    return response

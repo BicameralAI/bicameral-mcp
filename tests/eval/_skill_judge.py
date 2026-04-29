@@ -16,6 +16,7 @@ Environment:
     BICAMERAL_PREFLIGHT_EVAL_MODEL          default "claude-sonnet-4-6"
     BICAMERAL_PREFLIGHT_EVAL_RECORD=1       force-bypass cache, re-record
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -26,7 +27,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SKILL_MD_PATH = REPO_ROOT / "skills" / "bicameral-preflight" / "SKILL.md"
@@ -129,7 +129,7 @@ def _extract_step1_excerpt(skill_md: str) -> str:
 
     next_header = _STEP_HEADER_RE.search(body, step1_match.end())
     end = next_header.start() if next_header else len(body)
-    return body[step1_match.start():end].strip()
+    return body[step1_match.start() : end].strip()
 
 
 def _cache_path(model: str, skill_sha: str, input_sha: str) -> Path:
@@ -169,9 +169,7 @@ def _call_messages_api(
     with httpx.Client(timeout=REQUEST_TIMEOUT_S) as client:
         resp = client.post(ANTHROPIC_API_URL, headers=headers, json=payload)
         if resp.status_code >= 400:
-            raise RuntimeError(
-                f"Anthropic API error {resp.status_code}: {resp.text[:500]}"
-            )
+            raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:500]}")
         data = resp.json()
 
     stop_reason = data.get("stop_reason", "")
@@ -184,9 +182,7 @@ def _call_messages_api(
             f"(stop_reason={stop_reason!r}, text={'|'.join(text_parts)[:300]!r})"
         )
     if stop_reason == "max_tokens":
-        raise RuntimeError(
-            f"Anthropic response hit max_tokens={MAX_OUTPUT_TOKENS}"
-        )
+        raise RuntimeError(f"Anthropic response hit max_tokens={MAX_OUTPUT_TOKENS}")
     judgment = tool_use.get("input")
     if not isinstance(judgment, dict):
         raise RuntimeError(f"tool_use input is not a dict: {judgment!r}")

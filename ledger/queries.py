@@ -11,7 +11,7 @@ No SDK types (RecordID etc.) leak through — normalization happens in client.py
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .client import LedgerClient, LedgerError
 
@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 # UNIQUE(in, out) index so the same logical relationship is never created twice.
 # Team-mode event replay re-issues every RELATE; duplicates are rejected by the
 # DB and treated as a no-op success here.
+
 
 async def _execute_idempotent_edge(
     client: LedgerClient, sql: str, vars: dict | None = None
@@ -132,7 +133,7 @@ async def upsert_source_cursor(
         "source_scope": source_scope,
         "cursor": cursor,
         "last_source_ref": last_source_ref,
-        "synced_at": str(datetime.now(timezone.utc).isoformat()),
+        "synced_at": str(datetime.now(UTC).isoformat()),
         "status": status,
         "error": error,
     }
@@ -193,16 +194,13 @@ async def get_all_decisions(
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
     for row in rows:
-        for region in (row.get("code_regions") or []):
+        for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
     for row in rows:
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [
-            s for s in spans
-            if s and s.get("text") and s.get("text") != description
-        ]
+        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         if not row.get("meeting_date"):
@@ -253,15 +251,12 @@ async def search_by_bm25(
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
         row["confidence"] = round(1.0 - (i / max(total, 1)) * 0.4, 2)
-        for region in (row.get("code_regions") or []):
+        for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [
-            s for s in spans
-            if s and s.get("text") and s.get("text") != description
-        ]
+        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         row["meeting_date"] = (first_span.get("meeting_date") if first_span else "") or ""
@@ -376,7 +371,7 @@ async def get_decisions_for_file(
             "purpose": region_row.get("purpose", ""),
             "content_hash": region_row.get("content_hash", ""),
         }
-        for decision in (region_row.get("decisions") or []):
+        for decision in region_row.get("decisions") or []:
             if decision is None:
                 continue
             did = str(decision.get("id", ""))
@@ -384,19 +379,21 @@ async def get_decisions_for_file(
                 continue
             seen_decision_ids.add(did)
             decision_id_set.add(did)
-            results.append({
-                "decision_id": did,
-                "description": decision.get("description", ""),
-                "source_type": decision.get("source_type", ""),
-                "source_ref": decision.get("source_ref", ""),
-                "source_excerpt": "",
-                "meeting_date": "",
-                "speaker": "",
-                "ingested_at": str(decision.get("created_at", "")),
-                "status": decision.get("status", "ungrounded"),
-                "signoff": decision.get("signoff"),
-                "code_region": region,
-            })
+            results.append(
+                {
+                    "decision_id": did,
+                    "description": decision.get("description", ""),
+                    "source_type": decision.get("source_type", ""),
+                    "source_ref": decision.get("source_ref", ""),
+                    "source_excerpt": "",
+                    "meeting_date": "",
+                    "speaker": "",
+                    "ingested_at": str(decision.get("created_at", "")),
+                    "status": decision.get("status", "ungrounded"),
+                    "signoff": decision.get("signoff"),
+                    "code_region": region,
+                }
+            )
 
     # Backfill source_excerpt + meeting_date via yields reverse edge
     if decision_id_set:
@@ -412,14 +409,11 @@ async def get_decisions_for_file(
         )
         excerpt_by_decision: dict[str, tuple[str, str]] = {}
         desc_by_decision = {e["decision_id"]: e.get("description", "") for e in results}
-        for r in (excerpt_rows or []):
+        for r in excerpt_rows or []:
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [
-                s for s in spans
-                if s and s.get("text") and s.get("text") != desc
-            ]
+            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -486,7 +480,7 @@ async def get_decisions_for_files(
             "purpose": region_row.get("purpose", ""),
             "content_hash": region_row.get("content_hash", ""),
         }
-        for decision in (region_row.get("decisions") or []):
+        for decision in region_row.get("decisions") or []:
             if decision is None:
                 continue
             did = str(decision.get("id", ""))
@@ -494,18 +488,20 @@ async def get_decisions_for_files(
                 continue
             seen_decision_ids.add(did)
             decision_id_set.add(did)
-            results.append({
-                "decision_id": did,
-                "description": decision.get("description", ""),
-                "source_type": decision.get("source_type", ""),
-                "source_ref": decision.get("source_ref", ""),
-                "source_excerpt": "",
-                "meeting_date": "",
-                "ingested_at": str(decision.get("created_at", "")),
-                "status": decision.get("status", "ungrounded"),
-                "signoff": decision.get("signoff"),
-                "code_region": region,
-            })
+            results.append(
+                {
+                    "decision_id": did,
+                    "description": decision.get("description", ""),
+                    "source_type": decision.get("source_type", ""),
+                    "source_ref": decision.get("source_ref", ""),
+                    "source_excerpt": "",
+                    "meeting_date": "",
+                    "ingested_at": str(decision.get("created_at", "")),
+                    "status": decision.get("status", "ungrounded"),
+                    "signoff": decision.get("signoff"),
+                    "code_region": region,
+                }
+            )
 
     # Backfill source_excerpt + meeting_date
     if decision_id_set:
@@ -521,14 +517,11 @@ async def get_decisions_for_files(
         )
         desc_by_decision = {e["decision_id"]: e.get("description", "") for e in results}
         excerpt_by_decision: dict[str, tuple[str, str]] = {}
-        for r in (excerpt_rows or []):
+        for r in excerpt_rows or []:
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [
-                s for s in spans
-                if s and s.get("text") and s.get("text") != desc
-            ]
+            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -710,9 +703,13 @@ async def upsert_code_region(
         WHERE file_path = $file_path AND symbol_name = $symbol_name
         """,
         {
-            "file_path": file_path, "symbol_name": symbol_name,
-            "start_line": start_line, "end_line": end_line,
-            "purpose": purpose, "repo": repo, "content_hash": content_hash,
+            "file_path": file_path,
+            "symbol_name": symbol_name,
+            "start_line": start_line,
+            "end_line": end_line,
+            "purpose": purpose,
+            "repo": repo,
+            "content_hash": content_hash,
         },
     )
     if rows:
@@ -720,6 +717,44 @@ async def upsert_code_region(
     rows = await client.query(
         "CREATE code_region SET file_path=$fp, symbol_name=$s, start_line=$sl, end_line=$el",
         {"fp": file_path, "s": symbol_name, "sl": start_line, "el": end_line},
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
+async def create_code_region(
+    client: LedgerClient,
+    file_path: str,
+    symbol_name: str,
+    start_line: int,
+    end_line: int,
+    purpose: str = "",
+    repo: str = "",
+    content_hash: str = "",
+) -> str:
+    """Phase 3 (#60) — create a NEW code_region row, never upsert.
+
+    Unlike ``upsert_code_region`` (which keys on ``(file_path, symbol_name)``
+    and silently reuses the same row for same-file relocations or
+    line-shifts), this helper always creates a fresh region. Required
+    by the continuity-redirect path: when a symbol moves within the
+    same file, the old and new regions must have distinct IDs so
+    ``update_binds_to_region`` can redirect the binding without
+    overwriting the old span. PR #73 review, CodeRabbit MAJOR
+    ledger/adapter.py:365.
+    """
+    rows = await client.query(
+        "CREATE code_region SET "
+        "file_path=$fp, symbol_name=$s, start_line=$sl, end_line=$el, "
+        "purpose=$p, repo=$r, content_hash=$h",
+        {
+            "fp": file_path,
+            "s": symbol_name,
+            "sl": start_line,
+            "el": end_line,
+            "p": purpose,
+            "r": repo,
+            "h": content_hash,
+        },
     )
     return str(rows[0].get("id", "")) if rows else ""
 
@@ -736,6 +771,8 @@ async def upsert_compliance_check(
     commit_hash: str = "",
     pruned: bool = False,
     ephemeral: bool = False,
+    semantic_status: str | None = None,
+    evidence_refs: list[str] | None = None,
 ) -> bool:
     """Write a compliance_check row keyed on (decision_id, region_id, content_hash).
 
@@ -743,13 +780,21 @@ async def upsert_compliance_check(
     verdict must be one of: 'compliant', 'drifted', 'not_relevant'.
     ephemeral=True marks the verdict as from a WIP/fixup commit; downstream
     queries filter these out when computing decision status and drift scoring.
+
+    Phase 4 (#61) — additive optional fields:
+      semantic_status: 'semantically_preserved' | 'semantic_change' | None
+                       Records whether the auto-classifier or caller-LLM
+                       judged the change cosmetic vs meaningful.
+      evidence_refs:   list of free-form audit-trail strings, e.g.
+                       ['signature:1.00', 'neighbors:0.97'].
     """
+    refs = evidence_refs or []
     try:
         await client.execute(
             "CREATE compliance_check SET decision_id = $d, region_id = $r, "
             "content_hash = $h, verdict = $v, confidence = $cf, "
             "explanation = $e, phase = $p, commit_hash = $cm, pruned = $pr, "
-            "ephemeral = $ep",
+            "ephemeral = $ep, semantic_status = $ss, evidence_refs = $er",
             {
                 "d": decision_id,
                 "r": region_id,
@@ -761,6 +806,8 @@ async def upsert_compliance_check(
                 "cm": commit_hash,
                 "pr": pruned,
                 "ep": ephemeral,
+                "ss": semantic_status,
+                "er": refs,
             },
         )
         return True
@@ -1348,13 +1395,17 @@ async def search_context_pending_by_text(
     total = len(rows)
     for i, row in enumerate(rows):
         signoff = row.get("signoff")
-        if not (signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending"):
+        if not (
+            signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending"
+        ):
             continue
-        results.append({
-            "decision_id": row.get("decision_id", ""),
-            "description": row.get("description", ""),
-            "overlap_score": round(1.0 - (i / max(total, 1)) * 0.4, 2),
-        })
+        results.append(
+            {
+                "decision_id": row.get("decision_id", ""),
+                "description": row.get("description", ""),
+                "overlap_score": round(1.0 - (i / max(total, 1)) * 0.4, 2),
+            }
+        )
         if len(results) >= top_k:
             break
     return results
@@ -1430,7 +1481,7 @@ async def get_context_for_ready_decisions(
 # shape and raises ``LedgerError`` on mismatch — a single choke point
 # per call instead of trusting upstream callers.
 
-import re as _re
+import re as _re  # noqa: E402 — module-private import kept adjacent to its usage block
 
 _RECORD_ID_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z0-9_\-]+$")
 
@@ -1473,8 +1524,10 @@ async def upsert_code_subject(
         WHERE kind = $kind AND canonical_name = $name
         """,
         {
-            "kind": kind, "name": canonical_name,
-            "repo_ref": repo_ref, "conf": current_confidence,
+            "kind": kind,
+            "name": canonical_name,
+            "repo_ref": repo_ref,
+            "conf": current_confidence,
         },
     )
     if rows:
@@ -1483,8 +1536,10 @@ async def upsert_code_subject(
         "CREATE code_subject SET kind=$kind, canonical_name=$name, "
         "repo_ref=$repo_ref, current_confidence=$conf",
         {
-            "kind": kind, "name": canonical_name,
-            "repo_ref": repo_ref, "conf": current_confidence,
+            "kind": kind,
+            "name": canonical_name,
+            "repo_ref": repo_ref,
+            "conf": current_confidence,
         },
     )
     return str(rows[0].get("id", "")) if rows else ""
@@ -1501,6 +1556,7 @@ async def upsert_subject_identity(
     content_hash: str | None,
     confidence: float,
     model_version: str,
+    neighbors_at_bind: tuple[str, ...] | list[str] | None = None,
 ) -> str:
     """Create-or-fetch a subject_identity row by ``address`` (UNIQUE).
 
@@ -1512,6 +1568,10 @@ async def upsert_subject_identity(
     SELECT and both attempt CREATE, the loser hits the UNIQUE(address)
     index and SurrealDB returns "already contains"; we re-SELECT and
     return the winning row's id rather than propagating the conflict.
+
+    ``neighbors_at_bind`` (v12) is persisted as ``array<string>`` when
+    provided, ``NONE`` otherwise. Phase 3's continuity matcher reads this
+    field to compute Jaccard against post-rebase neighbors.
     """
     rows = await client.query(
         "SELECT id FROM subject_identity WHERE address = $a LIMIT 1",
@@ -1519,6 +1579,8 @@ async def upsert_subject_identity(
     )
     if rows:
         return str(rows[0].get("id", ""))
+
+    neighbors_value = list(neighbors_at_bind) if neighbors_at_bind is not None else None
 
     create_args = {
         "address": address,
@@ -1529,6 +1591,7 @@ async def upsert_subject_identity(
         "content_hash": content_hash,
         "confidence": confidence,
         "model_version": model_version,
+        "neighbors_at_bind": neighbors_value,
     }
     try:
         rows = await client.query(
@@ -1541,7 +1604,8 @@ async def upsert_subject_identity(
                 signature_hash       = $signature_hash,
                 content_hash         = $content_hash,
                 confidence           = $confidence,
-                model_version        = $model_version
+                model_version        = $model_version,
+                neighbors_at_bind    = $neighbors_at_bind
             """,
             create_args,
         )
@@ -1567,8 +1631,7 @@ async def relate_has_identity(
     siid = _validated_record_id(subject_identity_id, "subject_identity")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {csid}->has_identity->{siid} "
-        "SET confidence=$c, created_at=time::now()",
+        f"RELATE {csid}->has_identity->{siid} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 
@@ -1577,15 +1640,257 @@ async def link_decision_to_subject(
     client: LedgerClient,
     decision_id: str,
     code_subject_id: str,
+    region_id: str | None = None,
     confidence: float = 0.8,
 ) -> None:
-    """decision → about → code_subject. Idempotent."""
+    """decision → about → code_subject. Idempotent.
+
+    PR #73 review (CodeRabbit MAJOR ledger/queries.py:1567):
+    a decision can bind multiple regions; the ``about`` edge carries
+    the originating ``region_id`` so the per-region continuity pass
+    can disambiguate which stored identity belongs to a given drifted
+    region. ``region_id`` is optional for backward-compatibility with
+    callers that don't have a specific region in scope.
+    """
     did = _validated_record_id(decision_id, "decision")
     csid = _validated_record_id(code_subject_id, "code_subject")
+    if region_id:
+        rid = _validated_record_id(region_id, "code_region")
+        await _execute_idempotent_edge(
+            client,
+            f"RELATE {did}->about->{csid} SET confidence=$c, region_id=$r, created_at=time::now()",
+            {"c": confidence, "r": rid},
+        )
+    else:
+        await _execute_idempotent_edge(
+            client,
+            f"RELATE {did}->about->{csid} SET confidence=$c, created_at=time::now()",
+            {"c": confidence},
+        )
+
+
+async def get_region_metadata(
+    client: LedgerClient,
+    region_id: str,
+) -> dict | None:
+    """Phase 3 (#60) — load span + linked-identity kind for a region.
+
+    Returns ``{file_path, symbol_name, start_line, end_line, identity_type}``
+    where ``identity_type`` falls back to ``"unknown"`` when no
+    ``subject_identity`` is reachable from this region's decision.
+
+    PR #73 review (CodeRabbit MAJOR handlers/link_commit.py:255):
+    callers were seeding ``DriftContext`` with ``kind="unknown"`` and
+    ``0,0`` line numbers, permanently dropping the kind signal from
+    the Phase 3 score and reporting ``ContinuityResolution.old_location``
+    as ``:0-0``. This helper closes both gaps with a single query.
+    """
+    rid = _validated_record_id(region_id, "code_region")
+    rows = await client.query(
+        f"""
+        SELECT
+            file_path, symbol_name, start_line, end_line,
+            (<-binds_to<-decision->about->code_subject<-has_identity
+                <-subject_identity.identity_type)[0] AS identity_type
+        FROM {rid}
+        LIMIT 1
+        """,
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "file_path": row.get("file_path", ""),
+        "symbol_name": row.get("symbol_name", ""),
+        "start_line": int(row.get("start_line") or 0),
+        "end_line": int(row.get("end_line") or 0),
+        "identity_type": row.get("identity_type") or "unknown",
+    }
+
+
+async def update_binds_to_region(
+    client: LedgerClient,
+    decision_id: str,
+    old_region_id: str,
+    new_region_id: str,
+    *,
+    confidence: float = 0.85,
+) -> None:
+    """Phase 3 (#60): redirect a decision's binds_to from old to new region.
+
+    Atomically deletes the old ``decision -binds_to-> old_region`` edge
+    and creates a fresh edge to ``new_region`` with
+    ``provenance.method = "continuity_resolved"``. Wrapped in a single
+    SurrealQL transaction so a failure on the second statement leaves
+    the original binding intact rather than orphaning the decision
+    (PR #73 review, CodeRabbit MAJOR ledger/queries.py:1602).
+
+    The old binding's audit trail lives in the parallel
+    ``identity_supersedes`` edge written by ``write_identity_supersedes``.
+    """
+    did = _validated_record_id(decision_id, "decision")
+    old_id = _validated_record_id(old_region_id, "code_region")
+    new_id = _validated_record_id(new_region_id, "code_region")
+    # Embed provenance as a SurrealQL object literal — passing it via
+    # ``$p`` silently drops nested dicts to ``{}`` under surrealdb-py
+    # 2.0.0. The literal value is internal-only (no caller input
+    # interpolated). The whole DELETE+RELATE pair is wrapped in a
+    # transaction so a partial migration cannot leave a decision
+    # ungrounded.
+    #
+    # Idempotency: a repeat call (same decision_id / old_region_id /
+    # new_region_id) finds the old edge already gone and the new edge
+    # already present. The RELATE then hits UNIQUE(in, out) and the
+    # transaction rolls back with "already contains". We catch that
+    # specific error and treat it as success — the desired end state
+    # is already in place.
+    # Idempotency: when a repeat call finds the old edge already gone
+    # and the new edge already present, the transaction's RELATE hits
+    # UNIQUE(in, out) and rolls back. Pre-flight by checking whether
+    # the desired end state is already in place; if so, no-op.
+    existing = await client.query(
+        f"SELECT id FROM binds_to WHERE in = {did} AND out = {new_id} LIMIT 1",
+    )
+    if existing:
+        # Desired edge already exists. Ensure the old edge is gone
+        # (covers the partial-failure recovery case where a prior
+        # transaction succeeded the RELATE but failed the DELETE).
+        await client.execute(
+            f"DELETE FROM binds_to WHERE in = {did} AND out = {old_id}",
+        )
+        return
+    try:
+        await client.execute(
+            f"""
+            BEGIN TRANSACTION;
+            DELETE FROM binds_to WHERE in = {did} AND out = {old_id};
+            RELATE {did}->binds_to->{new_id}
+                SET confidence = $c,
+                    provenance = {{method: 'continuity_resolved'}},
+                    created_at = time::now();
+            COMMIT TRANSACTION;
+            """,
+            {"c": confidence},
+        )
+    except LedgerError as exc:
+        msg = str(exc)
+        # SurrealDB v2 wraps UNIQUE violations inside transactions as
+        # "failed transaction" without exposing the underlying cause.
+        # Treat both forms as idempotent if we got past the pre-flight
+        # without finding the new edge but the transaction still
+        # collided (race condition).
+        if "already contains" not in msg and "failed transaction" not in msg:
+            raise
+
+
+async def write_identity_supersedes(
+    client: LedgerClient,
+    old_identity_id: str,
+    new_identity_id: str,
+    change_type: str,
+    confidence: float,
+    evidence_refs: tuple[str, ...] | list[str] = (),
+) -> None:
+    """Phase 3 (#60): record an identity transition. Idempotent on (in, out).
+
+    ``change_type`` must be one of ``moved``, ``renamed``, ``moved_and_renamed``
+    (enforced by the schema's ASSERT).
+    """
+    old_id = _validated_record_id(old_identity_id, "subject_identity")
+    new_id = _validated_record_id(new_identity_id, "subject_identity")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {did}->about->{csid} "
-        "SET confidence=$c, created_at=time::now()",
+        f"RELATE {old_id}->identity_supersedes->{new_id} "
+        "SET change_type=$ct, confidence=$c, evidence_refs=$er, created_at=time::now()",
+        {"ct": change_type, "c": confidence, "er": list(evidence_refs)},
+    )
+
+
+async def write_subject_version(
+    client: LedgerClient,
+    code_subject_id: str,
+    repo_ref: str,
+    file_path: str,
+    start_line: int,
+    end_line: int,
+    *,
+    symbol_name: str | None = None,
+    symbol_kind: str | None = None,
+    content_hash: str | None = None,
+    signature_hash: str | None = None,
+) -> str:
+    """Phase 3 (#60): upsert a subject_version row at a concrete location.
+
+    Keyed on ``(repo_ref, file_path, start_line, end_line)`` — repeated calls
+    for the same location return the same id. Caller is responsible for the
+    ``has_version`` edge (``relate_has_version``).
+    """
+    _validated_record_id(code_subject_id, "code_subject")  # validate; no interpolation here
+    rows = await client.query(
+        """
+        UPSERT subject_version SET
+            repo_ref       = $repo_ref,
+            file_path      = $file_path,
+            start_line     = $start_line,
+            end_line       = $end_line,
+            symbol_name    = $symbol_name,
+            symbol_kind    = $symbol_kind,
+            content_hash   = $content_hash,
+            signature_hash = $signature_hash
+        WHERE repo_ref = $repo_ref AND file_path = $file_path
+              AND start_line = $start_line AND end_line = $end_line
+        """,
+        {
+            "repo_ref": repo_ref,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "symbol_name": symbol_name,
+            "symbol_kind": symbol_kind,
+            "content_hash": content_hash,
+            "signature_hash": signature_hash,
+        },
+    )
+    if rows:
+        return str(rows[0].get("id", ""))
+    rows = await client.query(
+        """
+        CREATE subject_version SET
+            repo_ref=$repo_ref, file_path=$file_path,
+            start_line=$start_line, end_line=$end_line,
+            symbol_name=$symbol_name, symbol_kind=$symbol_kind,
+            content_hash=$content_hash, signature_hash=$signature_hash
+        """,
+        {
+            "repo_ref": repo_ref,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "symbol_name": symbol_name,
+            "symbol_kind": symbol_kind,
+            "content_hash": content_hash,
+            "signature_hash": signature_hash,
+        },
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
+async def relate_has_version(
+    client: LedgerClient,
+    code_subject_id: str,
+    subject_version_id: str,
+    confidence: float = 0.9,
+) -> None:
+    """Phase 3 (#60): code_subject → has_version → subject_version. Idempotent.
+
+    Mirrors ``relate_has_identity``. Closes the orphan-edge condition where
+    ``has_version`` was defined-but-unused since #59 schema migration.
+    """
+    csid = _validated_record_id(code_subject_id, "code_subject")
+    svid = _validated_record_id(subject_version_id, "subject_version")
+    await _execute_idempotent_edge(
+        client,
+        f"RELATE {csid}->has_version->{svid} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 
@@ -1612,7 +1917,8 @@ async def find_subject_identities_for_decision(
             signature_hash,
             content_hash,
             confidence,
-            model_version
+            model_version,
+            neighbors_at_bind
         FROM {did}->about->code_subject->has_identity->subject_identity
         """,
     )
@@ -1627,6 +1933,7 @@ async def find_subject_identities_for_decision(
             "content_hash": r.get("content_hash"),
             "confidence": float(r.get("confidence") or 0.0),
             "model_version": str(r.get("model_version", "")),
+            "neighbors_at_bind": r.get("neighbors_at_bind"),
         }
         for r in (rows or [])
         if r.get("identity_id")

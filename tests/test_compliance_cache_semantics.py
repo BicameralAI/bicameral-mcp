@@ -6,6 +6,7 @@ Proves Phase 2 of 2026-04-20-ingest-time-verification.md:
 - Seeding a compliance_check row via resolve_compliance (simulated here by
   direct write) promotes the decision out of PENDING
 """
+
 from __future__ import annotations
 
 import pytest
@@ -14,7 +15,6 @@ from ledger.client import LedgerClient
 from ledger.queries import get_compliance_verdict
 from ledger.schema import init_schema, migrate
 from ledger.status import derive_status
-
 
 # ── Pure unit tests: derive_status decision table ────────────────────
 

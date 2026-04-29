@@ -13,12 +13,23 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 EvidenceType = Literal[
-    "code", "test", "diff", "runtime", "doc", "decision", "agent_eval", "manual",
+    "code",
+    "test",
+    "diff",
+    "runtime",
+    "doc",
+    "decision",
+    "agent_eval",
+    "manual",
 ]
 
 DriftStatus = Literal[
-    "reflected", "drifted", "pending", "ungrounded",
-    "semantically_preserved", "needs_review",
+    "reflected",
+    "drifted",
+    "pending",
+    "ungrounded",
+    "semantically_preserved",
+    "needs_review",
 ]
 
 
@@ -44,6 +55,12 @@ class SubjectIdentity:
     content_hash: str | None
     confidence: float
     model_version: str
+    # Phase 3 (#60): 1-hop call-graph neighbor addresses captured at bind
+    # time, used by ContinuityMatcher to score Jaccard overlap between
+    # pre-rebase and post-rebase neighbors. ``None`` for Phase 1+2 rows
+    # written before this field existed; empty tuple for explicit "no
+    # neighbors known"; non-empty sorted tuple otherwise.
+    neighbors_at_bind: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

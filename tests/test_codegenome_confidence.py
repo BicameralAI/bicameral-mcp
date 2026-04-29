@@ -8,7 +8,6 @@ import pytest
 
 from codegenome.confidence import noisy_or, weighted_average
 
-
 # ── noisy_or ────────────────────────────────────────────────────────────────
 
 

@@ -27,6 +27,7 @@ Design:
 - Offline tests use the rapidfuzz fallback in _extraction_metrics.py
   by passing matcher="rapidfuzz" explicitly, so no network is needed.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -280,9 +281,7 @@ def llm_match(
             "Set the env var, or pass matcher='rapidfuzz' explicitly."
         )
 
-    tool_input = _call_matcher_api(
-        actual, expected, model=chosen_model, api_key=chosen_key
-    )
+    tool_input = _call_matcher_api(actual, expected, model=chosen_model, api_key=chosen_key)
     pairs = _parse_matches(tool_input, n_actual=len(actual), n_expected=len(expected))
 
     if use_cache:

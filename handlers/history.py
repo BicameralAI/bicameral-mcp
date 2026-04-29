@@ -50,7 +50,6 @@ def _slugify(name: str) -> str:
     return slug.strip("-") or "uncategorized"
 
 
-
 def _decision_status_for_history(
     decision_status: str,
     has_code_regions: bool,
@@ -86,14 +85,16 @@ def _row_to_history_decision(
         if not r:
             continue
         symbol = r.get("symbol") or r.get("symbol_name") or None
-        fulfillments.append(HistoryFulfillment(
-            file_path=str(r.get("file_path") or ""),
-            symbol=symbol,
-            start_line=int(r.get("start_line") or 0),
-            end_line=int(r.get("end_line") or 0),
-            baseline_hash=r.get("content_hash") or None,
-            current_hash=r.get("content_hash") or None,
-        ))
+        fulfillments.append(
+            HistoryFulfillment(
+                file_path=str(r.get("file_path") or ""),
+                symbol=symbol,
+                start_line=int(r.get("start_line") or 0),
+                end_line=int(r.get("end_line") or 0),
+                baseline_hash=r.get("content_hash") or None,
+                current_hash=r.get("content_hash") or None,
+            )
+        )
 
     # Source spans → HistorySource list
     # get_all_decisions returns source_excerpt + meeting_date extracted from first span.
@@ -111,13 +112,15 @@ def _row_to_history_decision(
             raw_type = str(span.get("source_type") or row.get("source_type") or "manual")
             speakers = span.get("speakers") or []
             speaker = speakers[0] if speakers else None
-            sources.append(HistorySource(
-                source_ref=str(span.get("source_ref") or row.get("source_ref") or ""),
-                source_type=_normalize_source_type(raw_type),  # type: ignore[arg-type]
-                date=str(span.get("meeting_date") or row.get("meeting_date") or ""),
-                speaker=speaker,
-                quote=text,
-            ))
+            sources.append(
+                HistorySource(
+                    source_ref=str(span.get("source_ref") or row.get("source_ref") or ""),
+                    source_type=_normalize_source_type(raw_type),  # type: ignore[arg-type]
+                    date=str(span.get("meeting_date") or row.get("meeting_date") or ""),
+                    speaker=speaker,
+                    quote=text,
+                )
+            )
     else:
         # Fallback: build a single source from denormalized columns
         source_excerpt = str(row.get("source_excerpt") or "")
@@ -125,13 +128,15 @@ def _row_to_history_decision(
         source_type = str(row.get("source_type") or "manual")
         meeting_date = str(row.get("meeting_date") or "")
         if source_excerpt or source_ref:
-            sources.append(HistorySource(
-                source_ref=source_ref,
-                source_type=_normalize_source_type(source_type),  # type: ignore[arg-type]
-                date=meeting_date,
-                speaker=None,
-                quote=source_excerpt or description,
-            ))
+            sources.append(
+                HistorySource(
+                    source_ref=source_ref,
+                    source_type=_normalize_source_type(source_type),  # type: ignore[arg-type]
+                    date=meeting_date,
+                    speaker=None,
+                    quote=source_excerpt or description,
+                )
+            )
 
     drift_evidence: str | None = row.get("drift_evidence") or None
     signoff: dict | None = row.get("signoff") or None
@@ -212,7 +217,7 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
     for row in rows:
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
-        for region in (row.get("code_regions") or []):
+        for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
 
@@ -289,13 +294,13 @@ async def handle_history(
     """
     # V1 A3: time the catch-up locally so history can report it.
     import time as _time
-    from handlers.sync_middleware import ensure_ledger_synced
+
     from contracts import SyncMetrics
+    from handlers.sync_middleware import ensure_ledger_synced
+
     _t0 = _time.perf_counter()
     await ensure_ledger_synced(ctx)
-    sync_metrics = SyncMetrics(
-        sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3)
-    )
+    sync_metrics = SyncMetrics(sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3))
 
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
@@ -326,11 +331,13 @@ async def handle_history(
         if not decisions:
             continue
 
-        features.append(HistoryFeature(
-            id=feature_id,
-            name=feature_name,
-            decisions=decisions,
-        ))
+        features.append(
+            HistoryFeature(
+                id=feature_id,
+                name=feature_name,
+                decisions=decisions,
+            )
+        )
 
     # Apply feature_filter
     if feature_filter:
@@ -351,8 +358,7 @@ async def handle_history(
     # Mark decisions whose current compliance verdict came from a feature-branch commit.
     # Only meaningful for decisions that have a status verdict (reflected/drifted).
     verifiable_ids = [
-        d.id for f in features for d in f.decisions
-        if d.status in ("reflected", "drifted")
+        d.id for f in features for d in f.decisions if d.status in ("reflected", "drifted")
     ]
     ephemeral_ids = await _fetch_ephemeral_decision_ids(ledger, verifiable_ids)
     if ephemeral_ids:

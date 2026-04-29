@@ -8,18 +8,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 
 from .sqlite_store import SymbolDB
 from .symbol_extractor import (
     EXTENSION_LANGUAGE,
-    SKIP_DIRS,
     _get_parser,
     _node_text,
 )
 
-
 # ── Contains edges ───────────────────────────────────────────────────
+
 
 def _build_contains_edges(db: SymbolDB) -> list[tuple[int, int, str]]:
     """Build parent->child edges using parent_qualified_name."""
@@ -50,6 +48,7 @@ def _build_contains_edges(db: SymbolDB) -> list[tuple[int, int, str]]:
 
 # ── Import edges ─────────────────────────────────────────────────────
 
+
 def _extract_python_imports(tree, code: bytes) -> list[str]:
     """Extract imported names from Python import statements."""
     names: list[str] = []
@@ -73,7 +72,11 @@ def _extract_python_imports(tree, code: bytes) -> list[str]:
         if node.type == "import_from_statement":
             # from foo import bar, baz
             for child in node.children:
-                if child.type == "dotted_name" and child.prev_sibling and _node_text(code, child.prev_sibling) == "import":
+                if (
+                    child.type == "dotted_name"
+                    and child.prev_sibling
+                    and _node_text(code, child.prev_sibling) == "import"
+                ):
                     names.append(_node_text(code, child))
                 elif child.type == "aliased_import":
                     alias = child.child_by_field_name("alias")
@@ -198,6 +201,7 @@ def _extract_imports_for_language(language_id: str, tree, code: bytes) -> list[s
 
 # ── Invokes edges ────────────────────────────────────────────────────
 
+
 def _extract_call_names(tree, code: bytes, language_id: str) -> list[tuple[int, str]]:
     """Extract (line_number, called_function_name) from call expressions.
 
@@ -230,6 +234,7 @@ def _extract_call_names(tree, code: bytes, language_id: str) -> list[tuple[int, 
 
 # ── Main builder ─────────────────────────────────────────────────────
 
+
 def build_graph(db: SymbolDB, repo_path: str) -> int:
     """Build dependency edges for all indexed symbols. Returns edge count."""
     # Clear old edges — full rebuild is fast relative to symbol extraction
@@ -250,7 +255,7 @@ def build_graph(db: SymbolDB, repo_path: str) -> int:
     ).fetchall()
 
     # Map: name -> list of symbol ids (multiple symbols can have the same name)
-    name_to_ids: Dict[str, list[int]] = {}
+    name_to_ids: dict[str, list[int]] = {}
     for sym in all_symbols:
         name = sym[1]
         if name not in name_to_ids:
@@ -274,7 +279,7 @@ def build_graph(db: SymbolDB, repo_path: str) -> int:
             continue
 
         try:
-            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(abs_path, encoding="utf-8", errors="replace") as f:
                 source = f.read()
         except OSError:
             continue
@@ -301,7 +306,7 @@ def build_graph(db: SymbolDB, repo_path: str) -> int:
         for row in file_all_symbols:
             all_file_sym_ids.add(row[0])
 
-        seen_import_edges: Set[Tuple[int, int]] = set()
+        seen_import_edges: set[tuple[int, int]] = set()
         for imp_name in imported_names:
             target_ids = name_to_ids.get(imp_name, [])
             for target_id in target_ids:
@@ -324,7 +329,7 @@ def build_graph(db: SymbolDB, repo_path: str) -> int:
             (rel_path,),
         ).fetchall()
 
-        seen_invoke_edges: Set[Tuple[int, int]] = set()
+        seen_invoke_edges: set[tuple[int, int]] = set()
         for func in func_symbols:
             func_id = func[0]
             func_start = func[2]

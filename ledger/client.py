@@ -8,15 +8,72 @@ back a plain list of dicts — no SDK types leak through.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from surrealdb import AsyncSurreal, RecordID
+
 try:
     from surrealdb import SurrealError
 except ImportError:
     SurrealError = Exception  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
+
+
+# Windows-drive-letter detector at the start of an embedded URL path.
+# Matches "C:\..." or "C:/...". Used to spot URLs that contain a
+# Windows-style file path which needs slash-normalization before
+# urllib.parse can read them.
+_WINDOWS_DRIVE_AT_PATH_START = re.compile(r"^([A-Za-z]):[\\/]")
+
+
+def normalize_surrealkv_url(url: str) -> str:
+    """Normalize ``surrealkv://`` URLs containing Windows file paths.
+
+    Issue #68: ``urllib.parse.urlparse("surrealkv://C:\\Users\\...")``
+    treats everything after the scheme as a netloc and raises
+    ``ValueError: Port could not be cast to integer value`` on
+    ``parsed.port``. The SurrealDB Python SDK reads ``parsed.port``
+    in its ``Url`` wrapper, so passing an unmodified Windows backslash
+    path crashes every embedded test that builds its URL from a
+    ``tmp_path`` fixture.
+
+    Fix: replace backslashes with forward slashes inside the path.
+
+        surrealkv://C:\\Users\\foo\\bar.db    →    surrealkv://C:/Users/foo/bar.db
+
+    The forward-slash form parses cleanly through ``urllib.parse``
+    (netloc=``C:``, path=``/Users/foo/bar.db``, port=None — the path
+    after the colon doesn't look like an int, but ``urlparse`` only
+    raises when the port-position content is non-empty AND non-numeric;
+    here the colon is immediately followed by ``/`` so the port-position
+    is empty and parsing succeeds). The SurrealKV Rust backend accepts
+    this form on Windows.
+
+    POSIX URLs, in-memory URLs (``memory://``), and remote URLs
+    (``ws://``, ``http://``) pass through unchanged because they
+    contain no backslashes.
+    """
+    if not url.startswith(("surrealkv://", "surrealkv+versioned://", "file://")):
+        return url
+
+    # Find the path portion (everything after scheme://)
+    scheme_end = url.find("://") + len("://")
+    after_scheme = url[scheme_end:]
+
+    # Only rewrite if the URL contains a Windows-style backslash or a
+    # bare drive-letter prefix that would confuse urllib. Pure POSIX
+    # paths and already-normalized Windows paths pass through unchanged.
+    if "\\" not in after_scheme:
+        return url
+
+    if not _WINDOWS_DRIVE_AT_PATH_START.match(after_scheme):
+        # Has backslashes but no drive letter — likely a malformed URL,
+        # but we fix the slashes anyway to give urllib a fighting chance.
+        return url[:scheme_end] + after_scheme.replace("\\", "/")
+
+    return url[:scheme_end] + after_scheme.replace("\\", "/")
 
 
 class LedgerError(RuntimeError):
@@ -65,7 +122,10 @@ class LedgerClient:
         username: str = "root",
         password: str = "root",
     ) -> None:
-        self.url = url
+        # Normalize embedded Windows paths so the SurrealDB SDK's internal
+        # urllib.parse.urlparse() doesn't choke on the drive-letter colon.
+        # See ``normalize_surrealkv_url`` and issue #68.
+        self.url = normalize_surrealkv_url(url)
         self.ns = ns
         self.db = db
         self._username = username
