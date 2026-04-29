@@ -54,6 +54,22 @@ _MAX_BYTES = 50 * 10**6  # 50 MB
 _MAX_AGE_DAYS = 30
 _KEEP_ROTATIONS = 5
 
+# #112 — Phase 4 HITL bypass flow.
+# A bypass event written within this window suppresses subsequent writes
+# for the same decision_id (V4 idempotency guard) AND causes the
+# governance engine to drop one escalation tier (acknowledgement that
+# the user has seen the unresolved state). 1 hour is short enough that
+# a forgotten bypass doesn't permanently silence a finding, long enough
+# that follow-up preflights inside the same work session don't double-
+# prompt.
+_BYPASS_RECENCY_WINDOW_SECONDS = 3600
+
+# F3 bound: ``recent_bypass_seconds`` scans at most this many trailing
+# JSONL lines and breaks early on the first event older than the
+# recency window. Keeps per-call cost O(min(N, 1000)) for any file
+# size under the 50 MB rotation cap.
+_BYPASS_TAIL_SCAN_LIMIT = 1000
+
 
 # ── Env gates ────────────────────────────────────────────────────────
 
@@ -301,3 +317,138 @@ def write_engagement(
         "attribution": attribution,
     }
     _append(_ENGAGEMENTS_FILE, record)
+
+
+# ── Phase 4: #112 HITL bypass flow ───────────────────────────────────
+
+
+def write_bypass_event(
+    decision_id: str,
+    reason: str = "user_bypassed",
+    state_preserved: str = "proposed",
+) -> None:
+    """Append a ``preflight_prompt_bypassed`` event to the JSONL log.
+
+    Idempotent within ``_BYPASS_RECENCY_WINDOW_SECONDS`` (V4 spam-
+    bypass guard): if a bypass for ``decision_id`` already exists in
+    the window, this call is a no-op. The first bypass establishes
+    the recency fingerprint; subsequent calls inside the hour cannot
+    extend it. Prevents indefinite escalation suppression on a
+    sensitive decision.
+
+    No-op when telemetry is disabled. Reuses the existing salt +
+    rotation + 0o600-mode path of ``preflight_events.jsonl``. Bypass
+    does NOT mutate decision state -- the unresolved signoff_state
+    persists for future preflight surfaces.
+    """
+    if not telemetry_enabled():
+        return
+    if recent_bypass_seconds(decision_id) is not None:
+        return
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event_type": "preflight_prompt_bypassed",
+        "decision_id": decision_id,
+        "reason": reason,
+        "state_preserved": state_preserved,
+        "risk_visible": True,
+    }
+    _append(_EVENTS_FILE, record)
+
+
+def recent_bypass_seconds(decision_id: str) -> int | None:
+    """Return seconds since the most recent bypass for ``decision_id``,
+    or ``None`` if no bypass exists in the recency window.
+
+    F3 bounded tail-read: scans at most ``_BYPASS_TAIL_SCAN_LIMIT``
+    trailing JSONL lines and breaks early on the first event older
+    than ``_BYPASS_RECENCY_WINDOW_SECONDS``. Per-call cost is
+    O(min(N, 1000)) regardless of file size; the 50 MB rotation cap
+    bounds the worst case further.
+    """
+    if not _EVENTS_FILE.exists():
+        return None
+    now_dt = datetime.now(UTC)
+    window = _BYPASS_RECENCY_WINDOW_SECONDS
+
+    # Read all lines (file is bounded by the 50 MB rotation cap; the
+    # JSONL writer uses line-delimited records, so a streaming reverse
+    # walk is safe). Cap at the tail scan limit per F3.
+    try:
+        with _EVENTS_FILE.open("rb") as fh:
+            tail_lines = _read_tail_lines(fh, _BYPASS_TAIL_SCAN_LIMIT)
+    except OSError:
+        return None
+
+    # Walk from newest -> oldest, short-circuit on first event past window.
+    for raw in reversed(tail_lines):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts_raw = row.get("ts")
+        if not isinstance(ts_raw, str):
+            continue
+        try:
+            ts_dt = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if ts_dt.tzinfo is None:
+            ts_dt = ts_dt.replace(tzinfo=UTC)
+        age = (now_dt - ts_dt).total_seconds()
+        if age >= window:
+            # F3 short-circuit: events are JSONL-appended chronologically,
+            # so any event older than the window means everything before
+            # it is also older. Stop scanning.
+            return None
+        if (
+            row.get("event_type") == "preflight_prompt_bypassed"
+            and row.get("decision_id") == decision_id
+        ):
+            seconds = int(age) if age >= 0 else 0
+            return seconds
+    return None
+
+
+def _read_tail_lines(fh, limit: int) -> list[bytes]:
+    """Return at most the last ``limit`` newline-delimited lines from
+    ``fh`` (a file opened in binary mode).
+
+    Reads in 8 KiB blocks from the end, splits on ``\\n``, and stops
+    once ``limit + 1`` line boundaries are seen so we have ``limit``
+    complete lines plus the partial leading line we then discard.
+    Tiny files are read whole.
+    """
+    block_size = 8192
+    fh.seek(0, os.SEEK_END)
+    size = fh.tell()
+    if size == 0:
+        return []
+    blocks: list[bytes] = []
+    pos = size
+    line_count = 0
+    while pos > 0 and line_count <= limit:
+        read_size = min(block_size, pos)
+        pos -= read_size
+        fh.seek(pos)
+        chunk = fh.read(read_size)
+        blocks.append(chunk)
+        line_count += chunk.count(b"\n")
+    data = b"".join(reversed(blocks))
+    # Split out lines; drop the first if it is a partial leading line
+    # (i.e. we did not read from byte 0).
+    lines = data.split(b"\n")
+    # The split's last element is whatever followed the final \n —
+    # typically empty for properly-terminated JSONL; if non-empty it's
+    # an unterminated trailing record we still want to consider.
+    if pos > 0 and lines:
+        # Drop the partial first line.
+        lines = lines[1:]
+    # Decode non-empty lines.
+    out: list[bytes] = [ln for ln in lines if ln.strip()]
+    if len(out) > limit:
+        out = out[-limit:]
+    return out

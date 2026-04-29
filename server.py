@@ -48,6 +48,7 @@ from handlers.link_commit import handle_link_commit
 from handlers.list_unclassified_decisions import handle_list_unclassified_decisions
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
+from handlers.record_bypass import handle_record_bypass
 from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
@@ -109,6 +110,7 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.list_unclassified_decisions",
     "bicameral.set_decision_level",
     "bicameral.evaluate_governance",
+    "bicameral.record_bypass",
     "validate_symbols",
     "get_neighbors",
     "extract_symbols",
@@ -857,6 +859,39 @@ async def list_tools() -> list[Tool]:
                 "required": ["decision_id"],
             },
         ),
+        # ── Governance HITL bypass (#112) ───────────────────────────
+        Tool(
+            name="bicameral.record_bypass",
+            description=(
+                "Record that the user bypassed a preflight HITL prompt. "
+                "Bypass does NOT mutate decision state -- it preserves "
+                "the unresolved status while recording that the user "
+                "chose to continue. Idempotent within a 1-hour recency "
+                "window (returns deduped=true on a within-window repeat). "
+                "The governance engine reads recent bypass events at "
+                "preflight call time and drops one tier of escalation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision record id whose HITL prompt the user bypassed.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "default": "user_bypassed",
+                        "description": "Free-form reason label for the audit trail.",
+                    },
+                    "state_preserved": {
+                        "type": "string",
+                        "default": "proposed",
+                        "description": "The decision's signoff_state at bypass time (recorded for audit).",
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -1159,6 +1194,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 decision_id=arguments["decision_id"],
                 region_id=arguments.get("region_id"),
                 source=arguments.get("source", "manual"),
+            )
+        elif name in ("bicameral.record_bypass", "record_bypass"):
+            result = await handle_record_bypass(
+                ctx,
+                decision_id=arguments["decision_id"],
+                reason=arguments.get("reason", "user_bypassed"),
+                state_preserved=arguments.get("state_preserved", "proposed"),
             )
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse

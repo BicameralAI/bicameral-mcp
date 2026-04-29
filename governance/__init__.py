@@ -9,6 +9,12 @@ Phases 1-3 of the governance plan (#108-#110):
     locked to ``Literal[False]`` at the type level
   - engine: pure deterministic ``evaluate()`` orchestrator
 
-Phase 4 (#112 HITL bypass flow) and Phase 5 (#111 docs) ship in
-follow-up PRs.
+Phase 4 (#112 HITL bypass flow):
+  - contracts: ``HITLPrompt``, ``HITLPromptOption`` (mandatory-last
+    bypass option). Wired into ``handlers/preflight.py`` as
+    ``PreflightResponse.hitl_prompts``; ``handlers/record_bypass.py``
+    exposes the bypass writer as the ``bicameral.record_bypass`` MCP
+    tool.
+
+Phase 5 (#111 docs) ships in a follow-up PR.
 """

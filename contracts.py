@@ -18,7 +18,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from governance.contracts import GovernanceFinding
+from governance.contracts import GovernanceFinding, HITLPrompt
 
 # ── Skill telemetry diagnostic models ────────────────────────────────
 # One model per skill. extra="forbid" means the handler can detect and
@@ -664,10 +664,20 @@ class PreflightResponse(BaseModel):
     # #108-#110 — consolidated governance finding (with attached
     # policy_result) when preflight surfaced one or more drift candidates
     # for a region-anchored decision. None when there are no findings.
-    # Phase 4 (#112) will populate ``policy_result.action`` with
-    # bypass-aware downgrades; Phase 3 always passes
-    # ``bypass_recency_seconds=None`` to the engine.
+    # Phase 4 (#112) populates ``policy_result.action`` with
+    # bypass-aware downgrades by passing the JSONL-derived recency
+    # scalar to the engine; Phase 3 always passed
+    # ``bypass_recency_seconds=None``.
     governance_finding: GovernanceFinding | None = None
+    # #112 — HITL clarification prompts for unresolved signoff states
+    # (proposed, ai_surfaced, needs_context, collision_pending,
+    # context_pending). Each prompt carries a mandatory ``bypass``
+    # option as its LAST option; the skill side asserts this and
+    # routes the bypass selection to ``bicameral.record_bypass``.
+    # Bypass does NOT mutate decision state; the engine reads the
+    # bypass JSONL log and drops one tier of escalation when a recent
+    # bypass exists for the same decision_id.
+    hitl_prompts: list[HITLPrompt] = []
 
 
 # ── Tool: bicameral.evaluate_governance (#108) ───────────────────────
@@ -686,6 +696,25 @@ class EvaluateGovernanceResponse(BaseModel):
     region_id: str | None = None
     finding: GovernanceFinding | None = None
     error: str | None = None
+
+
+# ── Tool: bicameral.record_bypass (#112) ─────────────────────────────
+
+
+class RecordBypassResponse(BaseModel):
+    """Response envelope for ``bicameral.record_bypass``.
+
+    ``recorded`` is True iff a new ``preflight_prompt_bypassed`` event
+    was appended to the JSONL log. ``deduped`` is True iff the call
+    was a no-op because a prior bypass for the same decision_id is
+    still inside the recency window (V4 idempotency guard). When
+    telemetry is disabled both are False and ``reason`` carries the
+    ``telemetry_disabled`` sentinel.
+    """
+
+    recorded: bool
+    deduped: bool
+    reason: str | None = None
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────

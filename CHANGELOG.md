@@ -3,6 +3,24 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.17.1 -- preflight HITL bypass flow (#112)
+
+Wires the deterministic engine into the preflight HITL surface. Unresolved signoff states (proposed, ai_surfaced, needs_context, collision_pending, context_pending) trigger AskUserQuestion prompts with mandatory bypass option. Bypass writes a `preflight_prompt_bypassed` event via `preflight_telemetry.py` (V4 idempotent within 1-hour recency window) without mutating decision state. The engine reads recent bypass events and drops one tier of escalation for recently-bypassed decisions.
+
+### Added
+
+- `governance/contracts.py` -- `HITLPrompt`, `HITLPromptOption` (mandatory bypass last)
+- `contracts.py` -- `hitl_prompts: list[HITLPrompt] = []` on `PreflightResponse`; `RecordBypassResponse`
+- `preflight_telemetry.py` -- `write_bypass_event` (V4 idempotent), `recent_bypass_seconds` (F3 bounded tail-read, ≤1000 lines)
+- `bicameral.record_bypass` MCP tool (returns `{recorded, deduped, reason}`)
+- `handlers/preflight.py` -- HITL trigger logic + JSONL-driven recency wired into `engine.evaluate`
+- `handlers/record_bypass.py` -- new MCP write handler
+- `skills/bicameral-preflight/SKILL.md` -- step 5.4 documents trigger conditions, mandatory-last bypass, and the tier-drop semantics
+
+### Closes
+
+#112
+
 ## v0.17.0 -- governance contracts + escalation engine (#108-#110, Phases 1-3 of #108-#112 plan)
 
 Adds `governance/` package with the deterministic escalation policy engine, decision/risk/escalation metadata contracts, and the consolidated `GovernanceFinding` wrapper. Engine is non-blocking by design (`config.allow_blocking: Literal[False]` locks the type). Phase 4 (HITL bypass flow) and Phase 5 (docs) ship in follow-up PRs.

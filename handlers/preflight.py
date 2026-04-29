@@ -43,6 +43,8 @@ from governance import config as governance_config
 from governance import engine as governance_engine
 from governance.contracts import (
     GovernanceFinding,
+    HITLPrompt,
+    HITLPromptOption,
     derive_governance_metadata,
 )
 from governance.finding_factories import consolidate, from_preflight_drift_candidate
@@ -50,6 +52,7 @@ from handlers.action_hints import generate_hints_from_findings
 from handlers.analysis import _to_brief_decision
 from preflight_telemetry import (
     new_preflight_id,
+    recent_bypass_seconds,
     telemetry_enabled,
     write_preflight_event,
 )
@@ -427,14 +430,24 @@ async def handle_preflight(
     # #108-#110 — governance finding (Phase 3). Build a finding per
     # drifted region candidate, run the engine, consolidate per
     # (decision_id, region_id), and attach the highest-severity
-    # consolidated finding to the response. Phase 4 (#112) will plumb
-    # bypass-recency from preflight_telemetry.recent_bypass_seconds;
-    # Phase 3 always passes None.
+    # consolidated finding to the response. #112 (Phase 4) plumbs
+    # bypass-recency from preflight_telemetry.recent_bypass_seconds
+    # so recently-bypassed decisions render one tier softer.
     governance_finding: GovernanceFinding | None = None
     try:
         governance_finding = await _build_governance_finding(ctx, drift_candidates)
     except Exception as exc:
         logger.debug("[preflight] governance finding build failed: %s", exc)
+
+    # #112 — HITL clarification prompts. Iterate every decision that
+    # surfaced (region matches + collision/context-pending HITL rows)
+    # and emit a prompt for any unresolved signoff state. Bypass option
+    # is mandatory and last in every prompt's option list.
+    hitl_prompts = _build_hitl_prompts(
+        region_matches,
+        unresolved_collisions,
+        context_pending_ready,
+    )
 
     response = PreflightResponse(
         topic=topic,
@@ -453,6 +466,7 @@ async def handle_preflight(
         product_stage=_PRODUCT_STAGE_MSG if _should_show_product_stage() else None,
         preflight_id=pid,
         governance_finding=governance_finding,
+        hitl_prompts=hitl_prompts,
     )
 
     # #65 — capture-loop event. surfaced_ids is the union of decision_ids the
@@ -489,8 +503,11 @@ async def _build_governance_finding(
     candidates. Returns the highest-severity consolidated finding
     (with policy_result attached) or None if there are no candidates.
 
-    Engine runs with ``bypass_recency_seconds=None`` until Phase 4
-    (#112) wires the actual lookup via preflight_telemetry.
+    #112 (Phase 4): bypass-recency is read at the call site via
+    ``preflight_telemetry.recent_bypass_seconds`` and passed as a
+    scalar into the engine. Engine purity is preserved -- IO happens
+    here, not in ``evaluate()``. When telemetry is disabled the
+    recency lookup is skipped entirely.
     """
     if not drift_candidates:
         return None
@@ -556,12 +573,25 @@ async def _build_governance_finding(
             decision_status = "active"
 
         finding = from_preflight_drift_candidate(candidate, metadata)
+        # #112 — Phase 4 wiring. Read bypass recency from the JSONL
+        # log; engine drops one escalation tier when within window.
+        recency: int | None = None
+        if telemetry_enabled():
+            try:
+                recency = recent_bypass_seconds(candidate.decision_id)
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.debug(
+                    "[preflight] recent_bypass_seconds(%s) failed: %s",
+                    candidate.decision_id,
+                    exc,
+                )
+                recency = None
         policy = governance_engine.evaluate(
             finding=finding,
             metadata=metadata,
             config=cfg,
             decision_status=decision_status,  # type: ignore[arg-type]
-            bypass_recency_seconds=None,
+            bypass_recency_seconds=recency,
         )
         findings.append(finding.model_copy(update={"policy_result": policy}))
 
@@ -585,3 +615,130 @@ async def _build_governance_finding(
 
     consolidated.sort(key=_severity_key, reverse=True)
     return consolidated[0]
+
+
+# ── #112 — HITL clarification prompts ────────────────────────────────
+
+# Bypass option is mandatory and last in every prompt. The skill side
+# asserts ``options[-1].kind == "bypass"`` -- breaking this contract
+# breaks the surface.
+_BYPASS_OPTION = HITLPromptOption(
+    kind="bypass",
+    label="Bypass — proceed without resolving (recorded)",
+)
+
+# Trigger states that yield a HITL prompt. Mirrors the
+# ``HITLPrompt.trigger`` literal in ``governance/contracts.py``. Any
+# decision whose ``signoff_state`` is in this set surfaces a prompt.
+_HITL_TRIGGER_STATES: frozenset[str] = frozenset(
+    {
+        "proposed",
+        "ai_surfaced",
+        "needs_context",
+        "collision_pending",
+        "context_pending",
+    }
+)
+
+
+def _hitl_options_for(trigger: str) -> list[HITLPromptOption]:
+    """Return the option set for a given trigger.
+
+    Three shapes per the plan:
+      - generic: ratify / reject / needs_context / defer / bypass
+      - collision_pending: supersedes_a_b / supersedes_b_a /
+        keep_parallel / defer / bypass
+      - ai_surfaced: confirm_proposed / ratify_now / reject /
+        needs_context / bypass
+
+    Bypass is ALWAYS last.
+    """
+    if trigger == "collision_pending":
+        return [
+            HITLPromptOption(kind="supersedes_a_b", label="A supersedes B"),
+            HITLPromptOption(kind="supersedes_b_a", label="B supersedes A"),
+            HITLPromptOption(kind="keep_parallel", label="Keep both in parallel"),
+            HITLPromptOption(kind="defer", label="Defer — decide later"),
+            _BYPASS_OPTION,
+        ]
+    if trigger == "ai_surfaced":
+        return [
+            HITLPromptOption(kind="confirm_proposed", label="Confirm as proposed"),
+            HITLPromptOption(kind="ratify_now", label="Ratify now"),
+            HITLPromptOption(kind="reject", label="Reject — not a real decision"),
+            HITLPromptOption(kind="needs_context", label="Needs more context"),
+            _BYPASS_OPTION,
+        ]
+    # Generic: proposed, needs_context, context_pending.
+    return [
+        HITLPromptOption(kind="ratify", label="Ratify"),
+        HITLPromptOption(kind="reject", label="Reject"),
+        HITLPromptOption(kind="needs_context", label="Needs more context"),
+        HITLPromptOption(kind="defer", label="Defer — decide later"),
+        _BYPASS_OPTION,
+    ]
+
+
+def _hitl_question_for(trigger: str, description: str) -> str:
+    """Compose a one-line clarification question for the prompt."""
+    snippet = (description or "").strip()
+    if len(snippet) > 80:
+        snippet = snippet[:77] + "..."
+    if trigger == "collision_pending":
+        return f"Two decisions appear to conflict — which path applies? ({snippet})"
+    if trigger == "ai_surfaced":
+        return f"AI surfaced this as a possible decision — confirm? ({snippet})"
+    if trigger == "needs_context":
+        return f"This decision needs more context — what's missing? ({snippet})"
+    if trigger == "context_pending":
+        return f"Awaiting context to ground this decision — provide one? ({snippet})"
+    return f"This decision is unresolved — confirm or revise? ({snippet})"
+
+
+def _prompt_from(decision_id: str, description: str, trigger: str) -> HITLPrompt:
+    """Build a HITLPrompt for a single (decision_id, signoff_state)."""
+    return HITLPrompt(
+        decision_id=decision_id,
+        trigger=trigger,  # type: ignore[arg-type]
+        question=_hitl_question_for(trigger, description),
+        options=_hitl_options_for(trigger),
+    )
+
+
+def _build_hitl_prompts(
+    region_matches: list[DecisionMatch],
+    unresolved_collisions: list[BriefDecision],
+    context_pending_ready: list[BriefDecision],
+) -> list[HITLPrompt]:
+    """Scan all surfaced decisions and emit one HITLPrompt per
+    unresolved signoff_state. De-duped by decision_id.
+
+    Triggers come from ``signoff_state`` directly when it is one of
+    the configured trigger states; ``unresolved_collisions`` rows
+    always emit a ``collision_pending`` prompt and
+    ``context_pending_ready`` rows always emit a ``context_pending``
+    prompt -- those queries explicitly target those states.
+    """
+    prompts: list[HITLPrompt] = []
+    seen: set[str] = set()
+
+    def _add(decision_id: str, description: str, trigger: str) -> None:
+        if not decision_id or decision_id in seen:
+            return
+        if trigger not in _HITL_TRIGGER_STATES:
+            return
+        prompts.append(_prompt_from(decision_id, description, trigger))
+        seen.add(decision_id)
+
+    for m in region_matches:
+        state = (m.signoff_state or "").strip()
+        if state in _HITL_TRIGGER_STATES:
+            _add(m.decision_id, m.description, state)
+
+    for d in unresolved_collisions:
+        _add(d.decision_id, d.description, "collision_pending")
+
+    for d in context_pending_ready:
+        _add(d.decision_id, d.description, "context_pending")
+
+    return prompts

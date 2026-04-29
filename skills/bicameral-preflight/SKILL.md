@@ -283,6 +283,61 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.
 
+### 5.4 Surface HITL clarification prompts (#112)
+
+If `response.hitl_prompts` is non-empty, the server has detected one
+or more decisions with an unresolved `signoff_state`. Each prompt
+already carries the question, the trigger label, and a closed option
+list. Render them via `AskUserQuestion`.
+
+**Trigger conditions** — a prompt is emitted whenever a surfaced
+decision's `signoff_state` is one of:
+
+- `proposed` — decision exists but no one has ratified it yet.
+- `ai_surfaced` — auto-extracted by an LLM, awaiting human review.
+- `needs_context` — decision text is unclear; asks for more.
+- `collision_pending` — two decisions appear to conflict.
+- `context_pending` — awaiting a span to ground it.
+
+Bypass is **mandatory and last** in every option list — assert
+`prompt.options[-1].kind == "bypass"` before rendering. Trust contract:
+Bicameral does NOT block work, the bypass option is always reachable.
+
+```python
+for prompt in response.hitl_prompts:
+    assert prompt.options[-1].kind == "bypass"
+    answer = AskUserQuestion({
+        "question": prompt.question,
+        "multiSelect": False,
+        "options": [
+            {"label": opt.label, "description": opt.kind}
+            for opt in prompt.options
+        ],
+    })
+    if answer.kind == "bypass":
+        bicameral.record_bypass(decision_id=prompt.decision_id)
+```
+
+**Bypass semantics**:
+
+- Bypass does NOT mutate decision state. The unresolved
+  `signoff_state` persists for future preflight surfaces.
+- Calling `bicameral.record_bypass(decision_id)` writes a
+  `preflight_prompt_bypassed` event to the local JSONL log
+  (`~/.bicameral/preflight_events.jsonl`). Idempotent within a 1-hour
+  recency window — repeat calls inside the window return
+  `deduped=true` without re-writing (V4 spam-bypass guard prevents
+  indefinite escalation suppression).
+- The governance engine reads recent bypass events and drops one
+  escalation tier (e.g. `escalate` → `warn`, `warn` → `context`) when
+  the same decision is resurfaced inside the recency window. This
+  acknowledges that the user has SEEN the unresolved state without
+  permanently silencing the finding.
+- Telemetry must be enabled (`BICAMERAL_PREFLIGHT_TELEMETRY=1`) for
+  bypass writes to persist; otherwise `record_bypass` returns
+  `recorded=false, deduped=false, reason="telemetry_disabled"` and the
+  engine sees no recency.
+
 ### 5.5 Confirm finding relevance (ground truth for calibration)
 
 > **Guard**: Only run this step if guided mode is enabled (`guided: true` in `.bicameral/config.yaml`). In normal mode, skip and set `g10_user_overrode = 0`.

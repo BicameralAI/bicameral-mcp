@@ -164,3 +164,54 @@ class GovernanceFinding(BaseModel):
     explanation: str
     evidence_refs: list[str] = []
     policy_result: GovernancePolicyResult | None = None
+
+
+# ── Phase 4: HITL prompt + option (#112) ─────────────────────────────
+
+
+class HITLPromptOption(BaseModel):
+    """One selectable option in a preflight HITL clarification prompt.
+
+    The ``kind`` enum is closed; the skill side renders ``label`` to
+    the user and routes the chosen kind back to the appropriate
+    follow-up tool. ``bypass`` is mandatory and must always be the
+    final option (skill-side assertion enforces ordering).
+    """
+
+    kind: Literal[
+        "ratify",
+        "reject",
+        "needs_context",
+        "defer",
+        "bypass",
+        "supersedes_a_b",
+        "supersedes_b_a",
+        "keep_parallel",
+        "confirm_proposed",
+        "ratify_now",
+    ]
+    label: str
+
+
+class HITLPrompt(BaseModel):
+    """A preflight clarification prompt the agent should surface via
+    AskUserQuestion when a decision has an unresolved signoff state.
+
+    Bypass is mandatory and enforced as the LAST option in
+    ``options`` -- the skill assertion fails otherwise. Bypass writes
+    a ``preflight_prompt_bypassed`` event via ``preflight_telemetry``
+    but does NOT mutate decision state; the unresolved status persists
+    for future preflight surfaces. Recently-bypassed decisions are
+    treated one tier softer by the engine.
+    """
+
+    decision_id: str
+    trigger: Literal[
+        "proposed",
+        "ai_surfaced",
+        "needs_context",
+        "collision_pending",
+        "context_pending",
+    ]
+    question: str
+    options: list[HITLPromptOption]
