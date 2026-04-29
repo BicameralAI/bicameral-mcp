@@ -3,6 +3,23 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **GitHub Action — sticky PR-comment drift report (#49).** New advisory
+  workflow `.github/workflows/drift-report.yml` posts a sticky Markdown
+  comment on every PR open/synchronize with the drift state computed
+  from `link_commit`. Stateless sticky strategy via HTML marker; the
+  comment edits in place on each push instead of accumulating new ones.
+  Path C maintainer call: workflow gracefully skips with a
+  configuration-prompt comment when no `bicameral/decisions.yaml`
+  manifest exists in repo root (manifest format spec deferred to a
+  follow-up issue). New module `cli/drift_report.py` — pure-function
+  Markdown renderer with a CLI entry point invoked by the workflow.
+  New helper `.github/scripts/post_drift_comment.py` — stdlib-only
+  GitHub API client (no new dependencies). Issue #49.
+
 ## v0.16.0 -- decision_level classifier + MCP primitives (#77 + Phase 5+6 of #76 in sibling PR)
 
 Adds a heuristic decision-level classifier, a single-row write helper for
@@ -221,29 +238,9 @@ data flows.
   reroutes `~/.bicameral/` to a per-session tmp dir and sets the skip
   env var. Stdlib only — no third-party fixture plugin.
 
-### Added (continued — Issue #44, LLM drift judge)
-
-- **`bicameral-sync` skill — uncertain-band sub-protocol (#44).** The
-  skill rubric now teaches the caller LLM how to consume Phase 4's
-  `pre_classification: uncertain` hint with a two-axis judgment:
-  Axis 1 (compliance) decided first; Axis 2 (cosmetic-vs-semantic)
-  second; signals advisory only; `evidence_refs` echoed back to the
-  audit trail. No new tools, no new contracts — leverages Phase 4's
-  existing `semantic_status` + `evidence_refs` fields on
-  `ComplianceVerdict` (#61). Issue #44.
-- **M3 benchmark — `expected_judge` ground-truth labels.** All 10
-  uncertain-band cases in `tests/fixtures/m3_benchmark/cases.py`
-  now carry a `{verdict, semantic_status}` ground-truth pair the
-  operator QC pass measures LLM output against. Pure data; no
-  classifier or LLM behaviour change. Issue #44.
-- **Training doc — `docs/training/cosmetic-vs-semantic.md`.** New
-  long-form walkthrough of the two-axis judgment with a worked
-  example from `py_12_constant_value_tuned`. Pairs with the
-  `bicameral-sync` skill rubric. Issue #44.
-
 ### Closes
 
-#39, #42, #44.
+#39, #42.
 
 ## v0.13.0 — CodeGenome Phase 4 (#61) — semantic drift evaluation in `resolve_compliance` (M3) — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
