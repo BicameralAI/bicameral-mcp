@@ -132,7 +132,7 @@ Token NOT a candidate when:
   - `test_new_marker_exempts_path` — plan with `**new**` marker on the same line → no diagnostic.
   - `test_planned_suffix_exempts_path` — plan with `(planned)` suffix → no diagnostic.
   - `test_html_comment_skipped` — path inside `<!-- ... -->` block → no diagnostic.
-  - `test_suggestion_for_misspelled_package` — `bicameral/drift_report.py` → suggests `cli/drift_report.py`.
+  - `test_suggestion_for_misspelled_package` — `bicameral/drift_report.py` (example) → suggests `cli/drift_report.py`.
   - `test_main_exits_zero_when_all_clean` — `main()` against a clean fixture set → returncode 0.
   - `test_main_exits_one_when_diagnostics` — `main()` against a fixture with one bad path → returncode 1.
 
