@@ -1,0 +1,84 @@
+name: Bicameral drift report
+
+# Issue #49 — sticky PR-comment drift report on open/update.
+#
+# Advisory workflow (continue-on-error): renders a Markdown drift
+# report from `link_commit` against the PR's HEAD and posts it as
+# a sticky comment, edited in place on every push (HTML-marker
+# strategy in .github/scripts/post_drift_comment.py).
+#
+# Path C (per #49 plan): if `bicameral/decisions.yaml` is absent
+# from repo root, the renderer emits a "skipped" body. Sticky
+# comment still posts so the user sees the configuration prompt
+# once; subsequent pushes update in place.
+#
+# Note: when this workflow file lands, it does not run on the PR
+# that adds it — `pull_request` workflows execute the version on
+# the base branch. First execution is on the next qualifying PR
+# after merge.
+
+on:
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**/*.py'
+      - '**/*.js'
+      - '**/*.ts'
+      - '**/*.go'
+      - '**/*.rs'
+      - '**/*.java'
+      - '**/*.cs'
+      - 'bicameral/decisions.yaml'
+      - '.github/workflows/drift-report.yml'
+      - 'cli/drift_report.py'
+      - '.github/scripts/post_drift_comment.py'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  drift-report:
+    name: Bicameral drift report (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: red here doesn't gate merge.
+    continue-on-error: true
+    env:
+      SURREAL_URL: 'memory://'
+      REPO_PATH: ${{ github.workspace }}
+      BICAMERAL_CODEGENOME_ENHANCE_DRIFT: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install bicameral-mcp
+        run: pip install -e ".[test]"
+
+      - name: Render drift report
+        id: render
+        run: |
+          mkdir -p /tmp/bicameral
+          python -m cli.drift_report \
+            --pr-number ${{ github.event.pull_request.number }} \
+            --head-sha ${{ github.event.pull_request.head.sha }} \
+            --base-ref ${{ github.event.pull_request.base.ref }} \
+            --output /tmp/bicameral/drift-report.md
+
+      - name: Post sticky comment
+        if: always() && steps.render.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python .github/scripts/post_drift_comment.py \
+            --repo ${{ github.repository }} \
+            --pr ${{ github.event.pull_request.number }} \
+            --body /tmp/bicameral/drift-report.md
