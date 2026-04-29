@@ -646,7 +646,23 @@ async def list_tools() -> list[Tool]:
                     },
                     "diagnostic": {
                         "type": "object",
-                        "description": "Optional integer/float metrics (e.g. {decisions_ingested: 3}). Strings are dropped.",
+                        "description": (
+                            "Skill-level metrics. Field names are strictly validated server-side — "
+                            "unknown fields are dropped and echoed back in diagnostic_warning. "
+                            "bicameral-ingest fields: decisions_ingested, g2_candidates_evaluated, "
+                            "g2_dropped_hard_exclude, g2_dropped_l3, g2_dropped_gate1, g2_dropped_gate2, "
+                            "g2_dropped_implied, g2_parked_context_pending, g2_proposed_count, "
+                            "g2_l1_count, g2_l2_count, g2_user_overrode, g3_decisions_grounded, "
+                            "g3_decisions_ungrounded, g6_compliance_checks_received, g6_verdicts_compliant, "
+                            "g6_verdicts_drifted, g6_verdicts_not_relevant, g6_verdicts_cosmetic_autopass. "
+                            "bicameral-preflight fields: g9_history_features_count, g9_features_in_scope, "
+                            "g9_decisions_in_scope, g9_preflight_fired, g10_findings_drift_total, "
+                            "g10_findings_drift_cosmetic_autopass, g10_findings_drift_ask, "
+                            "g10_questions_surfaced, g10_user_overrode, g11_corrections_turns_scanned, "
+                            "g11_corrections_prefilter_retained, g11_corrections_classified_ask, "
+                            "g11_corrections_classified_mechanical, g11_corrections_classified_not, "
+                            "g11_corrections_dedup_removed, g11_user_overrode."
+                        ),
                     },
                 },
                 "required": ["skill_name", "session_id"],
@@ -764,26 +780,59 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         }))]
 
     if name == "bicameral.skill_end":
+        from pydantic import ValidationError
         from telemetry import record_skill_event
+        from contracts import SKILL_DIAGNOSTIC_MODELS
         session_id = arguments["session_id"]
         skill_name = arguments["skill_name"]
         errored = arguments.get("errored", False)
         error_class = arguments.get("error_class")
-        diagnostic = arguments.get("diagnostic")
+        raw_diagnostic = arguments.get("diagnostic") or {}
         session_data = _skill_sessions.pop(session_id, None)
         t0 = session_data["t0"] if session_data else None
         rationale = session_data.get("rationale") if session_data else None
         duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
+
+        # Validate diagnostic against the per-skill Pydantic model.
+        # On unknown fields: record the clean validated dict to PostHog and
+        # echo unknown field names back so the LLM can correct them.
+        diagnostic_model = SKILL_DIAGNOSTIC_MODELS.get(skill_name)
+        unknown_fields: list[str] = []
+        if diagnostic_model and raw_diagnostic:
+            try:
+                validated = diagnostic_model.model_validate(raw_diagnostic)
+                diagnostic = validated.model_dump()
+            except ValidationError as exc:
+                unknown_fields = [
+                    e["loc"][0] for e in exc.errors()
+                    if e["type"] == "extra_forbidden" and e["loc"]
+                ]
+                # Strip unknowns and validate the remaining known fields.
+                known_raw = {k: v for k, v in raw_diagnostic.items() if k not in unknown_fields}
+                try:
+                    validated = diagnostic_model.model_validate(known_raw)
+                    diagnostic = validated.model_dump()
+                except ValidationError:
+                    diagnostic = known_raw
+        else:
+            diagnostic = raw_diagnostic or None
+
         record_skill_event(
             skill_name, session_id, duration_ms, errored, SERVER_VERSION,
             diagnostic=diagnostic, error_class=error_class, rationale=rationale,
         )
-        return [TextContent(type="text", text=json.dumps({
+        response: dict = {
             "session_id": session_id,
             "skill": skill_name,
             "duration_ms": duration_ms,
             "status": "recorded",
-        }))]
+        }
+        if unknown_fields:
+            response["diagnostic_warning"] = (
+                f"Unknown diagnostic field(s) were dropped and not recorded: "
+                f"{unknown_fields}. Use the exact field names from the skill spec."
+            )
+        return [TextContent(type="text", text=json.dumps(response))]
 
     if name == "bicameral.feedback":
         from telemetry import send_event

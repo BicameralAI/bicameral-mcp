@@ -16,7 +16,62 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
+
+
+# ── Skill telemetry diagnostic models ────────────────────────────────
+# One model per skill. extra="forbid" means the handler can detect and
+# echo back any field names the LLM sent that don't belong here.
+
+
+class IngestDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decisions_ingested: int = 0
+    g2_candidates_evaluated: int = 0
+    g2_dropped_hard_exclude: int = 0
+    g2_dropped_l3: int = 0
+    g2_dropped_gate1: int = 0
+    g2_dropped_gate2: int = 0
+    g2_dropped_implied: int = 0
+    g2_parked_context_pending: int = 0
+    g2_proposed_count: int = 0
+    g2_l1_count: int = 0
+    g2_l2_count: int = 0
+    g2_user_overrode: int = 0
+    g3_decisions_grounded: int = 0
+    g3_decisions_ungrounded: int = 0
+    g6_compliance_checks_received: int = 0
+    g6_verdicts_compliant: int = 0
+    g6_verdicts_drifted: int = 0
+    g6_verdicts_not_relevant: int = 0
+    g6_verdicts_cosmetic_autopass: int = 0
+
+
+class PreflightDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    g9_history_features_count: int = 0
+    g9_features_in_scope: int = 0
+    g9_decisions_in_scope: int = 0
+    g9_preflight_fired: bool = False
+    g10_findings_drift_total: int = 0
+    g10_findings_drift_cosmetic_autopass: int = 0
+    g10_findings_drift_ask: int = 0
+    g10_questions_surfaced: int = 0
+    g10_user_overrode: int = 0
+    g11_corrections_turns_scanned: int = 0
+    g11_corrections_prefilter_retained: int = 0
+    g11_corrections_classified_ask: int = 0
+    g11_corrections_classified_mechanical: int = 0
+    g11_corrections_classified_not: int = 0
+    g11_corrections_dedup_removed: int = 0
+    g11_user_overrode: int = 0
+
+
+# Registry: skill_name → diagnostic model class
+SKILL_DIAGNOSTIC_MODELS: dict[str, type[BaseModel]] = {
+    "bicameral-ingest": IngestDiagnostic,
+    "bicameral-preflight": PreflightDiagnostic,
+}
 
 
 # ── Shared sub-types ─────────────────────────────────────────────────
