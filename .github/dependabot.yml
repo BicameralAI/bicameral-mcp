@@ -2,5 +2,10 @@ version: 2
 updates:
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
+    labels:
+      - "flow:feature"
+      - "dependencies"
+      - "python"
