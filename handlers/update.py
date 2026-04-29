@@ -226,6 +226,7 @@ async def handle_update(
     # Best-effort engagement telemetry — emit once at entry.
     try:
         from preflight_telemetry import telemetry_enabled, write_engagement
+
         if telemetry_enabled():
             write_engagement(
                 session_id="unknown",  # update.py is not session-scoped

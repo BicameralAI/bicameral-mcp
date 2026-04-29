@@ -19,10 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
-_UUID4_RE = re.compile(
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-)
+_UUID4_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
 
 def _isolate_home(monkeypatch, tmp_path: Path) -> None:
@@ -32,6 +29,7 @@ def _isolate_home(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     import preflight_telemetry as pt
+
     importlib.reload(pt)
 
 
@@ -45,11 +43,14 @@ async def test_preflight_response_has_uuid_id_when_enabled(monkeypatch, tmp_path
     _isolate_home(monkeypatch, tmp_path)
     # Reload preflight handler to pick up the new pt module path.
     import handlers.preflight as preflight_handler
+
     importlib.reload(preflight_handler)
 
     ctx = SimpleNamespace(guided_mode=False, session_id="s1")
     resp = await preflight_handler.handle_preflight(
-        ctx, topic="Stripe webhook payment intent", file_paths=["routes/webhook.py"],
+        ctx,
+        topic="Stripe webhook payment intent",
+        file_paths=["routes/webhook.py"],
     )
     assert resp.preflight_id is not None
     assert _UUID4_RE.match(resp.preflight_id), resp.preflight_id
@@ -61,11 +62,14 @@ async def test_preflight_response_id_none_when_disabled(monkeypatch, tmp_path):
     monkeypatch.setenv("BICAMERAL_PREFLIGHT_MUTE", "1")
     _isolate_home(monkeypatch, tmp_path)
     import handlers.preflight as preflight_handler
+
     importlib.reload(preflight_handler)
 
     ctx = SimpleNamespace(guided_mode=False, session_id="s1")
     resp = await preflight_handler.handle_preflight(
-        ctx, topic="Stripe webhook payment intent", file_paths=["routes/webhook.py"],
+        ctx,
+        topic="Stripe webhook payment intent",
+        file_paths=["routes/webhook.py"],
     )
     assert resp.preflight_id is None
 
@@ -76,6 +80,7 @@ async def test_preflight_id_unique_per_call(monkeypatch, tmp_path):
     monkeypatch.setenv("BICAMERAL_PREFLIGHT_MUTE", "1")
     _isolate_home(monkeypatch, tmp_path)
     import handlers.preflight as preflight_handler
+
     importlib.reload(preflight_handler)
 
     ctx = SimpleNamespace(guided_mode=False, session_id="s1")
@@ -93,22 +98,25 @@ async def test_link_commit_passes_through_preflight_id(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_TELEMETRY", raising=False)  # off
     _isolate_home(monkeypatch, tmp_path)
     import handlers.link_commit as lc
+
     importlib.reload(lc)
 
     ledger = MagicMock()
-    ledger.ingest_commit = AsyncMock(return_value={
-        "commit_hash": "abc123",
-        "synced": True,
-        "reason": "new_commit",
-        "regions_updated": 0,
-        "decisions_reflected": 0,
-        "decisions_drifted": 0,
-        "undocumented_symbols": [],
-        "sweep_scope": "head_only",
-        "range_size": 0,
-        "pending_compliance_checks": [],
-        "pending_grounding_checks": [],
-    })
+    ledger.ingest_commit = AsyncMock(
+        return_value={
+            "commit_hash": "abc123",
+            "synced": True,
+            "reason": "new_commit",
+            "regions_updated": 0,
+            "decisions_reflected": 0,
+            "decisions_drifted": 0,
+            "undocumented_symbols": [],
+            "sweep_scope": "head_only",
+            "range_size": 0,
+            "pending_compliance_checks": [],
+            "pending_grounding_checks": [],
+        }
+    )
     ledger.backfill_empty_hashes = AsyncMock()
 
     ctx = SimpleNamespace(
@@ -131,6 +139,7 @@ async def test_bind_passes_through_preflight_id(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_TELEMETRY", raising=False)
     _isolate_home(monkeypatch, tmp_path)
     import handlers.bind as bind_handler
+
     importlib.reload(bind_handler)
 
     # _do_bind requires a deeply mocked ledger; patch it out and check the
@@ -154,7 +163,8 @@ async def test_bind_passes_through_preflight_id(monkeypatch, tmp_path):
 
     ctx = SimpleNamespace(session_id="s1")
     resp = await bind_handler.handle_bind(
-        ctx, [{"decision_id": "d1", "file_path": "a.py", "symbol_name": "f"}],
+        ctx,
+        [{"decision_id": "d1", "file_path": "a.py", "symbol_name": "f"}],
         preflight_id="caller-pid-bind",
     )
     assert resp.preflight_id == "caller-pid-bind"
@@ -168,18 +178,23 @@ async def test_ratify_passes_through_preflight_id(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_TELEMETRY", raising=False)
     _isolate_home(monkeypatch, tmp_path)
     import handlers.ratify as ratify_handler
+
     importlib.reload(ratify_handler)
 
     # Mock out ledger queries.
     monkeypatch.setattr(ratify_handler, "decision_exists", AsyncMock(return_value=True))
-    monkeypatch.setattr(ratify_handler, "project_decision_status", AsyncMock(return_value="reflected"))
+    monkeypatch.setattr(
+        ratify_handler, "project_decision_status", AsyncMock(return_value="reflected")
+    )
     monkeypatch.setattr(ratify_handler, "update_decision_status", AsyncMock())
 
     fake_client = MagicMock()
-    fake_client.query = AsyncMock(side_effect=[
-        [{"signoff": None}],  # initial select
-        None,                   # update
-    ])
+    fake_client.query = AsyncMock(
+        side_effect=[
+            [{"signoff": None}],  # initial select
+            None,  # update
+        ]
+    )
     fake_inner = SimpleNamespace(_client=fake_client)
     fake_ledger = SimpleNamespace(_inner=fake_inner)
 
@@ -189,7 +204,11 @@ async def test_ratify_passes_through_preflight_id(monkeypatch, tmp_path):
         session_id="s1",
     )
     resp = await ratify_handler.handle_ratify(
-        ctx, "decision:abc", "alice", note="ok", action="ratify",
+        ctx,
+        "decision:abc",
+        "alice",
+        note="ok",
+        action="ratify",
         preflight_id="caller-pid-ratify",
     )
     assert resp.preflight_id == "caller-pid-ratify"
@@ -203,6 +222,7 @@ async def test_update_returns_preflight_id_in_dict(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_TELEMETRY", raising=False)
     _isolate_home(monkeypatch, tmp_path)
     import handlers.update as update_handler
+
     importlib.reload(update_handler)
 
     # Force the version fetcher to a known value.
@@ -223,6 +243,7 @@ async def test_update_unknown_action_still_carries_preflight_id(monkeypatch, tmp
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_TELEMETRY", raising=False)
     _isolate_home(monkeypatch, tmp_path)
     import handlers.update as update_handler
+
     importlib.reload(update_handler)
 
     out = await update_handler.handle_update(
@@ -243,6 +264,7 @@ async def test_bind_emits_engagement_when_telemetry_enabled(monkeypatch, tmp_pat
     monkeypatch.setenv("BICAMERAL_PREFLIGHT_TELEMETRY", "1")
     _isolate_home(monkeypatch, tmp_path)
     import handlers.bind as bind_handler
+
     importlib.reload(bind_handler)
 
     fake_response = bind_handler.BindResponse(bindings=[])
@@ -263,12 +285,14 @@ async def test_bind_emits_engagement_when_telemetry_enabled(monkeypatch, tmp_pat
 
     ctx = SimpleNamespace(session_id="s99")
     await bind_handler.handle_bind(
-        ctx, [{"decision_id": "d1", "file_path": "a.py", "symbol_name": "f"}],
+        ctx,
+        [{"decision_id": "d1", "file_path": "a.py", "symbol_name": "f"}],
         preflight_id="explicit-pid",
     )
     eng_file = tmp_path / ".bicameral" / "engagements.jsonl"
     assert eng_file.exists()
     import json
+
     rows = [json.loads(line) for line in eng_file.read_text().splitlines()]
     assert rows[-1]["preflight_id"] == "explicit-pid"
     assert rows[-1]["tool"] == "bicameral.bind"

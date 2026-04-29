@@ -18,7 +18,9 @@ def test_increment_creates_counter_file(tmp_path: Path, monkeypatch: pytest.Monk
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     local_counters.increment("bicameral-ingest")
@@ -33,7 +35,9 @@ def test_increment_appends(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     for _ in range(50):
@@ -46,7 +50,9 @@ def test_read_counters_aggregates(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     for _ in range(3):
@@ -63,7 +69,9 @@ def test_no_network_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     with patch("urllib.request.urlopen", side_effect=RuntimeError("net down")):
@@ -71,11 +79,15 @@ def test_no_network_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert _counters_path(tmp_path).exists()
 
 
-def test_concurrent_increments_no_data_loss(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_concurrent_increments_no_data_loss(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     def _worker(idx: int) -> None:
@@ -97,18 +109,24 @@ def test_disabled_when_env_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.setenv("BICAMERAL_LOCAL_COUNTERS", "0")
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     local_counters.increment("bicameral-ingest")
     assert not _counters_path(tmp_path).exists()
 
 
-def test_read_counters_handles_missing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_read_counters_handles_missing_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
 
     assert local_counters.read_counters() == {}

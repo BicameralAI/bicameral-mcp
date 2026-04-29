@@ -935,6 +935,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if name == "bicameral.usage_summary":
         from handlers.usage_summary import handle_usage_summary
+
         data = await handle_usage_summary(ctx, days=int(arguments.get("days", 7)))
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
 
@@ -1185,6 +1186,7 @@ async def serve_stdio() -> None:
     # below once the session is live.
     try:
         from consent import notify_if_first_run
+
         notify_if_first_run()
     except Exception:
         pass

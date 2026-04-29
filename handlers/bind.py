@@ -44,14 +44,8 @@ async def handle_bind(
         # One row per bind call (not per binding) — the call is the unit of
         # engagement. decision_id is the first binding's id when present;
         # file_paths is the union of file paths across the call.
-        first_decision = (
-            str(bindings[0].get("decision_id") or "") if bindings else None
-        ) or None
-        file_paths = [
-            str(b.get("file_path") or "")
-            for b in (bindings or [])
-            if b.get("file_path")
-        ]
+        first_decision = (str(bindings[0].get("decision_id") or "") if bindings else None) or None
+        file_paths = [str(b.get("file_path") or "") for b in (bindings or []) if b.get("file_path")]
         write_engagement(
             session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
             tool="bicameral.bind",

@@ -26,10 +26,7 @@ def _isolate_consent_state(tmp_path_factory):
     third-party fixture plugin.
     """
     home = tmp_path_factory.mktemp("bicameral_home")
-    saved = {
-        k: os.environ.get(k)
-        for k in ("HOME", "USERPROFILE", "BICAMERAL_SKIP_CONSENT_NOTICE")
-    }
+    saved = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "BICAMERAL_SKIP_CONSENT_NOTICE")}
     os.environ["HOME"] = str(home)
     os.environ["USERPROFILE"] = str(home)
     os.environ["BICAMERAL_SKIP_CONSENT_NOTICE"] = "1"

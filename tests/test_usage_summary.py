@@ -11,7 +11,9 @@ import pytest
 from handlers.usage_summary import handle_usage_summary
 
 
-def _ctx_with_decisions(rows: list[dict] | None = None, cc_rows: list[dict] | None = None) -> SimpleNamespace:
+def _ctx_with_decisions(
+    rows: list[dict] | None = None, cc_rows: list[dict] | None = None
+) -> SimpleNamespace:
     """Build a fake ctx whose ledger.client.query returns staged rows."""
     client = MagicMock()
     call_count = {"i": 0}
@@ -102,7 +104,9 @@ async def test_tool_call_counts_from_local_counters(
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     import importlib
+
     import local_counters
+
     importlib.reload(local_counters)
     for _ in range(3):
         local_counters.increment("bicameral-ingest")

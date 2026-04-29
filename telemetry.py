@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import uuid
 from pathlib import Path
@@ -60,6 +59,7 @@ def _is_enabled() -> bool:
     the env-var override (BICAMERAL_TELEMETRY=0) continues to work.
     """
     from consent import telemetry_allowed
+
     return telemetry_allowed()
 
 
@@ -121,6 +121,7 @@ def send_event(
     # Privacy-preserving: only the skill/tool name + 1 are written, no payload.
     try:
         from local_counters import increment as _local_increment
+
         skill_name = properties.get("skill") or properties.get("tool")
         if isinstance(skill_name, str):
             _local_increment(skill_name)

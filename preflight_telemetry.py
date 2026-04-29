@@ -40,7 +40,7 @@ import hashlib
 import json
 import os
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -142,9 +142,7 @@ def _maybe_rotate(path: Path) -> None:
     try:
         st = path.stat()
         too_big = st.st_size > _MAX_BYTES
-        too_old = (
-            datetime.now(timezone.utc).timestamp() - st.st_mtime
-        ) > _MAX_AGE_DAYS * 86400
+        too_old = (datetime.now(UTC).timestamp() - st.st_mtime) > _MAX_AGE_DAYS * 86400
     except OSError:
         return
     if not (too_big or too_old):
@@ -237,7 +235,7 @@ def write_preflight_event(
     if not telemetry_enabled():
         return
     record: dict = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "session_id": session_id,
         "preflight_id": preflight_id,
         "topic_hash": hash_topic(topic),
@@ -294,7 +292,7 @@ def write_engagement(
     if not preflight_id and file_paths:
         preflight_id = _resolve_fallback_attribution(file_paths)
     record = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": datetime.now(UTC).isoformat(),
         "session_id": session_id,
         "tool": tool,
         "decision_id": decision_id,

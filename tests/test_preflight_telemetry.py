@@ -12,7 +12,7 @@ import importlib
 import json
 import os
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -26,6 +26,7 @@ def _reload_pt(monkeypatch, home: Path):
     # Also patch Path.home directly because some envs ignore HOME on Windows.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     import preflight_telemetry as pt
+
     importlib.reload(pt)
     return pt
 
@@ -148,6 +149,7 @@ def test_telemetry_disabled_by_default(pt_disabled, tmp_path):
 
 def test_new_preflight_id_uuid4(pt):
     import uuid as _uuid
+
     pid = pt.new_preflight_id()
     assert _uuid.UUID(pid).version == 4
     # Two calls produce different ids
@@ -311,7 +313,7 @@ def test_rotation_at_30_days(pt, tmp_path):
     events_file.parent.mkdir(parents=True, exist_ok=True)
     events_file.write_text('{"old":"row"}\n')
     # Backdate mtime by 31 days.
-    old_ts = (datetime.now(timezone.utc) - timedelta(days=31)).timestamp()
+    old_ts = (datetime.now(UTC) - timedelta(days=31)).timestamp()
     os.utime(events_file, (old_ts, old_ts))
     pt.write_preflight_event(
         session_id="s",
