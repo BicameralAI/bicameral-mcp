@@ -125,6 +125,36 @@ stacks compound merge-conflict risk and review fatigue.
 **All feature/fix PRs target `dev`.** The release PR (and only the release PR)
 targets `main`. CI workflows enforce both: `pull_request: branches: [main, dev]`.
 
+#### 4.1.1 Flow labels (mandatory)
+
+Every PR carries exactly one `flow:` label so contributors and reviewers can
+tell at a glance which lane it's in. The label mirrors the target branch but
+disambiguates the two cases that share `main`:
+
+| Label | Color | Target | Meaning |
+|---|---|---|---|
+| `flow:feature` | green | `dev` | Standard feature/fix going through the integration branch. The default. |
+| `flow:release` | blue | `main` | Periodic `dev → main` release PR opened by the release manager. Carries no new code — only the integrated `dev` HEAD. |
+| `flow:hotfix` | red | `main` | Emergency fix bypassing `dev`. Sets the §10 sync-back-to-dev clock. |
+
+Why labels in addition to the base branch:
+
+- `gh pr list --base main` returns *both* release PRs and hotfix PRs — different
+  processes, different review tiers, different urgencies. The label
+  disambiguates.
+- Filters like `gh pr list --label flow:hotfix --state closed` give a clean
+  audit trail of every emergency bypass over time. We want that visible.
+- Dependabot auto-applies `flow:feature` via `.github/dependabot.yml`; nothing
+  arrives without a flow label.
+
+Reviewers can refuse to review a PR that has no `flow:` label — the contract
+is "label first, review second."
+
+**Distinct from the post-merge `merged-to-dev` label.** That one tracks
+*status* ("this work has landed on dev but not yet on main"). The `flow:`
+labels track *intent* (which lane the PR is in). Both can coexist on a single
+PR after merge if Jin uses `merged-to-dev` to surface his release queue.
+
 ### 4.2 Title
 
 `<type>(<surface>): <imperative summary>` — the same shape as the issue title.
