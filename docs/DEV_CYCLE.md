@@ -74,6 +74,14 @@ every box in that diagram. No back-doors to `main`.
 > see §4.4. Risk is a property of the change being made, knowable only after
 > design. Issues carry priority (urgency); PRs carry risk (review tier).
 
+> **CI grounding lint (Issue #114)**: every plan committed to this repo
+> runs through `scripts/lint_plan_grounding.py` in the lint workflow.
+> The lint rejects plan files that reference filesystem paths not
+> present on the working tree, unless the path is marked **new** or
+> followed by `(planned)` / `(future)` / `(v2)` / `(nonexistent)` /
+> `(example)` on its bullet. Author-time `ls -d */` is faster
+> feedback; CI is the durable gate. Mitigation for SG-PLAN-GROUNDING-DRIFT.
+
 #### 2.1.1 Priority labels (one per issue, mandatory after triage)
 
 Exactly one priority label per triaged issue. Untriaged issues carry `triage`
@@ -239,6 +247,22 @@ Refs #60 (depends on continuity matcher landed there)
 
 The Plan/Audit/Seal section is **mandatory for any PR > 100 LOC or risk:L2+**.
 Smaller PRs may use `Plan: trivial; risk:L1`.
+
+> **PR-body issue references (Issue #114)**: every PR body that
+> mentions `#NUMBER` tokens should wrap them with one of:
+>
+> - **`Closes #N`** / `Fixes #N` / `Resolves #N` — full closure, fires
+>   GitHub auto-close + the `merged-to-dev` labeller workflow.
+> - **`Refs #N`** / `Related to #N` / `See #N` — partial / related;
+>   creates the cross-link without auto-closing.
+> - **Place under a `## Linked issues` heading** — section-level
+>   wrapping, equivalent to per-line keyword.
+>
+> The advisory workflow `pr-body-refs-lint.yml` warns (does not block)
+> when bare `#NUMBER` mentions appear in prose without a wrapping.
+> Bare mentions still create GitHub's auto-cross-reference, but skip
+> the auto-close + labeller paths — surface them so authors choose
+> intentionally rather than implicitly.
 
 ### 4.4 Reviewers
 

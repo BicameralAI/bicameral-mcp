@@ -22,3 +22,16 @@ jobs:
         run: ruff format --check .
       - name: Mypy
         run: mypy .
+      - name: Plan-grounding lint (#114 Check A)
+        # Only lints plan-*.md files modified in this PR — historical
+        # plans that referenced now-deleted files would otherwise block
+        # CI for unrelated work. Adding/modifying a plan still gates.
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          PLANS=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- 'plan-*.md' 'docs/Planning/plan-*.md' 2>/dev/null || true)
+          if [ -n "$PLANS" ]; then
+            echo "Linting modified plans: $PLANS"
+            python scripts/lint_plan_grounding.py $PLANS
+          else
+            echo "No plan files modified in this PR — skipping"
+          fi

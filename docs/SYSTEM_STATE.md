@@ -1,11 +1,61 @@
-# System State — post-#48-substantiation snapshot
+# System State — post-#114-substantiation snapshot
 
 **Generated**: 2026-04-29
-**HEAD**: latest (Issue #48 sealed)
-**Branch**: `feat/48-pre-push-drift-hook` (off `BicameralAI/dev` post-#113, current dev tip `77b9ee3`)
-**Tracked PR**: will target `BicameralAI/dev` (Issue #48); aggregate `dev → main` PR is downstream
+**HEAD**: `f2eca47` (Issue #114 sealed)
+**Branch**: `feat/114-grounding-lint` (off `BicameralAI/dev` post-#117)
+**Tracked PR**: will target `BicameralAI/dev` (Issue #114); aggregate `dev → main` PR is downstream
 **Genesis hash**: `29dfd085...`
-**#48 seal**: see Entry #18 (computed during this substantiation)
+**#114 seal**: Entry #20 — `a19a04debe5f8f38aab182263e94819d50743849a26cdb8cc4aa3279a81be265`
+**#48 seal** (prior on chain): Entry #18 — `eacc6f89...`
+
+## #114 (CI grounding lint — plan-paths + PR-body refs) implementation — 7 files, ~573 LOC, 14 new tests, 29/29 targeted regression
+
+| Phase | Files | New tests | Notes |
+|---|---|---|---|
+| 0 — plan-grounding lint (blocking) | 1 new prod + 1 new test | 8 | `scripts/lint_plan_grounding.py` 212 LOC; walker + classifier + CLI; pure stdlib; exit 1 on unresolved paths |
+| 1 — PR-body refs lint (advisory) | 1 new prod + 1 new test | 6 | `.github/scripts/lint_pr_body_refs.py` 162 LOC; **OWASP A03 hardened** via `--from-env` env-var read (no shell interpolation); always exit 0 |
+| 2 — CI integration | 1 modified + 1 new workflow | 0 | `lint-and-typecheck.yml` plan-grounding step (only on PR-modified plans, via git-diff); `pr-body-refs-lint.yml` advisory workflow with `continue-on-error: true`, `pull_request` (fork-safe), `pull-requests: read` only |
+| 3 — Documentation | 2 modified | 0 | `DEV_CYCLE.md` §2.1 (Check A callout) + §4.3 (Check B PR-body discipline); `CHANGELOG.md` `[Unreleased]` Added entry |
+
+### Files in scope
+
+**New** (5):
+- `scripts/lint_plan_grounding.py` (212 LOC) — walker + classifier + CLI; HTML-comment + blockquote + multi-word skip; exemption markers (`**new**`, `(planned)`, `(future)`, `(v2)`, `(nonexistent)`, `(example)`)
+- `tests/test_lint_plan_grounding.py` (117 LOC, 8 tests) — clean plan, nonexistent path, **new** marker, (planned) suffix, HTML comment, blockquote, main exit codes
+- `.github/scripts/lint_pr_body_refs.py` (162 LOC) — `--body <file>` + `--from-env <NAME>` modes; reads `os.environ` directly; warns to stderr; always returns 0
+- `tests/test_lint_pr_body_refs.py` (82 LOC, 6 tests) — including security-critical `test_main_reads_from_env_var`
+- `.github/workflows/pr-body-refs-lint.yml` (37 LOC YAML) — advisory workflow
+
+**Modified** (3):
+- `.github/workflows/lint-and-typecheck.yml` (+10 LOC) — Plan-grounding step that only runs against PR-modified plans (avoids historical-plan regressions blocking unrelated PRs)
+- `docs/DEV_CYCLE.md` (~+20 LOC) — §2.1 Check A callout + §4.3 Check B PR-body keyword discipline
+- `CHANGELOG.md` (`[Unreleased]` Added entry under feat:)
+
+**Plan**: `plan-114-grounding-lint.md` (366 LOC, committed at `4ea06be` post-remediation)
+
+### Plan deviations (none)
+
+Implementation matches plan v2 (`4ea06be`) 1:1. The remediation between v1 (VETO at `a5e6a05`) and v2 (PASS at `4ea06be`) was the OWASP A03 fix — that's in the implementation. No deviations from v2 plan.
+
+### Architectural decisions retained from plan
+
+- **Q1**: CI-only for v1 (no pre-commit hook bootstrapping); pre-commit deferred to follow-up issue.
+- **Q2**: Dynamic discovery via `_PACKAGE_DIR_RE` token classifier (vs static package list); adapts as new top-level packages land.
+- **Q3**: Check A blocks (joins `ruff check` semantics); Check B advisory (`continue-on-error: true`).
+- **Q4**: Hard-coded keyword list for v1 (`Closes`, `Fixes`, `Resolves`, `Refs`, `Related`, `See`, etc.).
+- **Q5**: Asymmetric placement — `scripts/` for the dev-utility checker; `.github/scripts/` for the CI-only checker.
+- **Q6**: CI lint and audit's grounding pass are complementary (CI = fast pre-audit; audit = deeper API/contract verification).
+
+### Capability shortfalls (carried)
+
+- `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
+- `qor/reliability/` enforcement scripts absent — Step 4.6 reliability sweep skipped.
+- `agent-teams` capability not declared — sequential mode.
+- `codex-plugin` capability not declared — solo audit mode.
+- Step 7.5 version-bump-and-tag skipped — version stays at v0.17.x; #114 ships in next aggregate release PR.
+- This is the **third consecutive plan** in this session where SG-PLAN-GROUNDING-DRIFT prevention worked at *author-time* via `ls -d */` rather than audit-time. Now the durable countermeasure is in place: the lint that catches the next instance is shipped in this very PR.
+
+## #48 (pre-push drift hook + branch-scan CLI) implementation — 7 files, ~609 LOC, 11 new tests, 27/28 targeted regression
 
 ## #48 (pre-push drift hook + branch-scan CLI) implementation — 7 files, ~609 LOC, 11 new tests, 27/28 targeted regression
 
