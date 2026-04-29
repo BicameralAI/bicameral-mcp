@@ -265,3 +265,66 @@ def test_upsert_appends_when_not_found():
     new = {"metric": "C1", "recorded_on": "linux", "n_features": 10, "tokens": 105}
     out = upsert_baseline(rows, new)
     assert len(out) == 2
+
+
+# ── Real-ledger seeder ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_seeder_creates_decisions_at_n10(monkeypatch):
+    """Seed at N=10 → ledger contains the expected decision count."""
+    from _seed_ledger import seed_ledger_from_synthetic
+    from ledger.adapter import SurrealDBLedgerAdapter
+
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
+
+    synthetic = generate_ledger(n_features=10, decisions_per_feature=3, seed=42)
+    created_count = await seed_ledger_from_synthetic(adapter, synthetic)
+
+    # 10 features × 3 decisions = 30 expected
+    assert created_count == 30, f"expected 30 created, got {created_count}"
+
+    decisions = await adapter.get_all_decisions()
+    assert len(decisions) == 30, f"ledger has {len(decisions)} decisions after seed"
+
+
+@pytest.mark.asyncio
+async def test_seeder_status_distribution_matches_synthetic(monkeypatch):
+    """The seeded ledger's status distribution should match the generator's
+    target distribution (70% reflected / 20% drifted / ~10% other)."""
+    from _seed_ledger import seed_ledger_from_synthetic
+    from ledger.adapter import SurrealDBLedgerAdapter
+
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
+
+    synthetic = generate_ledger(n_features=100, decisions_per_feature=3, seed=42)
+    await seed_ledger_from_synthetic(adapter, synthetic)
+
+    decisions = await adapter.get_all_decisions()
+    statuses = [d.get("status") for d in decisions]
+    n = len(statuses)
+    reflected_pct = statuses.count("reflected") / n
+    drifted_pct = statuses.count("drifted") / n
+
+    # Same tolerance as the generator's distribution test.
+    assert 0.6 < reflected_pct < 0.8, f"reflected={reflected_pct:.2f}"
+    assert 0.1 < drifted_pct < 0.3, f"drifted={drifted_pct:.2f}"
+
+
+@pytest.mark.asyncio
+async def test_seeder_handles_empty_synthetic(monkeypatch):
+    """Empty synthetic dict → no decisions created."""
+    from _seed_ledger import seed_ledger_from_synthetic
+    from ledger.adapter import SurrealDBLedgerAdapter
+
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
+
+    synthetic = generate_ledger(n_features=0)
+    created_count = await seed_ledger_from_synthetic(adapter, synthetic)
+    assert created_count == 0
