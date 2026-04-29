@@ -6,15 +6,18 @@ the-loop end-to-end) is deferred.
 
 | Metric | What | Scope |
 |---|---|---|
-| **C1** | ``bicameral.history()`` payload tokens at N = 10, 100, 1000 features | synthetic ledger, JSON-serialized |
-| **C2** | ``bicameral.preflight()`` response size (region-anchored + HITL) | mocked ledger, representative shape |
-| **C3** | Handler latency p50 / p95 on ``bicameral.preflight`` | mocked ledger, representative shape |
+| **C1** | ``bicameral.history()`` payload tokens at N = 10, 100, 1000 features | synthetic ledger dict, JSON-serialized |
+| **C2** | ``bicameral.preflight()`` response size at N = 10, 100, 1000 | real ``memory://`` SurrealDB seeded from synthetic generator |
+| **C3** | Handler latency p50 / p95 on ``bicameral.preflight`` at N = 10, 100, 1000 | real ``memory://`` SurrealDB seeded from synthetic generator |
 
-C2 / C3 use mocked ledger queries so the metric isolates handler-logic +
-serialization cost from SurrealDB I/O variance. Real-ledger latency is
-its own concern; this baseline tracks the optimization-target code paths
-named in #58 (semantic prefilter, lazy/two-pass history, etc. — all of
-which mutate the handler logic, not the ledger).
+C2 + C3 measure against a **real seeded ledger**. The synthetic generator
+produces a deterministic `HistoryResponse`-shaped dict; ``_seed_ledger.py``
+translates it through ``adapter.ingest_payload`` into the v4 graph
+(input_span / decision / code_region nodes + yields / binds_to edges). The
+preflight handler then runs against real SurrealDB queries — same code
+path the developer hits in production. A regression in the SurrealDB query
+plan, the handler's iteration logic, the JSON serialization, or any
+combination surfaces as a C2 byte-count or C3 latency change.
 
 Modes:
 - Default: assert current values are within ±20% of the committed baseline,
@@ -26,12 +29,11 @@ Modes:
 """
 from __future__ import annotations
 
-import asyncio
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -40,6 +42,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from _baseline_io import (  # noqa: E402  (sibling module)
+    ANY_PLATFORM,
     BASELINE_PATH,
     BASELINE_VERSION,
     LATENCY_NOISE_FLOOR_MS,
@@ -53,6 +56,7 @@ from _baseline_io import (  # noqa: E402  (sibling module)
     upsert_baseline,
     write_baselines,
 )
+from _seed_ledger import seed_ledger_from_synthetic  # noqa: E402
 from _synthetic_ledger import GENERATOR_VERSION, generate_ledger  # noqa: E402
 from _token_count import count_tokens, count_tokens_json  # noqa: E402
 
@@ -68,6 +72,7 @@ def _record_or_assert(
     noise_floors: dict,
     extra_key_fields: dict | None = None,
     label: str,
+    platform_agnostic: bool = False,
 ) -> None:
     """Single entry point used by every metric test.
 
@@ -75,9 +80,13 @@ def _record_or_assert(
     Default mode: look up the matching row, assert each value within
     threshold via ``regression_check``. Skip cleanly if no baseline exists
     for the current platform or if the baseline version doesn't match.
+
+    ``platform_agnostic=True`` records / matches with ``recorded_on=any``
+    so the baseline applies on every host. Use for metrics that don't
+    depend on OS/hardware (token counts, byte counts).
     """
     extras = dict(extra_key_fields or {})
-    platform_tag = current_platform()
+    platform_tag = ANY_PLATFORM if platform_agnostic else current_platform()
 
     rows = load_baselines()
 
@@ -134,8 +143,9 @@ def _record_or_assert(
 
 @pytest.fixture(autouse=True)
 def _isolate_handler_environment(monkeypatch, tmp_path):
-    """Mirror the isolation in `run_preflight_eval.py` so handler calls are
-    deterministic and free of user/env interference."""
+    """Isolate handler from user/env interference. Notably stubs out
+    ``ensure_ledger_synced`` (cost/latency tests don't need real sync —
+    that's link_commit's territory) and the product-stage marker."""
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     import handlers.sync_middleware as sm
@@ -144,86 +154,46 @@ def _isolate_handler_environment(monkeypatch, tmp_path):
     monkeypatch.setattr(pf, "_should_show_product_stage", lambda: False)
 
 
-def _make_region_decision(decision_id: str, description: str, file_path: str, symbol: str) -> dict:
-    return {
-        "decision_id": decision_id,
-        "description": description,
-        "status": "reflected",
-        "source_type": "transcript",
-        "source_ref": "test",
-        "source_excerpt": "",
-        "meeting_date": "",
-        "ingested_at": "2026-04-28",
-        "signoff": None,
-        "code_region": {
-            "file_path": file_path,
-            "symbol": symbol,
-            "lines": (1, 50),
-            "purpose": description,
-            "content_hash": "test",
-        },
-    }
+async def _build_seeded_ctx(n_features: int) -> tuple[SimpleNamespace, dict]:
+    """Spin up a fresh ``memory://`` adapter, seed it with N synthetic
+    features, return (ctx, synthetic_dict). The synthetic dict is returned
+    so callers can pick file_paths that match grounded decisions.
 
-
-def _make_hitl_row(decision_id: str, description: str, signoff_state: str) -> dict:
-    return {
-        "decision_id": decision_id,
-        "description": description,
-        "status": "pending",
-        "signoff": {"state": signoff_state},
-    }
-
-
-def _build_realistic_ctx(
-    monkeypatch,
-    *,
-    n_region_matches: int = 10,
-    n_collision_pending: int = 2,
-    n_context_pending: int = 2,
-) -> SimpleNamespace:
-    """Mocked BicameralContext with production-realistic data shape.
-
-    Defaults reflect a typical preflight call: caller-supplied ``file_paths``
-    that resolve to ~10 region matches, a couple of HITL pending items.
+    Each call creates a new adapter instance — tests do not share state.
     """
-    ledger = MagicMock()
-    region_decisions = [
-        _make_region_decision(
-            decision_id=f"decision:test-{i}",
-            description=f"Test decision number {i} — pinned to a representative region",
-            file_path=f"src/module_{i % 5}.py",
-            symbol=f"function_{i}",
-        )
-        for i in range(n_region_matches)
-    ]
-    ledger.get_decisions_for_files = AsyncMock(return_value=region_decisions)
-    inner = MagicMock()
-    inner._client = MagicMock()
-    ledger._inner = inner
+    from ledger.adapter import SurrealDBLedgerAdapter
 
-    import ledger.queries as lq
-    monkeypatch.setattr(
-        lq,
-        "get_collision_pending_decisions",
-        AsyncMock(return_value=[
-            _make_hitl_row(f"decision:coll-{i}", f"Collision pending {i}", "collision_pending")
-            for i in range(n_collision_pending)
-        ]),
-    )
-    monkeypatch.setattr(
-        lq,
-        "get_context_for_ready_decisions",
-        AsyncMock(return_value=[
-            _make_hitl_row(f"decision:ctx-{i}", f"Context pending ready {i}", "context_pending_ready")
-            for i in range(n_context_pending)
-        ]),
-    )
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
 
-    return SimpleNamespace(
-        ledger=ledger,
+    synthetic = generate_ledger(n_features=n_features, seed=42)
+    await seed_ledger_from_synthetic(adapter, synthetic)
+
+    ctx = SimpleNamespace(
+        ledger=adapter,
         guided_mode=False,
         _sync_state={},
     )
+    return ctx, synthetic
+
+
+def _pick_grounded_paths(synthetic: dict, count: int = 2) -> list[str]:
+    """Return up to ``count`` file_paths drawn from grounded
+    (reflected / drifted) decisions in the synthetic ledger.
+
+    Used to guarantee region-anchored matches in C2 / C3 — the preflight
+    response should fire so we measure a non-trivial response shape.
+    """
+    paths: list[str] = []
+    for feature in synthetic["features"]:
+        for decision in feature["decisions"]:
+            if decision["status"] in {"reflected", "drifted"}:
+                fulfillments = decision.get("fulfillments") or []
+                if fulfillments:
+                    paths.append(fulfillments[0]["file_path"])
+                    if len(paths) >= count:
+                        return paths
+    return paths
 
 
 # ── C1: bicameral.history() payload tokens ─────────────────────────────
@@ -244,60 +214,70 @@ def test_c1_history_payload_tokens(n_features, capsys):
         noise_floors={"tokens": TOKEN_NOISE_FLOOR},
         extra_key_fields={"n_features": n_features},
         label=f"C1[N={n_features}]",
+        platform_agnostic=True,  # tiktoken + JSON is deterministic across OSes
     )
 
 
-# ── C2: bicameral.preflight() response size ────────────────────────────
+# ── C2: bicameral.preflight() response size (real seeded ledger) ──────
 
 
-@pytest.mark.asyncio
-async def test_c2_preflight_response_size(monkeypatch, capsys):
-    """C2 — response token + byte count on representative preflight inputs.
-
-    Single fixed shape: 10 region matches + 2 collision-pending + 2
-    context-pending. Response size doesn't scale meaningfully with ledger
-    size — it's bounded by ``file_paths`` and HITL state cardinality.
-    """
+@pytest.mark.parametrize("n_features", [10, 100, 1000])
+async def test_c2_preflight_response_size(n_features, capsys):
+    """C2 — response token + byte count against a real ledger seeded
+    with N synthetic features. file_paths picked from the seeded data
+    so region-anchored lookup hits at least 2 grounded decisions."""
     from handlers.preflight import handle_preflight
 
-    ctx = _build_realistic_ctx(monkeypatch)
+    seed_t0 = time.perf_counter()
+    ctx, synthetic = await _build_seeded_ctx(n_features)
+    seed_ms = (time.perf_counter() - seed_t0) * 1000
+
+    file_paths = _pick_grounded_paths(synthetic, count=2)
+
     response = await handle_preflight(
         ctx=ctx,
         topic="implement payment idempotency",
-        file_paths=["src/module_0.py", "src/module_1.py"],
+        file_paths=file_paths,
     )
-
     response_json = response.model_dump_json()
     response_tokens = count_tokens(response_json)
     response_bytes = len(response_json.encode("utf-8"))
 
     with capsys.disabled():
-        print(f"  C2: tokens={response_tokens}, bytes={response_bytes}")
-
-    assert response.fired is True, "representative load should fire (region + HITL signal present)"
+        print(
+            f"  C2 [N={n_features}]: tokens={response_tokens}, bytes={response_bytes}, "
+            f"fired={response.fired} (seed={seed_ms:.0f}ms)"
+        )
 
     _record_or_assert(
         metric="C2",
         current_values={"tokens": response_tokens, "bytes": response_bytes},
         noise_floors={"tokens": TOKEN_NOISE_FLOOR, "bytes": TOKEN_NOISE_FLOOR},
-        label="C2",
+        extra_key_fields={"n_features": n_features},
+        label=f"C2[N={n_features}]",
+        platform_agnostic=True,  # response shape is deterministic given same seed
     )
 
 
-# ── C3: handler latency ────────────────────────────────────────────────
+# ── C3: handler latency (real seeded ledger) ──────────────────────────
 
 
-@pytest.mark.asyncio
-async def test_c3_preflight_handler_latency(monkeypatch, capsys):
-    """C3 — p50 / p95 latency on bicameral.preflight, representative load.
+@pytest.mark.parametrize("n_features", [10, 100, 1000])
+async def test_c3_preflight_handler_latency(n_features, capsys):
+    """C3 — p50 / p95 latency on bicameral.preflight against a real
+    ledger seeded with N synthetic features. Measures handler-logic +
+    real SurrealDB query time + serialization — what the developer
+    actually feels.
 
-    Mocked ledger queries so the metric isolates handler-logic + serialization
-    cost. Real SurrealDB latency is a separate baseline (not tracked here).
-    Production-realistic shape: ~10 region matches + a couple of HITL items.
+    Per-platform baseline (latency varies meaningfully across hosts).
     """
     from handlers.preflight import handle_preflight
 
-    ctx = _build_realistic_ctx(monkeypatch)
+    seed_t0 = time.perf_counter()
+    ctx, synthetic = await _build_seeded_ctx(n_features)
+    seed_ms = (time.perf_counter() - seed_t0) * 1000
+
+    file_paths = _pick_grounded_paths(synthetic, count=2)
 
     async def _one_call():
         # Reset dedup state so each call evaluates the full path, not a
@@ -306,7 +286,7 @@ async def test_c3_preflight_handler_latency(monkeypatch, capsys):
         return await handle_preflight(
             ctx=ctx,
             topic="implement payment idempotency",
-            file_paths=["src/module_0.py", "src/module_1.py"],
+            file_paths=file_paths,
         )
 
     for _ in range(_C3_WARMUP):
@@ -324,7 +304,10 @@ async def test_c3_preflight_handler_latency(monkeypatch, capsys):
     p95 = timings_ms[int(len(timings_ms) * 0.95)]
 
     with capsys.disabled():
-        print(f"  C3: p50={p50:.2f}ms, p95={p95:.2f}ms (n={_C3_SAMPLES} after {_C3_WARMUP} warmup)")
+        print(
+            f"  C3 [N={n_features}]: p50={p50:.2f}ms, p95={p95:.2f}ms "
+            f"(seed={seed_ms:.0f}ms, n={_C3_SAMPLES} after {_C3_WARMUP} warmup)"
+        )
 
     assert p50 > 0, f"p50 should be positive, got {p50}"
     assert p95 >= p50, f"p95 ({p95}) should be ≥ p50 ({p50})"
@@ -333,5 +316,6 @@ async def test_c3_preflight_handler_latency(monkeypatch, capsys):
         metric="C3",
         current_values={"p50_ms": round(p50, 3), "p95_ms": round(p95, 3)},
         noise_floors={"p50_ms": LATENCY_NOISE_FLOOR_MS, "p95_ms": LATENCY_NOISE_FLOOR_MS},
-        label="C3",
+        extra_key_fields={"n_features": n_features},
+        label=f"C3[N={n_features}]",
     )
