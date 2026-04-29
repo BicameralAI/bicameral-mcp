@@ -19,6 +19,8 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 ## Telemetry
 
+> **Guard**: Only call `skill_begin` and `skill_end` if telemetry is enabled. Telemetry is enabled by default; disabled by setting `BICAMERAL_TELEMETRY=0` (or `false`/`off`/`no`). If disabled, skip both calls and omit all `diagnostic` tracking.
+
 **At skill start** (before any other tool calls):
 ```
 bicameral.skill_begin(skill_name="bicameral-ingest", session_id=<uuid4>,
@@ -29,7 +31,32 @@ bicameral.skill_begin(skill_name="bicameral-ingest", session_id=<uuid4>,
 ```
 bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
   errored=<bool>, error_class="<if errored — see enum>",
-  diagnostic={decisions_ingested: N, grounded: M})
+  source_type_ingest="<transcript|slack|notion|document|manual>",
+  diagnostic={
+    # skill-level
+    decisions_ingested: N,
+    # G2 fields
+    g2_candidates_evaluated: N,
+    g2_dropped_hard_exclude: N,
+    g2_dropped_l3: N,
+    g2_dropped_gate1: N,
+    g2_dropped_gate2: N,
+    g2_dropped_implied: N,
+    g2_parked_context_pending: N,
+    g2_proposed_count: N,
+    g2_l1_count: N,
+    g2_l2_count: N,
+    g2_user_overrode: N,
+    # G3 fields
+    g3_decisions_grounded: N,
+    g3_decisions_ungrounded: N,
+    # G6 fields (when pending_compliance_checks present)
+    g6_compliance_checks_received: N,
+    g6_verdicts_compliant: N,
+    g6_verdicts_drifted: N,
+    g6_verdicts_not_relevant: N,
+    g6_verdicts_cosmetic_autopass: N,
+  })
 ```
 
 `error_class` values (pass only when `errored=true`): `symbol_not_found`, `collision_unresolved`, `drift_mislabeled`, `low_confidence_verdict`, `ledger_empty`, `grounding_failed`, `user_abort`, `other`.
@@ -128,13 +155,18 @@ Read the source. For each statement, decide whether it's a real implementation d
 | Pattern | Example phrase |
 |---|---|
 | Negation | "we're NOT going to use Redis" |
-| Hedged conditional | "if infra approves, we'll switch to X" |
-| Aspirational | "we should look into" / "eventually" / "someday" / "would love to" |
 | Status quo | "keeping the existing X for now" / "no change" |
-| Parked / deferred | "let's revisit next quarter" / "park it" |
 | Vibes / no observable behavior | "be more performance-focused going forward" |
-| Strategy / hiring / pricing / OKRs / fundraising | "Q3 OKR is at 78%" / "tag SAML in CRM" |
+| Pure metrics / OKR status | "Q3 OKR is at 78%" / "we're at 84% retention" |
+| Pure question with no directional signal | "has anyone looked at Sentry vs PostHog?" (exploration request, not a direction) |
 | Reversed within the same source | speaker A proposes X → blocked → team agrees on Y → only Y is the decision, X is not |
+
+**SPECULATIVE PROPOSALS — aspirational, hedged, and exploratory candidates are NOT hard-excluded.** If a statement names a concrete subject (a feature, an architecture, a behavior the product could have), capture it as a `proposed` decision regardless of how tentative the language is. Hedged conditionals ("if infra approves, we'll switch to ScyllaDB"), aspirational statements ("I want to prioritize Google Calendar integration"), exploratory ideas ("we need something like Zoom attendance tracking"), and deferred items ("let's revisit this next quarter") all belong in the ledger — the team ratifies or rejects them there. Bicameral's whole value is serving as the central panel for that judgment; silently dropping speculative items before the team sees them defeats the purpose.
+
+- Write the description as the concrete proposed behavior, not as a hedge: *"Analytics storage migrates to ScyllaDB"* not *"If infra approves, switch to ScyllaDB"*
+- These route through level classification and the gate filters exactly like committed decisions
+- If they survive level/gate filters, ingest as `proposed` — ratification is where the team says yes or no
+- Pure vagueness with no concrete subject still hard-excludes: *"be more data-driven"* has no actionable subject; *"add Zoom attendance tracking"* does
 
 **LEVEL CLASSIFICATION GATE (v0.9.3+) — classify before applying any filter.** After the hard-exclude check, assign every surviving candidate a decision level. The level determines which gates apply.
 
@@ -269,15 +301,56 @@ The park path is not a consolation prize — it's the right answer when the filt
 
 When in doubt, **park**. A ledger with 3 high-confidence decisions is worth more than 10 mixed-quality entries that the team stops trusting.
 
+### 1.5 Borderline drop confirmation
+
+> **Guard**: Only run this step if guided mode is enabled (`guided: true` in `.bicameral/config.yaml`). In normal mode, skip silently and set `g2_user_overrode = 0` in the diagnostic.
+
+**Scope**: candidates routed to **drop** by Gate 1 (no business tie) or Gate 2 (no fork) only. Hard-excludes, L3 drops, redundancy-pruned candidates, and `context_pending` parks stay silent — those filters are high-confidence.
+
+**If 0 Gate 1/Gate 2 drops**: skip silently, proceed to Step 2.
+
+**If 1–4 borderline drops**: surface a single `AskUserQuestion` with `multiSelect: true`. No pre-selections — the LLM already judged these as drops; the user opts in to rescue rather than out to exclude.
+
+```python
+AskUserQuestion({
+  question: "Filtered out N borderline candidate(s) — restore any?",
+  header: "Filtered out",
+  multiSelect: True,
+  options: [
+    { label: "<decision description ≤ 10 words>",
+      description: "Dropped: <gate1: no business driver> | <gate2: no fork — implied>" },
+    ...  # one entry per borderline drop
+  ]
+})
+```
+
+**If > 4 borderline drops**: segment into batches of 4. Call `AskUserQuestion` for each batch in sequence (batch 1: items 1–4, batch 2: items 5–8, etc.) using the same `multiSelect: true, no pre-selections` structure. Label the question to indicate position: `"Filtered out N borderline candidate(s) — restore any? (batch M of K)"`. Collect rescued candidates across all batches before proceeding.
+
+**Handle the response**:
+- Checked options → rescue those candidates: add them back to the proposed set and proceed normally.
+- No selections / skip → proceed with original drops intact.
+
+**Record `g2_user_overrode`** (count of rescued candidates) in the `skill_end` diagnostic.
+
 ### Worked examples
 
 These cover the failure modes the skill must handle. Read them carefully — they are the spec.
 
-**Example 1 — Strategic / hedged / negated meeting (extract NOTHING)**
+**Example 1 — Speculative / hedged / negated meeting (capture speculative proposals)**
 
 > Q3 planning. Priya: "We should probably look into vector embeddings for search someday." Tomás: "If infra approves we'll switch to ScyllaDB for analytics." Lena: "We're keeping the existing webhook retry logic for now." Jin: "We're definitely not going to use Redis here." Tomás: "Eventually I'd love to migrate off the monolith. Maybe 2027."
 
-→ **Extract: 0 decisions, 0 action items.** Every line is hedged, aspirational, status-quo, or negated. The "we're not going to use Redis" line is a non-decision and must NOT be extracted as a "use Redis" decision.
+→ **Extract: 3 speculative proposals.** Aspirational and hedged statements with a concrete subject belong in the ledger for team ratification.
+
+| Candidate | Level | Decision | Route |
+|---|---|---|---|
+| Vector embeddings for search | L2 | "Search uses vector embeddings" | Gate 1: search quality is a product driver ✓. Gate 2: fork (BM25, Elasticsearch) ✓. → proposed |
+| ScyllaDB for analytics | L2 | "Analytics storage migrates to ScyllaDB" | Gate 1: analytics performance ✓. Gate 2: fork (stay with current DB) ✓. → proposed |
+| Migrate off the monolith | L2 | "Backend migrates off the monolith" | Gate 1: scalability/dev velocity ✓. Gate 2: fork (modular monolith, BFF, etc.) ✓. → proposed |
+
+**Not extracted**: "keeping the existing webhook retry logic" (status quo, no new commitment), "we're definitely not going to use Redis" (negation — not a positive decision).
+
+**These three surface in the ratification prompt.** The team confirms whether they're real commitments or brainstorming noise. That judgment belongs to the team, not the extraction filter.
 
 **Example 2 — Mostly business meeting with one buried real decision**
 

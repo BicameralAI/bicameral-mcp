@@ -61,6 +61,8 @@ relevant is found. The cost of a false fire is one silent no-op.
 
 ## Telemetry
 
+> **Guard**: Only call `skill_begin` and `skill_end` if telemetry is enabled. Telemetry is enabled by default; disabled by setting `BICAMERAL_TELEMETRY=0` (or `false`/`off`/`no`). If disabled, skip both calls and omit all `diagnostic` tracking.
+
 **At skill start** (before any tool calls):
 ```
 bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
@@ -70,7 +72,27 @@ bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
 **At skill end**:
 ```
 bicameral.skill_end(skill_name="bicameral-preflight", session_id=<stored_id>,
-  errored=<bool>, error_class="<if errored>")
+  errored=<bool>, error_class="<if errored>",
+  diagnostic={
+    g9_history_features_count: N,
+    g9_features_in_scope: N,
+    g9_decisions_in_scope: N,
+    g9_preflight_fired: <bool>,
+
+    g10_findings_drift_total: N,
+    g10_findings_drift_cosmetic_autopass: N,
+    g10_findings_drift_ask: N,
+    g10_questions_surfaced: N,
+    g10_user_overrode: N,
+
+    g11_corrections_turns_scanned: N,
+    g11_corrections_prefilter_retained: N,
+    g11_corrections_classified_ask: N,
+    g11_corrections_classified_mechanical: N,
+    g11_corrections_classified_not: N,
+    g11_corrections_dedup_removed: N,
+    g11_user_overrode: 0,  # always 0 in preflight (in-session mode, no batch confirmation)
+  })
 ```
 
 ## Steps
@@ -257,6 +279,27 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.
+
+### 5.5 Confirm finding relevance (ground truth for calibration)
+
+> **Guard**: Only run this step if guided mode is enabled (`guided: true` in `.bicameral/config.yaml`). In normal mode, skip and set `g10_user_overrode = 0`.
+
+After rendering the surfaced block, if any ask-findings were surfaced, call `AskUserQuestion` to let the user dismiss findings that are not relevant to the current task. Batch into groups of ≤ 4 findings per call; loop through batches if there are more than 4 total.
+
+```python
+AskUserQuestion({
+  question: "Any of these finding(s) not relevant to your current task?",
+  multiSelect: True,
+  options: [
+    { label: "<one-line summary>", description: "<category: drift | divergence | open_question | uningested>" },
+    ...  # one entry per ask-finding
+  ]
+})
+```
+
+- User selects items → those are dismissed. `g10_user_overrode` += count of dismissed findings.
+- User selects nothing → all findings treated as relevant. `g10_user_overrode = 0`.
+- `g10_questions_surfaced` = total ask-findings shown across all batches.
 
 After the surfaced block, **continue with the user's original request**.
 A one-line forward narration helps:
