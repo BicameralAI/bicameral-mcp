@@ -1,3 +1,77 @@
+# System State — post-#48-substantiation snapshot
+
+**Generated**: 2026-04-29
+**HEAD**: latest (Issue #48 sealed)
+**Branch**: `feat/48-pre-push-drift-hook` (off `BicameralAI/dev` post-#113, current dev tip `77b9ee3`)
+**Tracked PR**: will target `BicameralAI/dev` (Issue #48); aggregate `dev → main` PR is downstream
+**Genesis hash**: `29dfd085...`
+**#48 seal**: see Entry #18 (computed during this substantiation)
+
+## #48 (pre-push drift hook + branch-scan CLI) implementation — 7 files, ~609 LOC, 11 new tests, 27/28 targeted regression
+
+| Phase | Files | New tests | Notes |
+|---|---|---|---|
+| 0 — branch-scan CLI subcommand | 1 new prod + 1 new test + 1 modified | 7 | `cli/branch_scan.py` 177 LOC, server.py +14 LOC |
+| 1 — setup_wizard pre-push hook | 1 modified + 1 new test | 5 (1 chmod skipped on Windows) | setup_wizard.py +50 LOC, --with-push-hook flag |
+| 2 — Documentation | 2 modified/new | 0 | CHANGELOG [Unreleased] + 129-LOC user guide |
+
+### Files in scope
+
+**New** (4):
+- `cli/branch_scan.py` (177 LOC) — terminal-output drift renderer + main() CLI
+- `tests/test_branch_scan_cli.py` (144 LOC, 7 tests)
+- `tests/test_setup_pre_push_hook.py` (92 LOC, 5 tests)
+- `docs/guides/pre-push-drift-hook.md` (129 LOC) — user guide
+- `plan-48-pre-push-drift-hook.md` (366 LOC) — plan, committed at `79abcc2`
+
+**Modified** (3):
+- `server.py` (+14 LOC, branch-scan subparser + --with-push-hook flag)
+- `setup_wizard.py` (+50 LOC, _GIT_PRE_PUSH_HOOK + _install_git_pre_push_hook + run_setup kwarg + step 7b)
+- `CHANGELOG.md` (Unreleased entry under Added)
+
+### Plan deviations (none)
+
+Implementation matches plan 1:1. All design decisions Q1–Q5 implemented exactly as specified.
+
+### Architectural decisions retained from plan
+
+- **Q1**: `cli/branch_scan.py` placement (mirrors `cli/classify.py` and `cli/drift_report.py` patterns).
+- **Q2**: Deliberate non-modeling on possibly-broken post-commit-hook predecessor — `branch-scan` registered properly via `cli_main` subparser.
+- **Q3**: HEAD-only v1 (no multi-commit-range walk); v2 tracked as future enhancement.
+- **Q4**: TTY/no-TTY/no-ledger graceful behaviors — all three branches implemented per spec.
+- **Q5**: setup_wizard pattern mirrors `_install_git_post_commit_hook` exactly (idempotent install, append-on-existing).
+
+### Capability shortfalls (carried across phases)
+
+- `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
+- `qor/reliability/` enforcement scripts absent — Step 4.6 reliability sweep skipped.
+- `agent-teams` capability not declared — sequential mode.
+- `codex-plugin` capability not declared — solo audit mode.
+- v1 audit was first plan in session where SG-PLAN-GROUNDING-DRIFT prevention worked at *author-time* rather than audit-time. Issue #114 (CI lint enforcement) remains the durable countermeasure.
+
+### Test state (post-implementation)
+
+- Targeted sweep: 27/28 (11 new + 16 regression on PR #113's drift_report tests; 1 chmod test skipped on Windows non-POSIX).
+- All test functions ≤ 25 LOC.
+- All test files ≤ 144 LOC.
+- ruff check + format: clean.
+- mypy on `cli/branch_scan.py`: no issues.
+- End-to-end smoke confirmed: `python -m server branch-scan` → graceful skip → exit 0 (no ledger configured locally).
+
+### Workflow security review
+
+- Hook reads `/dev/tty` for the prompt; input matched against fixed regex (`[yY]|[yY][eE][sS]`); no shell expansion of user-controlled input.
+- Hook calls `bicameral-mcp branch-scan` from `PATH` — same trust model as the existing post-commit hook.
+- No `pull_request_target` triggers introduced.
+- File mode `0o755` (executable, world-readable). No secrets in hook content.
+- Behavior: hook short-circuits (`exit 0`) when no `.bicameral/` directory in repo.
+
+### Audit's separate-issue recommendation (NOT addressed in this PR)
+
+Latent bug in existing post-commit hook: `bicameral-mcp link_commit HEAD` is not a registered subcommand of `cli_main`. The `|| true` swallows the argparse error. Recommended title: *"post-commit hook command bicameral-mcp link_commit HEAD not a registered CLI subcommand — hook silently no-ops"*. Out of scope for #48; tracked separately.
+
+---
+
 # System State — post-#44-substantiation snapshot
 
 **Generated**: 2026-04-29

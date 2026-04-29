@@ -703,6 +703,72 @@ PASS first-attempt. Plan-author-level grounding mitigation confirmed working —
 - **File separately**: latent bug in existing post-commit hook — `bicameral-mcp link_commit HEAD` is not a registered subcommand of `cli_main`. Hook silently no-ops under `|| true`. Out of scope for #48.
 
 ---
-*Chain integrity: VALID (17 entries on this branch)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347`*
-*Next required action: `/qor-implement` for `plan-48-pre-push-drift-hook.md`*
+
+## Entry #18 — SUBSTANTIATION SEAL: `plan-48-pre-push-drift-hook.md` (Issue #48)
+
+**Phase**: SUBSTANTIATE / qor-substantiate
+**Date**: 2026-04-29
+**Branch**: `feat/48-pre-push-drift-hook` (off `BicameralAI/dev` post-#113)
+**Plan commit**: `79abcc2`; implementation latest commit on branch
+**Risk Grade**: L2 (new CLI subcommand surface; modifies setup_wizard + server.py; no MCP tool changes, no schema, no contracts)
+**Change Class**: minor
+
+### Verification gates
+
+| Step | Check | Result | Notes |
+|---|---|---|---|
+| Step 2 | PASS verdict in AUDIT_REPORT.md | ✅ | Entry #17 audit PASS at `bf890347` (first-attempt — no remediation cycle). |
+| Step 2.5 | Version validation | ✅ | Source remains v0.16.0 (current dev tip from PR #107); no version bump in this PR per maintainer direction. |
+| Step 3 | Reality vs Promise | ✅ | All 4 new files + 3 modified files exist. Zero plan deviations — implementation matches plan 1:1. |
+| Step 3.5 | Backlog blockers | ✅ | No new blockers. |
+| Step 4 | Test audit | ✅ | 27/28 in targeted sweep (11 new + 16 regression on PR #113 drift_report tests; 1 chmod test skipped on Windows). |
+| Step 4 (artifacts) | console.log / debug | ✅ | Zero. The `print()` statements in `cli/branch_scan.py` are stderr/stdout CLI status output — intentional design. |
+| Step 4.5 | Skill file integrity | N/A | No `skills/*/SKILL.md` files modified (no MCP tool changes). |
+| Step 4.6 | Reliability sweep | ⚠️ skip | `qor/reliability/` capability shortfall. |
+| Step 5 | Section 4 razor final | ✅ | `cli/branch_scan.py` 177 LOC (≤250); entry funcs ≤25 LOC; helpers ≤20 LOC; nesting ≤2; zero nested ternaries. |
+| Step 6 | SYSTEM_STATE.md sync | ✅ | Updated with #48 inventory; #44 history preserved below. |
+| Step 7 | Merkle seal | ✅ | Computed below. |
+| Step 7.5 | Annotated tag | ⚠️ skip | Per maintainer direction, no version bump in this PR. |
+
+### Architectural decisions sealed
+
+Q1 (`cli/branch_scan.py` placement), Q2 (deliberate non-modeling on broken predecessor), Q3 (HEAD-only v1), Q4 (TTY/no-TTY/no-ledger graceful behaviors), Q5 (setup_wizard pattern mirroring) — all implemented exactly as specified. Zero design deviations during implementation.
+
+### Plan deviations (none)
+
+First implementation in this session with zero plan deviations. Plan was thorough enough that implementation was direct.
+
+### Carried-forward observations
+
+- **Audit's separate-issue recommendation**: latent bug in existing post-commit hook (`bicameral-mcp link_commit HEAD` not a registered subcommand). NOT addressed in this PR — separate workstream.
+- **SG-PLAN-GROUNDING-DRIFT prevention**: this is the second consecutive plan in the session where author-time `ls -d */` mitigation worked (no instance #4). Issue #114 (CI lint) remains the durable countermeasure.
+
+### Capability shortfalls (carried)
+
+- `qor/scripts/` runtime helpers absent.
+- `qor/reliability/` enforcement scripts absent.
+- `agent-teams` capability not declared — sequential mode.
+- `codex-plugin` capability not declared — solo audit mode.
+- `AUDIT_REPORT.md` lives at `.agent/staging/` rather than `.failsafe/governance/`.
+
+### Session content hash
+
+SHA256 over 8 sorted-path files (plan + 1 new prod + 2 modified prod + 2 tests + 1 guide + SYSTEM_STATE.md) =
+**`d943569a6fd566fcb9dfe61bce660100ca28e84671b4ca465cac02065ab15023`**
+
+### Previous chain hash
+
+`bf890347b6aac9097f5468f577c5cf2e7581af57cc1dc776bda5baad498fb37c` (Entry #17 audit PASS first-attempt)
+
+### Merkle seal
+
+SHA256(content_hash + previous_hash) = **`eacc6f89f707ce958fa2485177c9706808fdfeb32b8e4865aadc8bcda47cb645`**
+
+### Decision
+
+**Reality matches Promise.** Implementation conforms to the audit-PASSED specification (`79abcc2`) with **zero plan deviations**. Phase 0 (branch-scan CLI) + Phase 1 (setup_wizard hook install) + Phase 2 (CHANGELOG + user guide) sealed in sequence; 11/12 new tests + 16/16 regression green (1 Windows-only chmod skip). Chain integrity intact on this branch. Next phase: `/qor-document` then open PR `feat/48-pre-push-drift-hook → BicameralAI/dev`.
+
+---
+*Chain integrity: VALID (18 entries on this branch)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89`*
+*Next required action: `/qor-document` then open PR to `BicameralAI/dev`*
