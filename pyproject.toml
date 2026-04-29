@@ -47,6 +47,7 @@ cocoindex = [
 test = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
+  "tiktoken>=0.7.0,<1.0.0",
 ]
 
 [project.scripts]
