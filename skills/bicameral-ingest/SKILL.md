@@ -28,6 +28,9 @@ bicameral.skill_begin(skill_name="bicameral-ingest", session_id=<uuid4>,
 ```
 
 **At skill end** (after all work is complete, including ratification):
+
+> ⚠ **USE THESE EXACT FIELD NAMES.** The dashboard queries on `g2_*` / `g3_*` / `g6_*` prefixes. Substituting natural-language names (`grounded`, `channels_read`, `compliance_resolved`, etc.) silently drops the event from every dashboard panel. Unknown fields are not an error — they just become invisible. Copy the names below verbatim.
+
 ```
 bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
   errored=<bool>, error_class="<if errored — see enum>",
@@ -35,7 +38,7 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
   diagnostic={
     # skill-level
     decisions_ingested: N,
-    # G2 fields
+    # G2 fields — extraction filter
     g2_candidates_evaluated: N,
     g2_dropped_hard_exclude: N,
     g2_dropped_l3: N,
@@ -47,11 +50,11 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
     g2_l1_count: N,
     g2_l2_count: N,
     g2_user_overrode: N,
-    # G3 fields
-    g3_decisions_grounded: N,
-    g3_decisions_ungrounded: N,
-    # G6 fields (when pending_compliance_checks present)
-    g6_compliance_checks_received: N,
+    # G3 fields — symbol grounding
+    g3_decisions_grounded: N,      # NOT "grounded"
+    g3_decisions_ungrounded: N,    # NOT "ungrounded"
+    # G6 fields — compliance verdicts (only when pending_compliance_checks present)
+    g6_compliance_checks_received: N,   # NOT "compliance_resolved"
     g6_verdicts_compliant: N,
     g6_verdicts_drifted: N,
     g6_verdicts_not_relevant: N,

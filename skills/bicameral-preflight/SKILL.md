@@ -70,6 +70,9 @@ bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
 ```
 
 **At skill end**:
+
+> ⚠ **USE THESE EXACT FIELD NAMES.** The dashboard queries on `g9_*` / `g10_*` / `g11_*` prefixes. Substituting natural-language names silently drops the event from every dashboard panel. Copy the names below verbatim.
+
 ```
 bicameral.skill_end(skill_name="bicameral-preflight", session_id=<stored_id>,
   errored=<bool>, error_class="<if errored>",
