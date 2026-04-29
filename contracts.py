@@ -851,6 +851,48 @@ class SessionStartBanner(BaseModel):
     truncated: bool = False
 
 
+# ── Tool: bicameral.list_unclassified_decisions / set_decision_level (#77)
+
+
+class UnclassifiedProposal(BaseModel):
+    """One unclassified decision row with a heuristic-proposed level.
+
+    Returned in batches by ``bicameral.list_unclassified_decisions``. The
+    ``rationale`` string explains which signal the heuristic matched and is
+    rendered by the bulk-classify CLI's dry-run table. ``confidence`` is
+    ``"low"`` when the heuristic defaulted (no positive signal matched) so
+    a human reviewer can prioritise these for manual override.
+    """
+
+    decision_id: str
+    description: str
+    proposed_level: Literal["L1", "L2", "L3"]
+    rationale: str
+    confidence: Literal["high", "low"]
+
+
+class ListUnclassifiedDecisionsResponse(BaseModel):
+    """Response envelope for ``bicameral.list_unclassified_decisions``."""
+
+    proposals: list[UnclassifiedProposal]
+    total_count: int
+
+
+class SetDecisionLevelResponse(BaseModel):
+    """Response envelope for ``bicameral.set_decision_level``.
+
+    Errors (invalid level, unknown decision_id) come back structured rather
+    than as exceptions so an agent loop can recover per-row without aborting
+    the whole batch. ``ok=True`` carries ``level``; ``ok=False`` carries
+    ``error``.
+    """
+
+    ok: bool
+    decision_id: str
+    level: str | None = None
+    error: str | None = None
+
+
 # Forward references
 IngestResponse.model_rebuild()
 ResolveCollisionResponse.model_rebuild()

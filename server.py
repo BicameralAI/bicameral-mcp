@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-13 tools:
+15 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -11,6 +11,8 @@
   bicameral.ratify            — product sign-off on a decision (double-entry ledger)
   bicameral.history           — read-only ledger dump grouped by feature area
   bicameral.dashboard         — launch live decision dashboard with SSE push updates
+  bicameral.list_unclassified_decisions — list decisions whose decision_level is NULL with proposals (#77)
+  bicameral.set_decision_level — set decision_level (L1/L2/L3) on a single decision (#77)
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   get_neighbors               — 1-hop structural graph traversal around a symbol
   extract_symbols             — tree-sitter symbol extraction from a source file
@@ -42,11 +44,13 @@ from handlers.gap_judge import handle_judge_gaps
 from handlers.history import handle_history
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
+from handlers.list_unclassified_decisions import handle_list_unclassified_decisions
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
 from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
+from handlers.set_decision_level import handle_set_decision_level
 from handlers.update import get_update_notice, handle_update
 from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
@@ -100,6 +104,9 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.skill_begin",
     "bicameral.skill_end",
     "bicameral.feedback",
+    "bicameral.usage_summary",
+    "bicameral.list_unclassified_decisions",
+    "bicameral.set_decision_level",
     "validate_symbols",
     "get_neighbors",
     "extract_symbols",
@@ -773,6 +780,52 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        # ── decision_level classification primitives (#77) ───────────
+        Tool(
+            name="bicameral.list_unclassified_decisions",
+            description=(
+                "List decisions whose decision_level is NULL, with a "
+                "heuristic-proposed level (L1/L2/L3) and a rationale per row. "
+                "Read-only. Use this to discover what needs classification "
+                "before calling bicameral.set_decision_level per row."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Restrict to these decision_ids; empty/omitted means all unclassified."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="bicameral.set_decision_level",
+            description=(
+                "Set decision_level (L1/L2/L3) on a single decision. "
+                "Idempotent. Use this after reviewing proposals from "
+                "bicameral.list_unclassified_decisions, or directly when "
+                "you already know the right level."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {"type": "string"},
+                    "level": {
+                        "type": "string",
+                        "enum": ["L1", "L2", "L3"],
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Optional one-line audit note.",
+                    },
+                },
+                "required": ["decision_id", "level"],
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -1054,6 +1107,21 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if update_notice:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        elif name in (
+            "bicameral.list_unclassified_decisions",
+            "list_unclassified_decisions",
+        ):
+            result = await handle_list_unclassified_decisions(
+                ctx,
+                decision_ids=arguments.get("decision_ids") or None,
+            )
+        elif name in ("bicameral.set_decision_level", "set_decision_level"):
+            result = await handle_set_decision_level(
+                ctx,
+                decision_id=arguments["decision_id"],
+                level=arguments["level"],
+                rationale=arguments.get("rationale"),
+            )
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse
 

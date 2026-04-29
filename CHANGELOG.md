@@ -3,7 +3,49 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## v0.16.x -- Dashboard decision_level surfacing (#76 part 1)
+## v0.16.0 -- decision_level classifier + MCP primitives (#77 + Phase 5+6 of #76 in sibling PR)
+
+Adds a heuristic decision-level classifier, a single-row write helper for
+`decision.decision_level`, two MCP primitives that expose classification to
+agents, and a bulk-classify CLI for offline backfill. The companion #76
+dashboard work (amber unclassified badge, filter dropdown, inline edit POST
+endpoint) ships in a sibling PR against the same `dev` branch.
+
+### Added
+
+- **New module: `classify/heuristic.py`** -- pure-function port of the L1/L2/L3
+  rules documented at `skills/bicameral-ingest/SKILL.md` lines 178-217. Single
+  public entrypoint `classify(description, source="") -> (level, rationale)`.
+  Deterministic, no IO, no LLM, no network. Regression-tested against the
+  7 fixtures at `tests/fixtures/ingest_level_classification/` (7/7 pass).
+- **New helper: `ledger.queries.update_decision_level(client, decision_id,
+  level)`** -- single-row write helper, sibling of `update_decision_status`.
+  Idempotent. Includes defensive `_DECISION_ID_RE` shape validation
+  (`^decision:[A-Za-z0-9_]+$`) before SurrealQL interpolation
+  (audit S1 defense-in-depth) and a `_VALID_LEVELS` membership check.
+  Raises `DecisionNotFound` when the row does not exist.
+- **New MCP primitives** (two tools, NOT a bulk wrapper):
+  - `bicameral.list_unclassified_decisions(decision_ids?)` -- read-only.
+    Returns `proposals[]` with `proposed_level`, `rationale`, and
+    `confidence` ("low" when the heuristic defaulted with no signal).
+  - `bicameral.set_decision_level(decision_id, level, rationale?)` --
+    single-row write, idempotent. Errors come back structured
+    (`{ok: false, error: ...}`) rather than raised, so agents recover
+    per-row without aborting the loop.
+- **New contracts**: `UnclassifiedProposal`,
+  `ListUnclassifiedDecisionsResponse`, `SetDecisionLevelResponse`.
+- **New CLI: `bicameral-mcp-classify`** (entrypoint at `cli.classify:main`).
+  Default is dry-run (prints a proposal table); `--apply` writes the
+  proposed levels via the same `update_decision_level` helper. Progress
+  output every 100 rows for large batches. Reuses the heuristic and the
+  ledger helper -- one write path, three callers (CLI, MCP tool, future
+  dashboard endpoint).
+
+### Closes
+
+#77
+
+## v0.16.1 -- Dashboard decision_level surfacing (#76 part 1)
 
 Read-side UI for `decision_level`. The pre-existing L1/L2/L3 badges
 (shipped in #71 / CodeGenome Phase 1+2) are preserved; this PR adds the

@@ -11,6 +11,7 @@ No SDK types (RecordID etc.) leak through — normalization happens in client.py
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from .client import LedgerClient, LedgerError
@@ -986,6 +987,58 @@ async def update_decision_status(
     await client.execute(
         f"UPDATE {decision_id} SET status = $s",
         {"s": status},
+    )
+
+
+# ── decision_level write helper (#77) ─────────────────────────────────
+# Single write path used by:
+#   - cli/classify.py --apply              (bulk backfill)
+#   - handlers/set_decision_level.py       (MCP tool primitive)
+#   - dashboard/server.py /api/decision/<id>/level (#76 sibling PR)
+# Schema ASSERT at ledger/schema.py enforces L1/L2/L3; this helper adds
+# defense-in-depth callers see clear Python errors before SurrealQL runs.
+
+_VALID_LEVELS = frozenset(("L1", "L2", "L3"))
+_DECISION_ID_RE = re.compile(r"^decision:[A-Za-z0-9_]+$")
+
+
+class DecisionNotFound(LedgerError):
+    """Raised by update_decision_level when the decision_id has no row."""
+
+
+async def update_decision_level(
+    client: LedgerClient,
+    decision_id: str,
+    level: str,
+) -> None:
+    """Set decision_level on a single decision. Idempotent.
+
+    Validates ``level`` against {L1, L2, L3} and ``decision_id`` against
+    the canonical ``^decision:[A-Za-z0-9_]+$`` shape before any SurrealQL
+    runs (audit S1 defense-in-depth — the existing f-string interpolation
+    pattern is consistent with siblings, but a malformed id would still
+    surface as a SurrealDB error rather than silent corruption).
+
+    Args:
+        client: Connected LedgerClient.
+        decision_id: Full record id (e.g. ``"decision:abc123"``).
+        level: One of ``"L1"``, ``"L2"``, ``"L3"``.
+
+    Raises:
+        ValueError: when ``level`` is not in {L1, L2, L3} or
+            ``decision_id`` fails the shape regex.
+        DecisionNotFound: when no row exists at ``decision_id``.
+    """
+    if level not in _VALID_LEVELS:
+        raise ValueError(f"invalid level {level!r}; expected one of L1, L2, L3")
+    if not _DECISION_ID_RE.match(decision_id):
+        raise ValueError(f"invalid decision_id shape: {decision_id!r}")
+    rows = await client.query(f"SELECT id FROM {decision_id} LIMIT 1")
+    if not rows:
+        raise DecisionNotFound(decision_id)
+    await client.execute(
+        f"UPDATE {decision_id} SET decision_level = $level",
+        {"level": level},
     )
 
 
