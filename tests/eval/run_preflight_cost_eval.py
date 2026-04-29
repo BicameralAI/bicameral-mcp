@@ -27,6 +27,7 @@ Modes:
   for the current platform; no assertion runs
 - No baseline for current platform: skip with re-record instructions
 """
+
 from __future__ import annotations
 
 import sys
@@ -59,7 +60,6 @@ from _baseline_io import (  # noqa: E402  (sibling module)
 from _seed_ledger import seed_ledger_from_synthetic  # noqa: E402
 from _synthetic_ledger import GENERATOR_VERSION, generate_ledger  # noqa: E402
 from _token_count import count_tokens, count_tokens_json  # noqa: E402
-
 
 _C3_WARMUP = 10
 _C3_SAMPLES = 100
@@ -149,8 +149,10 @@ def _isolate_handler_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     import handlers.sync_middleware as sm
+
     monkeypatch.setattr(sm, "ensure_ledger_synced", AsyncMock(return_value=None))
     import handlers.preflight as pf
+
     monkeypatch.setattr(pf, "_should_show_product_stage", lambda: False)
 
 

@@ -17,6 +17,7 @@ Seeding cost: ~20ms per decision via ``ingest_payload``. At N=1000 (3000
 decisions in 3 decisions-per-feature) the seed phase takes ~60s. Acceptable
 for advisory CI; cached at the test level (one seed per N per session).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -95,7 +96,11 @@ async def seed_ledger_from_synthetic(adapter: Any, synthetic: dict) -> int:
 
     # ingest_payload returns a dict (when called on the inner adapter directly)
     # or an IngestResponse model — handle both shapes.
-    created = response.get("created_decisions") if isinstance(response, dict) else getattr(response, "created_decisions", [])
+    created = (
+        response.get("created_decisions")
+        if isinstance(response, dict)
+        else getattr(response, "created_decisions", [])
+    )
     if not created:
         return 0
 
@@ -104,6 +109,7 @@ async def seed_ledger_from_synthetic(adapter: Any, synthetic: dict) -> int:
     desc_to_status = {desc: status for desc, status in desired_statuses}
 
     from ledger.queries import update_decision_status
+
     inner = getattr(adapter, "_inner", adapter)
     client = inner._client
 
