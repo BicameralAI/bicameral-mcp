@@ -107,6 +107,10 @@ CASES: list[dict] = [
         "id": "py_09_typing_annotation_added",
         "language": "python",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantically_preserved",
+        },
         "old": "def f(x):\n    return x + 1\n",
         "new": "def f(x: int) -> int:\n    return x + 1\n",
     },
@@ -114,6 +118,10 @@ CASES: list[dict] = [
         "id": "py_10_variable_rename_only",
         "language": "python",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantically_preserved",
+        },
         "old": ("def f(item):\n    result = item * 2\n    return result\n"),
         "new": ("def f(value):\n    doubled = value * 2\n    return doubled\n"),
     },
@@ -121,6 +129,10 @@ CASES: list[dict] = [
         "id": "py_11_assertion_text_changed",
         "language": "python",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantically_preserved",
+        },
         "old": ("def validate(x):\n    assert x > 0, 'must be positive'\n    return x\n"),
         "new": (
             "def validate(x):\n    assert x > 0, 'value must be greater than zero'\n    return x\n"
@@ -130,6 +142,10 @@ CASES: list[dict] = [
         "id": "py_12_constant_value_tuned",
         "language": "python",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "drifted",
+            "semantic_status": "semantic_change",
+        },
         "old": "DISCOUNT = 0.10\ndef apply(p): return p * (1 - DISCOUNT)\n",
         "new": "DISCOUNT = 0.15\ndef apply(p): return p * (1 - DISCOUNT)\n",
     },
@@ -158,6 +174,10 @@ CASES: list[dict] = [
         "id": "js_03_default_arg_changed",
         "language": "javascript",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "drifted",
+            "semantic_status": "semantic_change",
+        },
         "old": "function f(x = 10) {\n    return x;\n}\n",
         "new": "function f(x = 20) {\n    return x;\n}\n",
     },
@@ -184,6 +204,10 @@ CASES: list[dict] = [
         "id": "ts_03_generic_constraint_added",
         "language": "typescript",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "drifted",
+            "semantic_status": "semantic_change",
+        },
         "old": "function wrap<T>(x: T): T[] { return [x]; }\n",
         "new": ("function wrap<T extends object>(x: T): T[] { return [x]; }\n"),
     },
@@ -213,6 +237,10 @@ CASES: list[dict] = [
         "id": "go_03_error_string_reworded",
         "language": "go",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantically_preserved",
+        },
         "old": (
             "func F(x int) error {\n"
             "    if x < 0 {\n"
@@ -255,6 +283,10 @@ CASES: list[dict] = [
         "id": "rs_03_lifetime_annotation_added",
         "language": "rust",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantically_preserved",
+        },
         "old": "fn longest(x: &str, y: &str) -> &str {\n    x\n}\n",
         "new": ("fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {\n    x\n}\n"),
     },
@@ -285,6 +317,10 @@ CASES: list[dict] = [
         "id": "java_03_throws_clause_added",
         "language": "java",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantic_change",
+        },
         "old": ("class D {\n    int f(int x) { return x + 1; }\n}\n"),
         "new": ("class D {\n    int f(int x) throws IOException { return x + 1; }\n}\n"),
     },
@@ -319,6 +355,10 @@ CASES: list[dict] = [
         "id": "cs_03_async_modifier_added",
         "language": "c_sharp",
         "expected": "uncertain",
+        "expected_judge": {
+            "verdict": "compliant",
+            "semantic_status": "semantic_change",
+        },
         "old": ("class Demo {\n    Task<int> F(int x) { return Task.FromResult(x + 1); }\n}\n"),
         "new": (
             "class Demo {\n"

@@ -127,6 +127,67 @@ and the region stays `pending` until the next sweep.
 **Skip step 2** when `pending_compliance_checks` is empty — nothing changed or
 all regions already had cached verdicts.
 
+### 2.bis Uncertain-band sub-protocol (Phase 4 / #44)
+
+When a `PendingComplianceCheck` carries a `pre_classification` field with
+`verdict == "uncertain"`, the deterministic classifier scored the change in
+the [0.30, 0.80) band — too cosmetic to auto-resolve, too structural to
+short-circuit as semantic. **You are the judge.** Apply this two-axis rubric
+on top of the standard verdict flow above:
+
+**Axis 1 — compliance (decided FIRST).** Is this region semantically about
+the decision at all?
+
+- *No* — emit `verdict: "not_relevant"` and **leave `semantic_status` unset
+  (`None`)**. Axis 2 doesn't apply to misretrieved regions; the server
+  will prune the `binds_to` edge. Stop. Do not reason about cosmetic-vs-semantic.
+- *Yes* — continue to Axis 2.
+
+**Axis 2 — cosmetic vs semantic (decided SECOND).** Use
+`pre_classification.signals` as **advisory** evidence:
+
+| Signal | High value (>0.8) means |
+|---|---|
+| `signature` | Function shape unchanged → leans cosmetic |
+| `neighbors` | Surrounding context unchanged → leans cosmetic |
+| `diff_lines` | Only comment / docstring / whitespace lines changed → leans cosmetic |
+| `no_new_calls` | No new callees introduced → leans cosmetic |
+
+Read the actual diff. Don't trust the signals blindly — they're advisory,
+not authoritative. Then:
+
+- If the change is structurally cosmetic AND the decision's intent is
+  unaffected → `semantic_status: "semantically_preserved"`,
+  `verdict: "compliant"`.
+- If the change is genuinely semantic (logic, threshold, branch, return
+  shape changed) → `semantic_status: "semantic_change"`. The verdict
+  follows from Axis 1: `compliant` if the new logic still meets the
+  decision; `drifted` otherwise.
+
+**Echo the hint's `evidence_refs` back in the verdict's `evidence_refs`** so
+the audit trail captures the deterministic→LLM hand-off:
+
+```
+bicameral.resolve_compliance(
+  phase="drift",
+  flow_id="...",
+  verdicts=[{
+    decision_id:    "...",
+    region_id:      "...",
+    content_hash:   "...",
+    verdict:        "compliant" | "drifted" | "not_relevant",
+    confidence:     "high" | "medium" | "low",
+    explanation:    "<one sentence covering BOTH axes>",
+    semantic_status: "semantically_preserved" | "semantic_change" | None,
+    evidence_refs:  ["<echo from pre_classification.evidence_refs>", ...],
+  }, ...]
+)
+```
+
+The two-axis judgment maps to existing typed fields — no new contract.
+`PreClassificationHint` (the `pre_classification` you read) and
+`ComplianceVerdict` (what you emit) are defined in `contracts.py`.
+
 ### 3. Report
 
 Summarize in one line after `resolve_compliance` completes:

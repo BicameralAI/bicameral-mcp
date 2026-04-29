@@ -24,7 +24,7 @@ the feature introduces a concept, not just a tool).
 
 | Topic | Status |
 |---|---|
-| (none yet) | — |
+| [Cosmetic vs semantic drift](./cosmetic-vs-semantic.md) | Active |
 
 ## Template
 
