@@ -95,8 +95,16 @@ class SymbolDB:
                (name, qualified_name, type, file_path, start_line, end_line, signature, parent_qualified_name)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             [
-                (s.name, s.qualified_name, s.type, s.file_path,
-                 s.start_line, s.end_line, s.signature, s.parent_qualified_name)
+                (
+                    s.name,
+                    s.qualified_name,
+                    s.type,
+                    s.file_path,
+                    s.start_line,
+                    s.end_line,
+                    s.signature,
+                    s.parent_qualified_name,
+                )
                 for s in symbols
             ],
         )
@@ -109,21 +117,15 @@ class SymbolDB:
 
     def lookup_by_name(self, name: str) -> list[sqlite3.Row]:
         conn = self._connect()
-        return conn.execute(
-            "SELECT * FROM symbols WHERE name = ?", (name,)
-        ).fetchall()
+        return conn.execute("SELECT * FROM symbols WHERE name = ?", (name,)).fetchall()
 
     def lookup_by_file(self, file_path: str) -> list[sqlite3.Row]:
         conn = self._connect()
-        return conn.execute(
-            "SELECT * FROM symbols WHERE file_path = ?", (file_path,)
-        ).fetchall()
+        return conn.execute("SELECT * FROM symbols WHERE file_path = ?", (file_path,)).fetchall()
 
     def get_all_symbol_names(self) -> list[tuple[int, str, str]]:
         conn = self._connect()
-        rows = conn.execute(
-            "SELECT id, name, qualified_name FROM symbols"
-        ).fetchall()
+        rows = conn.execute("SELECT id, name, qualified_name FROM symbols").fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
 
     def symbol_count(self) -> int:
@@ -132,9 +134,7 @@ class SymbolDB:
 
     def lookup_by_id(self, symbol_id: int) -> sqlite3.Row | None:
         conn = self._connect()
-        return conn.execute(
-            "SELECT * FROM symbols WHERE id = ?", (symbol_id,)
-        ).fetchone()
+        return conn.execute("SELECT * FROM symbols WHERE id = ?", (symbol_id,)).fetchone()
 
     def delete_all_edges(self) -> None:
         conn = self._connect()

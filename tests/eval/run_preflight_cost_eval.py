@@ -24,6 +24,7 @@ Modes:
   for the current platform; no assertion runs
 - No baseline for current platform: skip with re-record instructions
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -138,8 +139,10 @@ def _isolate_handler_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     import handlers.sync_middleware as sm
+
     monkeypatch.setattr(sm, "ensure_ledger_synced", AsyncMock(return_value=None))
     import handlers.preflight as pf
+
     monkeypatch.setattr(pf, "_should_show_product_stage", lambda: False)
 
 
@@ -201,21 +204,28 @@ def _build_realistic_ctx(
     ledger._inner = inner
 
     import ledger.queries as lq
+
     monkeypatch.setattr(
         lq,
         "get_collision_pending_decisions",
-        AsyncMock(return_value=[
-            _make_hitl_row(f"decision:coll-{i}", f"Collision pending {i}", "collision_pending")
-            for i in range(n_collision_pending)
-        ]),
+        AsyncMock(
+            return_value=[
+                _make_hitl_row(f"decision:coll-{i}", f"Collision pending {i}", "collision_pending")
+                for i in range(n_collision_pending)
+            ]
+        ),
     )
     monkeypatch.setattr(
         lq,
         "get_context_for_ready_decisions",
-        AsyncMock(return_value=[
-            _make_hitl_row(f"decision:ctx-{i}", f"Context pending ready {i}", "context_pending_ready")
-            for i in range(n_context_pending)
-        ]),
+        AsyncMock(
+            return_value=[
+                _make_hitl_row(
+                    f"decision:ctx-{i}", f"Context pending ready {i}", "context_pending_ready"
+                )
+                for i in range(n_context_pending)
+            ]
+        ),
     )
 
     return SimpleNamespace(

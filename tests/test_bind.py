@@ -8,6 +8,7 @@ Covers:
 5. test_bind_idempotent — calling bind twice for same (decision, region) is a no-op
 6. test_bind_status_transition — after bind, decision status transitions to "pending"
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -56,6 +57,7 @@ async def test_bind_success_with_explicit_lines():
     client = await _fresh_client()
     try:
         from ledger.adapter import SurrealDBLedgerAdapter
+
         adapter = SurrealDBLedgerAdapter(url="memory://")
         adapter._client = client
         adapter._connected = True
@@ -63,14 +65,19 @@ async def test_bind_success_with_explicit_lines():
         decision_id = await _seed_decision(client, "Use BM25 for search")
         ctx = _StubCtx(adapter)
 
-        resp = await handle_bind(ctx, bindings=[{
-            "decision_id": decision_id,
-            "file_path": "server.py",
-            "symbol_name": "handle_search",
-            "start_line": 10,
-            "end_line": 30,
-            "purpose": "search handler",
-        }])
+        resp = await handle_bind(
+            ctx,
+            bindings=[
+                {
+                    "decision_id": decision_id,
+                    "file_path": "server.py",
+                    "symbol_name": "handle_search",
+                    "start_line": 10,
+                    "end_line": 30,
+                    "purpose": "search handler",
+                }
+            ],
+        )
 
         assert len(resp.bindings) == 1
         b = resp.bindings[0]
@@ -93,6 +100,7 @@ async def test_bind_symbol_resolution():
     client = await _fresh_client()
     try:
         from ledger.adapter import SurrealDBLedgerAdapter
+
         adapter = SurrealDBLedgerAdapter(url="memory://")
         adapter._client = client
         adapter._connected = True
@@ -101,11 +109,16 @@ async def test_bind_symbol_resolution():
         ctx = _StubCtx(adapter)
 
         with patch("ledger.status.resolve_symbol_lines", return_value=(5, 25)):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "middleware.py",
-                "symbol_name": "rate_limit",
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "middleware.py",
+                        "symbol_name": "rate_limit",
+                    }
+                ],
+            )
 
         assert len(resp.bindings) == 1
         b = resp.bindings[0]
@@ -125,6 +138,7 @@ async def test_bind_unknown_decision_id():
     client = await _fresh_client()
     try:
         from ledger.adapter import SurrealDBLedgerAdapter
+
         adapter = SurrealDBLedgerAdapter(url="memory://")
         adapter._client = client
         adapter._connected = True
@@ -132,13 +146,18 @@ async def test_bind_unknown_decision_id():
         ctx = _StubCtx(adapter)
         fake_id = "decision:fake_does_not_exist_xyz"
 
-        resp = await handle_bind(ctx, bindings=[{
-            "decision_id": fake_id,
-            "file_path": "server.py",
-            "symbol_name": "some_func",
-            "start_line": 1,
-            "end_line": 10,
-        }])
+        resp = await handle_bind(
+            ctx,
+            bindings=[
+                {
+                    "decision_id": fake_id,
+                    "file_path": "server.py",
+                    "symbol_name": "some_func",
+                    "start_line": 1,
+                    "end_line": 10,
+                }
+            ],
+        )
 
         assert len(resp.bindings) == 1
         b = resp.bindings[0]
@@ -158,6 +177,7 @@ async def test_bind_symbol_not_found():
     client = await _fresh_client()
     try:
         from ledger.adapter import SurrealDBLedgerAdapter
+
         adapter = SurrealDBLedgerAdapter(url="memory://")
         adapter._client = client
         adapter._connected = True
@@ -166,11 +186,16 @@ async def test_bind_symbol_not_found():
         ctx = _StubCtx(adapter)
 
         with patch("ledger.status.resolve_symbol_lines", return_value=None):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "cache.py",
-                "symbol_name": "evict_stale",
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "cache.py",
+                        "symbol_name": "evict_stale",
+                    }
+                ],
+            )
 
         assert len(resp.bindings) == 1
         b = resp.bindings[0]
@@ -190,6 +215,7 @@ async def test_bind_idempotent():
     client = await _fresh_client()
     try:
         from ledger.adapter import SurrealDBLedgerAdapter
+
         adapter = SurrealDBLedgerAdapter(url="memory://")
         adapter._client = client
         adapter._connected = True
@@ -226,6 +252,7 @@ async def test_bind_status_transition():
     client = await _fresh_client()
     try:
         from ledger.adapter import SurrealDBLedgerAdapter
+
         adapter = SurrealDBLedgerAdapter(url="memory://")
         adapter._client = client
         adapter._connected = True
@@ -234,25 +261,26 @@ async def test_bind_status_transition():
         ctx = _StubCtx(adapter)
 
         # Verify starting status is ungrounded
-        rows = await client.query(
-            f"SELECT status FROM {decision_id} LIMIT 1"
-        )
+        rows = await client.query(f"SELECT status FROM {decision_id} LIMIT 1")
         assert rows and rows[0].get("status") == "ungrounded"
 
-        resp = await handle_bind(ctx, bindings=[{
-            "decision_id": decision_id,
-            "file_path": "pagination.py",
-            "symbol_name": "paginate",
-            "start_line": 1,
-            "end_line": 15,
-        }])
+        resp = await handle_bind(
+            ctx,
+            bindings=[
+                {
+                    "decision_id": decision_id,
+                    "file_path": "pagination.py",
+                    "symbol_name": "paginate",
+                    "start_line": 1,
+                    "end_line": 15,
+                }
+            ],
+        )
 
         assert resp.bindings[0].error is None
 
         # Status should now be "pending"
-        rows = await client.query(
-            f"SELECT status FROM {decision_id} LIMIT 1"
-        )
+        rows = await client.query(f"SELECT status FROM {decision_id} LIMIT 1")
         assert rows and rows[0].get("status") == "pending"
     finally:
         await client.close()

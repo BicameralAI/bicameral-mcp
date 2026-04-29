@@ -6,6 +6,7 @@ Proves Phase 2 of 2026-04-20-ingest-time-verification.md:
 - Seeding a compliance_check row via resolve_compliance (simulated here by
   direct write) promotes the decision out of PENDING
 """
+
 from __future__ import annotations
 
 import pytest

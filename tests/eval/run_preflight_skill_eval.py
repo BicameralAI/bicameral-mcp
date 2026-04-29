@@ -20,6 +20,7 @@ This is the empirical recall measurement for the catalog's skill-layer
 miss/false-fire rows (M1-M4, FF1, FF3 in the catalog). A failure here is
 real signal: the LLM did not recover the failure mode the row models.
 """
+
 from __future__ import annotations
 
 import json

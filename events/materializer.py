@@ -91,7 +91,8 @@ class EventMaterializer:
                         replayed += 1
                     elif etype == "link_commit.completed":
                         await inner_adapter.ingest_commit(
-                            payload.get("commit_hash", ""), payload.get("repo_path", ""),
+                            payload.get("commit_hash", ""),
+                            payload.get("repo_path", ""),
                         )
                         replayed += 1
                 new_offsets[author] = f.tell()

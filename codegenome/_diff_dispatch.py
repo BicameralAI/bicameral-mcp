@@ -98,8 +98,12 @@ def _build_line_starts(code: bytes) -> list[int]:
 
 
 def _flag_signature_lines(
-    node, code: bytes, line_starts: list[int],
-    sig_node_types: tuple, body_field: str, flags: dict[int, tuple[bool, bool]],
+    node,
+    code: bytes,
+    line_starts: list[int],
+    sig_node_types: tuple,
+    body_field: str,
+    flags: dict[int, tuple[bool, bool]],
 ) -> None:
     """Walk the tree; for each function-like node, mark its signature
     lines (everything from node start to body start) with the
@@ -124,7 +128,8 @@ def _flag_signature_lines(
                 continue
             prev_end = child.end_byte
         last_line = _line_of(
-            max(sig_end_byte - 1, node.start_byte), line_starts,
+            max(sig_end_byte - 1, node.start_byte),
+            line_starts,
         )
         last_line = max(last_line, first_line)
         for ln in range(first_line, last_line + 1):
@@ -132,13 +137,22 @@ def _flag_signature_lines(
             flags[ln] = (True, cur_doc)
     for child in node.children:
         _flag_signature_lines(
-            child, code, line_starts, sig_node_types, body_field, flags,
+            child,
+            code,
+            line_starts,
+            sig_node_types,
+            body_field,
+            flags,
         )
 
 
 def _flag_docstring_lines(
-    node, code: bytes, line_starts: list[int],
-    sig_node_types: tuple, body_field: str, doc_type: str,
+    node,
+    code: bytes,
+    line_starts: list[int],
+    sig_node_types: tuple,
+    body_field: str,
+    doc_type: str,
     flags: dict[int, tuple[bool, bool]],
 ) -> None:
     """For each function-like node, find the first statement of its
@@ -149,7 +163,8 @@ def _flag_docstring_lines(
         body = node.child_by_field_name(body_field)
         if body is not None:
             first_stmt = next(
-                (c for c in body.children if c.is_named), None,
+                (c for c in body.children if c.is_named),
+                None,
             )
             if first_stmt is not None:
                 # Python wraps the literal in expression_statement → string.
@@ -162,19 +177,27 @@ def _flag_docstring_lines(
                 if doc_node is not None:
                     first_line = _line_of(doc_node.start_byte, line_starts)
                     last_line = _line_of(
-                        max(doc_node.end_byte - 1, doc_node.start_byte), line_starts,
+                        max(doc_node.end_byte - 1, doc_node.start_byte),
+                        line_starts,
                     )
                     for ln in range(first_line, last_line + 1):
                         cur_sig, _ = flags.get(ln, (False, False))
                         flags[ln] = (cur_sig, True)
     for child in node.children:
         _flag_docstring_lines(
-            child, code, line_starts, sig_node_types, body_field, doc_type, flags,
+            child,
+            code,
+            line_starts,
+            sig_node_types,
+            body_field,
+            doc_type,
+            flags,
         )
 
 
 def compute_slot_flags(
-    body: str, language: str,
+    body: str,
+    language: str,
 ) -> dict[int, tuple[bool, bool]]:
     """Return ``{line_number: (in_function_signature, in_docstring_slot)}``.
 
@@ -198,13 +221,21 @@ def compute_slot_flags(
     line_starts = _build_line_starts(code)
     flags: dict[int, tuple[bool, bool]] = {}
     _flag_signature_lines(
-        tree.root_node, code, line_starts,
-        config["signature_nodes"], config["body_field"], flags,
+        tree.root_node,
+        code,
+        line_starts,
+        config["signature_nodes"],
+        config["body_field"],
+        flags,
     )
     if config["docstring_node_type"] is not None:
         _flag_docstring_lines(
-            tree.root_node, code, line_starts,
-            config["signature_nodes"], config["body_field"],
-            config["docstring_node_type"], flags,
+            tree.root_node,
+            code,
+            line_starts,
+            config["signature_nodes"],
+            config["body_field"],
+            config["docstring_node_type"],
+            flags,
         )
     return flags

@@ -16,11 +16,7 @@ def _is_javadoc_open(stripped: str) -> bool:
 
 
 def _is_block_comment(stripped: str) -> bool:
-    return (
-        stripped.startswith("/*")
-        or stripped.startswith("*")
-        or stripped.endswith("*/")
-    )
+    return stripped.startswith("/*") or stripped.startswith("*") or stripped.endswith("*/")
 
 
 def _is_line_comment(stripped: str) -> bool:

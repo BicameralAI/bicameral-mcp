@@ -1,4 +1,5 @@
 """Tests for sync_middleware — session-start banner and ledger catch-up (v0.6.1)."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
@@ -47,8 +48,12 @@ def _ungrounded(decision_id="decision:2", description="Billing uses Stripe", sou
     }
 
 
-def _proposal(decision_id="decision:3", description="Rate limit is 100 req/s",
-              source_ref="sprint-notes", days_old=15):
+def _proposal(
+    decision_id="decision:3",
+    description="Rate limit is 100 req/s",
+    source_ref="sprint-notes",
+    days_old=15,
+):
     created_at = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
     return {
         "decision_id": decision_id,
@@ -99,21 +104,24 @@ async def test_banner_includes_ungrounded_decisions():
 async def test_banner_queries_both_drifted_and_ungrounded_statuses():
     ctx = _make_ctx(open_rows=[_drifted()])
     await get_session_start_banner(ctx)
-    ctx.ledger.get_decisions_by_status.assert_called_once_with(["drifted", "ungrounded", "context_pending"])
+    ctx.ledger.get_decisions_by_status.assert_called_once_with(
+        ["drifted", "ungrounded", "context_pending"]
+    )
 
 
 @pytest.mark.asyncio
 async def test_banner_truncates_at_10_items_with_drifted_prioritized():
     # 12 open items: 3 drifted + 9 ungrounded. Truncated view should keep
     # all 3 drifted first, then fill with ungrounded up to the 10-item cap.
-    rows = [_drifted(decision_id=f"decision:d{i}") for i in range(3)] + \
-           [_ungrounded(decision_id=f"decision:u{i}") for i in range(9)]
+    rows = [_drifted(decision_id=f"decision:d{i}") for i in range(3)] + [
+        _ungrounded(decision_id=f"decision:u{i}") for i in range(9)
+    ]
     ctx = _make_ctx(open_rows=rows)
     banner = await get_session_start_banner(ctx)
     assert banner is not None
-    assert banner.drifted_count == 3        # full count, not truncated
+    assert banner.drifted_count == 3  # full count, not truncated
     assert banner.ungrounded_count == 9
-    assert len(banner.items) == 10          # list is capped
+    assert len(banner.items) == 10  # list is capped
     assert banner.truncated is True
     # All 3 drifted must be present in the truncated view
     assert sum(1 for i in banner.items if i["status"] == "drifted") == 3
@@ -232,6 +240,7 @@ def _reset_locks():
     """Drop the per-repo lock registry before and after each test so lock
     identity is deterministic across tests in the same process."""
     from handlers.sync_middleware import _reset_repo_locks_for_tests
+
     _reset_repo_locks_for_tests()
     yield
     _reset_repo_locks_for_tests()

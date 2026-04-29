@@ -13,12 +13,23 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 EvidenceType = Literal[
-    "code", "test", "diff", "runtime", "doc", "decision", "agent_eval", "manual",
+    "code",
+    "test",
+    "diff",
+    "runtime",
+    "doc",
+    "decision",
+    "agent_eval",
+    "manual",
 ]
 
 DriftStatus = Literal[
-    "reflected", "drifted", "pending", "ungrounded",
-    "semantically_preserved", "needs_review",
+    "reflected",
+    "drifted",
+    "pending",
+    "ungrounded",
+    "semantically_preserved",
+    "needs_review",
 ]
 
 

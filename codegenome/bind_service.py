@@ -40,15 +40,24 @@ def _check_hash_parity(
     logger.warning(
         "[codegenome] identity content_hash %s != region content_hash %s "
         "(decision_id=%s, %s:%d-%d) — writing identity anyway",
-        identity.content_hash, code_region_content_hash,
-        decision_id, file_path, start_line, end_line,
+        identity.content_hash,
+        code_region_content_hash,
+        decision_id,
+        file_path,
+        start_line,
+        end_line,
     )
 
 
 async def _persist_subject_and_identity(
-    *, ledger, identity: SubjectIdentity,
-    kind: str, canonical_name: str, decision_id: str,
-    region_id: str | None, repo_ref: str,
+    *,
+    ledger,
+    identity: SubjectIdentity,
+    kind: str,
+    canonical_name: str,
+    decision_id: str,
+    region_id: str | None,
+    repo_ref: str,
 ) -> bool:
     """Run the four ledger writes atomically; return ``True`` on full success.
 
@@ -79,13 +88,16 @@ async def _persist_subject_and_identity(
     in scope.
     """
     subject_id = await ledger.upsert_code_subject(
-        kind=kind, canonical_name=canonical_name,
-        current_confidence=identity.confidence, repo_ref=repo_ref,
+        kind=kind,
+        canonical_name=canonical_name,
+        current_confidence=identity.confidence,
+        repo_ref=repo_ref,
     )
     if not subject_id:
         logger.warning(
             "[codegenome] upsert_code_subject empty id for %s/%s",
-            kind, canonical_name,
+            kind,
+            canonical_name,
         )
         return False
 
@@ -99,11 +111,15 @@ async def _persist_subject_and_identity(
 
     try:
         await ledger.relate_has_identity(
-            subject_id, identity_id, confidence=identity.confidence,
+            subject_id,
+            identity_id,
+            confidence=identity.confidence,
         )
         await ledger.link_decision_to_subject(
-            decision_id, subject_id,
-            region_id=region_id, confidence=identity.confidence,
+            decision_id,
+            subject_id,
+            region_id=region_id,
+            confidence=identity.confidence,
         )
     except Exception:
         # Best-effort cleanup: delete the rows we created in this call
@@ -115,7 +131,9 @@ async def _persist_subject_and_identity(
 
 
 async def _rollback_partial_bind(
-    ledger, subject_id: str, identity_id: str,
+    ledger,
+    subject_id: str,
+    identity_id: str,
 ) -> None:
     """Delete subject_identity + code_subject rows when later edges fail.
 
@@ -137,21 +155,33 @@ async def _rollback_partial_bind(
         except Exception as exc:  # noqa: BLE001 — cleanup, do not propagate
             logger.warning(
                 "[codegenome] partial-bind rollback failed to delete %s %s: %s",
-                label, table_id, exc,
+                label,
+                table_id,
+                exc,
             )
 
 
 def _compute_identity_for_bind(
-    codegenome, file_path, start_line, end_line, repo_ref, code_locator,
+    codegenome,
+    file_path,
+    start_line,
+    end_line,
+    repo_ref,
+    code_locator,
 ):
     """Phase 1+2 path (compute_identity) vs Phase 3 path (with neighbors)."""
     if code_locator is not None and hasattr(codegenome, "compute_identity_with_neighbors"):
         return codegenome.compute_identity_with_neighbors(
-            file_path=file_path, start_line=start_line, end_line=end_line,
-            code_locator=code_locator, repo_ref=repo_ref,
+            file_path=file_path,
+            start_line=start_line,
+            end_line=end_line,
+            code_locator=code_locator,
+            repo_ref=repo_ref,
         )
     return codegenome.compute_identity(
-        file_path=file_path, start_line=start_line, end_line=end_line,
+        file_path=file_path,
+        start_line=start_line,
+        end_line=end_line,
         repo_ref=repo_ref,
     )
 
@@ -184,11 +214,20 @@ async def write_codegenome_identity(
     drifted region. Optional for backward compatibility.
     """
     identity = _compute_identity_for_bind(
-        codegenome, file_path, start_line, end_line, repo_ref, code_locator,
+        codegenome,
+        file_path,
+        start_line,
+        end_line,
+        repo_ref,
+        code_locator,
     )
     _check_hash_parity(
-        identity, code_region_content_hash,
-        decision_id, file_path, start_line, end_line,
+        identity,
+        code_region_content_hash,
+        decision_id,
+        file_path,
+        start_line,
+        end_line,
     )
     persisted = await _persist_subject_and_identity(
         ledger=ledger,

@@ -34,6 +34,7 @@ Cost (approximate, one-time bootstrap with Opus 4.6):
 After running, `git diff tests/fixtures/extraction/` should
 show the new/changed fixtures. Review, hand-edit if needed, commit.
 """
+
 from __future__ import annotations
 
 import argparse

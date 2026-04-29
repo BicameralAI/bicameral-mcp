@@ -46,16 +46,13 @@ async def client() -> LedgerClient:
 
 async def _create_decision(client: LedgerClient, description: str) -> str:
     rows = await client.query(
-        "CREATE decision SET description = $d, status = 'ungrounded' "
-        "RETURN type::string(id) AS id",
+        "CREATE decision SET description = $d, status = 'ungrounded' RETURN type::string(id) AS id",
         {"d": description},
     )
     return str(rows[0]["id"])
 
 
-async def _create_region(
-    client: LedgerClient, file_path: str, symbol_name: str
-) -> str:
+async def _create_region(client: LedgerClient, file_path: str, symbol_name: str) -> str:
     rows = await client.query(
         "CREATE code_region SET "
         "file_path = $f, symbol_name = $s, start_line = 1, end_line = 10 "

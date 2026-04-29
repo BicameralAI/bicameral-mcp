@@ -48,8 +48,6 @@ def ensure_runtime_env() -> None:
     os.environ.setdefault("CODE_LOCATOR_SQLITE_DB", str(cache_root / "code-graph.db"))
 
 
-
-
 def _git_stdout(repo_path: str, *args: str) -> str:
     """Run ``git <args>`` in ``repo_path`` and return stdout (or "" on failure).
 

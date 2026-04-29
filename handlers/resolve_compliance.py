@@ -21,6 +21,7 @@ flow_id ties this call back to the link_commit that generated the checks.
 A missing or mismatched flow_id logs a warning (stale/orphaned call). This
 will become a hard error once the codebase fully migrates to flow_id usage.
 """
+
 from __future__ import annotations
 
 import logging
@@ -80,9 +81,7 @@ async def handle_resolve_compliance(
     last-verdict-wins caveat from v0.4.x).
     """
     if phase not in _VALID_PHASES:
-        raise ValueError(
-            f"Unknown phase {phase!r} — must be one of {sorted(_VALID_PHASES)}"
-        )
+        raise ValueError(f"Unknown phase {phase!r} — must be one of {sorted(_VALID_PHASES)}")
 
     sync_state = getattr(ctx, "_sync_state", None)
     is_ephemeral = False
@@ -92,7 +91,8 @@ async def handle_resolve_compliance(
             logger.warning(
                 "[resolve_compliance] flow_id mismatch: expected %s, got %s — "
                 "verdicts may be stale or from a different link_commit call",
-                expected_flow_id[:8], (flow_id or "missing")[:8],
+                expected_flow_id[:8],
+                (flow_id or "missing")[:8],
             )
         elif expected_flow_id and not flow_id:
             logger.warning(
@@ -117,21 +117,25 @@ async def handle_resolve_compliance(
 
     for v in parsed:
         if not await decision_exists(client, v.decision_id):
-            rejected.append(ResolveComplianceRejection(
-                decision_id=v.decision_id,
-                region_id=v.region_id,
-                reason="unknown_decision_id",
-                detail=f"no decision row for {v.decision_id}",
-            ))
+            rejected.append(
+                ResolveComplianceRejection(
+                    decision_id=v.decision_id,
+                    region_id=v.region_id,
+                    reason="unknown_decision_id",
+                    detail=f"no decision row for {v.decision_id}",
+                )
+            )
             continue
 
         if not await region_exists(client, v.region_id):
-            rejected.append(ResolveComplianceRejection(
-                decision_id=v.decision_id,
-                region_id=v.region_id,
-                reason="unknown_region_id",
-                detail=f"no code_region row for {v.region_id}",
-            ))
+            rejected.append(
+                ResolveComplianceRejection(
+                    decision_id=v.decision_id,
+                    region_id=v.region_id,
+                    reason="unknown_region_id",
+                    detail=f"no code_region row for {v.region_id}",
+                )
+            )
             continue
 
         is_pruned = v.verdict == "not_relevant"
@@ -145,7 +149,8 @@ async def handle_resolve_compliance(
             except Exception as exc:
                 logger.warning(
                     "[resolve_compliance] promote_ephemeral_verdict failed for %s: %s",
-                    v.decision_id, exc,
+                    v.decision_id,
+                    exc,
                 )
 
         await upsert_compliance_check(
@@ -174,13 +179,15 @@ async def handle_resolve_compliance(
 
         affected_decision_ids.add(v.decision_id)
 
-        accepted.append(ResolveComplianceAccepted(
-            decision_id=v.decision_id,
-            region_id=v.region_id,
-            phase=phase,
-            verdict=v.verdict,
-            semantic_status=getattr(v, "semantic_status", None),
-        ))
+        accepted.append(
+            ResolveComplianceAccepted(
+                decision_id=v.decision_id,
+                region_id=v.region_id,
+                phase=phase,
+                verdict=v.verdict,
+                semantic_status=getattr(v, "semantic_status", None),
+            )
+        )
 
     # Sync code_region.content_hash to the verdict hash for every accepted verdict.
     # project_decision_status looks up verdicts by (decision_id, region_id,
@@ -193,7 +200,9 @@ async def handle_resolve_compliance(
         try:
             await update_region_hash(client, v.region_id, v.content_hash)
         except Exception as exc:
-            logger.warning("[resolve_compliance] update_region_hash failed for %s: %s", v.region_id, exc)
+            logger.warning(
+                "[resolve_compliance] update_region_hash failed for %s: %s", v.region_id, exc
+            )
 
     # v0.5.0: holistic status projection after the full batch is written.
     # Replaces the per-verdict last-verdict-wins update from v0.4.x.
@@ -203,11 +212,15 @@ async def handle_resolve_compliance(
 
     logger.info(
         "[resolve_compliance] phase=%s accepted=%d rejected=%d commit=%s",
-        phase, len(accepted), len(rejected), (commit_hash or "")[:8] or "n/a",
+        phase,
+        len(accepted),
+        len(rejected),
+        (commit_hash or "")[:8] or "n/a",
     )
 
     try:
         from dashboard.server import notify_dashboard
+
         await notify_dashboard(ctx)
     except Exception:
         pass

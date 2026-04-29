@@ -94,7 +94,9 @@ def score_continuity(
 ) -> tuple[float, ChangeType]:
     """Pure scoring function. Returns ``(confidence, change_type)``."""
     name_sigs = _name_signals(
-        old_symbol_name, candidate.symbol_name or "", fuzzy_threshold=fuzzy_threshold,
+        old_symbol_name,
+        candidate.symbol_name or "",
+        fuzzy_threshold=fuzzy_threshold,
     )
     kind_sig = 1.0 if old_symbol_kind == (candidate.symbol_kind or "") else 0.0
     weights = dict(_WEIGHTS)
@@ -130,7 +132,8 @@ def find_continuity_match(
     best: tuple[float, ChangeType, object] | None = None
     for cand in candidates[:candidate_cap]:
         score, change_type = score_continuity(
-            identity, cand,
+            identity,
+            cand,
             old_symbol_name=old_symbol_name,
             old_symbol_kind=old_symbol_kind,
             fuzzy_threshold=fuzzy_threshold,

@@ -69,62 +69,97 @@ def _identity_from_dict(d: dict) -> SubjectIdentity:
 
 
 async def _persist_resolved_match(
-    *, ledger, codegenome, code_locator,
-    decision_id: str, region_id: str,
-    old_identity_id: str, code_subject_id: str,
-    repo_ref: str, repo_path: str,
+    *,
+    ledger,
+    codegenome,
+    code_locator,
+    decision_id: str,
+    region_id: str,
+    old_identity_id: str,
+    code_subject_id: str,
+    repo_ref: str,
+    repo_path: str,
     match,
 ) -> str:
     """Execute steps 1–7 of the auto-resolve sequence; return new_region_id."""
     new_identity = codegenome.compute_identity_with_neighbors(
-        match.new_file_path, match.new_start_line, match.new_end_line,
-        code_locator=code_locator, repo_ref=repo_ref,
+        match.new_file_path,
+        match.new_start_line,
+        match.new_end_line,
+        code_locator=code_locator,
+        repo_ref=repo_ref,
     )
     new_region_id = await ledger.upsert_code_region(
-        file_path=match.new_file_path, symbol_name=match.new_symbol_name,
-        start_line=match.new_start_line, end_line=match.new_end_line,
-        repo=repo_path, content_hash=new_identity.content_hash or "",
+        file_path=match.new_file_path,
+        symbol_name=match.new_symbol_name,
+        start_line=match.new_start_line,
+        end_line=match.new_end_line,
+        repo=repo_path,
+        content_hash=new_identity.content_hash or "",
     )
     new_identity_id = await ledger.upsert_subject_identity(new_identity)
     new_version_id = await ledger.write_subject_version(
-        code_subject_id, repo_ref,
-        match.new_file_path, match.new_start_line, match.new_end_line,
-        symbol_name=match.new_symbol_name, symbol_kind=match.new_symbol_kind,
-        content_hash=new_identity.content_hash, signature_hash=new_identity.signature_hash,
+        code_subject_id,
+        repo_ref,
+        match.new_file_path,
+        match.new_start_line,
+        match.new_end_line,
+        symbol_name=match.new_symbol_name,
+        symbol_kind=match.new_symbol_kind,
+        content_hash=new_identity.content_hash,
+        signature_hash=new_identity.signature_hash,
     )
     await ledger.relate_has_version(code_subject_id, new_version_id)
     await ledger.write_identity_supersedes(
-        old_identity_id, new_identity_id,
-        match.change_type, match.confidence,
+        old_identity_id,
+        new_identity_id,
+        match.change_type,
+        match.confidence,
     )
     await ledger.update_binds_to_region(decision_id, region_id, new_region_id)
     return new_region_id
 
 
 def _build_needs_review(
-    *, decision_id: str, region_id: str, old_loc, match,
+    *,
+    decision_id: str,
+    region_id: str,
+    old_loc,
+    match,
 ) -> ContinuityResolution:
     return ContinuityResolution(
-        decision_id=decision_id, old_code_region_id=region_id,
+        decision_id=decision_id,
+        old_code_region_id=region_id,
         new_code_region_id=None,
-        semantic_status="needs_review", confidence=match.confidence,
-        old_location=old_loc, new_location=None,
+        semantic_status="needs_review",
+        confidence=match.confidence,
+        old_location=old_loc,
+        new_location=None,
         rationale=f"ambiguous continuity candidate @ {match.confidence:.2f}; awaiting caller decision",
     )
 
 
 def _build_resolved(
-    *, decision_id: str, region_id: str, new_region_id: str, old_loc, match,
+    *,
+    decision_id: str,
+    region_id: str,
+    new_region_id: str,
+    old_loc,
+    match,
 ) -> ContinuityResolution:
     semantic = "identity_renamed" if match.change_type == "renamed" else "identity_moved"
     return ContinuityResolution(
-        decision_id=decision_id, old_code_region_id=region_id,
+        decision_id=decision_id,
+        old_code_region_id=region_id,
         new_code_region_id=new_region_id,
-        semantic_status=semantic, confidence=match.confidence,
+        semantic_status=semantic,
+        confidence=match.confidence,
         old_location=old_loc,
         new_location=_summary(
-            match.new_file_path, match.new_symbol_name,
-            match.new_start_line, match.new_end_line,
+            match.new_file_path,
+            match.new_symbol_name,
+            match.new_start_line,
+            match.new_end_line,
         ),
         rationale=f"continuity match @ {match.confidence:.2f}, change_type={match.change_type}",
     )
@@ -153,30 +188,46 @@ async def evaluate_continuity_for_drift(
     if old_identity is None:
         return None
     match = find_continuity_match(
-        old_identity, code_locator,
-        old_symbol_name=drift.old_symbol_name, old_symbol_kind=drift.old_symbol_kind,
+        old_identity,
+        code_locator,
+        old_symbol_name=drift.old_symbol_name,
+        old_symbol_kind=drift.old_symbol_kind,
         threshold=threshold_review,
     )
     if match is None:
         return None
-    old_loc = _summary(drift.old_file_path, drift.old_symbol_name, drift.old_start_line, drift.old_end_line)
+    old_loc = _summary(
+        drift.old_file_path, drift.old_symbol_name, drift.old_start_line, drift.old_end_line
+    )
     if match.confidence < threshold_high:
         return _build_needs_review(
-            decision_id=drift.decision_id, region_id=drift.region_id, old_loc=old_loc, match=match,
+            decision_id=drift.decision_id,
+            region_id=drift.region_id,
+            old_loc=old_loc,
+            match=match,
         )
     code_subject_id = await _resolve_code_subject_id(ledger, drift.decision_id)
     if not code_subject_id:
         logger.warning("[continuity] no code_subject for decision_id=%s", drift.decision_id)
         return None
     new_region_id = await _persist_resolved_match(
-        ledger=ledger, codegenome=codegenome, code_locator=code_locator,
-        decision_id=drift.decision_id, region_id=drift.region_id,
-        old_identity_id=old_identity_id, code_subject_id=code_subject_id,
-        repo_ref=drift.repo_ref, repo_path=drift.repo_path, match=match,
+        ledger=ledger,
+        codegenome=codegenome,
+        code_locator=code_locator,
+        decision_id=drift.decision_id,
+        region_id=drift.region_id,
+        old_identity_id=old_identity_id,
+        code_subject_id=code_subject_id,
+        repo_ref=drift.repo_ref,
+        repo_path=drift.repo_path,
+        match=match,
     )
     return _build_resolved(
-        decision_id=drift.decision_id, region_id=drift.region_id,
-        new_region_id=new_region_id, old_loc=old_loc, match=match,
+        decision_id=drift.decision_id,
+        region_id=drift.region_id,
+        new_region_id=new_region_id,
+        old_loc=old_loc,
+        match=match,
     )
 
 

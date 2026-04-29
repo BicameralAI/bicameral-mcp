@@ -44,6 +44,7 @@ class DriftClassificationContext:
     ``content_hash`` + ``commit_hash`` are write-key fields, not
     classifier inputs.
     """
+
     decision_id: str
     region_id: str
     content_hash: str
@@ -58,13 +59,16 @@ class DriftClassificationContext:
 @dataclass(frozen=True)
 class DriftClassificationOutcome:
     """Result of one ``evaluate_drift_classification`` call."""
+
     classification: DriftClassification | None
     auto_resolved: bool
     pre_classification_hint: PreClassificationHint | None
 
 
 _NO_OUTCOME = DriftClassificationOutcome(
-    classification=None, auto_resolved=False, pre_classification_hint=None,
+    classification=None,
+    auto_resolved=False,
+    pre_classification_hint=None,
 )
 
 
@@ -80,7 +84,8 @@ def _hint_from_classification(c: DriftClassification) -> PreClassificationHint:
 
 
 async def _write_auto_resolution(
-    ledger, ctx: DriftClassificationContext,
+    ledger,
+    ctx: DriftClassificationContext,
     classification: DriftClassification,
 ) -> None:
     """Persist the auto-resolved ``compliance_check`` row.
@@ -92,19 +97,26 @@ async def _write_auto_resolution(
     """
     inner = getattr(ledger, "_client", ledger)
     from ledger.queries import upsert_compliance_check
+
     await upsert_compliance_check(
         inner,
-        decision_id=ctx.decision_id, region_id=ctx.region_id,
-        content_hash=ctx.content_hash, verdict="compliant",
-        confidence="high", explanation="auto-classified as cosmetic change",
-        phase="drift", commit_hash=ctx.commit_hash, ephemeral=False,
+        decision_id=ctx.decision_id,
+        region_id=ctx.region_id,
+        content_hash=ctx.content_hash,
+        verdict="compliant",
+        confidence="high",
+        explanation="auto-classified as cosmetic change",
+        phase="drift",
+        commit_hash=ctx.commit_hash,
+        ephemeral=False,
         semantic_status="semantically_preserved",
         evidence_refs=list(classification.evidence_refs),
     )
 
 
 async def _write_or_hint(
-    ledger, ctx: DriftClassificationContext,
+    ledger,
+    ctx: DriftClassificationContext,
     classification: DriftClassification,
 ) -> DriftClassificationOutcome:
     """O5 helper — encapsulate the 3-branch verdict dispatch.
@@ -115,22 +127,28 @@ async def _write_or_hint(
     if classification.verdict == "cosmetic" and classification.confidence >= 0.80:
         await _write_auto_resolution(ledger, ctx, classification)
         return DriftClassificationOutcome(
-            classification=classification, auto_resolved=True,
+            classification=classification,
+            auto_resolved=True,
             pre_classification_hint=None,
         )
     if classification.verdict == "uncertain":
         return DriftClassificationOutcome(
-            classification=classification, auto_resolved=False,
+            classification=classification,
+            auto_resolved=False,
             pre_classification_hint=_hint_from_classification(classification),
         )
     return DriftClassificationOutcome(
-        classification=classification, auto_resolved=False,
+        classification=classification,
+        auto_resolved=False,
         pre_classification_hint=None,
     )
 
 
 def _get_current_neighbors(
-    code_locator, file_path: str, start_line: int, end_line: int,
+    code_locator,
+    file_path: str,
+    start_line: int,
+    end_line: int,
 ) -> Iterable[str] | None:
     """Fetch 1-hop neighbors via Phase 3's ``code_locator.neighbors_for``.
     Returns None on missing locator / missing method / exception
@@ -146,7 +164,9 @@ def _get_current_neighbors(
 
 def _compute_new_signature_hash(
     codegenome: CodeGenomeAdapter,
-    file_path: str, new_start_line: int, new_end_line: int,
+    file_path: str,
+    new_start_line: int,
+    new_end_line: int,
     repo_ref: str,
 ) -> str | None:
     """Recompute signature hash for the region's current location.
@@ -159,7 +179,8 @@ def _compute_new_signature_hash(
     try:
         identity = codegenome.compute_identity(
             file_path=file_path,
-            start_line=new_start_line, end_line=new_end_line,
+            start_line=new_start_line,
+            end_line=new_end_line,
             repo_ref=repo_ref,
         )
     except Exception as exc:
@@ -170,10 +191,14 @@ def _compute_new_signature_hash(
 
 async def _classify_with_loaded_identity(
     *,
-    old_identity, codegenome, code_locator,
+    old_identity,
+    codegenome,
+    code_locator,
     ctx: DriftClassificationContext,
-    new_start_line: int, new_end_line: int,
-    repo_ref: str, new_signature_hash: str | None,
+    new_start_line: int,
+    new_end_line: int,
+    repo_ref: str,
+    new_signature_hash: str | None,
 ):
     """Build the classifier inputs and call ``classify_drift``.
 
@@ -182,16 +207,23 @@ async def _classify_with_loaded_identity(
     keep the entry function under the razor cap.
     """
     new_neighbors = _get_current_neighbors(
-        code_locator, ctx.file_path, new_start_line, new_end_line,
+        code_locator,
+        ctx.file_path,
+        new_start_line,
+        new_end_line,
     )
     if new_signature_hash is None:
         new_signature_hash = _compute_new_signature_hash(
-            codegenome, ctx.file_path,
-            new_start_line, new_end_line, repo_ref,
+            codegenome,
+            ctx.file_path,
+            new_start_line,
+            new_end_line,
+            repo_ref,
         )
     try:
         return classify_drift(
-            ctx.old_body, ctx.new_body,
+            ctx.old_body,
+            ctx.new_body,
             old_signature_hash=old_identity.signature_hash,
             new_signature_hash=new_signature_hash,
             old_neighbors=old_identity.neighbors_at_bind,
@@ -233,9 +265,13 @@ async def evaluate_drift_classification(
         return _NO_OUTCOME
     classification = await _classify_with_loaded_identity(
         old_identity=old_identity,
-        codegenome=codegenome, code_locator=code_locator, ctx=ctx,
-        new_start_line=new_start_line, new_end_line=new_end_line,
-        repo_ref=repo_ref, new_signature_hash=new_signature_hash,
+        codegenome=codegenome,
+        code_locator=code_locator,
+        ctx=ctx,
+        new_start_line=new_start_line,
+        new_end_line=new_end_line,
+        repo_ref=repo_ref,
+        new_signature_hash=new_signature_hash,
     )
     if classification is None:
         return _NO_OUTCOME
@@ -244,6 +280,7 @@ async def evaluate_drift_classification(
     except Exception as exc:
         logger.warning(
             "[drift_service] write_or_hint raised for decision_id=%s: %s",
-            ctx.decision_id, exc,
+            ctx.decision_id,
+            exc,
         )
         return _NO_OUTCOME

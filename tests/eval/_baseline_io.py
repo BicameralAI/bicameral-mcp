@@ -22,6 +22,7 @@ Regression rule (asymmetric — only flags regressions, not improvements):
 Noise floors: tokens 10 (deterministic, but tolerate small generator tweaks),
 latency 0.5ms (OS scheduler + GC jitter on non-realtime kernels).
 """
+
 from __future__ import annotations
 
 import json
@@ -63,12 +64,14 @@ def load_baselines(path: Path = BASELINE_PATH) -> list[dict]:
 
 def write_baselines(rows: list[dict], path: Path = BASELINE_PATH) -> None:
     """Sorted, stable-key JSONL output to keep diffs minimal."""
+
     def _sort_key(row: dict) -> tuple:
         return (
             row.get("metric", ""),
             row.get("recorded_on", ""),
             row.get("n_features", -1),
         )
+
     rows_sorted = sorted(rows, key=_sort_key)
     body = "\n".join(json.dumps(r, sort_keys=True, ensure_ascii=False) for r in rows_sorted)
     path.write_text(body + "\n", encoding="utf-8")

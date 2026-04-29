@@ -43,12 +43,8 @@ class ValidatedSymbol(BaseModel):
 
     original_candidate: str = Field(description="What the LLM (or keyword extractor) proposed")
     matched_symbol: str = Field(description="The real symbol from the index that matched")
-    match_score: float = Field(
-        ge=0.0, le=100.0, description="rapidfuzz match score (0-100)"
-    )
-    symbol_id: int | None = Field(
-        default=None, description="SQLite row ID of the matched symbol"
-    )
+    match_score: float = Field(ge=0.0, le=100.0, description="rapidfuzz match score (0-100)")
+    symbol_id: int | None = Field(default=None, description="SQLite row ID of the matched symbol")
     repo: str = Field(default="", description="Source repo for multi-repo support")
     bridge_method: str = Field(
         default="rapidfuzz_validate",
@@ -95,9 +91,7 @@ class Provenance(BaseModel):
     bridge_match_score: float = Field(
         default=0.0, description="rapidfuzz score of the bridge match"
     )
-    bridge_method: str = Field(
-        default="", description="How the bridge candidate was generated"
-    )
+    bridge_method: str = Field(default="", description="How the bridge candidate was generated")
     rrf_score: float = Field(default=0.0, description="Weighted RRF fusion score")
 
 
@@ -111,7 +105,9 @@ class NeighborInfo(BaseModel):
     file_path: str = Field(description="Path relative to repo root")
     line_number: int = Field(default=0)
     edge_type: str = Field(description="Relationship: contains, imports, invokes, inherits")
-    direction: str = Field(description="forward (this calls neighbor) or backward (neighbor calls this)")
+    direction: str = Field(
+        description="forward (this calls neighbor) or backward (neighbor calls this)"
+    )
 
 
 # ── Output (to Agent C: Evidence Gater) ──────────────────────────────
@@ -133,5 +129,3 @@ class FoundComponent(BaseModel):
     neighbors: list[NeighborInfo] = Field(
         default_factory=list, description="1-hop structural neighbors"
     )
-
-

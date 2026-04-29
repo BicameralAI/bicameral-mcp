@@ -44,7 +44,10 @@ def resolve_symbol_lines(
         try:
             result = subprocess.run(
                 ["git", "show", f"{ref}:{file_path}"],
-                cwd=abs_repo, capture_output=True, text=True, timeout=10,
+                cwd=abs_repo,
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             if result.returncode != 0:
                 return None
@@ -57,9 +60,15 @@ def resolve_symbol_lines(
 
         ext = Path(file_path).suffix
         lang_map = {
-            ".py": "python", ".js": "javascript", ".jsx": "javascript",
-            ".ts": "typescript", ".tsx": "typescript", ".java": "java",
-            ".go": "go", ".rs": "rust", ".cs": "csharp",
+            ".py": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".java": "java",
+            ".go": "go",
+            ".rs": "rust",
+            ".cs": "csharp",
         }
         lang = lang_map.get(ext)
         if lang is None:
@@ -67,19 +76,33 @@ def resolve_symbol_lines(
 
         symbols = extract_symbols_from_content(content, lang, file_path)
         for sym in symbols:
-            name = getattr(sym, "name", None) or (sym.get("name") if isinstance(sym, dict) else None)
-            qname = getattr(sym, "qualified_name", None) or (sym.get("qualified_name") if isinstance(sym, dict) else None)
-            sl = getattr(sym, "start_line", None) or (sym.get("start_line") if isinstance(sym, dict) else None)
-            el = getattr(sym, "end_line", None) or (sym.get("end_line") if isinstance(sym, dict) else None)
+            name = getattr(sym, "name", None) or (
+                sym.get("name") if isinstance(sym, dict) else None
+            )
+            qname = getattr(sym, "qualified_name", None) or (
+                sym.get("qualified_name") if isinstance(sym, dict) else None
+            )
+            sl = getattr(sym, "start_line", None) or (
+                sym.get("start_line") if isinstance(sym, dict) else None
+            )
+            el = getattr(sym, "end_line", None) or (
+                sym.get("end_line") if isinstance(sym, dict) else None
+            )
             if name == symbol_name or qname == symbol_name:
                 return (sl, el)
 
         # Try fuzzy: symbol_name might be unqualified
         bare = symbol_name.split(".")[-1] if "." in symbol_name else symbol_name
         for sym in symbols:
-            name = getattr(sym, "name", None) or (sym.get("name") if isinstance(sym, dict) else None)
-            sl = getattr(sym, "start_line", None) or (sym.get("start_line") if isinstance(sym, dict) else None)
-            el = getattr(sym, "end_line", None) or (sym.get("end_line") if isinstance(sym, dict) else None)
+            name = getattr(sym, "name", None) or (
+                sym.get("name") if isinstance(sym, dict) else None
+            )
+            sl = getattr(sym, "start_line", None) or (
+                sym.get("start_line") if isinstance(sym, dict) else None
+            )
+            el = getattr(sym, "end_line", None) or (
+                sym.get("end_line") if isinstance(sym, dict) else None
+            )
             if name == bare:
                 return (sl, el)
 
@@ -163,7 +186,9 @@ def compute_content_hash(
     if start_line < 1 or end_line < start_line:
         logger.warning(
             "[status] Invalid range %d:%d for %s",
-            start_line, end_line, file_path,
+            start_line,
+            end_line,
+            file_path,
         )
         return None
     return hash_lines(content, start_line, end_line)
@@ -258,7 +283,9 @@ def get_changed_files_in_range(
         if result.returncode != 0:
             logger.warning(
                 "[status] git diff %s..%s failed: %s",
-                base_sha[:8], head_sha[:8], result.stderr[:200],
+                base_sha[:8],
+                head_sha[:8],
+                result.stderr[:200],
             )
             return None
         return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]

@@ -8,6 +8,7 @@ stable, which is what the regression rule depends on.
 tiktoken is pinned in ``pyproject.toml`` ``[test]`` extras to avoid silent
 count drift across CI runs.
 """
+
 from __future__ import annotations
 
 import functools
@@ -17,6 +18,7 @@ import json
 @functools.lru_cache(maxsize=1)
 def _encoder():
     import tiktoken
+
     return tiktoken.get_encoding("cl100k_base")
 
 

@@ -30,6 +30,7 @@ P0 ("auto-grounding not wired") now pass via the caller-LLM flow rather
 than via server-side magic. Scenarios depending on V2-only tools
 (``bicameral_rebind``, ``record_compliance_verdict``) are marked xfail.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -108,16 +109,19 @@ def _scenario_repo(monkeypatch, tmp_path):
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", "memory://")
     repo = tmp_path / "repo"
-    _seed_repo(repo, {
-        "src/payments.py": """
+    _seed_repo(
+        repo,
+        {
+            "src/payments.py": """
             def calculate_discount(order_total: float) -> float:
                 return order_total * 0.1
         """,
-        "src/auth.py": """
+            "src/auth.py": """
             def verify_token(token: str) -> bool:
                 return token.startswith("valid:")
         """,
-    })
+        },
+    )
     monkeypatch.setenv("REPO_PATH", str(repo))
     monkeypatch.setenv("BICAMERAL_AUTHORITATIVE_REF", "main")
     monkeypatch.chdir(repo)
@@ -155,11 +159,16 @@ async def test_scenario_01_new_decision_with_existing_code(_scenario_repo):
     assert ungrounded, f"Expected ungrounded grounding check, got: {lc.pending_grounding_checks}"
     decision_id = ungrounded[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/payments.py",
-        "symbol_name": "calculate_discount",
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/payments.py",
+                "symbol_name": "calculate_discount",
+            }
+        ],
+    )
     assert bind_resp.bindings
     assert not bind_resp.bindings[0].error, bind_resp.bindings[0].error
 
@@ -183,14 +192,16 @@ async def test_scenario_02_code_changed_after_grounded_pending_until_verdict(_sc
         _scenario_repo,
         text="Apply discount",
         intent="Apply 10% discount",
-        code_regions=[{
-            "file_path": "src/payments.py",
-            "symbol": "calculate_discount",
-            "start_line": 1,
-            "end_line": 2,
-            "type": "function",
-            "purpose": "discount calc",
-        }],
+        code_regions=[
+            {
+                "file_path": "src/payments.py",
+                "symbol": "calculate_discount",
+                "start_line": 1,
+                "end_line": 2,
+                "type": "function",
+                "purpose": "discount calc",
+            }
+        ],
     )
     await handle_ingest(ctx, payload)
 
@@ -229,12 +240,16 @@ async def test_scenario_03_code_deleted_after_grounded_pending(_scenario_repo):
         _scenario_repo,
         text="Apply discount",
         intent="Apply 10% discount",
-        code_regions=[{
-            "file_path": "src/payments.py",
-            "symbol": "calculate_discount",
-            "start_line": 1, "end_line": 2,
-            "type": "function", "purpose": "discount calc",
-        }],
+        code_regions=[
+            {
+                "file_path": "src/payments.py",
+                "symbol": "calculate_discount",
+                "start_line": 1,
+                "end_line": 2,
+                "type": "function",
+                "purpose": "discount calc",
+            }
+        ],
     )
     await handle_ingest(ctx, payload)
 
@@ -244,7 +259,9 @@ async def test_scenario_03_code_deleted_after_grounded_pending(_scenario_repo):
     lc = await handle_link_commit(ctx, "HEAD")
 
     # Symbol disappeared on authoritative ref.
-    disappeared = [c for c in lc.pending_grounding_checks if c.get("reason") == "symbol_disappeared"]
+    disappeared = [
+        c for c in lc.pending_grounding_checks if c.get("reason") == "symbol_disappeared"
+    ]
     assert disappeared, f"Expected symbol_disappeared check, got: {lc.pending_grounding_checks}"
 
 
@@ -257,12 +274,16 @@ async def test_scenario_04_symbol_renamed_in_file(_scenario_repo):
         _scenario_repo,
         text="Apply discount",
         intent="Apply 10% discount",
-        code_regions=[{
-            "file_path": "src/payments.py",
-            "symbol": "calculate_discount",
-            "start_line": 1, "end_line": 2,
-            "type": "function", "purpose": "discount calc",
-        }],
+        code_regions=[
+            {
+                "file_path": "src/payments.py",
+                "symbol": "calculate_discount",
+                "start_line": 1,
+                "end_line": 2,
+                "type": "function",
+                "purpose": "discount calc",
+            }
+        ],
     )
     await handle_ingest(ctx, payload)
 
@@ -273,7 +294,9 @@ async def test_scenario_04_symbol_renamed_in_file(_scenario_repo):
     invalidate_sync_cache(ctx)
     lc = await handle_link_commit(ctx, "HEAD")
 
-    disappeared = [c for c in lc.pending_grounding_checks if c.get("reason") == "symbol_disappeared"]
+    disappeared = [
+        c for c in lc.pending_grounding_checks if c.get("reason") == "symbol_disappeared"
+    ]
     assert disappeared, f"Expected symbol_disappeared, got: {lc.pending_grounding_checks}"
     assert disappeared[0]["symbol"] == "calculate_discount"
     # V1 D1: original_lines is part of the payload.
@@ -289,12 +312,16 @@ async def test_scenario_05_symbol_moved_to_different_file(_scenario_repo):
         _scenario_repo,
         text="Apply discount",
         intent="Apply 10% discount",
-        code_regions=[{
-            "file_path": "src/payments.py",
-            "symbol": "calculate_discount",
-            "start_line": 1, "end_line": 2,
-            "type": "function", "purpose": "discount calc",
-        }],
+        code_regions=[
+            {
+                "file_path": "src/payments.py",
+                "symbol": "calculate_discount",
+                "start_line": 1,
+                "end_line": 2,
+                "type": "function",
+                "purpose": "discount calc",
+            }
+        ],
     )
     await handle_ingest(ctx, payload)
 
@@ -306,8 +333,12 @@ async def test_scenario_05_symbol_moved_to_different_file(_scenario_repo):
     invalidate_sync_cache(ctx)
     lc = await handle_link_commit(ctx, "HEAD")
 
-    disappeared = [c for c in lc.pending_grounding_checks if c.get("reason") == "symbol_disappeared"]
-    assert disappeared, f"Expected symbol_disappeared on cross-file move, got: {lc.pending_grounding_checks}"
+    disappeared = [
+        c for c in lc.pending_grounding_checks if c.get("reason") == "symbol_disappeared"
+    ]
+    assert disappeared, (
+        f"Expected symbol_disappeared on cross-file move, got: {lc.pending_grounding_checks}"
+    )
 
 
 @pytest.mark.phase2
@@ -346,13 +377,18 @@ async def test_scenario_06_code_added_ungrounded_resolvable(_scenario_repo):
     # Pass explicit lines — ctx.authoritative_sha is captured at ctx
     # creation and is stale after the new commit, so resolve_symbol_lines
     # would look at the wrong ref. Explicit lines bypass resolution.
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/cart.py",
-        "symbol_name": "cart_total",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/cart.py",
+                "symbol_name": "cart_total",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error, (
         f"bind failed: {bind_resp.bindings[0].error if bind_resp.bindings else 'no result'}"
     )
@@ -412,24 +448,32 @@ async def test_scenario_09_intent_description_supersession(_scenario_repo):
         _scenario_repo,
         text="Apply discount",
         intent="Apply 10% discount on orders",
-        code_regions=[{
-            "file_path": "src/payments.py",
-            "symbol": "calculate_discount",
-            "start_line": 1, "end_line": 2,
-            "type": "function", "purpose": "discount calc",
-        }],
+        code_regions=[
+            {
+                "file_path": "src/payments.py",
+                "symbol": "calculate_discount",
+                "start_line": 1,
+                "end_line": 2,
+                "type": "function",
+                "purpose": "discount calc",
+            }
+        ],
         source_ref="meeting-1",
     )
     p2 = _build_payload(
         _scenario_repo,
         text="Apply discount with backoff",
         intent="Apply 15% discount on orders over $100",
-        code_regions=[{
-            "file_path": "src/payments.py",
-            "symbol": "calculate_discount",
-            "start_line": 1, "end_line": 2,
-            "type": "function", "purpose": "discount calc",
-        }],
+        code_regions=[
+            {
+                "file_path": "src/payments.py",
+                "symbol": "calculate_discount",
+                "start_line": 1,
+                "end_line": 2,
+                "type": "function",
+                "purpose": "discount calc",
+            }
+        ],
         source_ref="meeting-2",
     )
     r1 = await handle_ingest(ctx, p1)
@@ -445,17 +489,31 @@ async def test_scenario_10_multiple_intents_share_symbol(_scenario_repo):
     region = {
         "file_path": "src/auth.py",
         "symbol": "verify_token",
-        "start_line": 1, "end_line": 2,
-        "type": "function", "purpose": "auth check",
+        "start_line": 1,
+        "end_line": 2,
+        "type": "function",
+        "purpose": "auth check",
     }
-    await handle_ingest(ctx, _build_payload(
-        _scenario_repo, text="Verify JWT", intent="Use JWT verification",
-        code_regions=[region], source_ref="m1",
-    ))
-    await handle_ingest(ctx, _build_payload(
-        _scenario_repo, text="Reject invalid", intent="Reject malformed tokens",
-        code_regions=[region], source_ref="m2",
-    ))
+    await handle_ingest(
+        ctx,
+        _build_payload(
+            _scenario_repo,
+            text="Verify JWT",
+            intent="Use JWT verification",
+            code_regions=[region],
+            source_ref="m1",
+        ),
+    )
+    await handle_ingest(
+        ctx,
+        _build_payload(
+            _scenario_repo,
+            text="Reject invalid",
+            intent="Reject malformed tokens",
+            code_regions=[region],
+            source_ref="m2",
+        ),
+    )
     invalidate_sync_cache(ctx)
     drift = await handle_detect_drift(ctx, "src/auth.py")
     decision_ids = {d.decision_id for d in drift.decisions}
@@ -506,18 +564,25 @@ async def test_scenario_12_line_shift_does_not_trigger_drift(_scenario_repo):
     region = {
         "file_path": "src/auth.py",
         "symbol": "verify_token",
-        "start_line": 1, "end_line": 2,
-        "type": "function", "purpose": "auth check",
+        "start_line": 1,
+        "end_line": 2,
+        "type": "function",
+        "purpose": "auth check",
     }
-    await handle_ingest(ctx, _build_payload(
-        _scenario_repo, text="Use JWT", intent="JWT verification",
-        code_regions=[region],
-    ))
+    await handle_ingest(
+        ctx,
+        _build_payload(
+            _scenario_repo,
+            text="Use JWT",
+            intent="JWT verification",
+            code_regions=[region],
+        ),
+    )
 
     # Insert blank lines above — line numbers shift but the symbol bytes
     # are identical.
     (_scenario_repo / "src/auth.py").write_text(
-        "\n\n\ndef verify_token(token: str) -> bool:\n    return token.startswith(\"valid:\")\n"
+        '\n\n\ndef verify_token(token: str) -> bool:\n    return token.startswith("valid:")\n'
     )
     _commit(_scenario_repo, "insert blank lines above")
     invalidate_sync_cache(ctx)
@@ -525,7 +590,9 @@ async def test_scenario_12_line_shift_does_not_trigger_drift(_scenario_repo):
 
     drift = await handle_detect_drift(ctx, "src/auth.py")
     drifted = [d for d in drift.decisions if d.status == "drifted"]
-    assert not drifted, f"Line-shift edit must NOT trigger drift, got: {[(d.status, d.symbol, d.lines) for d in drift.decisions]}"
+    assert not drifted, (
+        f"Line-shift edit must NOT trigger drift, got: {[(d.status, d.symbol, d.lines) for d in drift.decisions]}"
+    )
 
 
 @pytest.mark.phase2

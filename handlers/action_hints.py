@@ -126,27 +126,26 @@ def generate_hints_for_search(
 
     drifted = [m for m in response.matches if m.status == "drifted"]
     if drifted:
-        files = sorted({
-            r.file_path
-            for m in drifted
-            for r in m.code_regions
-            if r.file_path
-        })
-        hints.append(ActionHint(
-            kind="review_drift",
-            message=_drift_message(len(drifted), guided_mode),
-            blocking=guided_mode,
-            refs=[m.decision_id for m in drifted] + files,
-        ))
+        files = sorted({r.file_path for m in drifted for r in m.code_regions if r.file_path})
+        hints.append(
+            ActionHint(
+                kind="review_drift",
+                message=_drift_message(len(drifted), guided_mode),
+                blocking=guided_mode,
+                refs=[m.decision_id for m in drifted] + files,
+            )
+        )
 
     ungrounded = [m for m in response.matches if m.status == "ungrounded"]
     if ungrounded:
-        hints.append(ActionHint(
-            kind="ground_decision",
-            message=_ground_message(len(ungrounded), guided_mode),
-            blocking=guided_mode,
-            refs=[m.decision_id for m in ungrounded],
-        ))
+        hints.append(
+            ActionHint(
+                kind="ground_decision",
+                message=_ground_message(len(ungrounded), guided_mode),
+                blocking=guided_mode,
+                refs=[m.decision_id for m in ungrounded],
+            )
+        )
 
     return hints
 
@@ -172,21 +171,25 @@ def generate_hints_for_scan_branch(
         # a symbol but not a file_path directly — fall back to the
         # response-level files_changed list when per-entry file refs
         # aren't available.
-        hints.append(ActionHint(
-            kind="review_drift",
-            message=_drift_message(len(drifted), guided_mode),
-            blocking=guided_mode,
-            refs=[d.decision_id for d in drifted] + response.files_changed,
-        ))
+        hints.append(
+            ActionHint(
+                kind="review_drift",
+                message=_drift_message(len(drifted), guided_mode),
+                blocking=guided_mode,
+                refs=[d.decision_id for d in drifted] + response.files_changed,
+            )
+        )
 
     ungrounded = [d for d in response.decisions if d.status == "ungrounded"]
     if ungrounded:
-        hints.append(ActionHint(
-            kind="ground_decision",
-            message=_ground_message(len(ungrounded), guided_mode),
-            blocking=guided_mode,
-            refs=[d.decision_id for d in ungrounded],
-        ))
+        hints.append(
+            ActionHint(
+                kind="ground_decision",
+                message=_ground_message(len(ungrounded), guided_mode),
+                blocking=guided_mode,
+                refs=[d.decision_id for d in ungrounded],
+            )
+        )
 
     return hints
 
@@ -210,31 +213,34 @@ def generate_hints_from_findings(
     hints: list[ActionHint] = []
 
     if divergences:
-        hints.append(ActionHint(
-            kind="resolve_divergence",
-            message=_divergence_message(len(divergences), guided_mode),
-            blocking=guided_mode,
-            refs=[f"{d.symbol} ({d.file_path})" for d in divergences],
-        ))
+        hints.append(
+            ActionHint(
+                kind="resolve_divergence",
+                message=_divergence_message(len(divergences), guided_mode),
+                blocking=guided_mode,
+                refs=[f"{d.symbol} ({d.file_path})" for d in divergences],
+            )
+        )
 
     if drift_candidates:
-        hints.append(ActionHint(
-            kind="review_drift",
-            message=_drift_message(len(drift_candidates), guided_mode),
-            blocking=guided_mode,
-            refs=[d.decision_id for d in drift_candidates],
-        ))
+        hints.append(
+            ActionHint(
+                kind="review_drift",
+                message=_drift_message(len(drift_candidates), guided_mode),
+                blocking=guided_mode,
+                refs=[d.decision_id for d in drift_candidates],
+            )
+        )
 
-    open_q_gaps = [
-        g for g in gaps
-        if "open-question" in g.hint or "open question" in g.hint
-    ]
+    open_q_gaps = [g for g in gaps if "open-question" in g.hint or "open question" in g.hint]
     if open_q_gaps:
-        hints.append(ActionHint(
-            kind="answer_open_questions",
-            message=_open_questions_message(len(open_q_gaps), guided_mode),
-            blocking=guided_mode,
-            refs=[g.description[:140] for g in open_q_gaps],
-        ))
+        hints.append(
+            ActionHint(
+                kind="answer_open_questions",
+                message=_open_questions_message(len(open_q_gaps), guided_mode),
+                blocking=guided_mode,
+                refs=[g.description[:140] for g in open_q_gaps],
+            )
+        )
 
     return hints

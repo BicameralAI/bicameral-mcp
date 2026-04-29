@@ -103,12 +103,14 @@ def _make_ctx(
     queried.
     """
     ledger = MagicMock()
-    ledger.ingest_commit = AsyncMock(return_value={
-        "commit_hash": "abc123",
-        "new_decisions_linked": 0,
-        "drift_detected": [],
-        "symbols_indexed": 0,
-    })
+    ledger.ingest_commit = AsyncMock(
+        return_value={
+            "commit_hash": "abc123",
+            "new_decisions_linked": 0,
+            "drift_detected": [],
+            "symbols_indexed": 0,
+        }
+    )
     ledger.get_decisions_for_files = AsyncMock(return_value=region_decisions or [])
     ledger.search_by_query = AsyncMock(return_value=[])
 
@@ -242,9 +244,17 @@ async def test_preflight_fires_on_region_hit_no_keyword():
     )
 
     with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
+        patch(
+            "handlers.link_commit.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.search_decisions.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)
+        ),
     ):
         resp = await handle_preflight(
             ctx,
@@ -269,9 +279,17 @@ async def test_preflight_region_in_sources_chained():
     )
 
     with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
+        patch(
+            "handlers.link_commit.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.search_decisions.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)
+        ),
     ):
         resp = await handle_preflight(
             ctx,
@@ -308,9 +326,17 @@ async def test_preflight_topic_only_no_file_paths_still_works():
     )
 
     with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
+        patch(
+            "handlers.link_commit.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.search_decisions.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)
+        ),
     ):
         resp = await handle_preflight(ctx, topic="drifted stripe webhook handler")
 

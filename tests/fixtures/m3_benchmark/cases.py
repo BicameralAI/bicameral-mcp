@@ -24,48 +24,37 @@ from __future__ import annotations
 CASES: list[dict] = [
     # ── Python: 4 cosmetic ─────────────────────────────────────────
     {
-        "id": "py_01_docstring_added", "language": "python",
+        "id": "py_01_docstring_added",
+        "language": "python",
         "expected": "cosmetic",
         "old": "def fetch(uid):\n    return db.lookup(uid)\n",
-        "new": (
-            "def fetch(uid):\n"
-            '    """Fetch a user by uid."""\n'
-            "    return db.lookup(uid)\n"
-        ),
+        "new": ('def fetch(uid):\n    """Fetch a user by uid."""\n    return db.lookup(uid)\n'),
     },
     {
-        "id": "py_02_imports_reordered", "language": "python",
+        "id": "py_02_imports_reordered",
+        "language": "python",
         "expected": "cosmetic",
-        "old": (
-            "import os\nimport sys\nimport json\n\n"
-            "def f(): return os.getcwd()\n"
-        ),
-        "new": (
-            "import json\nimport os\nimport sys\n\n"
-            "def f(): return os.getcwd()\n"
-        ),
+        "old": ("import os\nimport sys\nimport json\n\ndef f(): return os.getcwd()\n"),
+        "new": ("import json\nimport os\nimport sys\n\ndef f(): return os.getcwd()\n"),
     },
     {
-        "id": "py_03_blank_lines_added", "language": "python",
+        "id": "py_03_blank_lines_added",
+        "language": "python",
         "expected": "cosmetic",
         "old": "def f():\n    a = 1\n    b = 2\n    return a + b\n",
-        "new": (
-            "def f():\n\n    a = 1\n\n    b = 2\n\n    return a + b\n"
-        ),
+        "new": ("def f():\n\n    a = 1\n\n    b = 2\n\n    return a + b\n"),
     },
     {
-        "id": "py_04_comments_added", "language": "python",
+        "id": "py_04_comments_added",
+        "language": "python",
         "expected": "cosmetic",
         "old": "def f(x):\n    return x * 2\n",
-        "new": (
-            "def f(x):\n"
-            "    # double the input\n"
-            "    return x * 2\n"
-        ),
+        "new": ("def f(x):\n    # double the input\n    return x * 2\n"),
     },
     # ── Python: 4 semantic ──────────────────────────────────────────
     {
-        "id": "py_05_logic_removed", "language": "python",
+        "id": "py_05_logic_removed",
+        "language": "python",
         "expected": "semantic",
         "old": (
             "def f(x):\n"
@@ -78,18 +67,17 @@ CASES: list[dict] = [
         "new": "def f(x):\n    return x\n",
     },
     {
-        "id": "py_06_signature_changed", "language": "python",
+        "id": "py_06_signature_changed",
+        "language": "python",
         "expected": "semantic",
         "old": "def f(x):\n    return x\n",
         "new": "def f(x, y, z):\n    return x + y + z\n",
     },
     {
-        "id": "py_07_new_function_call", "language": "python",
+        "id": "py_07_new_function_call",
+        "language": "python",
         "expected": "semantic",
-        "old": (
-            "def f(x):\n"
-            "    return x + 1\n"
-        ),
+        "old": ("def f(x):\n    return x + 1\n"),
         "new": (
             "def f(x):\n"
             "    log_event(x)\n"
@@ -99,12 +87,10 @@ CASES: list[dict] = [
         ),
     },
     {
-        "id": "py_08_branching_added", "language": "python",
+        "id": "py_08_branching_added",
+        "language": "python",
         "expected": "semantic",
-        "old": (
-            "def process(x):\n"
-            "    return transform(x)\n"
-        ),
+        "old": ("def process(x):\n    return transform(x)\n"),
         "new": (
             "def process(x):\n"
             "    if x is None:\n"
@@ -118,59 +104,46 @@ CASES: list[dict] = [
     },
     # ── Python: 4 uncertain ─────────────────────────────────────────
     {
-        "id": "py_09_typing_annotation_added", "language": "python",
+        "id": "py_09_typing_annotation_added",
+        "language": "python",
         "expected": "uncertain",
         "old": "def f(x):\n    return x + 1\n",
         "new": "def f(x: int) -> int:\n    return x + 1\n",
     },
     {
-        "id": "py_10_variable_rename_only", "language": "python",
+        "id": "py_10_variable_rename_only",
+        "language": "python",
         "expected": "uncertain",
-        "old": (
-            "def f(item):\n"
-            "    result = item * 2\n"
-            "    return result\n"
-        ),
+        "old": ("def f(item):\n    result = item * 2\n    return result\n"),
+        "new": ("def f(value):\n    doubled = value * 2\n    return doubled\n"),
+    },
+    {
+        "id": "py_11_assertion_text_changed",
+        "language": "python",
+        "expected": "uncertain",
+        "old": ("def validate(x):\n    assert x > 0, 'must be positive'\n    return x\n"),
         "new": (
-            "def f(value):\n"
-            "    doubled = value * 2\n"
-            "    return doubled\n"
+            "def validate(x):\n    assert x > 0, 'value must be greater than zero'\n    return x\n"
         ),
     },
     {
-        "id": "py_11_assertion_text_changed", "language": "python",
-        "expected": "uncertain",
-        "old": (
-            "def validate(x):\n"
-            "    assert x > 0, 'must be positive'\n"
-            "    return x\n"
-        ),
-        "new": (
-            "def validate(x):\n"
-            "    assert x > 0, 'value must be greater than zero'\n"
-            "    return x\n"
-        ),
-    },
-    {
-        "id": "py_12_constant_value_tuned", "language": "python",
+        "id": "py_12_constant_value_tuned",
+        "language": "python",
         "expected": "uncertain",
         "old": "DISCOUNT = 0.10\ndef apply(p): return p * (1 - DISCOUNT)\n",
         "new": "DISCOUNT = 0.15\ndef apply(p): return p * (1 - DISCOUNT)\n",
     },
     # ── JavaScript: 1 cosmetic + 1 semantic + 1 uncertain ───────────
     {
-        "id": "js_01_jsdoc_added", "language": "javascript",
+        "id": "js_01_jsdoc_added",
+        "language": "javascript",
         "expected": "cosmetic",
         "old": "function add(x, y) {\n    return x + y;\n}\n",
-        "new": (
-            "/** Add two numbers. */\n"
-            "function add(x, y) {\n"
-            "    return x + y;\n"
-            "}\n"
-        ),
+        "new": ("/** Add two numbers. */\nfunction add(x, y) {\n    return x + y;\n}\n"),
     },
     {
-        "id": "js_02_logic_removed", "language": "javascript",
+        "id": "js_02_logic_removed",
+        "language": "javascript",
         "expected": "semantic",
         "old": (
             "function process(x) {\n"
@@ -182,20 +155,23 @@ CASES: list[dict] = [
         "new": "function process(x) {\n    return x;\n}\n",
     },
     {
-        "id": "js_03_default_arg_changed", "language": "javascript",
+        "id": "js_03_default_arg_changed",
+        "language": "javascript",
         "expected": "uncertain",
         "old": "function f(x = 10) {\n    return x;\n}\n",
         "new": "function f(x = 20) {\n    return x;\n}\n",
     },
     # ── TypeScript: 1 cosmetic + 1 semantic + 1 uncertain ───────────
     {
-        "id": "ts_01_type_annotation_only", "language": "typescript",
+        "id": "ts_01_type_annotation_only",
+        "language": "typescript",
         "expected": "cosmetic",
         "old": "function f(x) {\n    return x + 1;\n}\n",
         "new": "function f(x: number): number {\n    return x + 1;\n}\n",
     },
     {
-        "id": "ts_02_signature_changed", "language": "typescript",
+        "id": "ts_02_signature_changed",
+        "language": "typescript",
         "expected": "semantic",
         "old": "function f(x: number): number {\n    return x;\n}\n",
         "new": (
@@ -205,31 +181,23 @@ CASES: list[dict] = [
         ),
     },
     {
-        "id": "ts_03_generic_constraint_added", "language": "typescript",
+        "id": "ts_03_generic_constraint_added",
+        "language": "typescript",
         "expected": "uncertain",
         "old": "function wrap<T>(x: T): T[] { return [x]; }\n",
-        "new": (
-            "function wrap<T extends object>(x: T): T[] { return [x]; }\n"
-        ),
+        "new": ("function wrap<T extends object>(x: T): T[] { return [x]; }\n"),
     },
     # ── Go: 1 cosmetic + 1 semantic + 1 uncertain ───────────────────
     {
-        "id": "go_01_block_comment_added", "language": "go",
+        "id": "go_01_block_comment_added",
+        "language": "go",
         "expected": "cosmetic",
-        "old": (
-            "func Add(x, y int) int {\n"
-            "    return x + y\n"
-            "}\n"
-        ),
-        "new": (
-            "// Add adds two ints.\n"
-            "func Add(x, y int) int {\n"
-            "    return x + y\n"
-            "}\n"
-        ),
+        "old": ("func Add(x, y int) int {\n    return x + y\n}\n"),
+        "new": ("// Add adds two ints.\nfunc Add(x, y int) int {\n    return x + y\n}\n"),
     },
     {
-        "id": "go_02_logic_removed", "language": "go",
+        "id": "go_02_logic_removed",
+        "language": "go",
         "expected": "semantic",
         "old": (
             "func Process(x int) int {\n"
@@ -242,39 +210,37 @@ CASES: list[dict] = [
         "new": "func Process(x int) int {\n    return x\n}\n",
     },
     {
-        "id": "go_03_error_string_reworded", "language": "go",
+        "id": "go_03_error_string_reworded",
+        "language": "go",
         "expected": "uncertain",
         "old": (
-            'func F(x int) error {\n'
-            '    if x < 0 {\n'
+            "func F(x int) error {\n"
+            "    if x < 0 {\n"
             '        return errors.New("input must be non-negative")\n'
-            '    }\n'
-            '    return nil\n'
-            '}\n'
+            "    }\n"
+            "    return nil\n"
+            "}\n"
         ),
         "new": (
-            'func F(x int) error {\n'
-            '    if x < 0 {\n'
+            "func F(x int) error {\n"
+            "    if x < 0 {\n"
             '        return errors.New("x cannot be less than zero")\n'
-            '    }\n'
-            '    return nil\n'
-            '}\n'
+            "    }\n"
+            "    return nil\n"
+            "}\n"
         ),
     },
     # ── Rust: 1 cosmetic + 1 semantic + 1 uncertain ─────────────────
     {
-        "id": "rs_01_doc_comment_added", "language": "rust",
+        "id": "rs_01_doc_comment_added",
+        "language": "rust",
         "expected": "cosmetic",
         "old": "fn add_one(x: i32) -> i32 {\n    x + 1\n}\n",
-        "new": (
-            "/// Add one to the input.\n"
-            "fn add_one(x: i32) -> i32 {\n"
-            "    x + 1\n"
-            "}\n"
-        ),
+        "new": ("/// Add one to the input.\nfn add_one(x: i32) -> i32 {\n    x + 1\n}\n"),
     },
     {
-        "id": "rs_02_signature_changed", "language": "rust",
+        "id": "rs_02_signature_changed",
+        "language": "rust",
         "expected": "semantic",
         "old": "fn process(x: i32) -> i32 { x + 1 }\n",
         "new": (
@@ -286,29 +252,23 @@ CASES: list[dict] = [
         ),
     },
     {
-        "id": "rs_03_lifetime_annotation_added", "language": "rust",
+        "id": "rs_03_lifetime_annotation_added",
+        "language": "rust",
         "expected": "uncertain",
         "old": "fn longest(x: &str, y: &str) -> &str {\n    x\n}\n",
-        "new": (
-            "fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {\n"
-            "    x\n"
-            "}\n"
-        ),
+        "new": ("fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {\n    x\n}\n"),
     },
     # ── Java: 1 cosmetic + 1 semantic + 1 uncertain ─────────────────
     {
-        "id": "java_01_javadoc_added", "language": "java",
+        "id": "java_01_javadoc_added",
+        "language": "java",
         "expected": "cosmetic",
         "old": "class D {\n    int f(int x) { return x + 1; }\n}\n",
-        "new": (
-            "class D {\n"
-            "    /** Adds one. */\n"
-            "    int f(int x) { return x + 1; }\n"
-            "}\n"
-        ),
+        "new": ("class D {\n    /** Adds one. */\n    int f(int x) { return x + 1; }\n}\n"),
     },
     {
-        "id": "java_02_logic_removed", "language": "java",
+        "id": "java_02_logic_removed",
+        "language": "java",
         "expected": "semantic",
         "old": (
             "class D {\n"
@@ -319,37 +279,21 @@ CASES: list[dict] = [
             "    }\n"
             "}\n"
         ),
-        "new": (
-            "class D {\n"
-            "    int process(int x) {\n"
-            "        return x;\n"
-            "    }\n"
-            "}\n"
-        ),
+        "new": ("class D {\n    int process(int x) {\n        return x;\n    }\n}\n"),
     },
     {
-        "id": "java_03_throws_clause_added", "language": "java",
+        "id": "java_03_throws_clause_added",
+        "language": "java",
         "expected": "uncertain",
-        "old": (
-            "class D {\n"
-            "    int f(int x) { return x + 1; }\n"
-            "}\n"
-        ),
-        "new": (
-            "class D {\n"
-            "    int f(int x) throws IOException { return x + 1; }\n"
-            "}\n"
-        ),
+        "old": ("class D {\n    int f(int x) { return x + 1; }\n}\n"),
+        "new": ("class D {\n    int f(int x) throws IOException { return x + 1; }\n}\n"),
     },
     # ── C#: 1 cosmetic + 1 semantic + 1 uncertain ───────────────────
     {
-        "id": "cs_01_xml_doc_added", "language": "c_sharp",
+        "id": "cs_01_xml_doc_added",
+        "language": "c_sharp",
         "expected": "cosmetic",
-        "old": (
-            "class Demo {\n"
-            "    int F(int x) { return x + 1; }\n"
-            "}\n"
-        ),
+        "old": ("class Demo {\n    int F(int x) { return x + 1; }\n}\n"),
         "new": (
             "class Demo {\n"
             "    /// <summary>F adds one.</summary>\n"
@@ -358,13 +302,10 @@ CASES: list[dict] = [
         ),
     },
     {
-        "id": "cs_02_signature_changed", "language": "c_sharp",
+        "id": "cs_02_signature_changed",
+        "language": "c_sharp",
         "expected": "semantic",
-        "old": (
-            "class Demo {\n"
-            "    int F(int x) { return x; }\n"
-            "}\n"
-        ),
+        "old": ("class Demo {\n    int F(int x) { return x; }\n}\n"),
         "new": (
             "class Demo {\n"
             "    public async Task<T> F<T>(T x, CancellationToken ct = default) {\n"
@@ -375,13 +316,10 @@ CASES: list[dict] = [
         ),
     },
     {
-        "id": "cs_03_async_modifier_added", "language": "c_sharp",
+        "id": "cs_03_async_modifier_added",
+        "language": "c_sharp",
         "expected": "uncertain",
-        "old": (
-            "class Demo {\n"
-            "    Task<int> F(int x) { return Task.FromResult(x + 1); }\n"
-            "}\n"
-        ),
+        "old": ("class Demo {\n    Task<int> F(int x) { return Task.FromResult(x + 1); }\n}\n"),
         "new": (
             "class Demo {\n"
             "    async Task<int> F(int x) { return await Task.FromResult(x + 1); }\n"

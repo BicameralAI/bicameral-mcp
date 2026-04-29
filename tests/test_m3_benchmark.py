@@ -42,9 +42,12 @@ def _classify_case(case: dict) -> DriftClassification:
         old_sig = new_sig = "SIG_X"
         old_neighbors = new_neighbors = ("a", "b", "c")
     return classify_drift(
-        case["old"], case["new"],
-        old_signature_hash=old_sig, new_signature_hash=new_sig,
-        old_neighbors=old_neighbors, new_neighbors=new_neighbors,
+        case["old"],
+        case["new"],
+        old_signature_hash=old_sig,
+        new_signature_hash=new_sig,
+        old_neighbors=old_neighbors,
+        new_neighbors=new_neighbors,
         language=case["language"],
     )
 
@@ -98,25 +101,22 @@ def test_m3_precision_at_least_90_percent() -> None:
     results = []
     for case in CASES:
         c = _classify_case(case)
-        results.append({
-            "id": case["id"],
-            "language": case["language"],
-            "expected": case["expected"],
-            "actual": c.verdict,
-            "confidence": c.confidence,
-            "signals": c.signals,
-        })
+        results.append(
+            {
+                "id": case["id"],
+                "language": case["language"],
+                "expected": case["expected"],
+                "actual": c.verdict,
+                "confidence": c.confidence,
+                "signals": c.signals,
+            }
+        )
 
     # False positives = cases the classifier said cosmetic but were
     # actually expected semantic.
     auto_resolved = [r for r in results if r["actual"] == "cosmetic"]
-    false_positives = [
-        r for r in auto_resolved if r["expected"] == "semantic"
-    ]
-    fp_rate = (
-        len(false_positives) / len(auto_resolved)
-        if auto_resolved else 0.0
-    )
+    false_positives = [r for r in auto_resolved if r["expected"] == "semantic"]
+    fp_rate = len(false_positives) / len(auto_resolved) if auto_resolved else 0.0
     assert fp_rate < 0.05, (
         f"M3 false-positive rate {fp_rate:.2%} exceeds 5% threshold. "
         f"Misclassified semantic-as-cosmetic: "
@@ -126,7 +126,13 @@ def test_m3_precision_at_least_90_percent() -> None:
     # Coverage check: every supported language appears in the corpus.
     languages_seen = {r["language"] for r in results}
     expected_langs = {
-        "python", "javascript", "typescript", "go", "rust", "java", "c_sharp",
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "rust",
+        "java",
+        "c_sharp",
     }
     assert languages_seen == expected_langs, (
         f"Corpus language coverage mismatch. "

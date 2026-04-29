@@ -201,7 +201,10 @@ def test_compute_identity_with_neighbors_populates_field():
     locator = _StubLocator(["cg:foo", "cg:bar"])
     with _stub_git_content("def f(): pass\n"):
         identity = adapter.compute_identity_with_neighbors(
-            "src/foo.py", 1, 1, code_locator=locator,
+            "src/foo.py",
+            1,
+            1,
+            code_locator=locator,
         )
     assert identity.neighbors_at_bind == ("cg:bar", "cg:foo")  # sorted
 
@@ -211,7 +214,10 @@ def test_compute_identity_with_neighbors_falls_back_to_empty_tuple_on_none_locat
     adapter = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
     with _stub_git_content("def f(): pass\n"):
         identity = adapter.compute_identity_with_neighbors(
-            "src/foo.py", 1, 1, code_locator=None,
+            "src/foo.py",
+            1,
+            1,
+            code_locator=None,
         )
     assert identity.neighbors_at_bind == ()
 
@@ -221,7 +227,10 @@ def test_compute_identity_with_neighbors_locator_returning_empty_yields_empty_tu
     locator = _StubLocator([])
     with _stub_git_content("body"):
         identity = adapter.compute_identity_with_neighbors(
-            "src/foo.py", 1, 5, code_locator=locator,
+            "src/foo.py",
+            1,
+            5,
+            code_locator=locator,
         )
     assert identity.neighbors_at_bind == ()
 

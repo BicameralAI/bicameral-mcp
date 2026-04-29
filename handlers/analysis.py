@@ -38,14 +38,18 @@ _NEGATION_PAIRS: list[tuple[str, str]] = [
 ]
 
 _DIVERGENCE_TOKENS = {
-    " vs ", " vs. ", " or ", "instead of", "rather than",
+    " vs ",
+    " vs. ",
+    " or ",
+    "instead of",
+    "rather than",
 }
 
 
 def _descriptions_conflict(descriptions: list[str]) -> bool:
     lower = [d.lower() for d in descriptions]
     for i, a in enumerate(lower):
-        for b in lower[i + 1:]:
+        for b in lower[i + 1 :]:
             for left, right in _NEGATION_PAIRS:
                 if (left in a and right in b) or (left in b and right in a):
                     return True
@@ -86,8 +90,14 @@ def _detect_divergences(matches: list[DecisionMatch]) -> list[BriefDivergence]:
 # ── Gap extraction heuristic ─────────────────────────────────────────
 
 _OPEN_QUESTION_MARKERS = (
-    "?", " tbd", " tbh", " vs ", " vs. ",
-    "open question", "should we", "which one",
+    "?",
+    " tbd",
+    " tbh",
+    " vs ",
+    " vs. ",
+    "open question",
+    "should we",
+    "which one",
 )
 
 
@@ -101,22 +111,27 @@ def _extract_gaps(matches: list[DecisionMatch]) -> list[BriefGap]:
     gaps: list[BriefGap] = []
     for m in matches:
         if _looks_like_open_question(m.description):
-            gaps.append(BriefGap(
-                description=m.description,
-                hint="open-question phrasing (vs/or/tbd/?)",
-                relevant_source_refs=[m.source_ref] if m.source_ref else [],
-            ))
+            gaps.append(
+                BriefGap(
+                    description=m.description,
+                    hint="open-question phrasing (vs/or/tbd/?)",
+                    relevant_source_refs=[m.source_ref] if m.source_ref else [],
+                )
+            )
             continue
         if m.status == "ungrounded":
-            gaps.append(BriefGap(
-                description=m.description,
-                hint="decision recorded but no code grounding — needs implementation or clarification",
-                relevant_source_refs=[m.source_ref] if m.source_ref else [],
-            ))
+            gaps.append(
+                BriefGap(
+                    description=m.description,
+                    hint="decision recorded but no code grounding — needs implementation or clarification",
+                    relevant_source_refs=[m.source_ref] if m.source_ref else [],
+                )
+            )
     return gaps
 
 
 # ── Shape conversion ─────────────────────────────────────────────────
+
 
 def _to_brief_decision(m: DecisionMatch) -> BriefDecision:
     return BriefDecision(

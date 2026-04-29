@@ -34,6 +34,7 @@ def _read_collaboration_mode(repo_path: str) -> str:
         return "solo"
     try:
         import yaml
+
         config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         return config.get("mode", "solo")
     except Exception:
@@ -103,4 +104,5 @@ def get_drift_analyzer():
     or CodeGenomeDriftAnalyzer when ready.
     """
     from ledger.drift import HashDriftAnalyzer
+
     return HashDriftAnalyzer()

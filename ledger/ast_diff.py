@@ -41,18 +41,20 @@ logger = logging.getLogger(__name__)
 # Languages B1 actually classifies. Anything else returns False (fail-safe).
 # Matches the set wired into code_locator/indexing/symbol_extractor.py so
 # the cosmetic detector never silently diverges from the indexer.
-SUPPORTED_LANGUAGES: frozenset[str] = frozenset({
-    "python",
-    "javascript",
-    "typescript",
-    "java",
-    "go",
-    "rust",
-    "c_sharp",
-    # via LANGUAGE_FALLBACK
-    "jsx",
-    "tsx",
-})
+SUPPORTED_LANGUAGES: frozenset[str] = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "java",
+        "go",
+        "rust",
+        "c_sharp",
+        # via LANGUAGE_FALLBACK
+        "jsx",
+        "tsx",
+    }
+)
 
 
 def is_cosmetic_change(before: str, after: str, lang: str) -> bool:
@@ -93,8 +95,9 @@ def is_cosmetic_change(before: str, after: str, lang: str) -> bool:
         # If either input doesn't parse cleanly, refuse to call it cosmetic.
         if tree_before.root_node.has_error or tree_after.root_node.has_error:
             return False
-        return _signature(tree_before.root_node, before_bytes) == \
-               _signature(tree_after.root_node, after_bytes)
+        return _signature(tree_before.root_node, before_bytes) == _signature(
+            tree_after.root_node, after_bytes
+        )
     except (Exception, RecursionError) as exc:
         logger.debug("[ast_diff] classifier failed for %s: %s", normalized, exc)
         return False
@@ -114,7 +117,7 @@ def _signature(node: Any, source: bytes) -> tuple:
     produces a signature mismatch.
     """
     if node.child_count == 0:
-        return (node.type, source[node.start_byte:node.end_byte])
+        return (node.type, source[node.start_byte : node.end_byte])
     return (
         node.type,
         tuple(_signature(child, source) for child in node.children),

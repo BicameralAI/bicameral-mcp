@@ -21,7 +21,9 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "phase2: requires SurrealDBLedgerAdapter + SurrealDB")
     config.addinivalue_line("markers", "phase3: full E2E — requires both Phase 1 + Phase 2")
     config.addinivalue_line("markers", "alpha_flow: Jacob North Star regression suite — v0.7 gate")
-    config.addinivalue_line("markers", "bench: drift benchmark harness (V1 A1) — skipped by default, run with -m bench")
+    config.addinivalue_line(
+        "markers", "bench: drift benchmark harness (V1 A1) — skipped by default, run with -m bench"
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +44,7 @@ def _default_authoritative_ref_to_current_branch(monkeypatch):
     the start of the test, which unsets this default for that test only.
     """
     import subprocess
+
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -57,11 +60,12 @@ def _default_authoritative_ref_to_current_branch(monkeypatch):
         monkeypatch.setenv("BICAMERAL_AUTHORITATIVE_REF", current_branch)
 
 
-
 @pytest.fixture
 def repo_path() -> str:
     """Repo root. Defaults to the MCP repo itself for Phase 1+ tests."""
-    return os.getenv("REPO_PATH", str(os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))))
+    return os.getenv(
+        "REPO_PATH", str(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    )
 
 
 @pytest.fixture
@@ -73,6 +77,7 @@ def surreal_url() -> str:
 def ctx():
     """Build a BicameralContext from current env (SURREAL_URL, REPO_PATH)."""
     from context import BicameralContext
+
     return BicameralContext.from_env()
 
 

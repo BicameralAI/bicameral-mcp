@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Team-mode event replay re-issues every RELATE; duplicates are rejected by the
 # DB and treated as a no-op success here.
 
+
 async def _execute_idempotent_edge(
     client: LedgerClient, sql: str, vars: dict | None = None
 ) -> None:
@@ -193,16 +194,13 @@ async def get_all_decisions(
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
     for row in rows:
-        for region in (row.get("code_regions") or []):
+        for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
     for row in rows:
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [
-            s for s in spans
-            if s and s.get("text") and s.get("text") != description
-        ]
+        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         if not row.get("meeting_date"):
@@ -253,15 +251,12 @@ async def search_by_bm25(
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
         row["confidence"] = round(1.0 - (i / max(total, 1)) * 0.4, 2)
-        for region in (row.get("code_regions") or []):
+        for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [
-            s for s in spans
-            if s and s.get("text") and s.get("text") != description
-        ]
+        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         row["meeting_date"] = (first_span.get("meeting_date") if first_span else "") or ""
@@ -376,7 +371,7 @@ async def get_decisions_for_file(
             "purpose": region_row.get("purpose", ""),
             "content_hash": region_row.get("content_hash", ""),
         }
-        for decision in (region_row.get("decisions") or []):
+        for decision in region_row.get("decisions") or []:
             if decision is None:
                 continue
             did = str(decision.get("id", ""))
@@ -384,19 +379,21 @@ async def get_decisions_for_file(
                 continue
             seen_decision_ids.add(did)
             decision_id_set.add(did)
-            results.append({
-                "decision_id": did,
-                "description": decision.get("description", ""),
-                "source_type": decision.get("source_type", ""),
-                "source_ref": decision.get("source_ref", ""),
-                "source_excerpt": "",
-                "meeting_date": "",
-                "speaker": "",
-                "ingested_at": str(decision.get("created_at", "")),
-                "status": decision.get("status", "ungrounded"),
-                "signoff": decision.get("signoff"),
-                "code_region": region,
-            })
+            results.append(
+                {
+                    "decision_id": did,
+                    "description": decision.get("description", ""),
+                    "source_type": decision.get("source_type", ""),
+                    "source_ref": decision.get("source_ref", ""),
+                    "source_excerpt": "",
+                    "meeting_date": "",
+                    "speaker": "",
+                    "ingested_at": str(decision.get("created_at", "")),
+                    "status": decision.get("status", "ungrounded"),
+                    "signoff": decision.get("signoff"),
+                    "code_region": region,
+                }
+            )
 
     # Backfill source_excerpt + meeting_date via yields reverse edge
     if decision_id_set:
@@ -412,14 +409,11 @@ async def get_decisions_for_file(
         )
         excerpt_by_decision: dict[str, tuple[str, str]] = {}
         desc_by_decision = {e["decision_id"]: e.get("description", "") for e in results}
-        for r in (excerpt_rows or []):
+        for r in excerpt_rows or []:
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [
-                s for s in spans
-                if s and s.get("text") and s.get("text") != desc
-            ]
+            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -486,7 +480,7 @@ async def get_decisions_for_files(
             "purpose": region_row.get("purpose", ""),
             "content_hash": region_row.get("content_hash", ""),
         }
-        for decision in (region_row.get("decisions") or []):
+        for decision in region_row.get("decisions") or []:
             if decision is None:
                 continue
             did = str(decision.get("id", ""))
@@ -494,18 +488,20 @@ async def get_decisions_for_files(
                 continue
             seen_decision_ids.add(did)
             decision_id_set.add(did)
-            results.append({
-                "decision_id": did,
-                "description": decision.get("description", ""),
-                "source_type": decision.get("source_type", ""),
-                "source_ref": decision.get("source_ref", ""),
-                "source_excerpt": "",
-                "meeting_date": "",
-                "ingested_at": str(decision.get("created_at", "")),
-                "status": decision.get("status", "ungrounded"),
-                "signoff": decision.get("signoff"),
-                "code_region": region,
-            })
+            results.append(
+                {
+                    "decision_id": did,
+                    "description": decision.get("description", ""),
+                    "source_type": decision.get("source_type", ""),
+                    "source_ref": decision.get("source_ref", ""),
+                    "source_excerpt": "",
+                    "meeting_date": "",
+                    "ingested_at": str(decision.get("created_at", "")),
+                    "status": decision.get("status", "ungrounded"),
+                    "signoff": decision.get("signoff"),
+                    "code_region": region,
+                }
+            )
 
     # Backfill source_excerpt + meeting_date
     if decision_id_set:
@@ -521,14 +517,11 @@ async def get_decisions_for_files(
         )
         desc_by_decision = {e["decision_id"]: e.get("description", "") for e in results}
         excerpt_by_decision: dict[str, tuple[str, str]] = {}
-        for r in (excerpt_rows or []):
+        for r in excerpt_rows or []:
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [
-                s for s in spans
-                if s and s.get("text") and s.get("text") != desc
-            ]
+            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -710,9 +703,13 @@ async def upsert_code_region(
         WHERE file_path = $file_path AND symbol_name = $symbol_name
         """,
         {
-            "file_path": file_path, "symbol_name": symbol_name,
-            "start_line": start_line, "end_line": end_line,
-            "purpose": purpose, "repo": repo, "content_hash": content_hash,
+            "file_path": file_path,
+            "symbol_name": symbol_name,
+            "start_line": start_line,
+            "end_line": end_line,
+            "purpose": purpose,
+            "repo": repo,
+            "content_hash": content_hash,
         },
     )
     if rows:
@@ -750,9 +747,13 @@ async def create_code_region(
         "file_path=$fp, symbol_name=$s, start_line=$sl, end_line=$el, "
         "purpose=$p, repo=$r, content_hash=$h",
         {
-            "fp": file_path, "s": symbol_name,
-            "sl": start_line, "el": end_line,
-            "p": purpose, "r": repo, "h": content_hash,
+            "fp": file_path,
+            "s": symbol_name,
+            "sl": start_line,
+            "el": end_line,
+            "p": purpose,
+            "r": repo,
+            "h": content_hash,
         },
     )
     return str(rows[0].get("id", "")) if rows else ""
@@ -1362,13 +1363,17 @@ async def search_context_pending_by_text(
     total = len(rows)
     for i, row in enumerate(rows):
         signoff = row.get("signoff")
-        if not (signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending"):
+        if not (
+            signoff and isinstance(signoff, dict) and signoff.get("state") == "context_pending"
+        ):
             continue
-        results.append({
-            "decision_id": row.get("decision_id", ""),
-            "description": row.get("description", ""),
-            "overlap_score": round(1.0 - (i / max(total, 1)) * 0.4, 2),
-        })
+        results.append(
+            {
+                "decision_id": row.get("decision_id", ""),
+                "description": row.get("description", ""),
+                "overlap_score": round(1.0 - (i / max(total, 1)) * 0.4, 2),
+            }
+        )
         if len(results) >= top_k:
             break
     return results
@@ -1487,8 +1492,10 @@ async def upsert_code_subject(
         WHERE kind = $kind AND canonical_name = $name
         """,
         {
-            "kind": kind, "name": canonical_name,
-            "repo_ref": repo_ref, "conf": current_confidence,
+            "kind": kind,
+            "name": canonical_name,
+            "repo_ref": repo_ref,
+            "conf": current_confidence,
         },
     )
     if rows:
@@ -1497,8 +1504,10 @@ async def upsert_code_subject(
         "CREATE code_subject SET kind=$kind, canonical_name=$name, "
         "repo_ref=$repo_ref, current_confidence=$conf",
         {
-            "kind": kind, "name": canonical_name,
-            "repo_ref": repo_ref, "conf": current_confidence,
+            "kind": kind,
+            "name": canonical_name,
+            "repo_ref": repo_ref,
+            "conf": current_confidence,
         },
     )
     return str(rows[0].get("id", "")) if rows else ""
@@ -1590,8 +1599,7 @@ async def relate_has_identity(
     siid = _validated_record_id(subject_identity_id, "subject_identity")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {csid}->has_identity->{siid} "
-        "SET confidence=$c, created_at=time::now()",
+        f"RELATE {csid}->has_identity->{siid} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 
@@ -1618,21 +1626,20 @@ async def link_decision_to_subject(
         rid = _validated_record_id(region_id, "code_region")
         await _execute_idempotent_edge(
             client,
-            f"RELATE {did}->about->{csid} "
-            "SET confidence=$c, region_id=$r, created_at=time::now()",
+            f"RELATE {did}->about->{csid} SET confidence=$c, region_id=$r, created_at=time::now()",
             {"c": confidence, "r": rid},
         )
     else:
         await _execute_idempotent_edge(
             client,
-            f"RELATE {did}->about->{csid} "
-            "SET confidence=$c, created_at=time::now()",
+            f"RELATE {did}->about->{csid} SET confidence=$c, created_at=time::now()",
             {"c": confidence},
         )
 
 
 async def get_region_metadata(
-    client: LedgerClient, region_id: str,
+    client: LedgerClient,
+    region_id: str,
 ) -> dict | None:
     """Phase 3 (#60) — load span + linked-identity kind for a region.
 
@@ -1802,10 +1809,14 @@ async def write_subject_version(
               AND start_line = $start_line AND end_line = $end_line
         """,
         {
-            "repo_ref": repo_ref, "file_path": file_path,
-            "start_line": start_line, "end_line": end_line,
-            "symbol_name": symbol_name, "symbol_kind": symbol_kind,
-            "content_hash": content_hash, "signature_hash": signature_hash,
+            "repo_ref": repo_ref,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "symbol_name": symbol_name,
+            "symbol_kind": symbol_kind,
+            "content_hash": content_hash,
+            "signature_hash": signature_hash,
         },
     )
     if rows:
@@ -1819,10 +1830,14 @@ async def write_subject_version(
             content_hash=$content_hash, signature_hash=$signature_hash
         """,
         {
-            "repo_ref": repo_ref, "file_path": file_path,
-            "start_line": start_line, "end_line": end_line,
-            "symbol_name": symbol_name, "symbol_kind": symbol_kind,
-            "content_hash": content_hash, "signature_hash": signature_hash,
+            "repo_ref": repo_ref,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "symbol_name": symbol_name,
+            "symbol_kind": symbol_kind,
+            "content_hash": content_hash,
+            "signature_hash": signature_hash,
         },
     )
     return str(rows[0].get("id", "")) if rows else ""
@@ -1843,8 +1858,7 @@ async def relate_has_version(
     svid = _validated_record_id(subject_version_id, "subject_version")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {csid}->has_version->{svid} "
-        "SET confidence=$c, created_at=time::now()",
+        f"RELATE {csid}->has_version->{svid} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 

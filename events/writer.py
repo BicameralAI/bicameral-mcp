@@ -71,6 +71,7 @@ else:
 
 class EventEnvelope(BaseModel):
     """One event line in ``{email}.jsonl``."""
+
     schema_version: int = 2
     event_type: str
     author: str
@@ -83,7 +84,10 @@ def _get_git_email(repo_path: str | Path) -> str:
     try:
         result = subprocess.run(
             ["git", "config", "user.email"],
-            capture_output=True, text=True, timeout=5, cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=str(repo_path),
         )
         email = result.stdout.strip()
         if email:
@@ -117,7 +121,9 @@ class EventFileWriter:
     def write(self, event_type: str, payload: dict[str, Any]) -> Path:
         """Append one event line. Returns the JSONL file path."""
         envelope = EventEnvelope(
-            event_type=event_type, author=self._author, payload=payload,
+            event_type=event_type,
+            author=self._author,
+            payload=payload,
         )
         line = json.dumps(envelope.model_dump(), separators=(",", ":"), default=str) + "\n"
         with open(self._path, "ab") as f:

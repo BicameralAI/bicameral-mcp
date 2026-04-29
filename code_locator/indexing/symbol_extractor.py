@@ -39,6 +39,7 @@ _USE_LEGACY = False
 try:
     from tree_sitter_languages import get_language as _legacy_get_language
     from tree_sitter_languages import get_parser as _legacy_get_parser
+
     _USE_LEGACY = True
 except Exception:
     _legacy_get_language = None
@@ -83,6 +84,7 @@ def _get_language_obj(resolved: str):
 
     if pkg_name not in _LANG_MODULES:
         import importlib
+
         mod = importlib.import_module(pkg_name)
         _LANG_MODULES[pkg_name] = mod
 
@@ -108,8 +110,9 @@ def _get_parser(language_id: str):
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+
 def _node_text(code: bytes, node) -> str:
-    return code[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return code[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
 def _get_name_from_node(node, code: bytes) -> str | None:
@@ -146,6 +149,7 @@ def _make_record(
 
 
 # ── Python ───────────────────────────────────────────────────────────
+
 
 def _extract_python_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     records: list[SymbolRecord] = []
@@ -185,6 +189,7 @@ def _extract_python_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]
 
 
 # ── JavaScript / TypeScript / JSX / TSX ──────────────────────────────
+
 
 def _extract_js_ts_defs(tree, code: bytes, rel_path: str, language_id: str) -> list[SymbolRecord]:
     records: list[SymbolRecord] = []
@@ -249,6 +254,7 @@ def _extract_js_ts_defs(tree, code: bytes, rel_path: str, language_id: str) -> l
 
 # ── Java ─────────────────────────────────────────────────────────────
 
+
 def _extract_java_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     records: list[SymbolRecord] = []
     class_types = {"class_declaration", "interface_declaration", "enum_declaration"}
@@ -286,6 +292,7 @@ def _extract_java_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
 
 
 # ── Go ───────────────────────────────────────────────────────────────
+
 
 def _extract_go_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     records: list[SymbolRecord] = []
@@ -325,6 +332,7 @@ def _extract_go_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
 
 # ── Rust ─────────────────────────────────────────────────────────────
 
+
 def _extract_rust_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     records: list[SymbolRecord] = []
     class_types = {"struct_item", "enum_item", "trait_item"}
@@ -355,9 +363,15 @@ def _extract_rust_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
 
 # ── C# ───────────────────────────────────────────────────────────────
 
+
 def _extract_csharp_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     records: list[SymbolRecord] = []
-    class_types = {"class_declaration", "interface_declaration", "struct_declaration", "enum_declaration"}
+    class_types = {
+        "class_declaration",
+        "interface_declaration",
+        "struct_declaration",
+        "enum_declaration",
+    }
 
     def walk(node, class_stack: list[str]):
         if node.type in class_types:
@@ -393,6 +407,7 @@ def _extract_csharp_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]
 
 # ── Dispatch ─────────────────────────────────────────────────────────
 
+
 def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     if language_id == "python":
         return _extract_python_defs(tree, code, rel_path)
@@ -410,6 +425,7 @@ def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> 
 
 
 # ── Public API ───────────────────────────────────────────────────────
+
 
 def extract_symbols_from_content(
     content: str, language_id: str, rel_path: str

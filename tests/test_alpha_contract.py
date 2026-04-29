@@ -26,6 +26,7 @@ This file is the end-to-end contract — real git repo, real ledger,
 real commits — labeled under one suite so the v0.7.0 refactor can be
 gated on it.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -103,14 +104,16 @@ def _ingest_payload(description: str, *, with_region: bool, signoff: bool) -> di
         "code_regions": [],
     }
     if with_region:
-        mapping["code_regions"] = [{
-            "file_path": "impl.py",
-            "symbol": "fetch_user",
-            "type": "function",
-            "start_line": 1,
-            "end_line": 3,
-            "purpose": description,
-        }]
+        mapping["code_regions"] = [
+            {
+                "file_path": "impl.py",
+                "symbol": "fetch_user",
+                "type": "function",
+                "start_line": 1,
+                "end_line": 3,
+                "purpose": description,
+            }
+        ]
     if signoff:
         mapping["signoff"] = {
             "state": "ratified",
@@ -209,21 +212,28 @@ async def test_ingest_bind_commit_marks_reflected(alpha_env):
     # Decision is searchable by description tokens (invariant 1 — "searchable
     # by feature area"). Uses BM25 via handle_search_decisions.
     search_resp = await handle_search_decisions(
-        ctx, query="JWT session authentication", max_results=5,
+        ctx,
+        query="JWT session authentication",
+        max_results=5,
     )
     assert any(m.decision_id == decision_id for m in search_resp.matches), (
         "ingested decision must be retrievable via BM25 search"
     )
 
     # 2. Caller-LLM bind (invariant 2, author-attested via provenance=caller_llm).
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-        "purpose": "JWT validation entrypoint",
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+                "purpose": "JWT validation entrypoint",
+            }
+        ],
+    )
     assert len(bind_resp.bindings) == 1
     b = bind_resp.bindings[0]
     assert b.error is None, f"bind failed: {b.error}"
@@ -234,14 +244,16 @@ async def test_ingest_bind_commit_marks_reflected(alpha_env):
     rc_resp = await handle_resolve_compliance(
         ctx,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": b.region_id,
-            "content_hash": b.content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "fetch_user performs JWT lookup as decided.",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": b.region_id,
+                "content_hash": b.content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "fetch_user performs JWT lookup as decided.",
+            }
+        ],
     )
     assert len(rc_resp.accepted) == 1
     assert not rc_resp.rejected
@@ -273,26 +285,34 @@ async def test_code_edit_without_rebind_marks_drifted(alpha_env):
     )
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     b = bind_resp.bindings[0]
     assert b.error is None
 
     await handle_resolve_compliance(
-        ctx, phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": b.region_id,
-            "content_hash": b.content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "baseline verified",
-        }],
+        ctx,
+        phase="ingest",
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": b.region_id,
+                "content_hash": b.content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "baseline verified",
+            }
+        ],
     )
     assert await _decision_status(ctx, decision_id) == "reflected"
 
@@ -391,13 +411,18 @@ async def test_preflight_surfaces_bound_decisions(monkeypatch, alpha_env):
     )
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     assert bind_resp.bindings[0].error is None
 
     pf_resp = await handle_preflight(
@@ -409,8 +434,7 @@ async def test_preflight_surfaces_bound_decisions(monkeypatch, alpha_env):
     assert "region" in pf_resp.sources_chained
     decision_ids = [d.decision_id for d in pf_resp.decisions]
     assert decision_id in decision_ids, (
-        f"bound decision {decision_id} missing from preflight response "
-        f"(got: {decision_ids})"
+        f"bound decision {decision_id} missing from preflight response (got: {decision_ids})"
     )
 
 
@@ -440,26 +464,34 @@ async def test_hook_no_fire_still_syncs(alpha_env):
     )
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     b = bind_resp.bindings[0]
     assert b.error is None
 
     await handle_resolve_compliance(
-        ctx, phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": b.region_id,
-            "content_hash": b.content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "baseline",
-        }],
+        ctx,
+        phase="ingest",
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": b.region_id,
+                "content_hash": b.content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "baseline",
+            }
+        ],
     )
     assert await _decision_status(ctx, decision_id) == "reflected"
 

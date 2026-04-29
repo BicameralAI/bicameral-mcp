@@ -59,7 +59,8 @@ class _CtxWithCodegenome:
         self.codegenome = DeterministicCodeGenomeAdapter(repo_path=self.repo_path)
         # Both flags ON — L1 guard is the only thing that should suppress writes.
         self.codegenome_config = CodeGenomeConfig(
-            enabled=True, write_identity_records=True,
+            enabled=True,
+            write_identity_records=True,
         )
 
 
@@ -96,12 +97,18 @@ async def test_bind_l2_writes_identity():
         ctx = _CtxWithCodegenome(adapter)
 
         with _stub_bind_dependencies("h_l2"):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "ledger/client.py",
-                "symbol_name": "WALWriter",
-                "start_line": 10, "end_line": 30,
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "ledger/client.py",
+                        "symbol_name": "WALWriter",
+                        "start_line": 10,
+                        "end_line": 30,
+                    }
+                ],
+            )
         assert resp.bindings[0].error is None
 
         cs, si, ab = await _count_codegenome_rows(client)
@@ -130,17 +137,25 @@ async def test_bind_l1_skips_codegenome_writes():
         adapter._client = client
         adapter._connected = True
         decision_id = await _seed_decision(
-            client, description="Users can pause subscription for 90 days", level="L1",
+            client,
+            description="Users can pause subscription for 90 days",
+            level="L1",
         )
         ctx = _CtxWithCodegenome(adapter)
 
         with _stub_bind_dependencies("h_l1"):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "subscriptions/pause.py",
-                "symbol_name": "pause_subscription",
-                "start_line": 1, "end_line": 20,
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "subscriptions/pause.py",
+                        "symbol_name": "pause_subscription",
+                        "start_line": 1,
+                        "end_line": 20,
+                    }
+                ],
+            )
         # Bind itself succeeds (binds_to + code_region still written —
         # the bind contract is unchanged). Only the codegenome
         # side-effect is suppressed.
@@ -167,16 +182,25 @@ async def test_bind_l3_skips_codegenome_writes():
         adapter._client = client
         adapter._connected = True
         decision_id = await _seed_decision(
-            client, description="Loop unroll factor 4 in hot path", level="L3",
+            client,
+            description="Loop unroll factor 4 in hot path",
+            level="L3",
         )
         ctx = _CtxWithCodegenome(adapter)
 
         with _stub_bind_dependencies("h_l3"):
-            await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "vm/eval.py", "symbol_name": "eval_loop",
-                "start_line": 100, "end_line": 200,
-            }])
+            await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "vm/eval.py",
+                        "symbol_name": "eval_loop",
+                        "start_line": 100,
+                        "end_line": 200,
+                    }
+                ],
+            )
 
         cs, si, ab = await _count_codegenome_rows(client)
         assert (cs, si, ab) == (0, 0, 0)
@@ -201,16 +225,25 @@ async def test_bind_unclassified_decision_level_skips_codegenome_writes():
         adapter._client = client
         adapter._connected = True
         decision_id = await _seed_decision(
-            client, description="legacy ungrouped decision", level=None,
+            client,
+            description="legacy ungrouped decision",
+            level=None,
         )
         ctx = _CtxWithCodegenome(adapter)
 
         with _stub_bind_dependencies("h_null"):
-            await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "x.py", "symbol_name": "x",
-                "start_line": 1, "end_line": 5,
-            }])
+            await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "x.py",
+                        "symbol_name": "x",
+                        "start_line": 1,
+                        "end_line": 5,
+                    }
+                ],
+            )
 
         cs, si, ab = await _count_codegenome_rows(client)
         assert (cs, si, ab) == (0, 0, 0)
@@ -233,16 +266,25 @@ async def test_bind_response_shape_unchanged_for_l1():
         adapter._client = client
         adapter._connected = True
         decision_id = await _seed_decision(
-            client, description="Members can pause subscription", level="L1",
+            client,
+            description="Members can pause subscription",
+            level="L1",
         )
         ctx = _CtxWithCodegenome(adapter)
 
         with _stub_bind_dependencies("h_shape"):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "src/x.py", "symbol_name": "x",
-                "start_line": 1, "end_line": 5,
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "src/x.py",
+                        "symbol_name": "x",
+                        "start_line": 1,
+                        "end_line": 5,
+                    }
+                ],
+            )
 
         bind = resp.bindings[0]
         assert bind.error is None

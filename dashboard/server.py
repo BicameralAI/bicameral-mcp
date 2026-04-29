@@ -99,11 +99,13 @@ class DashboardServer:
     async def notify(self, ctx: Any) -> None:
         """Build a fresh HistoryResponse and push it to all SSE clients."""
         from dashboard.sse import get_broadcaster
+
         broadcaster = get_broadcaster()
         if broadcaster.subscriber_count == 0:
             return
         try:
             from handlers.history import handle_history
+
             response = await handle_history(ctx)
             payload = json.dumps(response.model_dump(), default=str)
             await broadcaster.broadcast(payload)
@@ -161,6 +163,7 @@ class DashboardServer:
         try:
             ctx = self._ctx_factory()
             from handlers.history import handle_history
+
             response = await handle_history(ctx)
             body = json.dumps(response.model_dump(), default=str).encode()
         except Exception as exc:
@@ -170,6 +173,7 @@ class DashboardServer:
 
     async def _serve_sse(self, writer: asyncio.StreamWriter) -> None:
         from dashboard.sse import get_broadcaster
+
         broadcaster = get_broadcaster()
         writer.write(_HTTP_200_SSE.encode())
         await writer.drain()
@@ -178,6 +182,7 @@ class DashboardServer:
         try:
             ctx = self._ctx_factory()
             from handlers.history import handle_history
+
             response = await handle_history(ctx)
             initial = json.dumps(response.model_dump(), default=str)
             writer.write(f"data: {initial}\n\n".encode())

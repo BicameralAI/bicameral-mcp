@@ -24,9 +24,14 @@ async def _fresh_adapter(suffix):
 
 
 async def _seed_decision_with_identity(
-    adapter, client, *,
-    file_path="src/foo.py", start_line=10, end_line=20,
-    symbol_name="enforce_rate_limit", symbol_kind="function",
+    adapter,
+    client,
+    *,
+    file_path="src/foo.py",
+    start_line=10,
+    end_line=20,
+    symbol_name="enforce_rate_limit",
+    symbol_kind="function",
 ):
     """Seed a decision + code_subject + subject_identity + edges (Phase 1+2 shape)."""
     rows = await client.query(
@@ -34,19 +39,30 @@ async def _seed_decision_with_identity(
     )
     decision_id = str(rows[0]["id"])
     region_id = await upsert_code_region(
-        client, file_path=file_path, symbol_name=symbol_name,
-        start_line=start_line, end_line=end_line, repo="r", content_hash="h_old",
+        client,
+        file_path=file_path,
+        symbol_name=symbol_name,
+        start_line=start_line,
+        end_line=end_line,
+        repo="r",
+        content_hash="h_old",
     )
     subject_id = await adapter.upsert_code_subject(
-        kind=symbol_kind, canonical_name=symbol_name, current_confidence=0.65,
+        kind=symbol_kind,
+        canonical_name=symbol_name,
+        current_confidence=0.65,
     )
     from codegenome.adapter import SubjectIdentity
+
     identity = SubjectIdentity(
         address=f"cg:{file_path}:{start_line}:{end_line}",
         identity_type="deterministic_location_v1",
         structural_signature=f"{file_path}:{start_line}:{end_line}",
-        behavioral_signature=None, signature_hash="sh_old", content_hash="h_old",
-        confidence=0.65, model_version="deterministic-location-v1",
+        behavioral_signature=None,
+        signature_hash="sh_old",
+        content_hash="h_old",
+        confidence=0.65,
+        model_version="deterministic-location-v1",
         neighbors_at_bind=("cg:helper_a",),
     )
     identity_id = await adapter.upsert_subject_identity(identity)
@@ -58,15 +74,28 @@ async def _seed_decision_with_identity(
 class _MovedCandidateLocator:
     """Stub locator: returns one candidate at a different file (perfect move)."""
 
-    def __init__(self, *, new_file_path, new_start_line, new_end_line, symbol_name, symbol_kind, neighbors=("cg:helper_a",)):
-        self._cand = type("C", (), {
-            "file_path": new_file_path,
-            "start_line": new_start_line,
-            "end_line": new_end_line,
-            "symbol_name": symbol_name,
-            "symbol_kind": symbol_kind,
-            "neighbors": tuple(neighbors),
-        })()
+    def __init__(
+        self,
+        *,
+        new_file_path,
+        new_start_line,
+        new_end_line,
+        symbol_name,
+        symbol_kind,
+        neighbors=("cg:helper_a",),
+    ):
+        self._cand = type(
+            "C",
+            (),
+            {
+                "file_path": new_file_path,
+                "start_line": new_start_line,
+                "end_line": new_end_line,
+                "symbol_name": symbol_name,
+                "symbol_kind": symbol_kind,
+                "neighbors": tuple(neighbors),
+            },
+        )()
 
     def find_candidates(self, *, symbol_name, symbol_kind, max_candidates):
         return [self._cand]
@@ -82,13 +111,18 @@ class _NeedsReviewLocator:
         # exact_name=0, fuzzy_name=1, kind=1, neighbors=0 → 0.40
         # Need to land in 0.50–0.75. Use exact_name=0, fuzzy_name=1, kind=1,
         # neighbors=1 (full overlap) → 0.60
-        self._cand = type("C", (), {
-            "file_path": "src/foo.py",  # same file
-            "start_line": 30, "end_line": 50,
-            "symbol_name": "enforce_checkout_rate_limit",  # fuzzy of enforce_rate_limit
-            "symbol_kind": "function",
-            "neighbors": ("cg:helper_a",),  # full overlap
-        })()
+        self._cand = type(
+            "C",
+            (),
+            {
+                "file_path": "src/foo.py",  # same file
+                "start_line": 30,
+                "end_line": 50,
+                "symbol_name": "enforce_checkout_rate_limit",  # fuzzy of enforce_rate_limit
+                "symbol_kind": "function",
+                "neighbors": ("cg:helper_a",),  # full overlap
+            },
+        )()
 
     def find_candidates(self, *, symbol_name, symbol_kind, max_candidates):
         return [self._cand]
@@ -114,24 +148,39 @@ async def test_evaluate_continuity_auto_resolves_moved_function():
     """Function moved to new file → 7-step sequence executes; resolution returned."""
     adapter, client = await _fresh_adapter("auto_moved")
     try:
-        decision_id, region_id, subject_id, old_identity_id = await _seed_decision_with_identity(adapter, client)
+        decision_id, region_id, subject_id, old_identity_id = await _seed_decision_with_identity(
+            adapter, client
+        )
 
         # Stub the deterministic adapter so compute_identity_with_neighbors
         # doesn't try to read actual git content for the new region.
         cg = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
         from unittest.mock import patch
-        with patch("ledger.status.get_git_content", return_value="def enforce_rate_limit(): pass\n"):
+
+        with patch(
+            "ledger.status.get_git_content", return_value="def enforce_rate_limit(): pass\n"
+        ):
             locator = _MovedCandidateLocator(
-                new_file_path="src/bar.py", new_start_line=5, new_end_line=15,
-                symbol_name="enforce_rate_limit", symbol_kind="function",
+                new_file_path="src/bar.py",
+                new_start_line=5,
+                new_end_line=15,
+                symbol_name="enforce_rate_limit",
+                symbol_kind="function",
             )
             resolution = await evaluate_continuity_for_drift(
-                ledger=adapter, codegenome=cg, code_locator=locator,
+                ledger=adapter,
+                codegenome=cg,
+                code_locator=locator,
                 drift=DriftContext(
-                    decision_id=decision_id, region_id=region_id,
-                    old_file_path="src/foo.py", old_symbol_name="enforce_rate_limit",
-                    old_symbol_kind="function", old_start_line=10, old_end_line=20,
-                    repo_ref="HEAD", repo_path="/tmp/r",
+                    decision_id=decision_id,
+                    region_id=region_id,
+                    old_file_path="src/foo.py",
+                    old_symbol_name="enforce_rate_limit",
+                    old_symbol_kind="function",
+                    old_start_line=10,
+                    old_end_line=20,
+                    repo_ref="HEAD",
+                    repo_path="/tmp/r",
                 ),
             )
 
@@ -168,17 +217,26 @@ async def test_evaluate_continuity_returns_needs_review_for_mid_confidence():
     """0.50–0.75 candidate → needs_review, no ledger writes."""
     adapter, client = await _fresh_adapter("needs_review")
     try:
-        decision_id, region_id, subject_id, old_identity_id = await _seed_decision_with_identity(adapter, client)
+        decision_id, region_id, subject_id, old_identity_id = await _seed_decision_with_identity(
+            adapter, client
+        )
         cg = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
         locator = _NeedsReviewLocator()
 
         resolution = await evaluate_continuity_for_drift(
-            ledger=adapter, codegenome=cg, code_locator=locator,
+            ledger=adapter,
+            codegenome=cg,
+            code_locator=locator,
             drift=DriftContext(
-                decision_id=decision_id, region_id=region_id,
-                old_file_path="src/foo.py", old_symbol_name="enforce_rate_limit",
-                old_symbol_kind="function", old_start_line=10, old_end_line=20,
-                repo_ref="HEAD", repo_path="/tmp/r",
+                decision_id=decision_id,
+                region_id=region_id,
+                old_file_path="src/foo.py",
+                old_symbol_name="enforce_rate_limit",
+                old_symbol_kind="function",
+                old_start_line=10,
+                old_end_line=20,
+                repo_ref="HEAD",
+                repo_path="/tmp/r",
             ),
         )
 
@@ -207,12 +265,19 @@ async def test_evaluate_continuity_returns_none_when_no_candidate():
         locator = _NoMatchLocator()
 
         resolution = await evaluate_continuity_for_drift(
-            ledger=adapter, codegenome=cg, code_locator=locator,
+            ledger=adapter,
+            codegenome=cg,
+            code_locator=locator,
             drift=DriftContext(
-                decision_id=decision_id, region_id=region_id,
-                old_file_path="src/foo.py", old_symbol_name="enforce_rate_limit",
-                old_symbol_kind="function", old_start_line=10, old_end_line=20,
-                repo_ref="HEAD", repo_path="/tmp/r",
+                decision_id=decision_id,
+                region_id=region_id,
+                old_file_path="src/foo.py",
+                old_symbol_name="enforce_rate_limit",
+                old_symbol_kind="function",
+                old_start_line=10,
+                old_end_line=20,
+                repo_ref="HEAD",
+                repo_path="/tmp/r",
             ),
         )
         assert resolution is None
@@ -234,12 +299,19 @@ async def test_evaluate_continuity_no_identities_returns_none():
         locator = _NoMatchLocator()
 
         resolution = await evaluate_continuity_for_drift(
-            ledger=adapter, codegenome=cg, code_locator=locator,
+            ledger=adapter,
+            codegenome=cg,
+            code_locator=locator,
             drift=DriftContext(
-                decision_id=decision_id, region_id="code_region:fake",
-                old_file_path="x.py", old_symbol_name="x", old_symbol_kind="function",
-                old_start_line=1, old_end_line=5,
-                repo_ref="HEAD", repo_path="/tmp/r",
+                decision_id=decision_id,
+                region_id="code_region:fake",
+                old_file_path="x.py",
+                old_symbol_name="x",
+                old_symbol_kind="function",
+                old_start_line=1,
+                old_end_line=5,
+                repo_ref="HEAD",
+                repo_path="/tmp/r",
             ),
         )
         assert resolution is None
@@ -253,21 +325,36 @@ async def test_evaluate_continuity_idempotent_repeat_returns_same_resolution():
     """Running twice produces same outcome; UNIQUE indexes prevent duplicate edges."""
     adapter, client = await _fresh_adapter("idem")
     try:
-        decision_id, region_id, subject_id, old_identity_id = await _seed_decision_with_identity(adapter, client)
+        decision_id, region_id, subject_id, old_identity_id = await _seed_decision_with_identity(
+            adapter, client
+        )
         cg = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
         from unittest.mock import patch
-        with patch("ledger.status.get_git_content", return_value="def enforce_rate_limit(): pass\n"):
+
+        with patch(
+            "ledger.status.get_git_content", return_value="def enforce_rate_limit(): pass\n"
+        ):
             locator = _MovedCandidateLocator(
-                new_file_path="src/bar.py", new_start_line=5, new_end_line=15,
-                symbol_name="enforce_rate_limit", symbol_kind="function",
+                new_file_path="src/bar.py",
+                new_start_line=5,
+                new_end_line=15,
+                symbol_name="enforce_rate_limit",
+                symbol_kind="function",
             )
             r1 = await evaluate_continuity_for_drift(
-                ledger=adapter, codegenome=cg, code_locator=locator,
+                ledger=adapter,
+                codegenome=cg,
+                code_locator=locator,
                 drift=DriftContext(
-                    decision_id=decision_id, region_id=region_id,
-                    old_file_path="src/foo.py", old_symbol_name="enforce_rate_limit",
-                    old_symbol_kind="function", old_start_line=10, old_end_line=20,
-                    repo_ref="HEAD", repo_path="/tmp/r",
+                    decision_id=decision_id,
+                    region_id=region_id,
+                    old_file_path="src/foo.py",
+                    old_symbol_name="enforce_rate_limit",
+                    old_symbol_kind="function",
+                    old_start_line=10,
+                    old_end_line=20,
+                    repo_ref="HEAD",
+                    repo_path="/tmp/r",
                 ),
             )
             # Note: second call will pass with the new region as the OLD region —

@@ -28,9 +28,7 @@ def _is_comment(stripped: str) -> bool:
 
 def _is_import(stripped: str) -> bool:
     return (
-        stripped.startswith("import ")
-        or stripped.startswith("import(")
-        or stripped == "import ("
+        stripped.startswith("import ") or stripped.startswith("import(") or stripped == "import ("
     )
 
 
@@ -56,7 +54,7 @@ def categorize_line(
     # The dispatcher sets the in-import flag through AST walk; we keep
     # a conservative fallback here for cases where the pre-pass missed.
     if (stripped.startswith('"') and stripped.endswith('"')) or (
-        stripped.startswith('_') and '"' in stripped
+        stripped.startswith("_") and '"' in stripped
     ):
         return "import"
     return "logic"

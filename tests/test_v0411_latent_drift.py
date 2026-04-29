@@ -48,18 +48,24 @@ def _seed_repo(repo_root: Path) -> str:
     _git(repo_root, "init", "-q", "-b", "main")
     _git(repo_root, "config", "user.email", "t@e.com")
     _git(repo_root, "config", "user.name", "t")
-    (repo_root / "pricing.py").write_text(dedent("""
+    (repo_root / "pricing.py").write_text(
+        dedent("""
         def calculate_discount(order_total):
             if order_total >= 100:
                 return order_total * 0.10
             return 0
-    """).strip() + "\n")
-    (repo_root / "auth.py").write_text(dedent("""
+    """).strip()
+        + "\n"
+    )
+    (repo_root / "auth.py").write_text(
+        dedent("""
         def validate_token(token):
             if not token:
                 return False
             return len(token) > 10
-    """).strip() + "\n")
+    """).strip()
+        + "\n"
+    )
     _git(repo_root, "add", ".")
     _git(repo_root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed")
     return _git(repo_root, "rev-parse", "HEAD")
@@ -166,12 +172,14 @@ async def test_second_sync_after_gap_uses_range_diff(_isolated_ledger):
 
     # Two commits, two different files
     sha2 = _commit_edit(
-        repo_root, "pricing.py",
+        repo_root,
+        "pricing.py",
         "def calculate_discount(t):\n    return t * 0.5",
         "rewrite pricing",
     )
     sha3 = _commit_edit(
-        repo_root, "auth.py",
+        repo_root,
+        "auth.py",
         "def validate_token(t):\n    return False",
         "rewrite auth",
     )
@@ -185,9 +193,7 @@ async def test_second_sync_after_gap_uses_range_diff(_isolated_ledger):
     ctx2 = _ctx()
     r2 = await handle_link_commit(ctx2, "HEAD")
 
-    assert r2.sweep_scope == "range_diff", (
-        f"Expected range_diff after gap, got {r2.sweep_scope}"
-    )
+    assert r2.sweep_scope == "range_diff", f"Expected range_diff after gap, got {r2.sweep_scope}"
     assert r2.range_size >= 2, (
         f"Expected range sweep to cover both pricing.py + auth.py "
         f"(range_size>=2), got range_size={r2.range_size}"
@@ -215,7 +221,8 @@ async def test_pre_v0411_head_only_would_have_missed_intermediate_drift(
 
     # Drift commit
     _commit_edit(
-        repo_root, "pricing.py",
+        repo_root,
+        "pricing.py",
         "def calculate_discount(t):\n    return t * 999",  # nonsense
         "drift pricing",
     )
@@ -259,7 +266,8 @@ async def test_sync_to_same_sha_fast_paths_with_head_only_scope(_isolated_ledger
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_unreachable_base_sha_falls_back_to_head_only(
-    _isolated_ledger, monkeypatch,
+    _isolated_ledger,
+    monkeypatch,
 ):
     """If ``last_synced_commit`` is unreachable (force-push, shallow
     clone), the range diff returns None and we fall back to head-only.
@@ -273,6 +281,7 @@ async def test_unreachable_base_sha_falls_back_to_head_only(
     # Inject a bogus cursor by patching get_sync_state to return a
     # SHA that doesn't exist in the repo.
     from ledger import adapter as adapter_mod
+
     bogus = "deadbeef" + "0" * 32
 
     real_get_sync_state = adapter_mod.get_sync_state
@@ -296,12 +305,15 @@ async def test_unreachable_base_sha_falls_back_to_head_only(
 def test_link_commit_response_contract_has_new_fields():
     """LinkCommitResponse v0.4.11 contract has sweep_scope + range_size."""
     from contracts import LinkCommitResponse
+
     fields = LinkCommitResponse.model_fields
     assert "sweep_scope" in fields
     assert "range_size" in fields
     # Defaults: head_only / 0 — backward compat for callers that don't set them
     inst = LinkCommitResponse(
-        commit_hash="abc", synced=True, reason="new_commit",
+        commit_hash="abc",
+        synced=True,
+        reason="new_commit",
     )
     assert inst.sweep_scope == "head_only"
     assert inst.range_size == 0
@@ -337,7 +349,8 @@ async def test_multi_region_edits_emit_pending_checks_per_region(
     await ledger.connect()
 
     # Append a second function so we have two regions in pricing.py
-    (repo_root / "pricing.py").write_text(dedent("""
+    (repo_root / "pricing.py").write_text(
+        dedent("""
         def calculate_discount(order_total):
             if order_total >= 100:
                 return order_total * 0.10
@@ -346,7 +359,9 @@ async def test_multi_region_edits_emit_pending_checks_per_region(
 
         def calculate_tax(order_total):
             return order_total * 0.08
-    """).strip() + "\n")
+    """).strip()
+        + "\n"
+    )
     _git(repo_root, "add", "pricing.py")
     _git(repo_root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "add tax")
 
@@ -389,14 +404,17 @@ async def test_multi_region_edits_emit_pending_checks_per_region(
     await handle_link_commit(ctx, "HEAD")
 
     # Now drift BOTH regions in one commit
-    (repo_root / "pricing.py").write_text(dedent("""
+    (repo_root / "pricing.py").write_text(
+        dedent("""
         def calculate_discount(order_total):
             return order_total * 999  # nonsense
 
 
         def calculate_tax(order_total):
             return order_total * 999  # nonsense
-    """).strip() + "\n")
+    """).strip()
+        + "\n"
+    )
     _git(repo_root, "add", "pricing.py")
     _git(repo_root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "drift both")
 
@@ -419,15 +437,12 @@ async def test_multi_region_edits_emit_pending_checks_per_region(
     # Same intent across both checks (proves the shared-intent case).
     intent_ids = {p.decision_id for p in r2.pending_compliance_checks}
     assert len(intent_ids) == 1, (
-        f"Multi-region test: pending checks should share one decision_id, "
-        f"got {intent_ids}"
+        f"Multi-region test: pending checks should share one decision_id, got {intent_ids}"
     )
 
     # Distinct region_ids — the caller needs independent verdicts per region.
     region_ids = {p.region_id for p in r2.pending_compliance_checks}
-    assert len(region_ids) == 2, (
-        f"Expected 2 distinct region_ids in the batch, got {region_ids}"
-    )
+    assert len(region_ids) == 2, f"Expected 2 distinct region_ids in the batch, got {region_ids}"
 
     # Phase is drift (hash-mismatch triggered re-emission).
     phases = {p.phase for p in r2.pending_compliance_checks}

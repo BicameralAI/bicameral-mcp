@@ -119,7 +119,10 @@ class RealCodeLocatorAdapter:
         return tuple(addresses)
 
     def _resolve_symbol_id_for_span(
-        self, file_path: str, start_line: int, end_line: int,
+        self,
+        file_path: str,
+        start_line: int,
+        end_line: int,
     ) -> int | None:
         """Look up the symbol_id whose span contains the given line range.
 
@@ -164,12 +167,14 @@ class RealCodeLocatorAdapter:
             sym_type = rec.type
             if sym_type not in ("function", "class", "module", "file"):
                 sym_type = "function"
-            symbols.append({
-                "name": rec.qualified_name or rec.name,
-                "type": sym_type,
-                "start_line": rec.start_line,
-                "end_line": rec.end_line,
-            })
+            symbols.append(
+                {
+                    "name": rec.qualified_name or rec.name,
+                    "type": sym_type,
+                    "start_line": rec.start_line,
+                    "end_line": rec.end_line,
+                }
+            )
         return symbols
 
     def resolve_symbols(self, payload: dict) -> dict:
@@ -179,10 +184,7 @@ class RealCodeLocatorAdapter:
         if not mappings:
             return payload
 
-        needs_resolution = any(
-            m.get("symbols") and not m.get("code_regions")
-            for m in mappings
-        )
+        needs_resolution = any(m.get("symbols") and not m.get("code_regions") for m in mappings)
         if not needs_resolution:
             return payload
 
@@ -203,21 +205,27 @@ class RealCodeLocatorAdapter:
                     try:
                         rows = db.lookup_by_name(name)
                     except Exception as exc:
-                        logger.warning("[resolve_symbols] lookup_by_name failed for '%s': %s", name, exc)
+                        logger.warning(
+                            "[resolve_symbols] lookup_by_name failed for '%s': %s", name, exc
+                        )
                         rows = []
                     for row in rows:
-                        code_regions.append({
-                            "symbol": row["qualified_name"] or row["name"],
-                            "file_path": row["file_path"],
-                            "start_line": row["start_line"],
-                            "end_line": row["end_line"],
-                            "type": row["type"],
-                            "purpose": mapping.get("intent", ""),
-                        })
+                        code_regions.append(
+                            {
+                                "symbol": row["qualified_name"] or row["name"],
+                                "file_path": row["file_path"],
+                                "start_line": row["start_line"],
+                                "end_line": row["end_line"],
+                                "type": row["type"],
+                                "purpose": mapping.get("intent", ""),
+                            }
+                        )
                 if code_regions:
                     mapping = {**mapping, "code_regions": code_regions}
                 else:
-                    logger.debug("[resolve_symbols] no symbols found in index for: %s", symbol_names)
+                    logger.debug(
+                        "[resolve_symbols] no symbols found in index for: %s", symbol_names
+                    )
 
             resolved_mappings.append(mapping)
 

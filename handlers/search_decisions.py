@@ -35,7 +35,9 @@ async def handle_search_decisions(
     sync_status: LinkCommitResponse = await handle_link_commit(ctx, "HEAD")
     catchup_ms = round((time.perf_counter() - t0) * 1000, 3)
 
-    raw_matches = await ctx.ledger.search_by_query(query, max_results=max_results, min_confidence=min_confidence)
+    raw_matches = await ctx.ledger.search_by_query(
+        query, max_results=max_results, min_confidence=min_confidence
+    )
 
     matches: list[DecisionMatch] = []
     suggested_review: list[str] = []
@@ -64,20 +66,22 @@ async def handle_search_decisions(
             suggested_review.append(m["decision_id"])
 
         _signoff = m.get("signoff") or {}
-        matches.append(DecisionMatch(
-            decision_id=m["decision_id"],
-            description=m["description"],
-            status=status,
-            signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
-            confidence=m.get("confidence", 0.5),
-            source_ref=m.get("source_ref", ""),
-            code_regions=regions,
-            drift_evidence=m.get("drift_evidence", ""),
-            related_constraints=m.get("related_constraints", []),
-            source_excerpt=m.get("source_excerpt", ""),
-            meeting_date=m.get("meeting_date", ""),
-            signoff=m.get("signoff"),
-        ))
+        matches.append(
+            DecisionMatch(
+                decision_id=m["decision_id"],
+                description=m["description"],
+                status=status,
+                signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
+                confidence=m.get("confidence", 0.5),
+                source_ref=m.get("source_ref", ""),
+                code_regions=regions,
+                drift_evidence=m.get("drift_evidence", ""),
+                related_constraints=m.get("related_constraints", []),
+                source_excerpt=m.get("source_excerpt", ""),
+                meeting_date=m.get("meeting_date", ""),
+                signoff=m.get("signoff"),
+            )
+        )
 
     ungrounded_count = sum(1 for m in matches if m.status == "ungrounded")
 
@@ -89,7 +93,8 @@ async def handle_search_decisions(
         suggested_review=suggested_review,
     )
     response.action_hints = generate_hints_for_search(
-        response, guided_mode=getattr(ctx, "guided_mode", False),
+        response,
+        guided_mode=getattr(ctx, "guided_mode", False),
     )
     response.sync_metrics = SyncMetrics(sync_catchup_ms=catchup_ms)
     return response

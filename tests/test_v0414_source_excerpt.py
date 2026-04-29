@@ -66,16 +66,17 @@ async def test_search_response_includes_source_excerpt(monkeypatch, surreal_url)
 
     ctx = BicameralContext.from_env()
     response = await handle_search_decisions(
-        ctx, query="token bucket rate limit", max_results=5, min_confidence=0.3,
+        ctx,
+        query="token bucket rate limit",
+        max_results=5,
+        min_confidence=0.3,
     )
     assert response.matches, "Expected at least one match for the ingested decision"
     match = response.matches[0]
     assert "token bucket" in match.source_excerpt.lower(), (
         f"source_excerpt should contain the meeting passage; got {match.source_excerpt!r}"
     )
-    assert "Alex:" in match.source_excerpt, (
-        "speaker prefix should be preserved in the raw passage"
-    )
+    assert "Alex:" in match.source_excerpt, "speaker prefix should be preserved in the raw passage"
     assert match.meeting_date == "2026-03-30", (
         f"meeting_date should round-trip; got {match.meeting_date!r}"
     )
@@ -115,7 +116,10 @@ async def test_empty_source_excerpt_is_graceful(monkeypatch, surreal_url):
 
     ctx = BicameralContext.from_env()
     response = await handle_search_decisions(
-        ctx, query="empty span test", max_results=5, min_confidence=0.3,
+        ctx,
+        query="empty span test",
+        max_results=5,
+        min_confidence=0.3,
     )
     assert response.matches
     assert response.matches[0].source_excerpt == ""
@@ -167,7 +171,9 @@ async def test_drift_entry_carries_source_excerpt(monkeypatch, surreal_url):
 
     ctx = BicameralContext.from_env()
     drift = await handle_detect_drift(
-        ctx, file_path="src/pricing/discount.py", use_working_tree=False,
+        ctx,
+        file_path="src/pricing/discount.py",
+        use_working_tree=False,
     )
     assert drift.decisions, "Expected at least one decision from detect_drift"
     entry = drift.decisions[0]

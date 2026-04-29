@@ -108,9 +108,7 @@ def test_validate_topic_strips_implementation_verbs():
 
 def test_dedup_key_normalizes_word_order():
     """'Stripe webhook' and 'webhook stripe' should dedup as same topic."""
-    assert _dedup_key_for("Stripe webhook payment") == _dedup_key_for(
-        "payment webhook Stripe"
-    )
+    assert _dedup_key_for("Stripe webhook payment") == _dedup_key_for("payment webhook Stripe")
 
 
 def test_check_dedup_marks_then_hits():
@@ -172,7 +170,9 @@ def _empty_search_response() -> SearchDecisionsResponse:
     return SearchDecisionsResponse(
         query="test",
         sync_status=LinkCommitResponse(
-            commit_hash="abc", synced=True, reason="new_commit",
+            commit_hash="abc",
+            synced=True,
+            reason="new_commit",
         ),
         matches=[],
         ungrounded_count=0,
@@ -184,7 +184,9 @@ def _search_response_with(matches: list[DecisionMatch]) -> SearchDecisionsRespon
     return SearchDecisionsResponse(
         query="test",
         sync_status=LinkCommitResponse(
-            commit_hash="abc", synced=True, reason="new_commit",
+            commit_hash="abc",
+            synced=True,
+            reason="new_commit",
         ),
         matches=matches,
         ungrounded_count=sum(1 for m in matches if m.status == "ungrounded"),
@@ -192,7 +194,9 @@ def _search_response_with(matches: list[DecisionMatch]) -> SearchDecisionsRespon
     )
 
 
-def _match(intent_id: str, status: str = "reflected", file_path: str = "src/foo.ts") -> DecisionMatch:
+def _match(
+    intent_id: str, status: str = "reflected", file_path: str = "src/foo.ts"
+) -> DecisionMatch:
     return DecisionMatch(
         decision_id=intent_id,
         description=f"decision {intent_id}",
@@ -201,11 +205,13 @@ def _match(intent_id: str, status: str = "reflected", file_path: str = "src/foo.
         source_ref="test-ref",
         code_regions=[
             CodeRegionSummary(
-                file_path=file_path, symbol="foo", lines=(1, 10), purpose="",
+                file_path=file_path,
+                symbol="foo",
+                lines=(1, 10),
+                purpose="",
             )
         ],
     )
-
 
 
 @pytest.mark.asyncio
@@ -260,10 +266,12 @@ async def test_normal_mode_silent_on_plain_matches_only():
     the only matches are reflected with no drift, no divergences, no
     open questions."""
     ctx = _ctx(guided=False)
-    search = _search_response_with([
-        _match("intent:1", status="reflected"),
-        _match("intent:2", status="reflected"),
-    ])
+    search = _search_response_with(
+        [
+            _match("intent:1", status="reflected"),
+            _match("intent:2", status="reflected"),
+        ]
+    )
     with patch(
         "handlers.preflight.handle_search_decisions",
         new=AsyncMock(return_value=search),
@@ -308,11 +316,11 @@ async def test_search_failure_fails_open():
     """Robustness: if search throws, preflight returns fired=false
     silently — never blocks on bicameral being unavailable."""
     ctx = _ctx()
+
     async def _boom(*a, **kw):
         raise RuntimeError("ledger down")
+
     with patch("handlers.preflight.handle_search_decisions", side_effect=_boom):
         r = await handle_preflight(ctx, topic="Stripe webhook payment")
     assert r.fired is False
     assert r.reason == "no_matches"
-
-

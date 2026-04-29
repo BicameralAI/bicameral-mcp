@@ -108,7 +108,9 @@ async def _collect_real_symbols(adapter, repo_path: Path, n_files_target: int) -
     files: list[Path] = []
     for d in seed_dirs:
         if d.exists():
-            files.extend(sorted(p for p in d.rglob("*.py") if p.is_file() and "__pycache__" not in p.parts))
+            files.extend(
+                sorted(p for p in d.rglob("*.py") if p.is_file() and "__pycache__" not in p.parts)
+            )
 
     collected: list[dict] = []
     seen_pairs: set[str] = set()
@@ -129,11 +131,13 @@ async def _collect_real_symbols(adapter, repo_path: Path, n_files_target: int) -
             if key in seen_pairs:
                 continue
             seen_pairs.add(key)
-            collected.append({
-                "file_path": rel,
-                "symbol_name": sym,
-                "line_number": line,
-            })
+            collected.append(
+                {
+                    "file_path": rel,
+                    "symbol_name": sym,
+                    "line_number": line,
+                }
+            )
     return collected
 
 
@@ -146,26 +150,30 @@ def _build_payload(symbols: list[dict], batch_idx: int, batch_size: int) -> dict
     mappings = []
     for i in range(batch_size):
         sym = symbols[(batch_idx * batch_size + i) % len(symbols)]
-        mappings.append({
-            "span": {
-                "span_id": f"bench-{batch_idx}-{i}",
-                "source_type": "transcript",
-                "text": f"Bench decision {batch_idx}-{i} about {sym['symbol_name']}",
-                "speaker": "bench",
-                "source_ref": f"bench-meeting-{batch_idx}",
-            },
-            "intent": f"Bench decision {batch_idx}-{i}: maintain {sym['symbol_name']} in {sym['file_path']}",
-            "symbols": [sym["symbol_name"]],
-            "code_regions": [{
-                "file_path": sym["file_path"],
-                "symbol": sym["symbol_name"],
-                "type": "function",
-                "start_line": sym["line_number"],
-                "end_line": sym["line_number"] + 20,
-                "purpose": f"bench batch {batch_idx} item {i}",
-            }],
-            "dependency_edges": [],
-        })
+        mappings.append(
+            {
+                "span": {
+                    "span_id": f"bench-{batch_idx}-{i}",
+                    "source_type": "transcript",
+                    "text": f"Bench decision {batch_idx}-{i} about {sym['symbol_name']}",
+                    "speaker": "bench",
+                    "source_ref": f"bench-meeting-{batch_idx}",
+                },
+                "intent": f"Bench decision {batch_idx}-{i}: maintain {sym['symbol_name']} in {sym['file_path']}",
+                "symbols": [sym["symbol_name"]],
+                "code_regions": [
+                    {
+                        "file_path": sym["file_path"],
+                        "symbol": sym["symbol_name"],
+                        "type": "function",
+                        "start_line": sym["line_number"],
+                        "end_line": sym["line_number"] + 20,
+                        "purpose": f"bench batch {batch_idx} item {i}",
+                    }
+                ],
+                "dependency_edges": [],
+            }
+        )
     return {
         "query": f"bench batch {batch_idx}",
         "repo": ".",
@@ -189,12 +197,16 @@ async def _run_bench(ctx) -> None:
     adapter = get_code_locator()
 
     # --- Setup: collect real symbols, ingest 100 decisions in batches of 10 ---
-    symbols = await _collect_real_symbols(adapter, Path(ctx.repo_path), n_files_target=N_FILES_TARGET)
+    symbols = await _collect_real_symbols(
+        adapter, Path(ctx.repo_path), n_files_target=N_FILES_TARGET
+    )
     assert len(symbols) >= 25, f"Only got {len(symbols)} symbols; need >= 25 for realistic bench"
 
     batch_size = 10
     n_batches = N_DECISIONS // batch_size
-    print(f"\n[bench] Ingesting {N_DECISIONS} decisions across {len(symbols)} unique symbols ({n_batches} batches of {batch_size})")
+    print(
+        f"\n[bench] Ingesting {N_DECISIONS} decisions across {len(symbols)} unique symbols ({n_batches} batches of {batch_size})"
+    )
 
     setup_start = time.perf_counter()
     for b in range(n_batches):
@@ -262,11 +274,15 @@ async def _run_bench(ctx) -> None:
     print("DRIFT BENCHMARK BASELINE — V1 A1")
     print("=" * 68)
     print(f"Setup: {N_DECISIONS} decisions, {len(symbols)} symbols, {len(file_paths)} files")
-    print(f"Setup ingest: {setup_elapsed:.2f}s total ({setup_elapsed/N_DECISIONS*1000:.1f}ms / decision)")
+    print(
+        f"Setup ingest: {setup_elapsed:.2f}s total ({setup_elapsed / N_DECISIONS * 1000:.1f}ms / decision)"
+    )
     print()
     print(f"{'handler':<25} {'p50 (ms)':>10} {'p95 (ms)':>10} {'max (ms)':>10} {'n':>5}")
     print("-" * 68)
     for name, p in report["handlers"].items():
-        print(f"{name:<25} {p['p50']*1000:>10.1f} {p['p95']*1000:>10.1f} {p['max']*1000:>10.1f} {p['n']:>5}")
+        print(
+            f"{name:<25} {p['p50'] * 1000:>10.1f} {p['p95'] * 1000:>10.1f} {p['max'] * 1000:>10.1f} {p['n']:>5}"
+        )
     print("=" * 68)
     print(f"Artifact: {out_path}")

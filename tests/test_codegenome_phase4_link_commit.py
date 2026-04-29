@@ -24,10 +24,14 @@ from contracts import PendingComplianceCheck, PreClassificationHint
 
 def _make_pending(decision_id="d:1", region_id="r:1") -> PendingComplianceCheck:
     return PendingComplianceCheck(
-        phase="drift", decision_id=decision_id, region_id=region_id,
+        phase="drift",
+        decision_id=decision_id,
+        region_id=region_id,
         decision_description="Stripe webhook handling",
-        file_path="src/foo.py", symbol="handle_webhook",
-        content_hash="h-1", code_body="def handle_webhook(): pass",
+        file_path="src/foo.py",
+        symbol="handle_webhook",
+        content_hash="h-1",
+        code_body="def handle_webhook(): pass",
     )
 
 
@@ -47,9 +51,13 @@ def _make_ctx(
     ctx.codegenome = MagicMock()
     ctx.ledger = MagicMock()
     ctx.ledger.get_region_metadata = AsyncMock(
-        return_value=region_meta or {
-            "file_path": "src/foo.py", "symbol_name": "handle_webhook",
-            "start_line": 1, "end_line": 5, "identity_type": "function",
+        return_value=region_meta
+        or {
+            "file_path": "src/foo.py",
+            "symbol_name": "handle_webhook",
+            "start_line": 1,
+            "end_line": 5,
+            "identity_type": "function",
         },
     )
     return ctx
@@ -65,7 +73,9 @@ async def test_run_drift_classification_pass_off_when_flag_disabled() -> None:
     ctx = _make_ctx(enhance_drift=False)
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert survivors == pending  # untouched
     assert count == 0
@@ -80,7 +90,9 @@ async def test_run_drift_classification_pass_off_when_config_missing() -> None:
     ctx.codegenome = None
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert survivors == pending
     assert count == 0
@@ -92,7 +104,9 @@ async def test_run_drift_classification_pass_off_when_pending_empty() -> None:
 
     ctx = _make_ctx()
     survivors, count = await _run_drift_classification_pass(
-        ctx, [], commit_hash="abc",
+        ctx,
+        [],
+        commit_hash="abc",
     )
     assert survivors == []
     assert count == 0
@@ -111,12 +125,14 @@ async def test_run_drift_classification_pass_strips_cosmetic_pendings(
 
     async def fake_eval(**kwargs):
         return DriftClassificationOutcome(
-            classification=None, auto_resolved=True,
+            classification=None,
+            auto_resolved=True,
             pre_classification_hint=None,
         )
 
     monkeypatch.setattr(
-        "codegenome.drift_service.evaluate_drift_classification", fake_eval,
+        "codegenome.drift_service.evaluate_drift_classification",
+        fake_eval,
     )
     monkeypatch.setattr(
         "ledger.status.get_git_content",
@@ -126,7 +142,9 @@ async def test_run_drift_classification_pass_strips_cosmetic_pendings(
     ctx = _make_ctx()
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert survivors == []
     assert count == 1
@@ -140,12 +158,14 @@ async def test_run_drift_classification_pass_keeps_semantic_pendings_unchanged(
 
     async def fake_eval(**kwargs):
         return DriftClassificationOutcome(
-            classification=None, auto_resolved=False,
+            classification=None,
+            auto_resolved=False,
             pre_classification_hint=None,
         )
 
     monkeypatch.setattr(
-        "codegenome.drift_service.evaluate_drift_classification", fake_eval,
+        "codegenome.drift_service.evaluate_drift_classification",
+        fake_eval,
     )
     monkeypatch.setattr(
         "ledger.status.get_git_content",
@@ -155,7 +175,9 @@ async def test_run_drift_classification_pass_keeps_semantic_pendings_unchanged(
     ctx = _make_ctx()
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert len(survivors) == 1
     assert survivors[0].pre_classification is None  # no hint
@@ -169,19 +191,22 @@ async def test_run_drift_classification_pass_attaches_hint_to_uncertain(
     from handlers.link_commit import _run_drift_classification_pass
 
     hint = PreClassificationHint(
-        verdict="uncertain", confidence=0.55,
+        verdict="uncertain",
+        confidence=0.55,
         signals={"signature": 1.0, "neighbors": 0.5},
         evidence_refs=["score:0.55"],
     )
 
     async def fake_eval(**kwargs):
         return DriftClassificationOutcome(
-            classification=None, auto_resolved=False,
+            classification=None,
+            auto_resolved=False,
             pre_classification_hint=hint,
         )
 
     monkeypatch.setattr(
-        "codegenome.drift_service.evaluate_drift_classification", fake_eval,
+        "codegenome.drift_service.evaluate_drift_classification",
+        fake_eval,
     )
     monkeypatch.setattr(
         "ledger.status.get_git_content",
@@ -191,7 +216,9 @@ async def test_run_drift_classification_pass_attaches_hint_to_uncertain(
     ctx = _make_ctx()
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert len(survivors) == 1
     assert survivors[0].pre_classification == hint
@@ -213,7 +240,8 @@ async def test_run_drift_classification_pass_failure_isolated(
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "codegenome.drift_service.evaluate_drift_classification", fake_eval,
+        "codegenome.drift_service.evaluate_drift_classification",
+        fake_eval,
     )
     monkeypatch.setattr(
         "ledger.status.get_git_content",
@@ -223,7 +251,9 @@ async def test_run_drift_classification_pass_failure_isolated(
     ctx = _make_ctx()
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert len(survivors) == 1
     assert survivors[0].pre_classification is None
@@ -243,7 +273,9 @@ async def test_run_drift_classification_pass_no_region_metadata_falls_through(
 
     pending = [_make_pending()]
     survivors, count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash="abc",
+        ctx,
+        pending,
+        commit_hash="abc",
     )
     assert len(survivors) == 1
     assert count == 0
@@ -255,6 +287,7 @@ async def test_run_drift_classification_pass_no_region_metadata_falls_through(
 def test_link_commit_response_includes_auto_resolved_count() -> None:
     """``LinkCommitResponse.auto_resolved_count`` exists with default 0."""
     from contracts import LinkCommitResponse
+
     r = LinkCommitResponse(commit_hash="abc", synced=True, reason="new_commit")
     assert hasattr(r, "auto_resolved_count")
     assert r.auto_resolved_count == 0

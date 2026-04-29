@@ -78,6 +78,7 @@ def _send_bg(payload: dict) -> None:
     """POST to the relay in a daemon thread. Never raises."""
     try:
         import urllib.request
+
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
             _RELAY_URL,
@@ -93,7 +94,9 @@ def _send_bg(payload: dict) -> None:
         logger.debug("[telemetry] relay POST failed (non-fatal): %s", exc)
 
 
-def send_event(version: str, diagnostic: dict | None = None, **properties: str | int | float | bool) -> None:
+def send_event(
+    version: str, diagnostic: dict | None = None, **properties: str | int | float | bool
+) -> None:
     """Send a telemetry event. Fire-and-forget. Never raises.
 
     The relay only requires `distinct_id` and `version` — all other kwargs are

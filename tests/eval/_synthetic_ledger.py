@@ -10,6 +10,7 @@ Realism trade-off: feature names and decision summaries are drawn from a small
 fixed corpus and parameterized by index, so the payload feels plausible (not
 "lorem ipsum") but generation stays deterministic and zero-network.
 """
+
 from __future__ import annotations
 
 import random
@@ -18,10 +19,26 @@ GENERATOR_VERSION = "1"
 
 
 _FEATURE_NAMES: list[str] = [
-    "auth", "billing", "payments", "logging", "audit", "search", "api",
-    "webhooks", "retention", "indexing", "ingestion", "drift-detection",
-    "ratification", "rate-limiting", "caching", "locking", "dedup", "ttl",
-    "sync", "scheduling",
+    "auth",
+    "billing",
+    "payments",
+    "logging",
+    "audit",
+    "search",
+    "api",
+    "webhooks",
+    "retention",
+    "indexing",
+    "ingestion",
+    "drift-detection",
+    "ratification",
+    "rate-limiting",
+    "caching",
+    "locking",
+    "dedup",
+    "ttl",
+    "sync",
+    "scheduling",
 ]
 
 
@@ -130,7 +147,9 @@ def _make_decision(
 
     if status in {"reflected", "drifted"}:
         baseline_hash = f"{decision_index:064x}"[-64:]
-        current_hash = baseline_hash if status == "reflected" else f"{decision_index + 1:064x}"[-64:]
+        current_hash = (
+            baseline_hash if status == "reflected" else f"{decision_index + 1:064x}"[-64:]
+        )
         decision["fulfillments"] = [
             {
                 "file_path": f"{feature_id}/handler_{decision_index}.py",
@@ -173,24 +192,21 @@ def generate_ledger(
     if n_features < 0:
         raise ValueError(f"n_features must be >= 0, got {n_features}")
     if decisions_per_feature < 0:
-        raise ValueError(
-            f"decisions_per_feature must be >= 0, got {decisions_per_feature}"
-        )
+        raise ValueError(f"decisions_per_feature must be >= 0, got {decisions_per_feature}")
 
     rng = random.Random(seed)
 
     features: list[dict] = []
     for i in range(n_features):
         feature_id = _feature_id(i)
-        decisions = [
-            _make_decision(rng, feature_id, j)
-            for j in range(decisions_per_feature)
-        ]
-        features.append({
-            "id": feature_id,
-            "name": feature_id.replace("-", " ").title(),
-            "decisions": decisions,
-        })
+        decisions = [_make_decision(rng, feature_id, j) for j in range(decisions_per_feature)]
+        features.append(
+            {
+                "id": feature_id,
+                "name": feature_id.replace("-", " ").title(),
+                "decisions": decisions,
+            }
+        )
 
     return {
         "features": features,

@@ -39,13 +39,13 @@ from .symbol_extractor import _LANG_PACKAGE_MAP, _get_parser, _node_text
 # ``callee_field_name`` is the field on the call node whose subtree
 # names the callable.
 _CALL_NODES: dict[str, tuple[str, str]] = {
-    "python":     ("call",                  "function"),
-    "javascript": ("call_expression",       "function"),
-    "typescript": ("call_expression",       "function"),
-    "go":         ("call_expression",       "function"),
-    "rust":       ("call_expression",       "function"),
-    "java":       ("method_invocation",     "name"),
-    "c_sharp":    ("invocation_expression", "function"),
+    "python": ("call", "function"),
+    "javascript": ("call_expression", "function"),
+    "typescript": ("call_expression", "function"),
+    "go": ("call_expression", "function"),
+    "rust": ("call_expression", "function"),
+    "java": ("method_invocation", "name"),
+    "c_sharp": ("invocation_expression", "function"),
 }
 
 
@@ -68,7 +68,11 @@ def _last_identifier(text: str) -> str:
 
 
 def _walk_calls(
-    node, code: bytes, call_type: str, callee_field: str, out: set[str],
+    node,
+    code: bytes,
+    call_type: str,
+    callee_field: str,
+    out: set[str],
 ) -> None:
     """Depth-first traversal collecting callee names."""
     if node.type == call_type:

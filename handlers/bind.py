@@ -54,46 +54,68 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
         purpose = str(b.get("purpose") or "")
 
         if not decision_id or not file_path or not symbol_name:
-            results.append(BindResult(
-                decision_id=decision_id, region_id="", content_hash="",
-                error="decision_id, file_path, and symbol_name are required",
-            ))
+            results.append(
+                BindResult(
+                    decision_id=decision_id,
+                    region_id="",
+                    content_hash="",
+                    error="decision_id, file_path, and symbol_name are required",
+                )
+            )
             continue
 
         try:
             exists = await ledger.decision_exists(decision_id)
         except Exception as exc:
-            results.append(BindResult(
-                decision_id=decision_id, region_id="", content_hash="",
-                error=f"decision lookup failed: {exc}",
-            ))
+            results.append(
+                BindResult(
+                    decision_id=decision_id,
+                    region_id="",
+                    content_hash="",
+                    error=f"decision lookup failed: {exc}",
+                )
+            )
             continue
 
         if not exists:
-            results.append(BindResult(
-                decision_id=decision_id, region_id="", content_hash="",
-                error=f"unknown_decision_id: {decision_id}",
-            ))
+            results.append(
+                BindResult(
+                    decision_id=decision_id,
+                    region_id="",
+                    content_hash="",
+                    error=f"unknown_decision_id: {decision_id}",
+                )
+            )
             continue
 
         if start_line is None or end_line is None:
             from ledger.status import resolve_symbol_lines
+
             resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=authoritative_sha)
             if resolved is None:
-                results.append(BindResult(
-                    decision_id=decision_id, region_id="", content_hash="",
-                    error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha}",
-                ))
+                results.append(
+                    BindResult(
+                        decision_id=decision_id,
+                        region_id="",
+                        content_hash="",
+                        error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha}",
+                    )
+                )
                 continue
             start_line, end_line = resolved
         else:
             start_line, end_line = int(start_line), int(end_line)
             from ledger.status import get_git_content
+
             if get_git_content(file_path, 1, 1, repo, ref=authoritative_sha) is None:
-                results.append(BindResult(
-                    decision_id=decision_id, region_id="", content_hash="",
-                    error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
-                ))
+                results.append(
+                    BindResult(
+                        decision_id=decision_id,
+                        region_id="",
+                        content_hash="",
+                        error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
+                    )
+                )
                 continue
 
         try:
@@ -109,10 +131,14 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             )
         except Exception as exc:
             logger.warning("[bind] bind_decision failed: %s", exc)
-            results.append(BindResult(
-                decision_id=decision_id, region_id="", content_hash="",
-                error=str(exc),
-            ))
+            results.append(
+                BindResult(
+                    decision_id=decision_id,
+                    region_id="",
+                    content_hash="",
+                    error=str(exc),
+                )
+            )
             continue
 
         region_id = bind_result["region_id"]
@@ -143,11 +169,13 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             except Exception as exc:
                 logger.warning(
                     "[bind] decision_level lookup failed for %s: %s — skipping codegenome write",
-                    decision_id, exc,
+                    decision_id,
+                    exc,
                 )
                 level = None  # treat lookup failure as "skip" — safer than over-writing
             if level == "L2":
                 from codegenome.bind_service import write_codegenome_identity
+
                 try:
                     await write_codegenome_identity(
                         ledger=ledger,
@@ -166,12 +194,14 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                 except Exception as exc:
                     logger.warning(
                         "[bind] codegenome identity write failed for %s: %s",
-                        decision_id, exc,
+                        decision_id,
+                        exc,
                     )
             else:
                 logger.debug(
                     "[bind] L1 exemption — skipping codegenome write for %s (decision_level=%r)",
-                    decision_id, level,
+                    decision_id,
+                    level,
                 )
 
         pending_check = None
@@ -190,15 +220,18 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                 content_hash=content_hash,
             )
 
-        results.append(BindResult(
-            decision_id=decision_id,
-            region_id=region_id,
-            content_hash=content_hash,
-            pending_compliance_check=pending_check,
-        ))
+        results.append(
+            BindResult(
+                decision_id=decision_id,
+                region_id=region_id,
+                content_hash=content_hash,
+                pending_compliance_check=pending_check,
+            )
+        )
 
     try:
         from dashboard.server import notify_dashboard
+
         await notify_dashboard(ctx)
     except Exception:
         pass

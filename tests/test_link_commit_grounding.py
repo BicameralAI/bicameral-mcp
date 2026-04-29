@@ -6,6 +6,7 @@ Covers:
 2. test_pending_grounding_checks_symbol_not_found — ingest a decision with a binding,
    then simulate symbol disappearing → link_commit emits grounding check for that decision
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -177,6 +178,7 @@ async def test_pending_grounding_checks_symbol_not_found(_isolated_ledger):
 
     # Invalidate the within-call sync cache so the handler runs a real sweep
     from handlers.link_commit import invalidate_sync_cache
+
     invalidate_sync_cache(ctx)
 
     # Simulate the old symbol (fetch_user) not being found in the new commit

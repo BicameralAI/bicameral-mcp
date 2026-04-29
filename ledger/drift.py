@@ -39,9 +39,7 @@ class HashDriftAnalyzer:
             start_line, end_line = resolved
 
         # Compute actual hash at this ref
-        actual_hash = compute_content_hash(
-            file_path, start_line, end_line, repo_path, ref=ref
-        )
+        actual_hash = compute_content_hash(file_path, start_line, end_line, repo_path, ref=ref)
 
         # Self-heal legacy regions that were persisted before v0.4.5's
         # baseline-stamping fix. If we have no stored hash but the code

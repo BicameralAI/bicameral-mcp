@@ -70,6 +70,7 @@ def test_get_neighbors_returns_valid_edges(monkeypatch, repo_path):
 
 # ── extract_symbols ──────────────────────────────────────────────────
 
+
 @pytest.mark.phase1
 @pytest.mark.asyncio
 async def test_extract_symbols_from_known_file(monkeypatch, repo_path):

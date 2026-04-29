@@ -8,12 +8,12 @@ from collections.abc import Iterable, Mapping
 # plan; referenced by Phase 3+4 callers (continuity, drift classifier).
 # Lives here so future phases import from one place without restructuring.
 DEFAULT_CONFIDENCE_WEIGHTS: dict[str, float] = {
-    "subject_resolution":    0.25,
-    "structural_identity":   0.20,
-    "content_similarity":    0.15,
+    "subject_resolution": 0.25,
+    "structural_identity": 0.20,
+    "content_similarity": 0.15,
     "call_graph_similarity": 0.15,
-    "test_support":          0.15,
-    "runtime_support":       0.10,
+    "test_support": 0.15,
+    "runtime_support": 0.10,
 }
 
 

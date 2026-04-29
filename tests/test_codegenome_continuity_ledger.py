@@ -60,12 +60,22 @@ async def test_update_binds_to_region_swaps_target():
     try:
         decision_id = await _seed_decision(client)
         old_region_id = await upsert_code_region(
-            client, file_path="src/foo.py", symbol_name="parse",
-            start_line=1, end_line=10, repo="r", content_hash="h_old",
+            client,
+            file_path="src/foo.py",
+            symbol_name="parse",
+            start_line=1,
+            end_line=10,
+            repo="r",
+            content_hash="h_old",
         )
         new_region_id = await upsert_code_region(
-            client, file_path="src/bar.py", symbol_name="parse",
-            start_line=1, end_line=10, repo="r", content_hash="h_new",
+            client,
+            file_path="src/bar.py",
+            symbol_name="parse",
+            start_line=1,
+            end_line=10,
+            repo="r",
+            content_hash="h_new",
         )
         # Initial bind
         await client.execute(
@@ -97,12 +107,20 @@ async def test_update_binds_to_region_idempotent_on_repeat():
     try:
         decision_id = await _seed_decision(client)
         old_region_id = await upsert_code_region(
-            client, file_path="src/foo.py", symbol_name="parse",
-            start_line=1, end_line=10, repo="r",
+            client,
+            file_path="src/foo.py",
+            symbol_name="parse",
+            start_line=1,
+            end_line=10,
+            repo="r",
         )
         new_region_id = await upsert_code_region(
-            client, file_path="src/bar.py", symbol_name="parse",
-            start_line=1, end_line=10, repo="r",
+            client,
+            file_path="src/bar.py",
+            symbol_name="parse",
+            start_line=1,
+            end_line=10,
+            repo="r",
         )
         await client.execute(
             f"RELATE {decision_id}->binds_to->{old_region_id} SET confidence=0.95, provenance={{}}",
@@ -130,8 +148,11 @@ async def test_write_identity_supersedes_creates_edge():
         old_id = await _seed_subject_identity(client, "cg:old")
         new_id = await _seed_subject_identity(client, "cg:new")
         await write_identity_supersedes(
-            client, old_id, new_id,
-            change_type="moved", confidence=0.85,
+            client,
+            old_id,
+            new_id,
+            change_type="moved",
+            confidence=0.85,
         )
         rows = await client.query(
             f"SELECT change_type, confidence, evidence_refs FROM identity_supersedes "
@@ -173,9 +194,16 @@ async def test_write_subject_version_creates_row():
     try:
         subject_id = await _seed_code_subject(client)
         version_id = await write_subject_version(
-            client, subject_id,
-            repo_ref="HEAD", file_path="src/foo.py", start_line=1, end_line=10,
-            symbol_name="parse", symbol_kind="function", content_hash="h", signature_hash="sh",
+            client,
+            subject_id,
+            repo_ref="HEAD",
+            file_path="src/foo.py",
+            start_line=1,
+            end_line=10,
+            symbol_name="parse",
+            symbol_kind="function",
+            content_hash="h",
+            signature_hash="sh",
         )
         assert version_id
         rows = await client.query(f"SELECT file_path, start_line FROM {version_id}")
@@ -191,10 +219,20 @@ async def test_write_subject_version_idempotent_on_same_location():
     try:
         subject_id = await _seed_code_subject(client)
         v1 = await write_subject_version(
-            client, subject_id, repo_ref="HEAD", file_path="x.py", start_line=1, end_line=5,
+            client,
+            subject_id,
+            repo_ref="HEAD",
+            file_path="x.py",
+            start_line=1,
+            end_line=5,
         )
         v2 = await write_subject_version(
-            client, subject_id, repo_ref="HEAD", file_path="x.py", start_line=1, end_line=5,
+            client,
+            subject_id,
+            repo_ref="HEAD",
+            file_path="x.py",
+            start_line=1,
+            end_line=5,
         )
         assert v1 == v2
     finally:
@@ -212,8 +250,12 @@ async def test_relate_has_version_creates_edge():
     try:
         subject_id = await _seed_code_subject(client)
         version_id = await write_subject_version(
-            client, subject_id, repo_ref="HEAD", file_path="src/foo.py",
-            start_line=1, end_line=10,
+            client,
+            subject_id,
+            repo_ref="HEAD",
+            file_path="src/foo.py",
+            start_line=1,
+            end_line=10,
         )
         await relate_has_version(client, subject_id, version_id)
 
@@ -232,7 +274,12 @@ async def test_relate_has_version_idempotent():
     try:
         subject_id = await _seed_code_subject(client)
         version_id = await write_subject_version(
-            client, subject_id, repo_ref="HEAD", file_path="x.py", start_line=1, end_line=5,
+            client,
+            subject_id,
+            repo_ref="HEAD",
+            file_path="x.py",
+            start_line=1,
+            end_line=5,
         )
         await relate_has_version(client, subject_id, version_id)
         await relate_has_version(client, subject_id, version_id)

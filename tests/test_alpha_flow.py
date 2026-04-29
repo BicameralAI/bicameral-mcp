@@ -18,6 +18,7 @@ Invariants:
 Plus one v0.7-specific invariant:
 6. Proposal state — new ingests enter as 'proposal'; drift-exempt until ratified.
 """
+
 from __future__ import annotations
 
 import os
@@ -95,14 +96,16 @@ def _ratified_payload(description: str, *, with_region: bool = False) -> dict:
         },
     }
     if with_region:
-        mapping["code_regions"] = [{
-            "file_path": "impl.py",
-            "symbol": "fetch_user",
-            "type": "function",
-            "start_line": 1,
-            "end_line": 3,
-            "purpose": description,
-        }]
+        mapping["code_regions"] = [
+            {
+                "file_path": "impl.py",
+                "symbol": "fetch_user",
+                "type": "function",
+                "start_line": 1,
+                "end_line": 3,
+                "purpose": description,
+            }
+        ]
     return {"query": description, "repo": "jacob-repo", "mappings": [mapping]}
 
 
@@ -138,9 +141,13 @@ async def test_ingest_bind_commit_marks_reflected(alpha_env):
     ctx, _ = alpha_env
 
     # Invariant 1: ingest lands in ledger, searchable.
-    ingest_resp = await handle_ingest(ctx, _ratified_payload(
-        "JWT is the session-auth primitive, not cookies.", with_region=False,
-    ))
+    ingest_resp = await handle_ingest(
+        ctx,
+        _ratified_payload(
+            "JWT is the session-auth primitive, not cookies.",
+            with_region=False,
+        ),
+    )
     assert ingest_resp.ingested
     assert len(ingest_resp.pending_grounding_decisions) == 1
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
@@ -151,26 +158,37 @@ async def test_ingest_bind_commit_marks_reflected(alpha_env):
     )
 
     # Invariant 2: bind is author-attested.
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     b = bind_resp.bindings[0]
     assert b.error is None, f"Invariant 2 FAIL: bind error: {b.error}"
     assert b.region_id and b.content_hash
 
     # Invariant 3: compliant verdict + ratified signoff → reflected.
-    rc = await handle_resolve_compliance(ctx, phase="ingest", verdicts=[{
-        "decision_id": decision_id,
-        "region_id": b.region_id,
-        "content_hash": b.content_hash,
-        "verdict": "compliant",
-        "confidence": "high",
-        "explanation": "fetch_user performs JWT lookup as decided.",
-    }])
+    rc = await handle_resolve_compliance(
+        ctx,
+        phase="ingest",
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": b.region_id,
+                "content_hash": b.content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "fetch_user performs JWT lookup as decided.",
+            }
+        ],
+    )
     assert len(rc.accepted) == 1
     status = await _decision_status(ctx, decision_id)
     assert status == "reflected", f"Invariant 3 FAIL: expected reflected, got {status}"
@@ -186,36 +204,55 @@ async def test_code_edit_without_rebind_marks_drifted(alpha_env):
     """Invariant 3 drift arm — file edit after bind, no rebind → drifted."""
     ctx, repo_root = alpha_env
 
-    ingest_resp = await handle_ingest(ctx, _ratified_payload(
-        "Fetch user returns JWT-validated identity.", with_region=False,
-    ))
+    ingest_resp = await handle_ingest(
+        ctx,
+        _ratified_payload(
+            "Fetch user returns JWT-validated identity.",
+            with_region=False,
+        ),
+    )
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     b = bind_resp.bindings[0]
     assert b.error is None
 
-    await handle_resolve_compliance(ctx, phase="ingest", verdicts=[{
-        "decision_id": decision_id,
-        "region_id": b.region_id,
-        "content_hash": b.content_hash,
-        "verdict": "compliant",
-        "confidence": "high",
-        "explanation": "baseline verified",
-    }])
+    await handle_resolve_compliance(
+        ctx,
+        phase="ingest",
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": b.region_id,
+                "content_hash": b.content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "baseline verified",
+            }
+        ],
+    )
     assert await _decision_status(ctx, decision_id) == "reflected"
 
-    _commit_edit(repo_root, """
+    _commit_edit(
+        repo_root,
+        """
         def fetch_user(user_id: int):
             # Cookie-based (violates JWT decision).
             return {"id": user_id, "session_cookie": "opaque"}
-        """, msg="drift-impl")
+        """,
+        msg="drift-impl",
+    )
 
     invalidate_sync_cache(ctx)
     lc = await handle_link_commit(ctx, "HEAD")
@@ -235,22 +272,29 @@ async def test_session_start_banner_surfaces_drifts(alpha_env):
     """Invariant 4 — cold MCP session with drifted decision → banner fires."""
     ctx, _ = alpha_env
 
-    ingest_resp = await handle_ingest(ctx, _ratified_payload(
-        "Billing webhook uses exponential backoff with jitter.", with_region=True,
-    ))
+    ingest_resp = await handle_ingest(
+        ctx,
+        _ratified_payload(
+            "Billing webhook uses exponential backoff with jitter.",
+            with_region=True,
+        ),
+    )
     assert ingest_resp.ingested
     decision_id = (
         ingest_resp.pending_grounding_decisions[0]["decision_id"]
         if ingest_resp.pending_grounding_decisions
-        else (ingest_resp.sync_status.pending_compliance_checks[0].decision_id
-              if (ingest_resp.sync_status and ingest_resp.sync_status.pending_compliance_checks)
-              else None)
+        else (
+            ingest_resp.sync_status.pending_compliance_checks[0].decision_id
+            if (ingest_resp.sync_status and ingest_resp.sync_status.pending_compliance_checks)
+            else None
+        )
     )
     assert decision_id, "Could not extract decision_id from ingest"
 
     # Force drift by writing a drifted verdict directly.
     inner = getattr(ctx.ledger, "_inner", ctx.ledger)
     from ledger.queries import update_decision_status
+
     await update_decision_status(inner._client, decision_id, "drifted")
 
     # Fresh session — clear banner cache.
@@ -282,22 +326,32 @@ async def test_preflight_surfaces_bound_decisions(monkeypatch, alpha_env):
     ctx = BicameralContext.from_env()
     assert ctx.guided_mode is True
 
-    ingest_resp = await handle_ingest(ctx, _ratified_payload(
-        "User fetch enforces per-tenant rate limits in middleware.", with_region=False,
-    ))
+    ingest_resp = await handle_ingest(
+        ctx,
+        _ratified_payload(
+            "User fetch enforces per-tenant rate limits in middleware.",
+            with_region=False,
+        ),
+    )
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     assert bind_resp.bindings[0].error is None
 
-    pf = await handle_preflight(ctx, topic="user fetch rate limit middleware",
-                                file_paths=["impl.py"])
+    pf = await handle_preflight(
+        ctx, topic="user fetch rate limit middleware", file_paths=["impl.py"]
+    )
     assert pf.fired, f"Invariant 5 FAIL: preflight did not fire; reason={pf.reason}"
     decision_ids_returned = [d.decision_id for d in pf.decisions]
     assert decision_id in decision_ids_returned, (
@@ -318,37 +372,56 @@ async def test_hook_no_fire_still_syncs(alpha_env):
     """
     ctx, repo_root = alpha_env
 
-    ingest_resp = await handle_ingest(ctx, _ratified_payload(
-        "Audit log retention 30 days, enforced at write path.", with_region=False,
-    ))
+    ingest_resp = await handle_ingest(
+        ctx,
+        _ratified_payload(
+            "Audit log retention 30 days, enforced at write path.",
+            with_region=False,
+        ),
+    )
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
-    bind_resp = await handle_bind(ctx, bindings=[{
-        "decision_id": decision_id,
-        "file_path": "impl.py",
-        "symbol_name": "fetch_user",
-        "start_line": 1,
-        "end_line": 3,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "impl.py",
+                "symbol_name": "fetch_user",
+                "start_line": 1,
+                "end_line": 3,
+            }
+        ],
+    )
     b = bind_resp.bindings[0]
     assert b.error is None
 
-    await handle_resolve_compliance(ctx, phase="ingest", verdicts=[{
-        "decision_id": decision_id,
-        "region_id": b.region_id,
-        "content_hash": b.content_hash,
-        "verdict": "compliant",
-        "confidence": "high",
-        "explanation": "baseline",
-    }])
+    await handle_resolve_compliance(
+        ctx,
+        phase="ingest",
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": b.region_id,
+                "content_hash": b.content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "baseline",
+            }
+        ],
+    )
     assert await _decision_status(ctx, decision_id) == "reflected"
 
     # Commit drift — no explicit link_commit call (simulates hook silence).
-    _commit_edit(repo_root, """
+    _commit_edit(
+        repo_root,
+        """
         def fetch_user(user_id: int):
             # Audit log bypassed.
             raise NotImplementedError
-        """, msg="bypass-audit-log")
+        """,
+        msg="bypass-audit-log",
+    )
 
     # ensure_ledger_synced must detect the new commit and sync.
     invalidate_sync_cache(ctx)
@@ -378,16 +451,18 @@ async def test_new_ingest_enters_as_proposal(alpha_env):
     payload = {
         "query": "Pagination defaults to 25 items per page.",
         "repo": "jacob-repo",
-        "mappings": [{
-            "intent": "Pagination defaults to 25 items per page.",
-            "span": {
-                "source_type": "transcript",
-                "text": "Pagination defaults to 25 items per page.",
-                "source_ref": "jacob-v0.7-test",
-            },
-            "symbols": [],
-            "code_regions": [],
-        }],
+        "mappings": [
+            {
+                "intent": "Pagination defaults to 25 items per page.",
+                "span": {
+                    "source_type": "transcript",
+                    "text": "Pagination defaults to 25 items per page.",
+                    "source_ref": "jacob-v0.7-test",
+                },
+                "symbols": [],
+                "code_regions": [],
+            }
+        ],
     }
     ingest_resp = await handle_ingest(ctx, payload)
     assert ingest_resp.ingested
@@ -396,14 +471,12 @@ async def test_new_ingest_enters_as_proposal(alpha_env):
     # Code-compliance status is 'ungrounded' (no regions bound yet).
     # Human-approval axis lives on signoff.state = 'proposed'.
     status = await _decision_status(ctx, decision_id)
-    assert status == "ungrounded", (
-        f"v0.9+ invariant FAIL: expected 'ungrounded', got '{status}'"
-    )
+    assert status == "ungrounded", f"v0.9+ invariant FAIL: expected 'ungrounded', got '{status}'"
 
     # After ratification, it remains ungrounded (no code regions bound).
     from handlers.ratify import handle_ratify
-    ratify_resp = await handle_ratify(ctx, decision_id=decision_id,
-                                     signer="jacob@example.com")
+
+    ratify_resp = await handle_ratify(ctx, decision_id=decision_id, signer="jacob@example.com")
     assert ratify_resp.was_new is True
     assert ratify_resp.signoff["state"] == "ratified"
 
@@ -427,22 +500,28 @@ async def test_ratify_idempotent(alpha_env):
     original signer and ratified_at timestamp must be preserved.
     """
     from handlers.ratify import handle_ratify
+
     ctx, _ = alpha_env
 
-    ingest_resp = await handle_ingest(ctx, {
-        "query": "Cache TTL is 5 minutes.",
-        "repo": "jacob-repo",
-        "mappings": [{
-            "intent": "Cache TTL is 5 minutes.",
-            "span": {
-                "source_type": "transcript",
-                "text": "Cache TTL is 5 minutes.",
-                "source_ref": "arch-review",
-            },
-            "symbols": [],
-            "code_regions": [],
-        }],
-    })
+    ingest_resp = await handle_ingest(
+        ctx,
+        {
+            "query": "Cache TTL is 5 minutes.",
+            "repo": "jacob-repo",
+            "mappings": [
+                {
+                    "intent": "Cache TTL is 5 minutes.",
+                    "span": {
+                        "source_type": "transcript",
+                        "text": "Cache TTL is 5 minutes.",
+                        "source_ref": "arch-review",
+                    },
+                    "symbols": [],
+                    "code_regions": [],
+                }
+            ],
+        },
+    )
     assert ingest_resp.ingested
     decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
 
@@ -456,4 +535,4 @@ async def test_ratify_idempotent(alpha_env):
     assert resp2.was_new is False
     assert resp2.signoff["state"] == "ratified"
     assert resp2.signoff["signer"] == "jin@example.com"  # original signer preserved
-    assert resp2.signoff["ratified_at"] == ratified_at   # timestamp unchanged
+    assert resp2.signoff["ratified_at"] == ratified_at  # timestamp unchanged

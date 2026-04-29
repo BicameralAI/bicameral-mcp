@@ -145,8 +145,7 @@ async def test_compliance_check_changefeed_records_overwritten_row(
     )
     # Current row reflects the caller's verdict.
     rows = await client.query(
-        "SELECT verdict, semantic_status FROM compliance_check "
-        "WHERE decision_id = 'decision:auto'"
+        "SELECT verdict, semantic_status FROM compliance_check WHERE decision_id = 'decision:auto'"
     )
     assert rows[0]["verdict"] == "drifted"
     assert rows[0]["semantic_status"] == "semantic_change"
@@ -171,8 +170,11 @@ async def test_compliance_check_changefeed_records_overwritten_row(
 def test_compliance_verdict_accepts_semantic_status() -> None:
     """ComplianceVerdict accepts both 'semantically_preserved' and 'semantic_change'."""
     v1 = ComplianceVerdict(
-        decision_id="d:1", region_id="r:1", content_hash="h",
-        verdict="compliant", confidence="high",
+        decision_id="d:1",
+        region_id="r:1",
+        content_hash="h",
+        verdict="compliant",
+        confidence="high",
         explanation="auto-resolved cosmetic change",
         semantic_status="semantically_preserved",
         evidence_refs=["signature:1.00"],
@@ -180,8 +182,11 @@ def test_compliance_verdict_accepts_semantic_status() -> None:
     assert v1.semantic_status == "semantically_preserved"
 
     v2 = ComplianceVerdict(
-        decision_id="d:1", region_id="r:1", content_hash="h",
-        verdict="drifted", confidence="high",
+        decision_id="d:1",
+        region_id="r:1",
+        content_hash="h",
+        verdict="drifted",
+        confidence="high",
         explanation="caller flagged real semantic change",
         semantic_status="semantic_change",
         evidence_refs=[],
@@ -198,8 +203,11 @@ def test_compliance_verdict_rejects_pre_classification_hint_value() -> None:
     """
     with pytest.raises(ValidationError):
         ComplianceVerdict(
-            decision_id="d:1", region_id="r:1", content_hash="h",
-            verdict="compliant", confidence="high",
+            decision_id="d:1",
+            region_id="r:1",
+            content_hash="h",
+            verdict="compliant",
+            confidence="high",
             explanation="x",
             semantic_status="pre_classification_hint",  # type: ignore[arg-type]
         )
@@ -210,15 +218,20 @@ def test_pending_compliance_check_accepts_pre_classification_hint() -> None:
     (not a schema enum string — it's an attached PreClassificationHint).
     """
     hint = PreClassificationHint(
-        verdict="uncertain", confidence=0.55,
-        signals={"signature": 1.0, "neighbors": 0.5,
-                 "diff_lines": 0.4, "no_new_calls": 0.5},
+        verdict="uncertain",
+        confidence=0.55,
+        signals={"signature": 1.0, "neighbors": 0.5, "diff_lines": 0.4, "no_new_calls": 0.5},
         evidence_refs=["score:0.55"],
     )
     p = PendingComplianceCheck(
-        phase="drift", decision_id="d:1", region_id="r:1",
-        decision_description="x", file_path="f.py", symbol="s",
-        content_hash="h", pre_classification=hint,
+        phase="drift",
+        decision_id="d:1",
+        region_id="r:1",
+        decision_description="x",
+        file_path="f.py",
+        symbol="s",
+        content_hash="h",
+        pre_classification=hint,
     )
     assert p.pre_classification is hint
     assert p.pre_classification.verdict == "uncertain"
@@ -227,13 +240,17 @@ def test_pending_compliance_check_accepts_pre_classification_hint() -> None:
 def test_link_commit_response_carries_auto_resolved_count() -> None:
     """O1 fix: ``auto_resolved_count`` is an additive field on the response."""
     r = LinkCommitResponse(
-        commit_hash="abc", synced=True, reason="new_commit",
+        commit_hash="abc",
+        synced=True,
+        reason="new_commit",
         auto_resolved_count=3,
     )
     assert r.auto_resolved_count == 3
     # Default for legacy callers is 0.
     r_legacy = LinkCommitResponse(
-        commit_hash="abc", synced=True, reason="already_synced",
+        commit_hash="abc",
+        synced=True,
+        reason="already_synced",
     )
     assert r_legacy.auto_resolved_count == 0
 
@@ -247,9 +264,12 @@ async def test_resolve_compliance_persists_semantic_status_and_evidence(
     """upsert_compliance_check accepts and persists the new optional fields."""
     await upsert_compliance_check(
         client,
-        decision_id="decision:e2e", region_id="code_region:e2e",
-        content_hash="h-e2e", verdict="compliant",
-        confidence="high", explanation="auto",
+        decision_id="decision:e2e",
+        region_id="code_region:e2e",
+        content_hash="h-e2e",
+        verdict="compliant",
+        confidence="high",
+        explanation="auto",
         phase="drift",
         semantic_status="semantically_preserved",
         evidence_refs=["signature:1.00", "neighbors:0.97"],
@@ -269,9 +289,12 @@ async def test_resolve_compliance_omits_optional_fields_for_legacy_callers(
     NONE / [] defaults (additive contract)."""
     await upsert_compliance_check(
         client,
-        decision_id="decision:legacy2", region_id="code_region:legacy2",
-        content_hash="h-legacy2", verdict="drifted",
-        confidence="medium", explanation="legacy",
+        decision_id="decision:legacy2",
+        region_id="code_region:legacy2",
+        content_hash="h-legacy2",
+        verdict="drifted",
+        confidence="medium",
+        explanation="legacy",
         phase="drift",
     )
     rows = await client.query(

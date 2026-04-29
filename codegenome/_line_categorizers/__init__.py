@@ -25,7 +25,12 @@ from __future__ import annotations
 from typing import Literal
 
 LineCategory = Literal[
-    "comment", "docstring", "blank", "import", "logic", "signature",
+    "comment",
+    "docstring",
+    "blank",
+    "import",
+    "logic",
+    "signature",
 ]
 
 
@@ -45,13 +50,13 @@ def categorize(
     from . import c_sharp, go, java, javascript, python, rust, typescript
 
     table = {
-        "python":     python.categorize_line,
+        "python": python.categorize_line,
         "javascript": javascript.categorize_line,
         "typescript": typescript.categorize_line,
-        "go":         go.categorize_line,
-        "rust":       rust.categorize_line,
-        "java":       java.categorize_line,
-        "c_sharp":    c_sharp.categorize_line,
+        "go": go.categorize_line,
+        "rust": rust.categorize_line,
+        "java": java.categorize_line,
+        "c_sharp": c_sharp.categorize_line,
     }
     fn = table.get(language)
     if fn is None:

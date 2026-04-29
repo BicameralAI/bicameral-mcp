@@ -93,7 +93,9 @@ class TestResolveRefStillWorksOnValidRepo:
         subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
         subprocess.run(
             ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed"],
-            cwd=repo, check=True, capture_output=True,
+            cwd=repo,
+            check=True,
+            capture_output=True,
         )
 
         sha = resolve_ref("HEAD", str(repo))
@@ -110,14 +112,15 @@ class TestNotADirectoryErrorInExceptClauses:
     fails by re-introducing the original Windows crash class.
     """
 
-    @pytest.mark.parametrize("module_path", [
-        "ledger/status.py",
-        "ledger/adapter.py",
-        "code_locator_runtime.py",
-    ])
-    def test_subprocess_except_includes_notadirectoryerror(
-        self, module_path: str
-    ) -> None:
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "ledger/status.py",
+            "ledger/adapter.py",
+            "code_locator_runtime.py",
+        ],
+    )
+    def test_subprocess_except_includes_notadirectoryerror(self, module_path: str) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         source = (repo_root / module_path).read_text(encoding="utf-8")
         # Permit modules with no subprocess.run at all.

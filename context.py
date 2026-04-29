@@ -36,6 +36,7 @@ def _read_guided_mode(repo_path: str) -> bool:
         return False
     try:
         import yaml
+
         config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         return bool(config.get("guided", False))
     except Exception:

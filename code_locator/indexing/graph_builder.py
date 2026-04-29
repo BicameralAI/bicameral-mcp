@@ -18,6 +18,7 @@ from .symbol_extractor import (
 
 # ── Contains edges ───────────────────────────────────────────────────
 
+
 def _build_contains_edges(db: SymbolDB) -> list[tuple[int, int, str]]:
     """Build parent->child edges using parent_qualified_name."""
     conn = db._connect()
@@ -47,6 +48,7 @@ def _build_contains_edges(db: SymbolDB) -> list[tuple[int, int, str]]:
 
 # ── Import edges ─────────────────────────────────────────────────────
 
+
 def _extract_python_imports(tree, code: bytes) -> list[str]:
     """Extract imported names from Python import statements."""
     names: list[str] = []
@@ -70,7 +72,11 @@ def _extract_python_imports(tree, code: bytes) -> list[str]:
         if node.type == "import_from_statement":
             # from foo import bar, baz
             for child in node.children:
-                if child.type == "dotted_name" and child.prev_sibling and _node_text(code, child.prev_sibling) == "import":
+                if (
+                    child.type == "dotted_name"
+                    and child.prev_sibling
+                    and _node_text(code, child.prev_sibling) == "import"
+                ):
                     names.append(_node_text(code, child))
                 elif child.type == "aliased_import":
                     alias = child.child_by_field_name("alias")
@@ -195,6 +201,7 @@ def _extract_imports_for_language(language_id: str, tree, code: bytes) -> list[s
 
 # ── Invokes edges ────────────────────────────────────────────────────
 
+
 def _extract_call_names(tree, code: bytes, language_id: str) -> list[tuple[int, str]]:
     """Extract (line_number, called_function_name) from call expressions.
 
@@ -226,6 +233,7 @@ def _extract_call_names(tree, code: bytes, language_id: str) -> list[tuple[int, 
 
 
 # ── Main builder ─────────────────────────────────────────────────────
+
 
 def build_graph(db: SymbolDB, repo_path: str) -> int:
     """Build dependency edges for all indexed symbols. Returns edge count."""

@@ -28,6 +28,7 @@ from ._line_categorizers import categorize as _categorize_line
 @dataclass(frozen=True)
 class DiffStats:
     """Bucketed counts of changed lines."""
+
     total: int
     comment: int
     docstring: int
@@ -45,14 +46,12 @@ class DiffStats:
         new import is not, and we can't tell those apart from line
         categories alone. Treat conservatively as logic-equivalent.
         """
-        return (
-            (self.comment + self.docstring + self.blank) / self.total
-            if self.total > 0 else 0.0
-        )
+        return (self.comment + self.docstring + self.blank) / self.total if self.total > 0 else 0.0
 
 
 def _changed_lines(
-    old_body: str, new_body: str,
+    old_body: str,
+    new_body: str,
 ) -> tuple[list[tuple[int, str]], list[tuple[int, str]]]:
     """Compute changed lines on each side via difflib.
 
@@ -76,17 +75,24 @@ def _changed_lines(
 
 
 def _bucket(
-    lines: list[tuple[int, str]], language: str, flags: dict,
+    lines: list[tuple[int, str]],
+    language: str,
+    flags: dict,
 ) -> dict:
     """Count category occurrences for one side of the diff."""
     counts = {
-        "comment": 0, "docstring": 0, "blank": 0,
-        "import": 0, "logic": 0, "signature": 0,
+        "comment": 0,
+        "docstring": 0,
+        "blank": 0,
+        "import": 0,
+        "logic": 0,
+        "signature": 0,
     }
     for line_no, text in lines:
         sig_flag, doc_flag = flags.get(line_no, (False, False))
         cat = _categorize_line(
-            language, text,
+            language,
+            text,
             in_function_signature=sig_flag,
             in_docstring_slot=doc_flag,
         )
@@ -95,7 +101,9 @@ def _bucket(
 
 
 def categorize_diff(
-    old_body: str, new_body: str, language: str,
+    old_body: str,
+    new_body: str,
+    language: str,
 ) -> DiffStats:
     """Categorize each changed line per-language. Public API.
 
@@ -110,9 +118,7 @@ def categorize_diff(
     new_flags = _diff_dispatch.compute_slot_flags(new_body, language)
     rem_counts = _bucket(removed, language, old_flags)
     add_counts = _bucket(added, language, new_flags)
-    total = (
-        sum(rem_counts.values()) + sum(add_counts.values())
-    )
+    total = sum(rem_counts.values()) + sum(add_counts.values())
     return DiffStats(
         total=total,
         comment=rem_counts["comment"] + add_counts["comment"],

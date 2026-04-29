@@ -73,13 +73,15 @@ def _normalize_payload(payload: dict) -> dict:
         # committed to them, no code implements them. signoff.discovered=true
         # marks them as AI-discovered so consumers can distinguish them from
         # explicitly ingested decisions without a description prefix hack.
-        mappings.append({
-            "intent": q,
-            "span": {**source_meta, "text": ""},
-            "symbols": [],
-            "code_regions": [],
-            "signoff": {"state": "proposed", "discovered": True},
-        })
+        mappings.append(
+            {
+                "intent": q,
+                "span": {**source_meta, "text": ""},
+                "symbols": [],
+                "code_regions": [],
+                "signoff": {"state": "proposed", "discovered": True},
+            }
+        )
 
     if not mappings:
         logger.warning(
@@ -192,12 +194,14 @@ async def _find_context_for_candidates(
                 if pair in seen_pairs:
                     continue
                 seen_pairs.add(pair)
-                candidates.append(ContextForCandidate(
-                    span_id=span_id,
-                    decision_id=decision_id,
-                    decision_description=m.get("description", ""),
-                    overlap_score=float(m.get("overlap_score", 0.0)),
-                ))
+                candidates.append(
+                    ContextForCandidate(
+                        span_id=span_id,
+                        decision_id=decision_id,
+                        decision_description=m.get("description", ""),
+                        overlap_score=float(m.get("overlap_score", 0.0)),
+                    )
+                )
                 if len(candidates) >= top_k:
                     return candidates
         except Exception as exc:
@@ -238,6 +242,7 @@ async def handle_ingest(
         if span.get("source_type") in _SESSION_SOURCE_TYPES and not span.get("speakers"):
             if _git_email_cache is None:
                 from events.writer import _get_git_email
+
                 _git_email_cache = _get_git_email(ctx.repo_path)
             if _git_email_cache and _git_email_cache != "unknown":
                 span["speakers"] = [_git_email_cache]
@@ -245,6 +250,7 @@ async def handle_ingest(
     payload = ctx.code_graph.resolve_symbols(payload)
 
     from datetime import datetime
+
     _now_iso = datetime.now(UTC).isoformat()
     _session_id = getattr(ctx, "session_id", None) or ""
 
@@ -271,7 +277,10 @@ async def handle_ingest(
             "(HEAD=%s); baseline hashes will be stamped against %s so the "
             "ledger stays branch-independent. Switch to %s if you want "
             "baselines pinned to the current working tree.",
-            authoritative_ref, head_sha[:8], authoritative_ref, authoritative_ref,
+            authoritative_ref,
+            head_sha[:8],
+            authoritative_ref,
+            authoritative_ref,
         )
 
     # v0.4.8: writes always invalidate the within-call sync cache. In the
@@ -281,6 +290,7 @@ async def handle_ingest(
     # then writes would leave a stale cache covering post-write reads.
     try:
         from handlers.link_commit import handle_link_commit, invalidate_sync_cache
+
         invalidate_sync_cache(ctx)
     except Exception:
         pass
@@ -314,6 +324,7 @@ async def handle_ingest(
         topics = _derive_topics(payload)
         if topics:
             from handlers.gap_judge import handle_judge_gaps
+
             for topic in topics:
                 jp = await handle_judge_gaps(ctx, topic=topic)
                 if jp is not None:
@@ -323,7 +334,9 @@ async def handle_ingest(
     judgment_payload = judgment_payloads[0] if judgment_payloads else None
 
     cursor_summary = None
-    source_type = str(((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual"))
+    source_type = str(
+        ((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_type", "manual")
+    )
     last_source_ref = _derive_last_source_ref(payload)
     if hasattr(ledger, "upsert_source_cursor"):
         cursor_row = await ledger.upsert_source_cursor(
@@ -379,8 +392,7 @@ async def handle_ingest(
             for d in result.get("created_decisions", [])
         ],
         pending_grounding_decisions=[
-            d for d in result.get("ungrounded_decisions", [])
-            if d.get("decision_level") != "L1"
+            d for d in result.get("ungrounded_decisions", []) if d.get("decision_level") != "L1"
         ],
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
@@ -391,6 +403,7 @@ async def handle_ingest(
 
     try:
         from dashboard.server import notify_dashboard
+
         await notify_dashboard(ctx)
     except Exception:
         pass

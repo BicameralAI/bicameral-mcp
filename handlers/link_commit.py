@@ -109,6 +109,7 @@ def _build_verification_instruction(
         parts.append(_GROUNDING_INSTRUCTION_RELOCATION)
     return "".join(parts)
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,6 +126,7 @@ def _read_current_head_sha(repo_path: str) -> str:
     """
     try:
         import subprocess
+
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo_path,
@@ -230,11 +232,15 @@ def invalidate_sync_cache(ctx) -> None:
         sync_state.pop("last_sync_response", None)
         sync_state.pop("pending_flow_id", None)
     from handlers.sync_middleware import invalidate_process_cache
+
     invalidate_process_cache()
 
 
 async def _run_drift_classification_pass(
-    ctx, pending: list[PendingComplianceCheck], *, commit_hash: str,
+    ctx,
+    pending: list[PendingComplianceCheck],
+    *,
+    commit_hash: str,
 ) -> tuple[list[PendingComplianceCheck], int]:
     """Phase 4 (#61): per-region cosmetic-vs-semantic classification.
 
@@ -253,10 +259,7 @@ async def _run_drift_classification_pass(
     cg_adapter = getattr(ctx, "codegenome", None)
     if cg_config is None or cg_adapter is None:
         return pending, 0
-    if not (
-        getattr(cg_config, "enabled", False)
-        and getattr(cg_config, "enhance_drift", False)
-    ):
+    if not (getattr(cg_config, "enabled", False) and getattr(cg_config, "enhance_drift", False)):
         return pending, 0
     if not pending:
         return pending, 0
@@ -271,8 +274,13 @@ async def _run_drift_classification_pass(
     repo_ref = getattr(ctx, "authoritative_sha", "") or "HEAD"
     for p in pending:
         outcome = await _classify_one(
-            ctx, p, cg_adapter, repo_ref, commit_hash,
-            DriftClassificationContext, evaluate_drift_classification,
+            ctx,
+            p,
+            cg_adapter,
+            repo_ref,
+            commit_hash,
+            DriftClassificationContext,
+            evaluate_drift_classification,
             get_git_content,
         )
         if outcome is None:
@@ -290,9 +298,13 @@ async def _run_drift_classification_pass(
 
 
 async def _classify_one(
-    ctx, p: PendingComplianceCheck,
-    cg_adapter, repo_ref: str, commit_hash: str,
-    DriftClassificationContext, evaluate_drift_classification,
+    ctx,
+    p: PendingComplianceCheck,
+    cg_adapter,
+    repo_ref: str,
+    commit_hash: str,
+    DriftClassificationContext,
+    evaluate_drift_classification,
     get_git_content,
 ):
     """Run drift classification for a single pending check.
@@ -305,28 +317,41 @@ async def _classify_one(
         if not meta:
             return None
         old_body = get_git_content(
-            p.file_path, meta["start_line"], meta["end_line"],
-            ctx.repo_path, ref=repo_ref,
+            p.file_path,
+            meta["start_line"],
+            meta["end_line"],
+            ctx.repo_path,
+            ref=repo_ref,
         )
         new_body = get_git_content(
-            p.file_path, meta["start_line"], meta["end_line"],
-            ctx.repo_path, ref=commit_hash,
+            p.file_path,
+            meta["start_line"],
+            meta["end_line"],
+            ctx.repo_path,
+            ref=commit_hash,
         )
         if old_body is None or new_body is None:
             return None
         from code_locator.indexing.symbol_extractor import EXTENSION_LANGUAGE
+
         ext = "." + p.file_path.rsplit(".", 1)[-1] if "." in p.file_path else ""
         language = EXTENSION_LANGUAGE.get(ext, "")
         if not language:
             return None
         ctx_dc = DriftClassificationContext(
-            decision_id=p.decision_id, region_id=p.region_id,
-            content_hash=p.content_hash, commit_hash=commit_hash,
-            file_path=p.file_path, symbol_name=p.symbol,
-            old_body=old_body, new_body=new_body, language=language,
+            decision_id=p.decision_id,
+            region_id=p.region_id,
+            content_hash=p.content_hash,
+            commit_hash=commit_hash,
+            file_path=p.file_path,
+            symbol_name=p.symbol,
+            old_body=old_body,
+            new_body=new_body,
+            language=language,
         )
         return await evaluate_drift_classification(
-            ledger=ctx.ledger, codegenome=cg_adapter,
+            ledger=ctx.ledger,
+            codegenome=cg_adapter,
             code_locator=getattr(ctx, "code_graph", None),
             ctx=ctx_dc,
             new_start_line=int(meta["start_line"]),
@@ -336,7 +361,8 @@ async def _classify_one(
     except Exception as exc:  # noqa: BLE001 — failure-isolated by design
         logger.warning(
             "[link_commit] drift classification failed for region %s: %s",
-            p.region_id, exc,
+            p.region_id,
+            exc,
         )
         return None
 
@@ -377,7 +403,8 @@ async def _run_continuity_pass(ctx, pending: list[PendingComplianceCheck]) -> li
         except Exception as exc:
             logger.debug(
                 "[link_commit] region metadata lookup failed for %s: %s",
-                p.region_id, exc,
+                p.region_id,
+                exc,
             )
         if meta:
             old_kind = str(meta.get("identity_type") or "unknown")
@@ -386,20 +413,27 @@ async def _run_continuity_pass(ctx, pending: list[PendingComplianceCheck]) -> li
         else:
             old_kind, old_start, old_end = "unknown", 0, 0
         drift = DriftContext(
-            decision_id=p.decision_id, region_id=p.region_id,
-            old_file_path=p.file_path, old_symbol_name=p.symbol,
+            decision_id=p.decision_id,
+            region_id=p.region_id,
+            old_file_path=p.file_path,
+            old_symbol_name=p.symbol,
             old_symbol_kind=old_kind,
-            old_start_line=old_start, old_end_line=old_end,
+            old_start_line=old_start,
+            old_end_line=old_end,
             repo_ref=getattr(ctx, "authoritative_sha", "") or "HEAD",
             repo_path=ctx.repo_path,
         )
         try:
             r = await evaluate_continuity_for_drift(
-                ledger=ctx.ledger, codegenome=cg_adapter, code_locator=ctx.code_graph,
+                ledger=ctx.ledger,
+                codegenome=cg_adapter,
+                code_locator=ctx.code_graph,
                 drift=drift,
             )
         except Exception as exc:  # noqa: BLE001 — failure-isolated by design
-            logger.warning("[link_commit] continuity eval failed for region %s: %s", p.region_id, exc)
+            logger.warning(
+                "[link_commit] continuity eval failed for region %s: %s", p.region_id, exc
+            )
             continue
         if r is not None:
             resolutions.append(r)
@@ -425,7 +459,8 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
     try:
         if hasattr(ctx.ledger, "backfill_empty_hashes"):
             await ctx.ledger.backfill_empty_hashes(
-                ctx.repo_path, drift_analyzer=ctx.drift_analyzer,
+                ctx.repo_path,
+                drift_analyzer=ctx.drift_analyzer,
             )
     except Exception as exc:
         logger.warning("[link_commit] backfill failed: %s", exc)
@@ -459,7 +494,8 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
     continuity_resolutions = await _run_continuity_pass(ctx, pending)
     if continuity_resolutions:
         resolved_region_ids = {
-            r.old_code_region_id for r in continuity_resolutions
+            r.old_code_region_id
+            for r in continuity_resolutions
             if r.semantic_status in ("identity_moved", "identity_renamed")
         }
         if resolved_region_ids:
@@ -472,16 +508,16 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
     # written by the service. Uncertain pendings get a
     # ``pre_classification`` hint attached. Failure-isolated.
     pending, auto_resolved_count = await _run_drift_classification_pass(
-        ctx, pending, commit_hash=result["commit_hash"],
+        ctx,
+        pending,
+        commit_hash=result["commit_hash"],
     )
 
     pending_grounding_raw = result.get("pending_grounding_checks", []) or []
 
     has_action_items = bool(pending) or bool(pending_grounding_raw)
     verification_text = (
-        _build_verification_instruction(pending, pending_grounding_raw)
-        if has_action_items
-        else ""
+        _build_verification_instruction(pending, pending_grounding_raw) if has_action_items else ""
     )
 
     is_ephemeral = _is_ephemeral_commit(
@@ -518,6 +554,7 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
 
     try:
         from dashboard.server import notify_dashboard
+
         await notify_dashboard(ctx)
     except Exception:
         pass

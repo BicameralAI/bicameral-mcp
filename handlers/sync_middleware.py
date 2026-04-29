@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 _LAST_SYNCED_SHA: str | None = None
 
 
-
 # ── V1 A2-light: per-repo write barrier ─────────────────────────────────
 # Module-level registry of per-repo asyncio.Locks. Serializes mutating
 # handlers against the same repo inside a single MCP server process.
@@ -95,6 +94,7 @@ class BarrierTiming:
     Handlers read it after the ``async with`` block to attach the number
     to their ``SyncMetrics`` response field.
     """
+
     __slots__ = ("held_ms",)
 
     def __init__(self) -> None:
@@ -153,14 +153,11 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
     now = datetime.now(UTC)
 
     drifted_rows = [r for r in rows if r.get("status") == "drifted"]
-    proposal_rows = [
-        r for r in rows
-        if (r.get("signoff") or {}).get("state") == "proposed"
-    ]
+    proposal_rows = [r for r in rows if (r.get("signoff") or {}).get("state") == "proposed"]
     real_ungrounded_rows = [
-        r for r in rows
-        if r.get("status") == "ungrounded"
-        and (r.get("signoff") or {}).get("state") != "proposed"
+        r
+        for r in rows
+        if r.get("status") == "ungrounded" and (r.get("signoff") or {}).get("state") != "proposed"
     ]
 
     stale_proposals = []
@@ -191,13 +188,15 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
     items = []
     for r in visible:
         signoff = r.get("signoff") or {}
-        items.append({
-            "decision_id": r.get("decision_id", r.get("id", "")),
-            "description": r.get("description", ""),
-            "status": r.get("status", ""),
-            "signoff_state": signoff.get("state"),
-            "source_ref": r.get("source_ref", ""),
-        })
+        items.append(
+            {
+                "decision_id": r.get("decision_id", r.get("id", "")),
+                "description": r.get("description", ""),
+                "status": r.get("status", ""),
+                "signoff_state": signoff.get("state"),
+                "source_ref": r.get("source_ref", ""),
+            }
+        )
 
     parts = []
     if drifted_count:
@@ -233,6 +232,7 @@ async def ensure_ledger_synced(ctx) -> LinkCommitResponse | None:
 
     try:
         from handlers.link_commit import _read_current_head_sha, handle_link_commit
+
         live_head = _read_current_head_sha(getattr(ctx, "repo_path", "") or ".")
         if live_head and live_head != _LAST_SYNCED_SHA:
             result = await handle_link_commit(ctx, "HEAD")

@@ -177,12 +177,10 @@ async def test_ingest_of_existing_symbol_is_pending_until_verified(_isolated_led
     ctx = _ctx()
     status = await handle_decision_status(ctx, filter="all")
     assert status.summary.get("reflected", 0) == 0, (
-        f"v3 must not auto-promote to REFLECTED without a verdict, "
-        f"got summary={status.summary!r}"
+        f"v3 must not auto-promote to REFLECTED without a verdict, got summary={status.summary!r}"
     )
     assert status.summary.get("pending", 0) == 1, (
-        f"Expected 1 pending intent (grounded but unverified), "
-        f"got summary={status.summary!r}"
+        f"Expected 1 pending intent (grounded but unverified), got summary={status.summary!r}"
     )
 
 
@@ -220,8 +218,7 @@ async def test_hash_change_alone_does_not_flip_status_without_verdict(_isolated_
     ctx = _ctx()
     pre = await handle_decision_status(ctx, filter="all")
     assert pre.summary.get("pending", 0) == 1, (
-        f"Pre-edit baseline is PENDING under v3 (grounded, unverified), "
-        f"got summary={pre.summary!r}"
+        f"Pre-edit baseline is PENDING under v3 (grounded, unverified), got summary={pre.summary!r}"
     )
 
     # Invert the discount threshold — real semantic change, not cosmetic
@@ -334,14 +331,11 @@ async def test_backfill_restores_hash_but_stays_pending_without_verdict(_isolate
         f"got summary={status.summary!r}"
     )
     assert status.summary.get("pending", 0) == 1, (
-        f"Post-backfill region is hashed but unverified → PENDING, "
-        f"got summary={status.summary!r}"
+        f"Post-backfill region is hashed but unverified → PENDING, got summary={status.summary!r}"
     )
 
     # Defensive: confirm backfill actually re-stamped the content_hash
     # (the cache-key is now populated even though the verdict isn't).
     post_rows = await client.query("SELECT content_hash FROM code_region")
     hashes = [r.get("content_hash", "") for r in post_rows]
-    assert any(h for h in hashes), (
-        f"Backfill should have populated content_hash, got {hashes!r}"
-    )
+    assert any(h for h in hashes), f"Backfill should have populated content_hash, got {hashes!r}"

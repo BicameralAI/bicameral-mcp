@@ -52,7 +52,10 @@ def _payload_for(repo: str, source_type: str, source_ref: str) -> dict:
 
 
 async def _seed_repo_with_cursors(
-    ledger, repo: str, count: int = 3, source_type: str = "slack",
+    ledger,
+    repo: str,
+    count: int = 3,
+    source_type: str = "slack",
 ) -> None:
     """Seed N source_cursor rows for a repo by upserting them directly."""
     for i in range(count):
@@ -71,6 +74,7 @@ def _ctx(repo_path: str = "test-repo") -> BicameralContext:
     are left as whatever from_env builds — reset doesn't use them.
     """
     import os
+
     os.environ["REPO_PATH"] = repo_path
     return BicameralContext.from_env()
 
@@ -138,9 +142,7 @@ async def test_reset_confirm_actually_wipes(monkeypatch, surreal_url):
     for d in post_decisions:
         # description-based check — the seeded decisions had distinctive
         # 'decision from msg_N' descriptions
-        assert "decision from msg_" not in d.get("description", ""), (
-            f"wipe missed an intent: {d}"
-        )
+        assert "decision from msg_" not in d.get("description", ""), f"wipe missed an intent: {d}"
 
     reset_ledger_singleton()
 

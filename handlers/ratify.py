@@ -10,6 +10,7 @@ that returns the existing signoff with was_new=False.
 No unratify. Rescinding ratification or rejection requires writing a new
 decision that supersedes the previous one — clean audit trail, no rollback.
 """
+
 from __future__ import annotations
 
 import logging
@@ -58,7 +59,11 @@ async def handle_ratify(
     )
     existing_signoff = (rows[0].get("signoff") if rows else None) or None
 
-    if existing_signoff and isinstance(existing_signoff, dict) and existing_signoff.get("state") == target_state:
+    if (
+        existing_signoff
+        and isinstance(existing_signoff, dict)
+        and existing_signoff.get("state") == target_state
+    ):
         projected = await project_decision_status(client, decision_id)
         return RatifyResponse(
             decision_id=decision_id,
@@ -100,7 +105,10 @@ async def handle_ratify(
 
     logger.info(
         "[ratify] decision=%s action=%s signer=%s projected_status=%s",
-        decision_id, action, signer, projected,
+        decision_id,
+        action,
+        signer,
+        projected,
     )
 
     return RatifyResponse(

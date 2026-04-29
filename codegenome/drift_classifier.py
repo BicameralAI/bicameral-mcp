@@ -35,9 +35,17 @@ _W_NO_NEW_CALLS = 0.15
 _T_COSMETIC = 0.80
 _T_SEMANTIC = 0.30
 
-_SUPPORTED_LANGUAGES = frozenset({
-    "python", "javascript", "typescript", "go", "rust", "java", "c_sharp",
-})
+_SUPPORTED_LANGUAGES = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "rust",
+        "java",
+        "c_sharp",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +62,7 @@ class DriftClassification:
         emit the pending check with a ``pre_classification`` hint so
         the caller LLM has structured evidence.
     """
+
     verdict: Literal["cosmetic", "semantic", "uncertain"]
     confidence: float
     signals: dict[str, float]
@@ -71,7 +80,8 @@ def _signal_signature(old: str | None, new: str | None) -> float:
 
 
 def _signal_neighbors(
-    old: Iterable[str] | None, new: Iterable[str] | None,
+    old: Iterable[str] | None,
+    new: Iterable[str] | None,
 ) -> float:
     """Jaccard of neighbor address sets, with the issue-mandated 0.95
     threshold acting as a step function over the raw ratio.
@@ -87,7 +97,9 @@ def _signal_neighbors(
 
 
 def _signal_diff_lines(
-    old_body: str, new_body: str, language: str,
+    old_body: str,
+    new_body: str,
+    language: str,
 ) -> float:
     """Ratio of changed cosmetic lines (comment + docstring + blank)
     to total changed lines. Returns 1.0 if no lines changed (no diff
@@ -103,7 +115,9 @@ def _signal_diff_lines(
 
 
 def _signal_no_new_calls(
-    old_body: str, new_body: str, language: str,
+    old_body: str,
+    new_body: str,
+    language: str,
 ) -> float:
     """1.0 if call set in ``new`` ⊆ call set in ``old`` (no new
     callees introduced, including the trivial ``set() ⊆ set()`` case
@@ -116,7 +130,13 @@ def _signal_no_new_calls(
     'uncertain' rather than asserting cosmetic on extraction failure.
     """
     if language not in (
-        "python", "javascript", "typescript", "go", "rust", "java", "c_sharp",
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "rust",
+        "java",
+        "c_sharp",
     ):
         return 0.5
     new_calls = extract_call_sites(new_body, language)
@@ -138,7 +158,8 @@ def _verdict_from_score(
 
 
 def _build_evidence_refs(
-    signals: dict[str, float], score: float,
+    signals: dict[str, float],
+    score: float,
 ) -> list[str]:
     """Free-form audit-trail strings round-tripped to
     ``compliance_check.evidence_refs``."""
@@ -168,7 +189,8 @@ def classify_drift(
     """
     if language not in _SUPPORTED_LANGUAGES:
         return DriftClassification(
-            verdict="uncertain", confidence=0.0,
+            verdict="uncertain",
+            confidence=0.0,
             signals={},
             evidence_refs=[f"language:unsupported:{language}"],
         )
@@ -186,6 +208,8 @@ def classify_drift(
     )
     verdict = _verdict_from_score(score)
     return DriftClassification(
-        verdict=verdict, confidence=score, signals=signals,
+        verdict=verdict,
+        confidence=score,
+        signals=signals,
         evidence_refs=_build_evidence_refs(signals, score),
     )

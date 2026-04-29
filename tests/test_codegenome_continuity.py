@@ -16,7 +16,9 @@ from codegenome.continuity import (
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _make_identity(*, file_path="src/foo.py", start_line=10, end_line=20, neighbors=("cg:helper_a", "cg:helper_b")):
+def _make_identity(
+    *, file_path="src/foo.py", start_line=10, end_line=20, neighbors=("cg:helper_a", "cg:helper_b")
+):
     structural = f"{file_path}:{start_line}:{end_line}"
     return SubjectIdentity(
         address=f"cg:{structural}",
@@ -86,7 +88,9 @@ def test_score_continuity_exact_match_full_signal():
     """Exact name + same kind + identical neighbors → max score; file changed = moved."""
     old = _make_identity(neighbors=("cg:a", "cg:b"))
     cand = _Candidate("src/bar.py", 5, 30, "parse", "function", ("cg:a", "cg:b"))
-    score, change_type = score_continuity(old, cand, old_symbol_name="parse", old_symbol_kind="function")
+    score, change_type = score_continuity(
+        old, cand, old_symbol_name="parse", old_symbol_kind="function"
+    )
     assert score == pytest.approx(1.0)
     assert change_type == "moved"
 
@@ -96,8 +100,10 @@ def test_score_continuity_renamed_in_same_file():
     old = _make_identity(file_path="src/foo.py", neighbors=("cg:h",))
     cand = _Candidate("src/foo.py", 12, 25, "enforce_checkout_rate_limit", "function", ("cg:h",))
     score, change_type = score_continuity(
-        old, cand,
-        old_symbol_name="enforce_rate_limit", old_symbol_kind="function",
+        old,
+        cand,
+        old_symbol_name="enforce_rate_limit",
+        old_symbol_kind="function",
     )
     assert 0.50 <= score < 0.75
     assert change_type == "renamed"
@@ -107,7 +113,10 @@ def test_score_continuity_moved_and_renamed():
     old = _make_identity(file_path="src/foo.py", neighbors=("cg:t",))
     cand = _Candidate("src/bar.py", 1, 10, "parse_user_input", "function", ("cg:t",))
     score, change_type = score_continuity(
-        old, cand, old_symbol_name="parse_input", old_symbol_kind="function",
+        old,
+        cand,
+        old_symbol_name="parse_input",
+        old_symbol_kind="function",
     )
     assert change_type == "moved_and_renamed"
     assert score > 0.0
@@ -124,8 +133,12 @@ def test_score_continuity_kind_mismatch_drops_signal():
     old = _make_identity(neighbors=("cg:a",))
     cand_function = _Candidate("src/foo.py", 10, 20, "parse", "function", ("cg:a",))
     cand_class = _Candidate("src/foo.py", 10, 20, "parse", "class", ("cg:a",))
-    score_match, _ = score_continuity(old, cand_function, old_symbol_name="parse", old_symbol_kind="function")
-    score_mismatch, _ = score_continuity(old, cand_class, old_symbol_name="parse", old_symbol_kind="function")
+    score_match, _ = score_continuity(
+        old, cand_function, old_symbol_name="parse", old_symbol_kind="function"
+    )
+    score_mismatch, _ = score_continuity(
+        old, cand_class, old_symbol_name="parse", old_symbol_kind="function"
+    )
     assert score_match > score_mismatch
 
 
@@ -144,10 +157,12 @@ def test_score_continuity_neighbors_none_renormalizes_weights():
 
 def test_find_continuity_match_returns_best_above_threshold():
     old = _make_identity(neighbors=("cg:a",))
-    locator = _StubLocator([
-        _Candidate("src/bar.py", 1, 10, "parse", "function", ("cg:a",)),
-        _Candidate("src/baz.py", 1, 5, "totally_unrelated", "class", ()),
-    ])
+    locator = _StubLocator(
+        [
+            _Candidate("src/bar.py", 1, 10, "parse", "function", ("cg:a",)),
+            _Candidate("src/baz.py", 1, 5, "totally_unrelated", "class", ()),
+        ]
+    )
     match = find_continuity_match(old, locator, old_symbol_name="parse", old_symbol_kind="function")
     assert match is not None
     assert match.new_file_path == "src/bar.py"
@@ -156,9 +171,11 @@ def test_find_continuity_match_returns_best_above_threshold():
 
 def test_find_continuity_match_returns_none_below_threshold():
     old = _make_identity(neighbors=("cg:a",))
-    locator = _StubLocator([
-        _Candidate("src/baz.py", 1, 5, "totally_unrelated", "class", ()),
-    ])
+    locator = _StubLocator(
+        [
+            _Candidate("src/baz.py", 1, 5, "totally_unrelated", "class", ()),
+        ]
+    )
     match = find_continuity_match(old, locator, old_symbol_name="parse", old_symbol_kind="function")
     assert match is None
 
@@ -169,8 +186,10 @@ def test_find_continuity_match_honors_candidate_cap():
     perfect = _Candidate("src/match.py", 1, 5, "parse", "function", ("cg:a",))
     locator = _StubLocator(bad + [perfect])
     match = find_continuity_match(
-        old, locator,
-        old_symbol_name="parse", old_symbol_kind="function",
+        old,
+        locator,
+        old_symbol_name="parse",
+        old_symbol_kind="function",
         candidate_cap=20,
     )
     # The perfect candidate is at index 30 — beyond the cap. No junk scores ≥ 0.75.
@@ -189,9 +208,11 @@ def test_find_continuity_match_threshold_at_or_above_0_75():
 
 def test_find_continuity_match_change_type_pure_move():
     old = _make_identity(file_path="src/foo.py", neighbors=("cg:a",))
-    locator = _StubLocator([
-        _Candidate("src/bar.py", 1, 10, "parse", "function", ("cg:a",)),
-    ])
+    locator = _StubLocator(
+        [
+            _Candidate("src/bar.py", 1, 10, "parse", "function", ("cg:a",)),
+        ]
+    )
     match = find_continuity_match(old, locator, old_symbol_name="parse", old_symbol_kind="function")
     assert match is not None
     assert match.change_type == "moved"
@@ -199,9 +220,11 @@ def test_find_continuity_match_change_type_pure_move():
 
 def test_find_continuity_match_returns_continuity_match_dataclass():
     old = _make_identity(neighbors=("cg:a",))
-    locator = _StubLocator([
-        _Candidate("src/bar.py", 1, 10, "parse", "function", ("cg:a",)),
-    ])
+    locator = _StubLocator(
+        [
+            _Candidate("src/bar.py", 1, 10, "parse", "function", ("cg:a",)),
+        ]
+    )
     match = find_continuity_match(old, locator, old_symbol_name="parse", old_symbol_kind="function")
     assert isinstance(match, ContinuityMatch)
     assert match.new_symbol_kind == "function"

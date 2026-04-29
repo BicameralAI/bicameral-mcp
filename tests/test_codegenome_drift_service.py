@@ -33,14 +33,19 @@ from codegenome.drift_service import (
 def _make_ctx(
     *,
     old_body: str = "def f(x):\n    return x\n",
-    new_body: str = "def f(x):\n    \"\"\"Return x.\"\"\"\n    return x\n",
+    new_body: str = 'def f(x):\n    """Return x."""\n    return x\n',
     language: str = "python",
 ) -> DriftClassificationContext:
     return DriftClassificationContext(
-        decision_id="decision:d1", region_id="code_region:r1",
-        content_hash="h-1", commit_hash="commit-abc",
-        file_path="src/foo.py", symbol_name="f",
-        old_body=old_body, new_body=new_body, language=language,
+        decision_id="decision:d1",
+        region_id="code_region:r1",
+        content_hash="h-1",
+        commit_hash="commit-abc",
+        file_path="src/foo.py",
+        symbol_name="f",
+        old_body=old_body,
+        new_body=new_body,
+        language=language,
     )
 
 
@@ -61,20 +66,22 @@ def _stub_ledger(
     # `_load_best_identity` calls `ledger.find_subject_identities_for_decision`
     ledger = MagicMock()
     ledger._client = inner
-    ledger.find_subject_identities_for_decision = AsyncMock(return_value=[
-        {
-            "identity_id": "subject_identity:i1",
-            "address": "cg:abc",
-            "identity_type": "function",
-            "structural_signature": "fn(x)",
-            "behavioral_signature": None,
-            "signature_hash": identity_signature_hash,
-            "content_hash": "h-old",
-            "confidence": 0.9,
-            "model_version": "deterministic_location_v1",
-            "neighbors_at_bind": list(identity_neighbors) if identity_neighbors else None,
-        },
-    ])
+    ledger.find_subject_identities_for_decision = AsyncMock(
+        return_value=[
+            {
+                "identity_id": "subject_identity:i1",
+                "address": "cg:abc",
+                "identity_type": "function",
+                "structural_signature": "fn(x)",
+                "behavioral_signature": None,
+                "signature_hash": identity_signature_hash,
+                "content_hash": "h-old",
+                "confidence": 0.9,
+                "model_version": "deterministic_location_v1",
+                "neighbors_at_bind": list(identity_neighbors) if identity_neighbors else None,
+            },
+        ]
+    )
     # Patch upsert_compliance_check via the queries module the service imports.
     ledger._upsert_mock = upsert
     return ledger
@@ -114,13 +121,15 @@ async def test_cosmetic_drift_writes_compliance_check_and_returns_auto_resolved(
         return True
 
     monkeypatch.setattr(
-        "ledger.queries.upsert_compliance_check", fake_upsert,
+        "ledger.queries.upsert_compliance_check",
+        fake_upsert,
     )
 
     ledger = _stub_ledger(identity_signature_hash="SIG_X")
     ctx = _make_ctx()
     outcome = await evaluate_drift_classification(
-        ledger=ledger, codegenome=MagicMock(),
+        ledger=ledger,
+        codegenome=MagicMock(),
         code_locator=_stub_code_locator(),
         ctx=ctx,
         new_signature_hash="SIG_X",  # signatures match → cosmetic
@@ -143,13 +152,15 @@ async def test_cosmetic_drift_writes_evidence_refs(monkeypatch) -> None:
         return True
 
     monkeypatch.setattr(
-        "ledger.queries.upsert_compliance_check", fake_upsert,
+        "ledger.queries.upsert_compliance_check",
+        fake_upsert,
     )
 
     outcome = await evaluate_drift_classification(
         ledger=_stub_ledger(identity_signature_hash="SIG_X"),
         codegenome=MagicMock(),
-        code_locator=_stub_code_locator(), ctx=_make_ctx(),
+        code_locator=_stub_code_locator(),
+        ctx=_make_ctx(),
         new_signature_hash="SIG_X",
     )
     assert outcome.auto_resolved is True
@@ -182,7 +193,8 @@ async def test_semantic_drift_returns_no_hint_no_auto_resolve(monkeypatch) -> No
         ),
     )
     outcome = await evaluate_drift_classification(
-        ledger=ledger, codegenome=MagicMock(),
+        ledger=ledger,
+        codegenome=MagicMock(),
         code_locator=_stub_code_locator(neighbors=("n1",)),  # neighbors shrank
         ctx=ctx,
     )
@@ -211,7 +223,8 @@ async def test_uncertain_drift_returns_pre_classification_hint(monkeypatch) -> N
         new_body="def g(x):\n    return x\n",  # rename only
     )
     outcome = await evaluate_drift_classification(
-        ledger=ledger, codegenome=MagicMock(),
+        ledger=ledger,
+        codegenome=MagicMock(),
         code_locator=_stub_code_locator(neighbors=("n1", "n2")),
         ctx=ctx,
     )
@@ -240,7 +253,8 @@ async def test_no_subject_identity_falls_through_cleanly(monkeypatch) -> None:
     ledger.find_subject_identities_for_decision = AsyncMock(return_value=[])
 
     outcome = await evaluate_drift_classification(
-        ledger=ledger, codegenome=MagicMock(),
+        ledger=ledger,
+        codegenome=MagicMock(),
         code_locator=_stub_code_locator(),
         ctx=_make_ctx(),
     )
@@ -265,8 +279,10 @@ async def test_failure_isolated_returns_no_auto_resolve_on_exception(
     monkeypatch.setattr("codegenome.drift_service.classify_drift", boom)
 
     outcome = await evaluate_drift_classification(
-        ledger=_stub_ledger(), codegenome=MagicMock(),
-        code_locator=_stub_code_locator(), ctx=_make_ctx(),
+        ledger=_stub_ledger(),
+        codegenome=MagicMock(),
+        code_locator=_stub_code_locator(),
+        ctx=_make_ctx(),
     )
     assert outcome.auto_resolved is False
     assert outcome.classification is None
@@ -284,7 +300,8 @@ async def test_ledger_load_exception_falls_through(monkeypatch) -> None:
     )
 
     outcome = await evaluate_drift_classification(
-        ledger=ledger, codegenome=MagicMock(),
+        ledger=ledger,
+        codegenome=MagicMock(),
         code_locator=_stub_code_locator(),
         ctx=_make_ctx(),
     )
@@ -303,6 +320,4 @@ def test_evaluate_function_under_40_lines() -> None:
     # Count non-blank, non-pure-docstring lines roughly. We allow ~50
     # to leave room for the docstring + imports inside the body.
     n = len(src.splitlines())
-    assert n <= 50, (
-        f"evaluate_drift_classification is {n} lines (target <= 40 + docstring slack)"
-    )
+    assert n <= 50, f"evaluate_drift_classification is {n} lines (target <= 40 + docstring slack)"

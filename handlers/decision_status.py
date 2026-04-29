@@ -23,6 +23,7 @@ async def handle_decision_status(
     # Auto-sync to HEAD so status reflects current code state
     try:
         from handlers.link_commit import handle_link_commit
+
         await handle_link_commit(ctx, ref)
     except Exception as exc:
         logger.warning("[status] auto-sync failed: %s", exc)
@@ -50,22 +51,24 @@ async def handle_decision_status(
         ]
 
         _signoff = d.get("signoff") or {}
-        entries.append(DecisionStatusEntry(
-            decision_id=d["decision_id"],
-            description=d["description"],
-            status=status,
-            signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
-            source_type=d.get("source_type", ""),
-            source_ref=d.get("source_ref", ""),
-            ingested_at=d.get("ingested_at", ""),
-            code_regions=regions,
-            drift_evidence=d.get("drift_evidence", ""),
-            blast_radius=d.get("blast_radius", []),
-            source_excerpt=d.get("source_excerpt", ""),
-            meeting_date=d.get("meeting_date", ""),
-            speakers=d.get("speakers", []),
-            signoff=d.get("signoff"),
-        ))
+        entries.append(
+            DecisionStatusEntry(
+                decision_id=d["decision_id"],
+                description=d["description"],
+                status=status,
+                signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
+                source_type=d.get("source_type", ""),
+                source_ref=d.get("source_ref", ""),
+                ingested_at=d.get("ingested_at", ""),
+                code_regions=regions,
+                drift_evidence=d.get("drift_evidence", ""),
+                blast_radius=d.get("blast_radius", []),
+                source_excerpt=d.get("source_excerpt", ""),
+                meeting_date=d.get("meeting_date", ""),
+                speakers=d.get("speakers", []),
+                signoff=d.get("signoff"),
+            )
+        )
 
     return DecisionStatusResponse(
         ref=ref,

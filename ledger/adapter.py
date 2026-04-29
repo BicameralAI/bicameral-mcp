@@ -101,6 +101,7 @@ def _get_branch_delta_files(authoritative_ref: str, commit_hash: str, repo_path:
     Returns [] if the command fails or authoritative_ref is unreachable.
     """
     import subprocess as _sp
+
     try:
         result = _sp.run(
             ["git", "diff", f"{authoritative_ref}...{commit_hash}", "--name-only"],
@@ -254,7 +255,9 @@ class SurrealDBLedgerAdapter:
             raise ValueError(f"upsert_code_region returned empty id for {file_path}:{symbol_name}")
 
         await relate_binds_to(
-            self._client, decision_id, region_id,
+            self._client,
+            decision_id,
+            region_id,
             confidence=0.95,
             provenance={"method": "caller_llm"},
         )
@@ -313,7 +316,10 @@ class SurrealDBLedgerAdapter:
     ) -> None:
         await self._ensure_connected()
         await relate_has_identity(
-            self._client, code_subject_id, subject_identity_id, confidence=confidence,
+            self._client,
+            code_subject_id,
+            subject_identity_id,
+            confidence=confidence,
         )
 
     async def link_decision_to_subject(
@@ -330,8 +336,11 @@ class SurrealDBLedgerAdapter:
         """
         await self._ensure_connected()
         await link_decision_to_subject(
-            self._client, decision_id, code_subject_id,
-            region_id=region_id, confidence=confidence,
+            self._client,
+            decision_id,
+            code_subject_id,
+            region_id=region_id,
+            confidence=confidence,
         )
 
     async def get_region_metadata(self, region_id: str) -> dict | None:
@@ -388,9 +397,13 @@ class SurrealDBLedgerAdapter:
         await self._ensure_connected()
         return await create_code_region(
             self._client,
-            file_path=file_path, symbol_name=symbol_name,
-            start_line=start_line, end_line=end_line,
-            purpose=purpose, repo=repo, content_hash=content_hash,
+            file_path=file_path,
+            symbol_name=symbol_name,
+            start_line=start_line,
+            end_line=end_line,
+            purpose=purpose,
+            repo=repo,
+            content_hash=content_hash,
         )
 
     async def update_binds_to_region(
@@ -402,7 +415,10 @@ class SurrealDBLedgerAdapter:
     ) -> None:
         await self._ensure_connected()
         await update_binds_to_region(
-            self._client, decision_id, old_region_id, new_region_id,
+            self._client,
+            decision_id,
+            old_region_id,
+            new_region_id,
             confidence=confidence,
         )
 
@@ -416,8 +432,12 @@ class SurrealDBLedgerAdapter:
     ) -> None:
         await self._ensure_connected()
         await write_identity_supersedes(
-            self._client, old_identity_id, new_identity_id,
-            change_type, confidence, evidence_refs,
+            self._client,
+            old_identity_id,
+            new_identity_id,
+            change_type,
+            confidence,
+            evidence_refs,
         )
 
     async def write_subject_version(
@@ -435,9 +455,16 @@ class SurrealDBLedgerAdapter:
     ) -> str:
         await self._ensure_connected()
         return await write_subject_version(
-            self._client, code_subject_id, repo_ref, file_path, start_line, end_line,
-            symbol_name=symbol_name, symbol_kind=symbol_kind,
-            content_hash=content_hash, signature_hash=signature_hash,
+            self._client,
+            code_subject_id,
+            repo_ref,
+            file_path,
+            start_line,
+            end_line,
+            symbol_name=symbol_name,
+            symbol_kind=symbol_kind,
+            content_hash=content_hash,
+            signature_hash=signature_hash,
         )
 
     async def relate_has_version(
@@ -448,7 +475,10 @@ class SurrealDBLedgerAdapter:
     ) -> None:
         await self._ensure_connected()
         await relate_has_version(
-            self._client, code_subject_id, subject_version_id, confidence=confidence,
+            self._client,
+            code_subject_id,
+            subject_version_id,
+            confidence=confidence,
         )
 
     async def lookup_vocab_cache(
@@ -515,6 +545,7 @@ class SurrealDBLedgerAdapter:
 
         if drift_analyzer is None:
             from .drift import HashDriftAnalyzer
+
             drift_analyzer = HashDriftAnalyzer()
 
         if commit_hash == "HEAD":
@@ -525,6 +556,7 @@ class SurrealDBLedgerAdapter:
         is_authoritative = True
         if authoritative_ref:
             import subprocess
+
             try:
                 result = subprocess.run(
                     ["git", "rev-parse", "--abbrev-ref", "HEAD"],
@@ -541,7 +573,8 @@ class SurrealDBLedgerAdapter:
                 logger.info(
                     "[link_commit] current branch %s != authoritative %s — "
                     "running in read-only mode (no baseline writes)",
-                    current_branch, authoritative_ref,
+                    current_branch,
+                    authoritative_ref,
                 )
 
         state = await get_sync_state(self._client, repo_path)
@@ -563,18 +596,22 @@ class SurrealDBLedgerAdapter:
                     if not current_hash:
                         continue
                     code_body = _extract_code_body(fp, sl, el, repo_path, ref=commit_hash)
-                    pending_checks.append({
-                        "phase": "ingest",
-                        "decision_id": str(row.get("decision_id", "")),
-                        "region_id": region_id,
-                        "decision_description": str(row.get("description", "")),
-                        "file_path": fp,
-                        "symbol": row.get("symbol_name", ""),
-                        "content_hash": current_hash,
-                        "code_body": code_body,
-                    })
+                    pending_checks.append(
+                        {
+                            "phase": "ingest",
+                            "decision_id": str(row.get("decision_id", "")),
+                            "region_id": region_id,
+                            "decision_description": str(row.get("description", "")),
+                            "file_path": fp,
+                            "symbol": row.get("symbol_name", ""),
+                            "content_hash": current_hash,
+                            "code_body": code_body,
+                        }
+                    )
             except Exception as exc:
-                logger.warning("[link_commit] could not surface pending decisions on already_synced: %s", exc)
+                logger.warning(
+                    "[link_commit] could not surface pending decisions on already_synced: %s", exc
+                )
             return {
                 "synced": True,
                 "commit_hash": commit_hash,
@@ -598,7 +635,8 @@ class SurrealDBLedgerAdapter:
             if range_files is None:
                 logger.warning(
                     "[link_commit] range %s..%s unreachable, falling back to head-only sweep",
-                    last_synced[:8], commit_hash[:8],
+                    last_synced[:8],
+                    commit_hash[:8],
                 )
                 changed_files = get_changed_files(commit_hash, repo_path)
                 sweep_scope = "head_only"
@@ -608,7 +646,8 @@ class SurrealDBLedgerAdapter:
                 if len(changed_files) > _MAX_SWEEP_FILES:
                     logger.warning(
                         "[link_commit] range sweep capped at %d files (would have swept %d).",
-                        _MAX_SWEEP_FILES, len(changed_files),
+                        _MAX_SWEEP_FILES,
+                        len(changed_files),
                     )
                     changed_files = changed_files[:_MAX_SWEEP_FILES]
                     sweep_scope = "range_truncated"
@@ -691,10 +730,13 @@ class SurrealDBLedgerAdapter:
             if is_authoritative:
                 await update_region_hash(self._client, region_id, actual_hash, commit_hash)
                 from .status import resolve_symbol_lines
+
                 resolved = resolve_symbol_lines(file_path, symbol_name, repo_path, ref=commit_hash)
                 if resolved is None:
                     symbol_disappeared = True
-                elif resolved[0] != region.get("start_line") or resolved[1] != region.get("end_line"):
+                elif resolved[0] != region.get("start_line") or resolved[1] != region.get(
+                    "end_line"
+                ):
                     await self._client.query(
                         f"UPDATE {region_id} SET start_line = $sl, end_line = $el",
                         {"sl": resolved[0], "el": resolved[1]},
@@ -705,7 +747,7 @@ class SurrealDBLedgerAdapter:
             phase = "ingest" if not stored_hash else "drift"
 
             # v0.5.0: decisions are accessed via binds_to (renamed from intents via maps_to)
-            for decision in (region.get("decisions") or []):
+            for decision in region.get("decisions") or []:
                 if decision is None:
                     continue
                 decision_id = str(decision.get("id", ""))
@@ -732,20 +774,25 @@ class SurrealDBLedgerAdapter:
                 if symbol_disappeared:
                     # L1 decisions are intentionally ungrounded — skip grounding alarm.
                     if decision.get("decision_level") != "L1":
-                        pending_grounding_checks.append({
-                            "decision_id": decision_id,
-                            "description": str(decision.get("description", "")),
-                            "reason": "symbol_disappeared",
-                            "file_path": file_path,
-                            "symbol": symbol_name,
-                            "original_lines": [start_line, end_line],
-                        })
+                        pending_grounding_checks.append(
+                            {
+                                "decision_id": decision_id,
+                                "description": str(decision.get("description", "")),
+                                "reason": "symbol_disappeared",
+                                "file_path": file_path,
+                                "symbol": symbol_name,
+                                "original_lines": [start_line, end_line],
+                            }
+                        )
                     continue
 
                 verdict: dict | None = None
                 if actual_hash:
                     verdict = await get_compliance_verdict(
-                        self._client, decision_id, region_id, actual_hash,
+                        self._client,
+                        decision_id,
+                        region_id,
+                        actual_hash,
                     )
 
                 new_status = derive_status(stored_hash, actual_hash, cached_verdict=verdict)
@@ -753,7 +800,9 @@ class SurrealDBLedgerAdapter:
                 if is_authoritative:
                     # V2: promote ephemeral verdict when same hash lands on authoritative branch
                     if actual_hash:
-                        await promote_ephemeral_verdict(self._client, decision_id, region_id, actual_hash)
+                        await promote_ephemeral_verdict(
+                            self._client, decision_id, region_id, actual_hash
+                        )
                     # v0.5.0: holistic status projection from DB
                     projected = await project_decision_status(self._client, decision_id)
                     await update_decision_status(self._client, decision_id, projected)
@@ -767,8 +816,12 @@ class SurrealDBLedgerAdapter:
                         fb_status = "pending"
                     elif actual_hash == stored_hash:
                         if verdict is not None and not verdict.get("pruned"):
-                            fb_status = "reflected" if verdict.get("verdict") == "compliant" else "drifted"
-                        elif await has_prior_compliant_verdict(self._client, decision_id, region_id):
+                            fb_status = (
+                                "reflected" if verdict.get("verdict") == "compliant" else "drifted"
+                            )
+                        elif await has_prior_compliant_verdict(
+                            self._client, decision_id, region_id
+                        ):
                             fb_status = "drifted"
                         else:
                             fb_status = "pending"
@@ -788,18 +841,24 @@ class SurrealDBLedgerAdapter:
                 if actual_hash and verdict is None:
                     if region_code_body is None:
                         region_code_body = _extract_code_body(
-                            file_path, start_line, end_line, repo_path, ref=commit_hash,
+                            file_path,
+                            start_line,
+                            end_line,
+                            repo_path,
+                            ref=commit_hash,
                         )
-                    pending_checks.append({
-                        "phase": phase,
-                        "decision_id": decision_id,
-                        "region_id": region_id,
-                        "decision_description": str(decision.get("description", "")),
-                        "file_path": file_path,
-                        "symbol": symbol_name,
-                        "content_hash": actual_hash,
-                        "code_body": region_code_body,
-                    })
+                    pending_checks.append(
+                        {
+                            "phase": phase,
+                            "decision_id": decision_id,
+                            "region_id": region_id,
+                            "decision_description": str(decision.get("description", "")),
+                            "file_path": file_path,
+                            "symbol": symbol_name,
+                            "content_hash": actual_hash,
+                            "code_body": region_code_body,
+                        }
+                    )
 
             decisions = [i for i in (region.get("decisions") or []) if i is not None]
             if not decisions and symbol_name:
@@ -818,11 +877,13 @@ class SurrealDBLedgerAdapter:
                 # `d["id"]` returns "" and produces unusable grounding
                 # checks the caller cannot bind against. Surfaced by V1 F1
                 # regression coverage.
-                pending_grounding_checks.append({
-                    "decision_id": str(d.get("decision_id") or d.get("id", "")),
-                    "description": str(d.get("description", "")),
-                    "reason": "ungrounded",
-                })
+                pending_grounding_checks.append(
+                    {
+                        "decision_id": str(d.get("decision_id") or d.get("id", "")),
+                        "description": str(d.get("description", "")),
+                        "reason": "ungrounded",
+                    }
+                )
         except Exception as exc:
             logger.warning("[link_commit] could not query ungrounded decisions: %s", exc)
 
@@ -843,16 +904,18 @@ class SurrealDBLedgerAdapter:
                 if not current_hash:
                     continue
                 code_body = _extract_code_body(fp, sl, el, repo_path, ref=commit_hash)
-                pending_checks.append({
-                    "phase": "drift",
-                    "decision_id": str(row.get("decision_id", "")),
-                    "region_id": region_id,
-                    "decision_description": str(row.get("description", "")),
-                    "file_path": fp,
-                    "symbol": row.get("symbol_name", ""),
-                    "content_hash": current_hash,
-                    "code_body": code_body,
-                })
+                pending_checks.append(
+                    {
+                        "phase": "drift",
+                        "decision_id": str(row.get("decision_id", "")),
+                        "region_id": region_id,
+                        "decision_description": str(row.get("description", "")),
+                        "file_path": fp,
+                        "symbol": row.get("symbol_name", ""),
+                        "content_hash": current_hash,
+                        "code_body": code_body,
+                    }
+                )
         except Exception as exc:
             logger.warning("[link_commit] could not surface stale pending decisions: %s", exc)
 
@@ -883,6 +946,7 @@ class SurrealDBLedgerAdapter:
 
         if drift_analyzer is None:
             from .drift import HashDriftAnalyzer
+
             drift_analyzer = HashDriftAnalyzer()
 
         legacy = await get_regions_without_hash(self._client, repo=repo_path)
@@ -920,7 +984,7 @@ class SurrealDBLedgerAdapter:
 
             await update_region_hash(self._client, region_id, drift_result.content_hash, ref)
             new_status = drift_result.status
-            for decision in (region.get("decisions") or []):
+            for decision in region.get("decisions") or []:
                 if decision is None:
                     continue
                 decision_id = str(decision.get("id", ""))
@@ -951,12 +1015,12 @@ class SurrealDBLedgerAdapter:
         # The handler layer (handlers.ingest) already injects ctx.repo_path
         # into the payload; this is a defensive belt for any other caller
         # that constructs a payload directly.
-        repo = payload.get("repo", "") or (
-            getattr(ctx, "repo_path", "") if ctx is not None else ""
-        )
+        repo = payload.get("repo", "") or (getattr(ctx, "repo_path", "") if ctx is not None else "")
         commit_hash = payload.get("commit_hash", "")
         authoritative_sha = getattr(ctx, "authoritative_sha", "") if ctx is not None else ""
-        effective_ref = commit_hash or authoritative_sha or (resolve_head(repo) if repo else None) or "HEAD"
+        effective_ref = (
+            commit_hash or authoritative_sha or (resolve_head(repo) if repo else None) or "HEAD"
+        )
         decisions_created = 0
         symbols_mapped = 0
         regions_linked = 0
@@ -1059,10 +1123,9 @@ class SurrealDBLedgerAdapter:
                     # contexts — fall through with empty hash so the decision
                     # is created as ungrounded (matches pre-v0.10.7 behavior).
                     repo_on_disk = Path(repo).resolve().is_dir()
-                    ref_resolves = (
-                        repo_on_disk
-                        and (effective_ref == "working_tree"
-                             or resolve_ref(effective_ref, repo) is not None)
+                    ref_resolves = repo_on_disk and (
+                        effective_ref == "working_tree"
+                        or resolve_ref(effective_ref, repo) is not None
                     )
                     if repo_on_disk and ref_resolves:
                         _computed = compute_content_hash(
@@ -1072,7 +1135,9 @@ class SurrealDBLedgerAdapter:
                             logger.warning(
                                 "[ingest] skipping region: file '%s' not found at %s in %s"
                                 " — only bind to existing code, never hypothetical files",
-                                file_path, effective_ref, repo,
+                                file_path,
+                                effective_ref,
+                                repo,
                             )
                             continue
                         content_hash = _computed
@@ -1113,7 +1178,9 @@ class SurrealDBLedgerAdapter:
                     provenance["grounding_tier"] = grounding_tier
                     provenance["method"] = "auto_ground"
                 await relate_binds_to(
-                    self._client, decision_id, region_id,
+                    self._client,
+                    decision_id,
+                    region_id,
                     confidence=region_data.get("confidence", 0.8),
                     provenance=provenance,
                 )
@@ -1195,12 +1262,13 @@ class SurrealDBLedgerAdapter:
         immediately ready for use after this call returns.
         """
         import shutil
+
         await self._ensure_connected()
         await self._client.close()
         self._connected = False
         url = self._url
         if url.startswith("surrealkv://"):
-            db_path = url[len("surrealkv://"):]
+            db_path = url[len("surrealkv://") :]
             if db_path:
                 shutil.rmtree(db_path, ignore_errors=True)
         await self._ensure_connected()

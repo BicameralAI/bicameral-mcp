@@ -118,9 +118,11 @@ def test_search_empty_matches_no_hints_in_either_mode():
 
 def test_search_drifted_match_fires_in_normal_mode_as_advisory():
     """v0.4.10: hints fire even in normal mode, just non-blocking."""
-    response = _search_response([
-        _match(intent_id="decision:1", status="drifted", file_path="src/a.ts"),
-    ])
+    response = _search_response(
+        [
+            _match(intent_id="decision:1", status="drifted", file_path="src/a.ts"),
+        ]
+    )
     hints = generate_hints_for_search(response, guided_mode=False)
     assert len(hints) == 1
     h = hints[0]
@@ -133,10 +135,12 @@ def test_search_drifted_match_fires_in_normal_mode_as_advisory():
 
 
 def test_search_drifted_match_fires_in_guided_mode_as_blocking():
-    response = _search_response([
-        _match(intent_id="decision:1", status="drifted", file_path="src/a.ts"),
-        _match(intent_id="decision:2", status="drifted", file_path="src/b.ts"),
-    ])
+    response = _search_response(
+        [
+            _match(intent_id="decision:1", status="drifted", file_path="src/a.ts"),
+            _match(intent_id="decision:2", status="drifted", file_path="src/b.ts"),
+        ]
+    )
     hints = generate_hints_for_search(response, guided_mode=True)
     review = [h for h in hints if h.kind == "review_drift"]
     assert len(review) == 1
@@ -152,9 +156,11 @@ def test_search_drifted_match_fires_in_guided_mode_as_blocking():
 
 
 def test_search_ungrounded_fires_in_both_modes():
-    response = _search_response([
-        _match(intent_id="decision:1", status="ungrounded"),
-    ])
+    response = _search_response(
+        [
+            _match(intent_id="decision:1", status="ungrounded"),
+        ]
+    )
     response.matches[0].code_regions = []
 
     advisory = generate_hints_for_search(response, guided_mode=False)
@@ -179,11 +185,13 @@ def test_search_message_tone_differs_between_modes():
 
 
 def test_search_fires_both_review_and_ground_when_mixed():
-    response = _search_response([
-        _match(intent_id="decision:1", status="drifted"),
-        _match(intent_id="decision:2", status="ungrounded"),
-        _match(intent_id="decision:3", status="reflected"),
-    ])
+    response = _search_response(
+        [
+            _match(intent_id="decision:1", status="drifted"),
+            _match(intent_id="decision:2", status="ungrounded"),
+            _match(intent_id="decision:3", status="reflected"),
+        ]
+    )
     for guided in (False, True):
         hints = generate_hints_for_search(response, guided_mode=guided)
         kinds = {h.kind for h in hints}
@@ -270,11 +278,14 @@ def test_findings_open_question_gap_fires_in_both_modes():
 
 def test_findings_fires_all_three_kinds_when_everything_present():
     drift = [_brief_decision(intent_id="a", status="drifted")]
-    divergences = [BriefDivergence(
-        symbol="X", file_path="src/x.ts",
-        conflicting_decisions=[_brief_decision(), _brief_decision()],
-        summary="conflict",
-    )]
+    divergences = [
+        BriefDivergence(
+            symbol="X",
+            file_path="src/x.ts",
+            conflicting_decisions=[_brief_decision(), _brief_decision()],
+            summary="conflict",
+        )
+    ]
     gaps = [BriefGap(description="open q", hint="open-question phrasing")]
     for guided in (False, True):
         hints = generate_hints_from_findings(divergences, drift, gaps, guided_mode=guided)
@@ -295,22 +306,26 @@ def test_action_hints_default_to_empty_list():
 # ── Context flag parsing ────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("env_val,expected", [
-    ("1", True),
-    ("true", True),
-    ("True", True),
-    ("TRUE", True),
-    ("yes", True),
-    ("on", True),
-    ("0", False),
-    ("false", False),
-    ("no", False),
-    ("off", False),
-    ("maybe", False),  # unrecognized → falls through to config file → false
-])
+@pytest.mark.parametrize(
+    "env_val,expected",
+    [
+        ("1", True),
+        ("true", True),
+        ("True", True),
+        ("TRUE", True),
+        ("yes", True),
+        ("on", True),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("off", False),
+        ("maybe", False),  # unrecognized → falls through to config file → false
+    ],
+)
 def test_guided_mode_env_truthy_set(env_val: str, expected: bool):
     """Truthy/falsy env values map correctly via the helper sets."""
     from context import _GUIDED_MODE_FALSY, _GUIDED_MODE_TRUTHY
+
     is_truthy = env_val.strip().lower() in _GUIDED_MODE_TRUTHY
     if expected:
         assert is_truthy
@@ -323,6 +338,7 @@ def test_guided_mode_env_truthy_set(env_val: str, expected: bool):
 def test_read_guided_mode_falls_back_to_false_when_no_config(tmp_path, monkeypatch):
     monkeypatch.delenv("BICAMERAL_GUIDED_MODE", raising=False)
     from context import _read_guided_mode
+
     assert _read_guided_mode(str(tmp_path)) is False
 
 
@@ -332,6 +348,7 @@ def test_read_guided_mode_reads_config_yaml_true(tmp_path, monkeypatch):
     cfg_dir.mkdir()
     (cfg_dir / "config.yaml").write_text("mode: solo\nguided: true\n")
     from context import _read_guided_mode
+
     assert _read_guided_mode(str(tmp_path)) is True
 
 
@@ -341,6 +358,7 @@ def test_read_guided_mode_reads_config_yaml_false(tmp_path, monkeypatch):
     cfg_dir.mkdir()
     (cfg_dir / "config.yaml").write_text("mode: solo\nguided: false\n")
     from context import _read_guided_mode
+
     assert _read_guided_mode(str(tmp_path)) is False
 
 
@@ -351,6 +369,7 @@ def test_env_var_overrides_config_file(tmp_path, monkeypatch):
     (cfg_dir / "config.yaml").write_text("mode: solo\nguided: false\n")
     monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
     from context import _read_guided_mode
+
     assert _read_guided_mode(str(tmp_path)) is True
 
 
@@ -361,4 +380,5 @@ def test_env_var_can_force_off_against_config_file(tmp_path, monkeypatch):
     (cfg_dir / "config.yaml").write_text("mode: solo\nguided: true\n")
     monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "0")
     from context import _read_guided_mode
+
     assert _read_guided_mode(str(tmp_path)) is False
