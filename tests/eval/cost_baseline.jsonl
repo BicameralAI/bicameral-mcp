@@ -1,0 +1,5 @@
+{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 10, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokenizer": "cl100k_base", "tokens": 7574}
+{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 100, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokenizer": "cl100k_base", "tokens": 79025}
+{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 1000, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokenizer": "cl100k_base", "tokens": 795982}
+{"_baseline_version": "1", "bytes": 6610, "metric": "C2", "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokens": 1519}
+{"_baseline_version": "1", "metric": "C3", "p50_ms": 0.082, "p95_ms": 0.099, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin"}
