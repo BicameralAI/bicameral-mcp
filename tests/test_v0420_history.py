@@ -137,9 +137,9 @@ async def test_single_source_reflected(ctx):
     # Status should be ungrounded (no real file) or reflected if hash matched
     assert dec.status in ("reflected", "ungrounded", "discovered")
     # fulfillment populated since we passed code_regions
-    assert dec.fulfillment is not None
-    assert dec.fulfillment.file_path == "server.py"
-    assert dec.fulfillment.symbol == "validate_symbols"
+    assert dec.fulfillments
+    assert dec.fulfillments[0].file_path == "server.py"
+    assert dec.fulfillments[0].symbol == "validate_symbols"
 
 
 @pytest.mark.phase2
@@ -187,7 +187,7 @@ async def test_ungrounded_no_fulfillment(ctx):
     assert len(matching) >= 1
 
     dec = matching[0]
-    assert dec.fulfillment is None
+    assert len(dec.fulfillments) == 0
     assert dec.status in ("ungrounded", "discovered")
 
 

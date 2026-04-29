@@ -338,6 +338,9 @@ async def test_scenario_06_code_added_ungrounded_resolvable(_scenario_repo):
         "def cart_total(items: list) -> float:\n    return sum(i['price'] for i in items)\n"
     )
     _commit(_scenario_repo, "add cart_total")
+    object.__setattr__(
+        ctx, "authoritative_sha", _git(_scenario_repo, "rev-parse", "HEAD").strip()
+    )
     invalidate_sync_cache(ctx)
     lc2 = await handle_link_commit(ctx, "HEAD")
 

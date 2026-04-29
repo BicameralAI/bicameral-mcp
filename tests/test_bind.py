@@ -186,7 +186,8 @@ async def test_bind_symbol_not_found():
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_bind_idempotent():
+@patch("ledger.status.get_git_content", return_value="# stub")
+async def test_bind_idempotent(_mock_git_content):
     """Calling bind twice for the same (decision, region) pair is idempotent."""
     client = await _fresh_client()
     try:
@@ -222,7 +223,8 @@ async def test_bind_idempotent():
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_bind_status_transition():
+@patch("ledger.status.get_git_content", return_value="# stub")
+async def test_bind_status_transition(_mock_git_content):
     """After bind, decision status transitions from 'ungrounded' to 'pending'."""
     client = await _fresh_client()
     try:

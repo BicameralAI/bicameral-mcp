@@ -231,7 +231,7 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Fail-safe valve for a polluted or stale ledger. Returns a replay plan and, "
                 "if confirmed, wipes state according to wipe_mode. "
-                "wipe_mode='ledger' (default): wipes only the materialized SurrealDB rows — "
+                "wipe_mode='ledger' (default): wipes only the materialized decision ledger — "
                 "config and event files are preserved. Safe for bug recovery; server stays live. "
                 "wipe_mode='full': deletes the entire .bicameral/ directory (ledger + config.yaml "
                 "+ team event files). Nuclear restart. Always show the dry-run warning to the user "
