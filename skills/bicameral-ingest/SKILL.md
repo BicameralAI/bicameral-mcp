@@ -756,7 +756,16 @@ All decisions ingested by `bicameral.ingest` enter as **proposals** (`signoff.st
 until they are ratified. Ratification is the user's explicit sign-off that a decision
 is committed, not just discussed.
 
-**Always surface the ratify prompt after ingest.** Use `AskUserQuestion`:
+**Position: LAST.** Surface the ratify prompt only after Steps 4, 5, and 6 are
+fully complete — report printed, brief rendered, gap-judge findings shown, parked
+decisions resolved. The ratify `AskUserQuestion` must be the last user-facing output
+of the ingest flow. Do NOT fire it immediately after `bicameral.ingest` returns.
+
+**Multi-segment ingests (Step 0 fan-out):** fire a single ratify prompt at the
+very end of the roll-up (after all segment briefs and gap-judge outputs are shown),
+covering all decisions across all segments. Do not ratify per segment.
+
+Use `AskUserQuestion`:
 
 **If N ≤ 4 decisions**: use `multiSelect: true` with one option per decision. All pre-selected (recommended). User unchecks any they want to skip.
 ```
