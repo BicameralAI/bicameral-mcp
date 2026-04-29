@@ -26,6 +26,18 @@
 - [ ] [B3] Issue #61 — CodeGenome Phase 4 semantic drift evaluation in
       `resolve_compliance`. Depends on #59; recommended after #60.
 
+- [ ] [B5] Event-sourced ledger RFC — append-only event log with
+      SurrealDB/SQLite as a rebuildable projection. Tracked as Issue #97.
+      v1.0.0 candidate; load-bearing iff multi-machine/team sync enters
+      the roadmap. We already get partial event-sourcing today via the
+      META_LEDGER chain and the `compliance_check` CHANGEFEED (Phase 4 /
+      #61); the RFC asks whether to extend that pattern to all
+      mutation-bearing tables. Cheap v0.14.0 wedge proposed in the issue:
+      extend `CHANGEFEED 30d INCLUDE ORIGINAL` to `code_subject`,
+      `subject_identity`, `binds_to`, `code_region` without committing
+      to the full rewrite. Decision blocked on Jin's call about team
+      sync as a v1.0.0 goal.
+
 ## Wishlist (Nice to Have)
 <!-- Format: - [ ] [W#] Description -->
 - [ ] [W1] Section-4 razor enforcement on legacy oversized files
