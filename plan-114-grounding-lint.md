@@ -150,8 +150,8 @@ TDD-light: tests written FIRST, confirm red, then implement, confirm green.
 
 ### Affected files
 
-- `tests/test_lint_pr_body_refs.py` — **new**, ~90 LOC, 5 tests covering keyword recognition, bare-mention warnings, edge cases.
-- `.github/scripts/lint_pr_body_refs.py` — **new**, ~100 LOC. Stdlib-only checker that consumes a PR body via `--body` (path) or stdin, emits warnings for bare `#NUMBER` mentions.
+- `tests/test_lint_pr_body_refs.py` — **new**, ~100 LOC, 6 tests covering keyword recognition, bare-mention warnings, edge cases, AND the `--from-env` env-var read path (security-critical — see Phase 2 workflow).
+- `.github/scripts/lint_pr_body_refs.py` — **new**, ~110 LOC. Stdlib-only checker that consumes a PR body via `--body <file>` (local dev / tests) or `--from-env <NAME>` (CI — direct env-var read avoids shell interpolation). Emits warnings for bare `#NUMBER` mentions.
 
 ### Public interface
 
@@ -166,11 +166,17 @@ def lint_pr_body(body: str) -> list[Warning]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry. Reads --body file (or stdin if no flag), runs
-    lint_pr_body, prints warnings to stderr. Always returns 0
-    (advisory check; never blocks merge). The CI workflow can
-    inspect printed warnings via `gh pr review` or comment posting
-    if desired in v2."""
+    """CLI entry. Body source — exactly one of:
+       --body <file>      — read PR body from file (local dev / tests)
+       --from-env <NAME>  — read PR body from environment variable (CI)
+
+    The ``--from-env`` path is the SECURITY-CRITICAL invocation: it lets
+    the CI workflow avoid passing user-controlled PR-body text through
+    a Bash shell, which would otherwise allow command-substitution
+    injection (OWASP A03). Direct ``os.environ[NAME]`` read.
+
+    Runs lint_pr_body, prints warnings to stderr. Always returns 0
+    (advisory check; never blocks merge)."""
 ```
 
 ### Recognised keywords (case-insensitive)
@@ -195,6 +201,7 @@ warning: bare '#108' on line 12 — wrap with 'Closes #108' / 'Refs #108', or mo
   - `test_bare_mention_in_prose_warns` — body with `Phase 1 (#42):` → 1 warning.
   - `test_linked_issues_section_exempts_bare_mentions` — body with `## Linked issues\n\n- #42` (bare under the section) → no warnings.
   - `test_main_always_returns_zero` — even with warnings, exit code 0 (advisory).
+  - `test_main_reads_from_env_var` — set `PR_BODY` env var, invoke `main(['--from-env', 'PR_BODY'])`, verify warnings emitted match `--body file` mode. **Security-critical path — verifies the CI's no-shell-interpolation invocation works.**
 
 ### Function-level razor
 
@@ -245,10 +252,16 @@ jobs:
       - name: Run lint
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          echo "$PR_BODY" > /tmp/pr-body.md
-          python .github/scripts/lint_pr_body_refs.py --body /tmp/pr-body.md
+        run: python .github/scripts/lint_pr_body_refs.py --from-env PR_BODY
 ```
+
+**Security note**: the `--from-env` argument tells the script to read
+`PR_BODY` directly via `os.environ`, bypassing Bash entirely. An earlier
+draft of this plan used `echo "$PR_BODY" > /tmp/pr-body.md` which is
+vulnerable to OWASP A03 command-substitution injection (Bash double
+quotes expand `$(cmd)`). Caught at audit (#114 v1 VETO). The current
+pattern is safe — `os.environ[NAME]` is a direct memory read with
+no shell interpreter in the path.
 
 `continue-on-error: true` is intentional — Check B is advisory.
 
@@ -329,9 +342,9 @@ mypy scripts/lint_plan_grounding.py
 | File | Estimate | Razor cap | OK? |
 |---|---|---|---|
 | `scripts/lint_plan_grounding.py` | ~140 LOC | ≤250 | yes |
-| `.github/scripts/lint_pr_body_refs.py` | ~100 LOC | ≤250 | yes |
+| `.github/scripts/lint_pr_body_refs.py` | ~110 LOC | ≤250 | yes |
 | `tests/test_lint_plan_grounding.py` | ~120 LOC | ≤250 | yes |
-| `tests/test_lint_pr_body_refs.py` | ~90 LOC | ≤250 | yes |
+| `tests/test_lint_pr_body_refs.py` | ~100 LOC | ≤250 | yes |
 | `pr-body-refs-lint.yml` | ~30 LOC | n/a (YAML) | n/a |
 
 Function-level: every new function ≤ 30 LOC entry / ≤ 25 LOC helpers / nesting ≤ 3 / no nested ternaries.
