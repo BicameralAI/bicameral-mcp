@@ -391,6 +391,165 @@ regression caught and remediated at seal time; no new violations
 introduced.
 
 ---
-*Chain integrity: VALID (10 entries)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff`*
-*Next required action: amend razor-fix into commit + push + open PR #60 stacked on PR #71*
+
+## Entry #11 — GATE TRIBUNAL (VETO) — Phase 4 plan
+
+**Date:** 2026-04-28
+**Phase:** AUDIT
+**Persona:** Judge
+**Subject:** `plan-codegenome-phase-4.md` (CodeGenome Phase 4, Issue #61)
+**Risk Grade:** L2
+
+**Verdict:** **VETO**
+
+**Findings (5 blocking):**
+- F1 (V2): falsified CHANGEFEED mitigation — `compliance_check` table has no changefeed; the silent-overwrite risk has no actual audit trail.
+- F2 (V2): dead enum value — `pre_classification_hint` listed in `semantic_status` ASSERT but never written by any code path.
+- F3 (V2): language-name mismatch — plan uses `csharp`, `code_locator` uses `c_sharp`. Multi-language promise silently broken for C#.
+- F4 (V1): orphan macro-arch — `_signal_no_new_calls` references a non-existent `extract_calls` API on `code_locator.indexing.symbol_extractor`.
+- F5 (V2): scope inconsistency — Q2=B (multi-language) chosen, but no uncertain-band fixtures for non-Python; Java + C# get zero fixtures.
+
+**Non-blocking observations (5):** O1 hidden contract change, O2 enhance_drift flag policy, O3 razor margin thin on diff_categorizer.py, O4 mocks/README acknowledgement, O5 evaluate_drift_classification razor margin tight.
+
+**Plan content hash:** `sha256:927ff046977631b17883ec0f11dc20edf087b71d00b0da60bc017db44373dbf6`
+**Audit-report content hash:** `sha256:b68749de8d96f23ae50843076754384ad14e50ee707be3d3fd29dc6a35c78d37`
+
+**Previous chain hash:** `89cac7ff99a689b211955e68c6a688508287d3325df3737958556c41070237e2` (Entry #10, Phase 3 SEAL)
+
+**Merkle seal:**
+SHA256(audit_content_hash + previous_chain_hash) = **`231fe5f1a6ab1b57b5b49761c56b69063a7507a2f164d01f80df12179462450a`**
+
+**Decision:** Plan does not pass adversarial review. Implementation gate held closed. Governor must address F1–F5 in `/qor-plan` revision and re-audit before `/qor-implement` is permitted.
+
+**Next required action:** `/qor-plan` (revision) → re-`/qor-audit`.
+
+---
+
+## Entry #12 — GATE TRIBUNAL (PASS) — Phase 4 plan, re-audit v2
+
+**Date:** 2026-04-28
+**Phase:** AUDIT (re-run)
+**Persona:** Judge
+**Subject:** `plan-codegenome-phase-4.md` v2 (CodeGenome Phase 4, Issue #61)
+**Risk Grade:** L2
+
+**Verdict:** **PASS**
+
+**Remediation summary:**
+- F1 (CHANGEFEED): table-level `CHANGEFEED 30d INCLUDE ORIGINAL` added; 3 regression tests planned. ✓
+- F2 (dead enum): `pre_classification_hint` removed from schema ASSERT and Pydantic Literal types. ✓
+- F3 (csharp): all references normalized to `c_sharp`; parity test enforces `_SUPPORTED_LANGUAGES == _LANG_PACKAGE_MAP.keys()`. ✓
+- F4 (orphan API): new sibling module `code_locator/indexing/call_site_extractor.py` (~150 LOC) replaces the invented `extract_calls` API on `symbol_extractor.py`. ✓
+- F5 (corpus): expanded to 30 fixtures; Java + C# get full cosmetic/semantic/uncertain triples; every non-Python language has uncertain coverage. ✓
+- O1–O5 all addressed.
+
+**Grounding sweep (per SG-PLAN-GROUNDING-DRIFT countermeasure, Failure Entry #3):** every API/schema reference verified against codebase. `_LANG_PACKAGE_MAP` (line 57), `_get_parser` (line 97), `CHANGEFEED` syntax (already in use on `decision` and `code_region` tables) all confirmed.
+
+**Non-blocking observations carried into implementation:**
+- Obs-V2-1: `SHOW CHANGES FOR TABLE` syntax not yet used in this codebase; if unreliable in v2 embedded, implementer should find an alternative verification path for the F1 regression test and document the limitation.
+- Obs-V2-2: `_LANG_PACKAGE_MAP` is defined inside `if not _USE_LEGACY`; F3 parity test should guard with `_USE_LEGACY` check or `pytest.importorskip`.
+
+**Plan content hash (v2):** `sha256:efdf0477f01ffe38e7262b8b995655b77aeff44f6747f8943741306d8f81054d`
+**Audit-report content hash:** `sha256:dcf28287420c07f03a34ece5866582da74430addde6a37bdebaf8cc8fb5aba73`
+
+**Previous chain hash:** `231fe5f1a6ab1b57b5b49761c56b69063a7507a2f164d01f80df12179462450a` (Entry #11, v1 VETO)
+
+**Merkle seal:**
+SHA256(audit_content_hash + previous_chain_hash) = **`332c72b23d0d64ec77979f64147e5d4df4a9fa130f9c110be6217e5331b66f14`**
+
+**Decision:** Plan passes adversarial review. Implementation gate **OPENS**. Governor advances to `/qor-implement`.
+
+**Next required action:** `/qor-implement` (Phase-by-phase TDD per the v2 plan).
+
+---
+
+## Entry #13 — GATE TRIBUNAL (PASS) — Phase 4 plan v3 (post-rebase, Phase 1 sealed)
+
+**Date:** 2026-04-28
+**Phase:** AUDIT (re-run)
+**Persona:** Judge
+**Subject:** `plan-codegenome-phase-4.md` v3
+**Risk Grade:** L2
+**Verdict:** **PASS**
+
+**Refresh summary:** branch rebased onto `BicameralAI/dev` (single base; 3-deep stack collapsed). Phase 1 of Phase 4 SEALED at commit `2afd52d` post-rebase / `c39317c` plan refresh: schema v13 + contracts + 9 persistence tests all green; 146/146 broader regression clean. Obs-V2-1 resolved positively (`SHOW CHANGES FOR TABLE` works in v2 embedded). Merge target now `BicameralAI/dev`. Implementation queue table for Phases 2-5 added.
+
+**Grounding sweep (per SG-PLAN-GROUNDING-DRIFT):** every claim verified — branch state, schema versions (dev=v12, Phase 4 branch=v13), Phase 3 primitives all confirmed in dev. PR #71/#73 merge timestamps verified.
+
+**Internal consistency (per SG-PLAN-INTERNAL-INCONSISTENCY):** all v2 sealed decisions preserved in v3 — sibling pass, multi-language scope, `PreClassificationHint`, CHANGEFEED 30d, `c_sharp` consistency, 30-fixture corpus, `call_site_extractor.py`, `_diff_dispatch.py`. No regressions.
+
+**Non-blocking observations (2):** Obs-V3-1 schema-version race with PR #81 (sequencing only, 5-min mechanical fix when triggered); Obs-V3-2 carries Obs-V2-2 forward (legacy tree-sitter guard for F3 parity test).
+
+**Plan content hash (v3):** `sha256:911171cfc18ce1eba783fd49e3e12be6a1d1ac5375cb06c728dea88a6ff14b52`
+**Audit content hash:** `sha256:883b4cf776c97aaa66a1a67b45b66736b7472bc59c89309ed77d9724ccddc337`
+**Previous chain hash:** `332c72b23d0d64ec77979f64147e5d4df4a9fa130f9c110be6217e5331b66f14` (Entry #12)
+
+**Merkle seal:** SHA256(audit_content_hash + previous_chain_hash) = **`21ac210f1d043ccfd22fd941e5b373783c833240b1ca473f55a3cf5c8e6b2026`**
+
+**Decision:** v3 plan passes adversarial review. Implementation gate **OPENS** for Phases 2-5. Per user directive ("if /qor-audit passes, then you can go directly to /qor-implement"), chain proceeds without pause.
+
+**Next required action:** `/qor-implement` (Phase 2 — drift classifier + multi-language line categorizers + call_site_extractor).
+
+---
+
+## Entry #14 — SUBSTANTIATION (Phase 4 SESSION SEAL)
+
+**Date:** 2026-04-29
+**Phase:** SUBSTANTIATE
+**Persona:** Judge (executed via `/qor-substantiate`)
+**Risk Grade:** L2
+**Verdict:** **REALITY = PROMISE**
+**Mode:** Solo
+
+### Verifications run
+
+| Check | Result | Notes |
+|---|---|---|
+| Step 2 — PASS verdict present | ✅ | `.agent/staging/AUDIT_REPORT.md` (v3 PASS, chain `21ac210f`) |
+| Step 2.5 — Version validation | ✅ | Current tag `v0.10.8` → target `v0.13.0` (feature bump). Schema renumbered v13→v14 mid-substantiation per Obs-V3-1 (race with merged PR #81). |
+| Step 3 — Reality audit | ✅ | 22/22 planned new files exist; 0 missing. §Phase 5 fixture-collapse deviation documented inline. |
+| Step 4 — Test audit | ✅ | 189/189 codegenome + extract_call_sites + m3_benchmark + ledger phase2 + resolve_compliance regression suite passing on Windows local. |
+| Step 5 — Section 4 razor | ✅ for production | All 13 new production files ≤ 250 LOC (largest: `drift_service.py` 249, `_diff_dispatch.py` 213). Test files + data fixture exceed cap (consistent with Phase 1+2 / Phase 3 precedent — production code is what the razor primarily protects). |
+| Step 6 — SYSTEM_STATE.md sync | ✅ | Phase 4 snapshot prepended; Phase 3 history preserved. |
+| Step 7 — Merkle seal | ✅ | Computed below. |
+| Step 7.5 — Annotated tag | ⚠️ | qor governance_helpers script absent on this branch; tag deferred to release-eng at PR merge time. Plan target: v0.13.0. |
+
+### Plan deviations (documented)
+
+1. **Schema renumbering v13 → v14** during substantiation — Obs-V3-1 fired (PR #81 merged claiming v13 with provenance FLEXIBLE). Phase 4's CHANGEFEED + semantic_status + evidence_refs migration was rebased to claim v14. SCHEMA_COMPATIBILITY[14] = "0.13.0".
+2. **§Phase 5 fixture collapse** — plan called for 30 paired files on disk; delivered as 30 cases in a single `cases.py` data module. Same coverage, identical contract for `test_m3_benchmark.py`. Documented in `tests/fixtures/m3_benchmark/__init__.py`.
+3. **Test file razor exceptions** — 4 test files + 1 data fixture exceed the 250-LOC cap. Consistent with Phase 1+2 / Phase 3 precedent in this codebase. Production files all ≤ 250.
+
+### Carried-forward observations
+
+- **Obs-V3-1**: schema-version race RESOLVED via mid-substantiation rebase to v14.
+- **Obs-V3-2**: legacy tree-sitter guard ADDRESSED via `pytest.skipif(_USE_LEGACY)` in the F3 parity test (Phase 2 commit).
+
+### Capability shortfalls (carried across phases)
+
+- `qor/scripts/` runtime helpers (`gate_chain`, `session`, `governance_helpers`) absent — gate artifact files at `.qor/gates/<session>/*.json` not written. File-based META_LEDGER chain remains canonical.
+- `qor/reliability/` enforcement scripts (`intent-lock`, `skill-admission`, `gate-skill-matrix`) absent — Step 4.6 reliability sweep skipped; documented as session shortfall.
+- `agent-teams` capability not declared on Claude Code host — Step 1.a parallel-mode disabled; ran sequential.
+- `codex-plugin` capability not declared — Step 1.a adversarial audit-mode disabled; ran solo across all audit phases.
+- `AUDIT_REPORT.md` lives at `.agent/staging/` rather than the skill's default `.failsafe/governance/`. Path divergence noted; chain integrity preserved.
+
+### Session content hash
+
+SHA256 over 28 sorted-path files = **`ba20c63f37bb8c39f8b0d252222488088f16f8a3cb66423fa909361e9a40d88e`**
+
+### Previous chain hash
+
+`21ac210f1d043ccfd22fd941e5b373783c833240b1ca473f55a3cf5c8e6b2026` (Entry #13, v3 audit PASS)
+
+### Merkle seal
+
+SHA256(content_hash + previous_hash) = **`0ebcf69bf25e11d9d85cb9856ccc9757ad39b75c2f352bdd063bd2d957f506cf`**
+
+### Decision
+
+Reality matches Promise. Phase 4 (#61) implementation conforms to the v3-audited specification with two documented plan deviations (schema renumbering and §Phase 5 fixture collapse). All 5 phases sealed in sequence; M3 benchmark exit criterion (false-positive rate < 5%) met with 0 false positives. Chain integrity intact. Next phase: `/qor-document` then open PR `claude/codegenome-phase-4-qor → BicameralAI/dev`.
+
+---
+*Chain integrity: VALID (14 entries)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b`*
+*Next required action: `/qor-document` then open PR to `BicameralAI/dev`*

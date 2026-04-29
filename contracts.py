@@ -99,6 +99,21 @@ class DecisionMatch(BaseModel):
     signoff: dict | None = None
 
 
+class PreClassificationHint(BaseModel):
+    """Phase 4 (#61) — server-computed structural-drift evidence attached
+    to ``PendingComplianceCheck`` when the auto-classifier scored the
+    change in the uncertain band [0.30, 0.80).
+
+    The caller LLM may use this as a hint when reasoning about whether
+    a code change is genuinely semantic. The caller's verdict always
+    wins; this is advisory.
+    """
+    verdict: Literal["cosmetic", "semantic", "uncertain"]
+    confidence: float                # weighted score in [0, 1]
+    signals: dict[str, float] = {}   # per-signal contribution
+    evidence_refs: list[str] = []    # free-form audit refs
+
+
 class ComplianceVerdict(BaseModel):
     """One caller-LLM judgment to write back to the compliance cache.
 
@@ -108,6 +123,15 @@ class ComplianceVerdict(BaseModel):
       - "not_relevant" — retrieval made a mistake; this region is not about
                          this decision. Server will prune the binds_to edge
                          and record compliance_check with pruned=true.
+
+    Phase 4 (#61) — additive optional fields:
+      semantic_status: caller's claim about whether this is a cosmetic
+                       change (``semantically_preserved``) or a real
+                       semantic change (``semantic_change``). Persisted
+                       to ``compliance_check.semantic_status`` for the
+                       audit trail. ``None`` means "no claim".
+      evidence_refs:   free-form audit-trail strings (e.g.
+                       ``["signature:1.00", "neighbors:0.97"]``).
     """
     decision_id: str
     region_id: str
@@ -116,6 +140,8 @@ class ComplianceVerdict(BaseModel):
     confidence: Literal["high", "medium", "low"]
     explanation: str             # one-sentence rationale for audit trail
     phase_metadata: dict = {}
+    semantic_status: Literal["semantically_preserved", "semantic_change"] | None = None
+    evidence_refs: list[str] = []
 
 
 class ResolveComplianceRejection(BaseModel):
@@ -135,6 +161,9 @@ class ResolveComplianceAccepted(BaseModel):
     region_id: str
     phase: str
     verdict: Literal["compliant", "drifted", "not_relevant"]
+    # Phase 4 (#61) additive: echoes the caller's semantic_status claim
+    # (or None if the caller didn't provide one).
+    semantic_status: Literal["semantically_preserved", "semantic_change"] | None = None
 
 
 class ResolveComplianceResponse(BaseModel):
@@ -154,6 +183,13 @@ class PendingComplianceCheck(BaseModel):
     """One verification job batched for the caller LLM to resolve.
 
     v0.5.0: decision_id replaces intent_id.
+
+    Phase 4 (#61) additive: ``pre_classification`` carries the
+    auto-classifier's structural evidence when the score landed in the
+    uncertain band [0.30, 0.80). The caller LLM may use this as a hint
+    when reasoning about cosmetic vs semantic; the caller's verdict
+    always wins. ``None`` for clearly-semantic pendings (score ≤ 0.30)
+    and when ``codegenome.enhance_drift`` is disabled.
     """
     phase: Literal["ingest", "drift", "regrounding"]
     decision_id: str
@@ -164,6 +200,7 @@ class PendingComplianceCheck(BaseModel):
     content_hash: str                   # key the verdict must be written against
     code_body: str = ""                 # extracted via tree-sitter, capped
     old_code_body: str | None = None    # drift-phase only
+    pre_classification: PreClassificationHint | None = None  # Phase 4 (#61)
 
 
 class ContinuityResolution(BaseModel):
@@ -210,6 +247,12 @@ class LinkCommitResponse(BaseModel):
     # region. Empty when ``codegenome.enhance_drift`` is disabled or no
     # drifted region produces a continuity match.
     continuity_resolutions: list[ContinuityResolution] = []
+    # Phase 4 (#61) additive: count of drifted regions auto-resolved as
+    # cosmetic (verdict='compliant', semantic_status='semantically_preserved')
+    # by the structural classifier. Stripped from
+    # ``pending_compliance_checks`` before the response is sent. Zero
+    # when ``codegenome.enhance_drift`` is disabled.
+    auto_resolved_count: int = 0
 
 
 class ActionHint(BaseModel):

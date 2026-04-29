@@ -3,6 +3,74 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.13.0 — CodeGenome Phase 4 (#61) — semantic drift evaluation in `resolve_compliance` (M3) — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Final PR in the three-phase CodeGenome rollout (issues #59 / #60 /
+#61). Adds a deterministic cosmetic-vs-semantic classifier that
+auto-resolves drifted regions whose change is structurally cosmetic
+(docstrings, comments, import re-order, whitespace, signature- and
+neighbor-equivalent edits) BEFORE the caller LLM is asked for a
+verdict. Cuts noise on the M3 metric. Default behavior is
+**unchanged** unless callers opt in via `BICAMERAL_CODEGENOME_ENHANCE_DRIFT`.
+
+### Added
+
+- **Drift classifier** (`codegenome/drift_classifier.py`,
+  `codegenome/drift_service.py`) — issue-mandated weighted scoring
+  (signature 0.30, neighbors 0.25, diff_lines 0.30, no_new_calls
+  0.15). Verdict: ≥0.80 cosmetic (auto-resolve), ≤0.30 semantic, else
+  uncertain (caller LLM still decides, with a structured hint).
+- **Multi-language line categorizers** (`codegenome/_line_categorizers/`)
+  — Python, JavaScript, TypeScript, Go, Rust, Java, C#. Per-language
+  rules for docstring / comment / import / signature recognition.
+- **Call-site extractor** (`code_locator/indexing/call_site_extractor.py`)
+  — sibling of `symbol_extractor`; extracts `set[str]` of called
+  callable names per language for the `no_new_calls` signal.
+- **Schema v14** — `compliance_check` table redefined with
+  `CHANGEFEED 30d INCLUDE ORIGINAL`; new `semantic_status` field
+  (option<string>, ASSERT enum
+  `['semantically_preserved', 'semantic_change']`); new
+  `evidence_refs` field (array<string>). Additive migration
+  (`_migrate_v13_to_v14`).
+- **`PendingComplianceCheck.pre_classification`** — typed
+  `PreClassificationHint | None` field. Populated when the
+  classifier scored the change in the uncertain band; carries
+  `verdict`, `confidence`, per-signal contributions, and
+  `evidence_refs`. Advisory hint for the caller LLM.
+- **`ComplianceVerdict.semantic_status` + `.evidence_refs`** —
+  optional fields on caller verdicts. Persisted to
+  `compliance_check.semantic_status` and
+  `compliance_check.evidence_refs` for the audit trail.
+- **`ResolveComplianceAccepted.semantic_status`** — echoes the
+  caller's claim through the response.
+- **`LinkCommitResponse.auto_resolved_count`** — number of regions
+  the classifier auto-resolved as cosmetic in this commit's sweep.
+
+### Changed
+
+- `_run_drift_classification_pass` runs after `_run_continuity_pass`
+  in `handlers/link_commit.py`, sharing the same
+  `cg_config.enhance_drift` flag (one feature, one toggle).
+- `handlers/resolve_compliance.py` accepts and persists the new
+  optional verdict fields.
+- `skills/bicameral-sync/SKILL.md` documents the
+  `auto_resolved_count`, `pre_classification` hint, and the
+  optional `semantic_status` + `evidence_refs` on caller verdicts.
+
+### Schema compatibility
+
+- v13 → v14 (additive); rolling upgrade safe.
+- v14 = "0.13.0" placeholder; release-eng pins final value at PR merge.
+
+### M3 benchmark
+
+`tests/test_m3_benchmark.py` runs a 30-case corpus (Python 12 + JS 3
++ TS 3 + Go 3 + Rust 3 + Java 3 + C# 3) through the classifier.
+False-positive rate (semantic mis-classified as cosmetic) on the
+corpus: **0%** (target: < 5%).
+
+---
+
 ## v0.12.0 — CodeGenome Phase 3 (#60) — continuity evaluation in `link_commit` — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Second PR in the three-phase CodeGenome rollout (issues #59 / #60 / #61).

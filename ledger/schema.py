@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -41,6 +41,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     11: "0.11.0",   # placeholder; release-eng pins final value at PR merge
     12: "0.12.0",   # placeholder; release-eng pins final value at PR merge
     13: "0.12.1",   # provenance FLEXIBLE on binds_to (#72)
+    14: "0.13.0",   # placeholder; release-eng pins final value at PR merge — Phase 4 (#61)
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -194,7 +195,13 @@ _TABLES = [
     # Cache key: (decision_id, region_id, content_hash) — one verdict per code shape.
     # pruned=true means the caller said "not_relevant" — retrieval mistake, binds_to
     # edge has been deleted. Row kept for audit trail.
-    "DEFINE TABLE compliance_check SCHEMAFULL",
+    #
+    # CHANGEFEED 30d INCLUDE ORIGINAL (Phase 4 / #61, F1 audit remediation):
+    # required so caller-LLM verdicts that overwrite an auto-resolved
+    # cosmetic row remain forensically recoverable for 30 days. Without
+    # the changefeed, the original (semantic_status='semantically_preserved')
+    # row would be silently lost on overwrite.
+    "DEFINE TABLE compliance_check SCHEMAFULL CHANGEFEED 30d INCLUDE ORIGINAL",
     "DEFINE FIELD decision_id  ON compliance_check TYPE string",   # renamed from intent_id
     "DEFINE FIELD region_id    ON compliance_check TYPE string",
     "DEFINE FIELD content_hash ON compliance_check TYPE string",
@@ -210,6 +217,14 @@ _TABLES = [
     "DEFAULT 'drift'",
     "DEFINE FIELD checked_at   ON compliance_check TYPE datetime DEFAULT time::now()",
     "DEFINE FIELD ephemeral    ON compliance_check TYPE bool DEFAULT false",
+    # Phase 4 (#61) — semantic drift evaluation fields.
+    # semantic_status records whether an auto-classifier or caller-LLM
+    # judged the change cosmetic vs semantically meaningful.
+    # evidence_refs is a free-form audit trail of the signals that drove
+    # the verdict (e.g. ['signature:1.00', 'neighbors:0.97']).
+    "DEFINE FIELD semantic_status ON compliance_check TYPE option<string> DEFAULT NONE "
+    "ASSERT $value = NONE OR $value IN ['semantically_preserved', 'semantic_change']",
+    "DEFINE FIELD evidence_refs   ON compliance_check TYPE array<string> DEFAULT []",
     "DEFINE INDEX idx_cc_cache_key ON compliance_check FIELDS decision_id, region_id, content_hash UNIQUE",
     "DEFINE INDEX idx_cc_decision  ON compliance_check FIELDS decision_id",
     "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
@@ -844,34 +859,53 @@ async def _migrate_v11_to_v12(client: LedgerClient) -> None:
 
 
 async def _migrate_v12_to_v13(client: LedgerClient) -> None:
-    """v12 → v13: Add FLEXIBLE to binds_to.provenance (#72).
-
-    Before: ``DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}``
-    After:  ``DEFINE FIELD provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}``
-
-    Without FLEXIBLE, SurrealDB v2 silently strips nested keys from the
-    object on insert/update. Callers attach structured provenance like
-    ``{"caller_llm": {...}, "search_hint": {...}}`` — those nested
-    objects were being dropped, leaving only top-level scalar keys.
-
-    The schema redefinition is handled automatically by ``init_schema``
-    on next connect (every DEFINE statement gets OVERWRITE injected),
-    so this migration body is a no-op acknowledging that the DB has
-    been touched. We do NOT attempt to recover stripped provenance on
-    existing rows — that data is gone. Future writes will preserve
-    nested keys correctly.
-
-    Originally targeted v10→v11 but Phase 1+2 (#71) and Phase 3 (#73)
-    claimed v11 and v12 first; this migration is now v12→v13.
-    """
+    """v12 → v13: Add FLEXIBLE to binds_to.provenance (#72)."""
     await _execute_define_idempotent(
         client,
         "DEFINE FIELD OVERWRITE provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}",
     )
     logger.info(
-        "[migration] v12 → v13: binds_to.provenance redefined as FLEXIBLE "
-        "(existing stripped rows are NOT recovered — future writes will "
-        "preserve nested keys)"
+        "[migration] v12 → v13: binds_to.provenance redefined as FLEXIBLE"
+    )
+
+
+async def _migrate_v13_to_v14(client: LedgerClient) -> None:
+    """v13 → v14: Add CHANGEFEED on compliance_check + semantic_status +
+    evidence_refs fields (#61 Phase 4).
+
+    Three additive changes:
+
+    1. Retrofit ``CHANGEFEED 30d INCLUDE ORIGINAL`` on the
+       ``compliance_check`` table. Required so caller-LLM verdicts that
+       overwrite an auto-resolved cosmetic row remain forensically
+       recoverable for 30 days (F1 audit remediation).
+
+    2. Add ``semantic_status`` (nullable string with ASSERT enum
+       ``['semantically_preserved', 'semantic_change']``).
+
+    3. Add ``evidence_refs`` (array of strings, default ``[]``).
+
+    All three are additive: existing rows read back ``semantic_status =
+    NONE`` and ``evidence_refs = []`` until rewritten. The CHANGEFEED
+    retrofit via ``DEFINE TABLE OVERWRITE`` preserves all existing rows.
+
+    Originally numbered v12→v13 in the Phase 4 plan; PR #81 (provenance
+    FLEXIBLE) merged claiming v13 first per Obs-V3-1 of the v3 audit,
+    so this migration was renumbered v13→v14 during /qor-substantiate.
+    """
+    new_stmts = [
+        "DEFINE TABLE compliance_check SCHEMAFULL CHANGEFEED 30d INCLUDE ORIGINAL",
+        "DEFINE FIELD semantic_status ON compliance_check "
+        "TYPE option<string> DEFAULT NONE "
+        "ASSERT $value = NONE OR $value IN ['semantically_preserved', 'semantic_change']",
+        "DEFINE FIELD evidence_refs ON compliance_check "
+        "TYPE array<string> DEFAULT []",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, _with_overwrite(sql))
+    logger.info(
+        "[migration] v13 → v14: compliance_check changefeed retrofitted; "
+        "semantic_status + evidence_refs fields defined"
     )
 
 
@@ -885,6 +919,7 @@ _MIGRATIONS: dict[int, ...] = {
     11: _migrate_v10_to_v11,
     12: _migrate_v11_to_v12,
     13: _migrate_v12_to_v13,
+    14: _migrate_v13_to_v14,
 }
 
 

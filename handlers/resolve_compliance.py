@@ -160,6 +160,11 @@ async def handle_resolve_compliance(
             commit_hash=commit_hash or "",
             pruned=is_pruned,
             ephemeral=is_ephemeral,
+            # Phase 4 (#61): caller's optional semantic claim +
+            # supporting evidence. Both default to None / [] when the
+            # caller doesn't supply them — fully backward-compatible.
+            semantic_status=getattr(v, "semantic_status", None),
+            evidence_refs=list(getattr(v, "evidence_refs", []) or []),
         )
 
         # Prune the binds_to edge when the caller says "not relevant" —
@@ -174,6 +179,7 @@ async def handle_resolve_compliance(
             region_id=v.region_id,
             phase=phase,
             verdict=v.verdict,
+            semantic_status=getattr(v, "semantic_status", None),
         ))
 
     # Sync code_region.content_hash to the verdict hash for every accepted verdict.
