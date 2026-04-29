@@ -3,29 +3,12 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## v0.17.2 -- governance architecture documentation (#111)
 
-### Added
+New `docs/semantic-drift-governance.md` describing the shipped governance surface (Phases 1-4 from the #108-#112 plan): contracts, engine, config, HITL bypass flow, MCP tools, and the non-blocking absolute. Includes two Mermaid diagrams (lifecycle and inference-vs-determinism) and explicit cross-references to existing docs.
 
-- **CI grounding lint for plan files and PR bodies (#114).** Two new
-  checkers ship together:
-  - `scripts/lint_plan_grounding.py` — walks `plan-*.md` files for
-    backtick-wrapped path tokens and verifies each resolves on the
-    working tree. Marks `**new**` / `(planned)` / `(future)` /
-    `(v2)` / `(nonexistent)` / `(example)` as exempt. Folded into
-    the existing `lint-and-typecheck.yml` workflow as a blocking
-    gate; only runs against plans modified in the current PR.
-    Closes the SG-PLAN-GROUNDING-DRIFT loop after three instances
-    in the v0.13/v0.16 development window.
-  - `.github/scripts/lint_pr_body_refs.py` + new
-    `.github/workflows/pr-body-refs-lint.yml` advisory workflow —
-    warns on bare `#NUMBER` mentions in PR bodies that aren't
-    wrapped by `Closes`/`Fixes`/`Resolves`/`Refs`/`Related`/`See`
-    keywords or under a `## Linked issues` heading. Reads PR body
-    via `--from-env PR_BODY` (direct `os.environ` read, no shell
-    interpolation; OWASP A03 mitigation caught at audit v1).
-  - Documentation: `DEV_CYCLE.md` §2.1 (plan-grounding lint
-    callout) + §4.3 (PR-body keyword discipline). Issue #114.
+### Closes
+#111
 
 ## v0.17.1 -- preflight HITL bypass flow (#112)
 
