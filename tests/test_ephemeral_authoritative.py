@@ -1468,9 +1468,7 @@ async def test_e18_bind_branch_local_file(_eph_repo):
     repo = _eph_repo
 
     _checkout(repo, "feat/new-module", create=True)
-    (repo / "src/new_module.py").write_text(
-        "def compute(x: int) -> int:\n    return x * 2\n"
-    )
+    (repo / "src/new_module.py").write_text("def compute(x: int) -> int:\n    return x * 2\n")
     _commit(repo, "add new_module.py (branch-only file)")
 
     ctx = BicameralContext.from_env()
@@ -1482,19 +1480,22 @@ async def test_e18_bind_branch_local_file(_eph_repo):
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/new_module.py",
-        "symbol_name": "compute",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/new_module.py",
+                "symbol_name": "compute",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
 
     assert bind_resp.bindings, "no bind results"
     b = bind_resp.bindings[0]
-    assert not b.error, (
-        f"bind must succeed for a branch-local file; got error: {b.error}"
-    )
+    assert not b.error, f"bind must succeed for a branch-local file; got error: {b.error}"
     assert b.content_hash, "content_hash must be non-empty after successful bind"
 
 
@@ -1545,13 +1546,18 @@ async def test_e19_bind_modified_function_uses_branch_hash(_eph_repo):
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
 
     assert bind_resp.bindings, "no bind results"
     b = bind_resp.bindings[0]
@@ -1612,13 +1618,18 @@ async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo)
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error
     bind_hash = bind_resp.bindings[0].content_hash
     assert bind_hash, "bind must return content_hash"
@@ -1632,7 +1643,7 @@ async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo)
     # First link_commit: surfaces pending check at H_branch.
     lc1 = await handle_link_commit(ctx, "HEAD")
     pending = [p for p in lc1.pending_compliance_checks if p.decision_id == decision_id]
-    assert pending, f"link_commit must surface pending check for the bound decision"
+    assert pending, "link_commit must surface pending check for the bound decision"
     assert pending[0].content_hash == bind_hash, (
         f"pending_check.content_hash ({pending[0].content_hash[:8]}) must equal "
         f"bind_result.content_hash ({bind_hash[:8]}) — hash consistency invariant"
@@ -1642,14 +1653,16 @@ async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo)
     rc = await handle_resolve_compliance(
         ctx,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "branch content verified",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "branch content verified",
+            }
+        ],
         flow_id=lc1.flow_id,
     )
     assert rc.accepted, f"resolve_compliance rejected: {rc.rejected}"
@@ -1715,8 +1728,7 @@ async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
     # Engineer creates feature branch and writes the implementation.
     _checkout(repo, "feat/cap-discount", create=True)
     (repo / "src/calc.py").write_text(
-        "def rate(order_total: float) -> float:\n"
-        "    return min(order_total * 0.30, order_total)\n"
+        "def rate(order_total: float) -> float:\n    return min(order_total * 0.30, order_total)\n"
     )
     _commit(repo, "cap discount at 30% (feat/cap-discount)")
 
@@ -1729,13 +1741,18 @@ async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
     )
 
     # Bind to the implementation on the feature branch.
-    bind_resp = await handle_bind(ctx_feat, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx_feat,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error, (
         f"bind must succeed on feature branch: "
         f"{bind_resp.bindings[0].error if bind_resp.bindings else 'no results'}"
@@ -1757,14 +1774,16 @@ async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
     rc = await handle_resolve_compliance(
         ctx_feat,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "cap implementation verified",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "cap implementation verified",
+            }
+        ],
         flow_id=lc.flow_id,
     )
     assert rc.accepted, f"resolve_compliance rejected: {rc.rejected}"
@@ -1825,21 +1844,25 @@ async def test_e22_switch_to_main_no_stale_reflected(_eph_repo):
     # Feature branch: implement + bind + resolve → reflected, ephemeral=True.
     _checkout(repo, "feat/cap-v2", create=True)
     (repo / "src/calc.py").write_text(
-        "def rate(order_total: float) -> float:\n"
-        "    return min(order_total * 0.30, order_total)\n"
+        "def rate(order_total: float) -> float:\n    return min(order_total * 0.30, order_total)\n"
     )
     _commit(repo, "cap at 30%")
 
     # Fresh ctx on the feature branch.
     ctx_feat = BicameralContext.from_env()
 
-    bind_resp = await handle_bind(ctx_feat, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx_feat,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error
 
     lc_feat = await handle_link_commit(ctx_feat, "HEAD")
@@ -1850,14 +1873,16 @@ async def test_e22_switch_to_main_no_stale_reflected(_eph_repo):
     rc = await handle_resolve_compliance(
         ctx_feat,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "verified on branch",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "verified on branch",
+            }
+        ],
         flow_id=lc_feat.flow_id,
     )
     assert rc.accepted
