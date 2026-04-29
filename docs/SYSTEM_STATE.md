@@ -1,10 +1,29 @@
-# System State — post-Phase-3-substantiation snapshot
+# System State — post-Phase-4-substantiation snapshot
 
-**Generated**: 2026-04-28
-**HEAD**: `d10f0ca` + razor-fix amendment (Phase 3 sealed)
-**Branch**: `claude/codegenome-phase-3-qor`
-**Tracked PR**: stacked on PR #71; #60 PR pending
+**Generated**: 2026-04-29
+**HEAD**: `09f30a8` (Phase 4 / #61 sealed; rebased on `dev` after #71/#73/#79–#84 merged)
+**Branch**: `claude/codegenome-phase-4-qor`
+**Tracked PR**: targets `BicameralAI/dev` (Phase 4 / Issue #61); aggregate `dev → main` PR is downstream
 **Genesis hash**: `29dfd085...`
+**Phase 4 seal**: `0ebcf69b...`
+
+## Phase 4 (#61) implementation — 27 files, ~2515 LOC, 73 new tests, 189/189 regression
+
+| Phase | Files | New tests | Commit |
+|---|---|---|---|
+| 1 — Schema v14 + contracts | 3 modified, 1 new test | 9 | `066a209` |
+| 2 — Drift classifier + 7-lang categorizers + call_site_extractor | 12 new + 2 new tests | 35 | `7a79dc5` |
+| 3 — Drift classification service | 2 new | 8 | `3a0fc8c` |
+| 4 — Handler integration (link_commit + resolve_compliance) | 2 modified + 2 new tests | 14 | `6bbc687` |
+| 5 — M3 benchmark corpus (30 cases × 7 languages) | 3 new | 7 | `09f30a8` |
+
+Schema renumbered v13 → v14 during /qor-substantiate per Obs-V3-1: PR #81 (provenance FLEXIBLE) merged claiming v13 first; this Phase 4 migration shifted to v14 (compliance_check CHANGEFEED + semantic_status + evidence_refs). Plan deviation: §Phase 5 collapsed 30 paired files to a single ``cases.py`` data module — same coverage, far less file-system noise; documented in `tests/fixtures/m3_benchmark/__init__.py`.
+
+---
+
+## Phase 3 (#60) seal preserved below
+
+
 
 ## Files added across the project DNA chain (Phases 1-2-3)
 
