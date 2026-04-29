@@ -814,6 +814,85 @@ The plan is to build the lint that prevents one class of carelessness (filesyste
 Instance #5 prevented at author-time via `ls -d */` before submission. Two consecutive plans (#117, #114) with author-time mitigation working.
 
 ---
-*Chain integrity: VALID (19 entries on this branch)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #114 Audit (PASS, post-remediation): `850ec57f`*
-*Next required action: `/qor-implement` for `plan-114-grounding-lint.md`*
+## Entry #20 — SUBSTANTIATION (SESSION SEAL): `plan-114-grounding-lint.md` (Issue #114)
+
+**Phase**: SUBSTANTIATE / qor-substantiate
+**Date**: 2026-04-29
+**Branch**: `feat/114-grounding-lint` (off `BicameralAI/dev` post-#117)
+**Subject**: Issue #114 — *CI lint for unstructured references in plan files and PR bodies*
+**Risk Grade**: L1
+**Verdict**: **PASS** — Reality matches Promise
+
+### Reality vs Promise
+
+| Plan phase | Files | Status |
+|---|---|---|
+| Phase 0: plan-grounding lint | `scripts/lint_plan_grounding.py` (212 LOC) + `tests/test_lint_plan_grounding.py` (117 LOC, 8 tests) | EXISTS |
+| Phase 1: PR-body refs lint | `.github/scripts/lint_pr_body_refs.py` (162 LOC) + `tests/test_lint_pr_body_refs.py` (82 LOC, 6 tests) | EXISTS |
+| Phase 2: CI integration | `.github/workflows/lint-and-typecheck.yml` (modified, +10 LOC for plan-grounding step) + `.github/workflows/pr-body-refs-lint.yml` (new, advisory) | EXISTS |
+| Phase 3: Documentation | `docs/DEV_CYCLE.md` §2.1 + §4.3 + `CHANGELOG.md` `[Unreleased]` entry | EXISTS |
+
+**Plan deviations**: zero. Implementation matches v2 plan (`4ea06be`) 1:1, including the OWASP A03 remediation (`--from-env` direct env-var read).
+
+### Test verification
+
+- **14/14 new tests pass** (8 plan-grounding + 6 PR-body refs); pytest 1.29s green.
+- **Self-test**: `python scripts/lint_plan_grounding.py plan-114-grounding-lint.md` → exit 0. The plan that builds the lint passes the lint.
+- **ruff** + **ruff format --check** + **mypy** clean on all 4 new source files.
+
+### Razor final check
+
+| File | LOC | Cap | Status |
+|---|---|---|---|
+| `scripts/lint_plan_grounding.py` | 212 | ≤250 | OK |
+| `.github/scripts/lint_pr_body_refs.py` | 162 | ≤250 | OK |
+| `tests/test_lint_plan_grounding.py` | 117 | ≤250 | OK |
+| `tests/test_lint_pr_body_refs.py` | 82 | ≤250 | OK |
+
+Entry funcs ≤30 LOC, helpers ≤25 LOC, nesting ≤2, zero nested ternaries (confirmed at implement).
+
+### Artifact hashes
+
+- `plan-114-grounding-lint.md` — `aa212fde63ed523c3e2652eccfbb51e077fef51992e25de81f7119bd24aa2856`
+- `scripts/lint_plan_grounding.py` — `202cb8a3313b4c2f0ef2009a0da6efe951862735cf1e10a63b95ed37377e6b29`
+- `.github/scripts/lint_pr_body_refs.py` — `c893362811c3ceaf63ab6d57b0526302629c571111c586053d82d81c2ff90156`
+- `tests/test_lint_plan_grounding.py` — `d1d4e22ecf16a27cbb747390d3a7e1df06cdbf83a82b816bee344fb51396d249`
+- `tests/test_lint_pr_body_refs.py` — `40e7951ceffe1d619f5b029f1a161b11e08b14c23c02678149cd4978faefde07`
+- `.github/workflows/lint-and-typecheck.yml` — `25ce76558b3f73c1458b017c4f9e31e32c15c4b9a55468ae7b26c60f0e43ba54`
+- `.github/workflows/pr-body-refs-lint.yml` — `dc856ddf6bf95b2661bf686e912b6010e621281a7032fdd30aa61de18cf758ba`
+- `.agent/staging/AUDIT_REPORT.md` — `8f20e9e00919db98efb7cf144592fd5ac24752e47d7be8911e2dd17486d3e2fd`
+
+### Content hash (sorted-concat artifacts)
+
+`SHA256(sorted(hashes))` = `9d75b6863b1150606bf13931fe5051bde7643668a312dd36fe73c4405ba4bb33`
+
+### Previous chain hash
+
+`850ec57faaded3e43059d7eb919b6ad861babd324e0eff27c47ac0e88406a40d` (Entry #19, #114 Audit PASS post-remediation)
+
+### Merkle seal
+
+`SHA256(content_hash + previous_hash) =` **`a19a04debe5f8f38aab182263e94819d50743849a26cdb8cc4aa3279a81be265`**
+
+### Capability shortfalls
+
+- `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
+- `qor/reliability/` enforcement scripts absent — Step 4.6 reliability sweep skipped.
+- `agent-teams` capability not declared — sequential mode.
+- `codex-plugin` capability not declared — solo audit mode.
+- Step 7.5 version-bump-and-tag skipped — version stays at v0.17.x; #114 ships in next aggregate release PR (Jin's call at v0.18.x cut time).
+
+### Notable
+
+#114 closes the SG-PLAN-GROUNDING-DRIFT loop after 5 instances tracked across this branch family. The durable countermeasure (CI lint) now sits alongside the author-time mitigation (`ls -d */`) — defense in depth. The plan that builds the lint *passes* the lint, which is the strongest possible self-validation.
+
+### Decision
+
+**PASS, sealed**. Implementation gate-cleared for PR.
+
+**Next required action**: `/qor-document` for PR description authoring → `gh pr create` targeting `BicameralAI/dev`.
+
+---
+*Chain integrity: VALID (20 entries on this branch)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #114 Audit (PASS, post-remediation): `850ec57f` → #114 SEAL: `a19a04de`*
+*Next required action: `/qor-document` for `plan-114-grounding-lint.md` → PR description + open PR to `BicameralAI/dev`*
