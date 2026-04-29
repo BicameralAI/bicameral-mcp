@@ -1,6 +1,6 @@
 """Exhaustive regression matrix for ephemeral/authoritative edge cases (v1).
 
-17 scenarios covering the full lifecycle of compliance verdicts across branch
+20 scenarios covering the full lifecycle of compliance verdicts across branch
 boundaries, process restarts, hash-keyed lookups, and authority resolution.
 
 Each test is tagged:
@@ -34,6 +34,11 @@ Scenario matrix:
   E15 — authoritative_ref="" → degraded safe mode, ephemeral=False        [PASS]
   E16 — resolve_compliance without prior link_commit → reflected          [PASS]
   E17 — ephemeral first-write-wins → promoted by resolve_compliance      [PASS V2]
+  E18 — bind to branch-local file succeeds (ephemeral-aware ref)         [PASS]
+  E19 — bind to modified function uses branch hash, not main hash        [PASS]
+  E20 — bind+link_commit hash consistency: no phantom drifted after resolve [PASS]
+  E21 — ungrounded → feature branch bind → reflected + ephemeral=True   [PASS]
+  E22 — switch back to main: no stale ephemeral 'reflected' (→ drifted)  [PASS]
 """
 
 from __future__ import annotations
@@ -1439,4 +1444,450 @@ async def test_e17_ephemeral_first_write_wins_flag_stuck(_eph_repo):
     assert checks_final[0]["ephemeral"] is False, (
         "V2 gap: ephemeral=True record must be updated to False when the "
         "same hash is confirmed on the authoritative branch"
+    )
+
+
+# ── E18: Bind against a branch-local file succeeds (ephemeral-aware ref) ────────
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_e18_bind_branch_local_file(_eph_repo):
+    """[PASS] bicameral_bind succeeds for a file that only exists on the feature branch.
+
+    Bug: bind was always validating file/symbol existence at authoritative_sha (main).
+    Files added on a feature branch don't exist at main's SHA, so bind rejected them.
+    Fix: when _is_ephemeral_commit returns True, use head_sha as the effective ref.
+
+    Invariants:
+    - feature branch adds NewModule.py (not on main)
+    - bind for a symbol in NewModule.py succeeds (no error)
+    - resulting content_hash is non-empty (hashed from branch content)
+    - decision status transitions to pending (region created)
+    """
+    repo = _eph_repo
+
+    _checkout(repo, "feat/new-module", create=True)
+    (repo / "src/new_module.py").write_text(
+        "def compute(x: int) -> int:\n    return x * 2\n"
+    )
+    _commit(repo, "add new_module.py (branch-only file)")
+
+    ctx = BicameralContext.from_env()
+
+    ingest = await handle_ingest(
+        ctx,
+        _payload(repo, text="Double computation", intent="Double the input value"),
+    )
+    assert ingest.ingested
+    decision_id = ingest.created_decisions[0].decision_id
+
+    bind_resp = await handle_bind(ctx, [{
+        "decision_id": decision_id,
+        "file_path": "src/new_module.py",
+        "symbol_name": "compute",
+        "start_line": 1,
+        "end_line": 2,
+    }])
+
+    assert bind_resp.bindings, "no bind results"
+    b = bind_resp.bindings[0]
+    assert not b.error, (
+        f"bind must succeed for a branch-local file; got error: {b.error}"
+    )
+    assert b.content_hash, "content_hash must be non-empty after successful bind"
+
+
+# ── E19: Bind to modified function uses branch hash, not main hash ────────────
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_e19_bind_modified_function_uses_branch_hash(_eph_repo):
+    """[PASS] bind content_hash reflects branch content, not authoritative_sha content.
+
+    Bug: _do_bind always computed content_hash at authoritative_sha (main HEAD).
+    For a function that exists on both branches but with different content, bind
+    returned H_main — the hash of main's version — even when called on a feature
+    branch with different content.
+
+    Fix: when _is_ephemeral_commit is True, effective_ref = head_sha.
+    bind_result.content_hash is now computed at head_sha (branch content).
+
+    Invariants:
+    - main: rate() returns 0.1   → H_main
+    - feature branch: rate() returns 0.25 → H_branch  (H_branch ≠ H_main)
+    - bind on feature branch → bind_result.content_hash == H_branch
+    - bind_result.content_hash != H_main
+    """
+    from ledger.status import compute_content_hash
+
+    repo = _eph_repo
+
+    # Capture H_main before branching.
+    main_sha = _git(repo, "rev-parse", "HEAD")
+    h_main = compute_content_hash("src/calc.py", 1, 2, str(repo), ref=main_sha)
+    assert h_main, "pre-condition: main hash must be computable"
+
+    # Create feature branch with different content.
+    _checkout(repo, "feat/rate-change", create=True)
+    (repo / "src/calc.py").write_text(
+        "def rate(order_total: float) -> float:\n    return order_total * 0.25\n"
+    )
+    _commit(repo, "set rate to 25%")
+
+    ctx = BicameralContext.from_env()
+
+    ingest = await handle_ingest(
+        ctx,
+        _payload(repo, text="Rate 25%", intent="Apply 25% rate to order total"),
+    )
+    assert ingest.ingested
+    decision_id = ingest.created_decisions[0].decision_id
+
+    bind_resp = await handle_bind(ctx, [{
+        "decision_id": decision_id,
+        "file_path": "src/calc.py",
+        "symbol_name": "rate",
+        "start_line": 1,
+        "end_line": 2,
+    }])
+
+    assert bind_resp.bindings, "no bind results"
+    b = bind_resp.bindings[0]
+    assert not b.error, f"bind failed: {b.error}"
+    assert b.content_hash, "content_hash must be non-empty"
+
+    assert b.content_hash != h_main, (
+        f"bind content_hash must be branch hash (H_branch), not main hash (H_main={h_main[:8]}). "
+        f"Got {b.content_hash[:8]} — suggests effective_ref was not updated to head_sha"
+    )
+
+
+# ── E20: Bind+link_commit hash consistency — no phantom drifted ──────────────
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo):
+    """[PASS] After bind on feature branch → resolve_compliance → second link_commit
+    → status is 'reflected', not phantom 'drifted'.
+
+    Root cause of phantom 'drifted' (pre-fix):
+      1. bind used authoritative_sha → stored code_region.content_hash = H_main
+      2. link_commit(HEAD) computed actual_hash = H_branch (≠ H_main)
+      3. resolve_compliance stored compliance_check.content_hash = H_branch
+      4. Second link_commit: stored_hash = H_main, actual_hash = H_branch → mismatch
+         has_prior_compliant_verdict = True (H_branch verdict exists) → 'drifted'!
+
+    With the fix:
+      1. bind uses head_sha → stored code_region.content_hash = H_branch
+      2. link_commit(HEAD): actual_hash = H_branch = stored_hash → no mismatch
+      3. resolve_compliance stores verdict at H_branch
+      4. Second link_commit: stored_hash = H_branch, actual_hash = H_branch
+         verdict found at H_branch → 'reflected' ✓
+
+    Invariants:
+    - bind on feature branch with modified content
+    - link_commit → pending_check at H_branch
+    - resolve_compliance(H_branch, compliant)
+    - second link_commit → status = 'reflected' (not 'drifted')
+    - pending_check.content_hash == bind_result.content_hash (hash consistency)
+    """
+    repo = _eph_repo
+
+    # Feature branch: modify rate().
+    _checkout(repo, "feat/rate-v2", create=True)
+    (repo / "src/calc.py").write_text(
+        "def rate(order_total: float) -> float:\n    return order_total * 0.26\n"
+    )
+    _commit(repo, "set rate to 26%")
+
+    ctx = BicameralContext.from_env()
+
+    ingest = await handle_ingest(
+        ctx,
+        _payload(repo, text="Rate 26%", intent="Apply 26% rate"),
+    )
+    assert ingest.ingested
+    decision_id = ingest.created_decisions[0].decision_id
+
+    bind_resp = await handle_bind(ctx, [{
+        "decision_id": decision_id,
+        "file_path": "src/calc.py",
+        "symbol_name": "rate",
+        "start_line": 1,
+        "end_line": 2,
+    }])
+    assert bind_resp.bindings and not bind_resp.bindings[0].error
+    bind_hash = bind_resp.bindings[0].content_hash
+    assert bind_hash, "bind must return content_hash"
+
+    # Invalidate the session sync cache: ingest called link_commit internally
+    # and cached the response (pre-bind, before the region was created).
+    # Without this, the next link_commit call returns the stale cached response
+    # that has no pending checks for the newly bound region.
+    invalidate_sync_cache(ctx)
+
+    # First link_commit: surfaces pending check at H_branch.
+    lc1 = await handle_link_commit(ctx, "HEAD")
+    pending = [p for p in lc1.pending_compliance_checks if p.decision_id == decision_id]
+    assert pending, f"link_commit must surface pending check for the bound decision"
+    assert pending[0].content_hash == bind_hash, (
+        f"pending_check.content_hash ({pending[0].content_hash[:8]}) must equal "
+        f"bind_result.content_hash ({bind_hash[:8]}) — hash consistency invariant"
+    )
+
+    # Resolve the compliance check.
+    rc = await handle_resolve_compliance(
+        ctx,
+        phase="ingest",
+        verdicts=[{
+            "decision_id": decision_id,
+            "region_id": pending[0].region_id,
+            "content_hash": pending[0].content_hash,
+            "verdict": "compliant",
+            "confidence": "high",
+            "explanation": "branch content verified",
+        }],
+        flow_id=lc1.flow_id,
+    )
+    assert rc.accepted, f"resolve_compliance rejected: {rc.rejected}"
+
+    # Second link_commit: no new pending check, status should be reflected.
+    invalidate_sync_cache(ctx)
+    lc2 = await handle_link_commit(ctx, "HEAD")
+
+    status = await _get_decision_status(ctx, decision_id)
+    assert status == "reflected", (
+        f"After resolve_compliance on feature branch, status must be 'reflected' "
+        f"(not phantom 'drifted'). Got: {status}. "
+        f"This fails pre-fix: bind stored H_main, link_commit computed H_branch → "
+        f"mismatch + prior verdict → 'drifted' forever."
+    )
+
+    new_pending = [p for p in lc2.pending_compliance_checks if p.decision_id == decision_id]
+    assert not new_pending, (
+        f"No re-pend expected after compliant verdict for current hash, got: {new_pending}"
+    )
+
+
+# ── E21: Ungrounded → feature branch bind → reflected + ephemeral=True ────────
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
+    """[PASS] Full flow: ungrounded decision → feature branch bind → reflected, ephemeral=True.
+
+    This is the canonical "implement a decision on a feature branch" scenario.
+    Starts with a decision that has no code binding (ungrounded), then:
+      - engineer creates a feature branch and writes the implementation
+      - calls bind against the new code (head_sha, not authoritative_sha)
+      - link_commit + resolve_compliance on the feature branch
+      - decision is 'reflected' and compliance_check.ephemeral=True
+
+    Each tool call creates a fresh BicameralContext (matching real MCP server behavior).
+    ctx.head_sha must reflect the current HEAD — stale head_sha causes bind to fall
+    back to authoritative_sha and hash the wrong content.
+
+    Invariants:
+    - ingest without code_regions → status = 'ungrounded'
+    - after feature branch bind → status = 'pending'
+    - after link_commit + resolve_compliance → status = 'reflected'
+    - compliance_check.ephemeral == True (verdict was on a feature branch)
+    - lc.ephemeral == True (commit is not reachable from main)
+    """
+    repo = _eph_repo
+
+    # Ingest on main — no code regions, starts ungrounded.
+    ctx_main = BicameralContext.from_env()
+    ingest = await handle_ingest(
+        ctx_main,
+        _payload(repo, text="Cap discount at 30%", intent="Discount must never exceed 30%"),
+    )
+    assert ingest.ingested
+    decision_id = ingest.created_decisions[0].decision_id
+    assert await _get_decision_status(ctx_main, decision_id) == "ungrounded", (
+        "Decision must start ungrounded when no code_regions are provided"
+    )
+
+    # Engineer creates feature branch and writes the implementation.
+    _checkout(repo, "feat/cap-discount", create=True)
+    (repo / "src/calc.py").write_text(
+        "def rate(order_total: float) -> float:\n"
+        "    return min(order_total * 0.30, order_total)\n"
+    )
+    _commit(repo, "cap discount at 30% (feat/cap-discount)")
+
+    # Fresh ctx on the feature branch — head_sha now points to the feature commit.
+    # In the real MCP server, each tool call creates a new context from env, so
+    # head_sha always reflects the current HEAD at call time.
+    ctx_feat = BicameralContext.from_env()
+    assert ctx_feat.head_sha != ctx_main.head_sha, (
+        "ctx_feat must have a different head_sha than ctx_main (branch diverged)"
+    )
+
+    # Bind to the implementation on the feature branch.
+    bind_resp = await handle_bind(ctx_feat, [{
+        "decision_id": decision_id,
+        "file_path": "src/calc.py",
+        "symbol_name": "rate",
+        "start_line": 1,
+        "end_line": 2,
+    }])
+    assert bind_resp.bindings and not bind_resp.bindings[0].error, (
+        f"bind must succeed on feature branch: "
+        f"{bind_resp.bindings[0].error if bind_resp.bindings else 'no results'}"
+    )
+    assert await _get_decision_status(ctx_feat, decision_id) == "pending", (
+        "Status must be 'pending' after bind (region created, no verdict yet)"
+    )
+
+    # link_commit: feature branch commit is not reachable from main → ephemeral=True.
+    lc = await handle_link_commit(ctx_feat, "HEAD")
+    assert lc.ephemeral is True, (
+        f"link_commit on feature branch must be ephemeral=True, got {lc.ephemeral}"
+    )
+
+    pending = [p for p in lc.pending_compliance_checks if p.decision_id == decision_id]
+    assert pending, "link_commit must surface a pending compliance check for the bound decision"
+
+    # Resolve: LLM verifies the implementation is compliant.
+    rc = await handle_resolve_compliance(
+        ctx_feat,
+        phase="ingest",
+        verdicts=[{
+            "decision_id": decision_id,
+            "region_id": pending[0].region_id,
+            "content_hash": pending[0].content_hash,
+            "verdict": "compliant",
+            "confidence": "high",
+            "explanation": "cap implementation verified",
+        }],
+        flow_id=lc.flow_id,
+    )
+    assert rc.accepted, f"resolve_compliance rejected: {rc.rejected}"
+
+    # Final assertions: reflected AND ephemeral.
+    status = await _get_decision_status(ctx_feat, decision_id)
+    assert status == "reflected", (
+        f"Status must be 'reflected' after compliant verdict on feature branch, got {status}"
+    )
+
+    checks = await _get_compliance_checks(ctx_feat, decision_id)
+    assert checks, "compliance_check row must exist"
+    assert checks[0]["ephemeral"] is True, (
+        f"compliance_check.ephemeral must be True (verdict was on a feature branch), "
+        f"got {checks[0]['ephemeral']}"
+    )
+
+
+# ── E22: Switch back to main — no stale ephemeral 'reflected' ────────────────
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_e22_switch_to_main_no_stale_reflected(_eph_repo):
+    """[PASS] After switching back to main (no merge), status is 'drifted', not stale 'reflected'.
+
+    The feature branch produced: status='reflected', compliance_check.ephemeral=True.
+    On main the implementation doesn't exist yet (H_main ≠ H_branch).
+    After link_commit on main (fresh ctx):
+      - code_region.content_hash is updated to H_main (authoritative path)
+      - project_decision_status: no verdict at H_main, but prior compliant verdict
+        exists (H_branch, ephemeral) → 'drifted'
+
+    This confirms the ephemeral verdict does NOT falsely promote main to 'reflected'.
+    'drifted' is the correct signal: "a verified implementation exists on a branch,
+    but main doesn't have it yet — main's code is out of sync with the decision."
+
+    Each branch switch creates a fresh BicameralContext (matching real MCP behavior),
+    so head_sha correctly reflects the current HEAD on each branch.
+
+    Invariants:
+    - feature branch: status = 'reflected', ephemeral=True
+    - switch to main (no merge): link_commit on main → status = 'drifted'
+    - status is NOT 'reflected' (stale ephemeral not carried over)
+    - compliance_check.ephemeral remains True (the row itself is unchanged)
+    """
+    repo = _eph_repo
+
+    # Ingest on main — ungrounded.
+    ctx_main = BicameralContext.from_env()
+    ingest = await handle_ingest(
+        ctx_main,
+        _payload(repo, text="Max 30% cap", intent="Discount cap at 30%"),
+    )
+    assert ingest.ingested
+    decision_id = ingest.created_decisions[0].decision_id
+
+    # Feature branch: implement + bind + resolve → reflected, ephemeral=True.
+    _checkout(repo, "feat/cap-v2", create=True)
+    (repo / "src/calc.py").write_text(
+        "def rate(order_total: float) -> float:\n"
+        "    return min(order_total * 0.30, order_total)\n"
+    )
+    _commit(repo, "cap at 30%")
+
+    # Fresh ctx on the feature branch.
+    ctx_feat = BicameralContext.from_env()
+
+    bind_resp = await handle_bind(ctx_feat, [{
+        "decision_id": decision_id,
+        "file_path": "src/calc.py",
+        "symbol_name": "rate",
+        "start_line": 1,
+        "end_line": 2,
+    }])
+    assert bind_resp.bindings and not bind_resp.bindings[0].error
+
+    lc_feat = await handle_link_commit(ctx_feat, "HEAD")
+    assert lc_feat.ephemeral is True
+    pending = [p for p in lc_feat.pending_compliance_checks if p.decision_id == decision_id]
+    assert pending
+
+    rc = await handle_resolve_compliance(
+        ctx_feat,
+        phase="ingest",
+        verdicts=[{
+            "decision_id": decision_id,
+            "region_id": pending[0].region_id,
+            "content_hash": pending[0].content_hash,
+            "verdict": "compliant",
+            "confidence": "high",
+            "explanation": "verified on branch",
+        }],
+        flow_id=lc_feat.flow_id,
+    )
+    assert rc.accepted
+
+    assert await _get_decision_status(ctx_feat, decision_id) == "reflected", (
+        "Pre-condition: feature branch must show 'reflected' before switch"
+    )
+
+    # Switch back to main WITHOUT merging.
+    # Fresh ctx — head_sha now points to main's HEAD again.
+    _checkout(repo, "main")
+    ctx_back = BicameralContext.from_env()
+    lc_main = await handle_link_commit(ctx_back, "HEAD")
+
+    status_on_main = await _get_decision_status(ctx_back, decision_id)
+
+    assert status_on_main != "reflected", (
+        "STALE EPHEMERAL BUG: main must NOT show 'reflected' from a feature branch "
+        "ephemeral verdict — the implementation hasn't landed on main yet."
+    )
+    assert status_on_main == "drifted", (
+        f"After switching to main without merging, status must be 'drifted' "
+        f"(prior compliant verdict exists on branch, but H_main has no verdict). "
+        f"Got: {status_on_main}"
+    )
+
+    # The compliance_check row itself still records ephemeral=True (it's unchanged).
+    checks = await _get_compliance_checks(ctx_back, decision_id)
+    assert checks, "compliance_check row must still exist"
+    assert checks[0]["ephemeral"] is True, (
+        f"compliance_check.ephemeral must still be True (row unchanged after branch switch), "
+        f"got {checks[0]['ephemeral']}"
     )

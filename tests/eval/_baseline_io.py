@@ -3,9 +3,10 @@
 Read/write semantics:
 - One JSONL file: ``tests/eval/cost_baseline.jsonl``
 - Each row keyed on ``(metric, recorded_on)`` plus optional ``n_features`` for C1
-- ``recorded_on`` distinguishes ``darwin`` / ``linux`` / ``windows`` so latency
-  metrics can have per-platform baselines (token counts are platform-agnostic
-  but still tagged for symmetry)
+- ``recorded_on`` is ``any`` for platform-agnostic metrics (token counts
+  via tiktoken + JSON serialization are deterministic across OSes), or
+  ``darwin`` / ``linux`` / ``windows`` for platform-specific metrics
+  (latency, since wall-clock varies with hardware/scheduler)
 - ``_baseline_version`` field on every row; bumping the constant in this
   module invalidates all rows and forces re-record
 
@@ -22,19 +23,25 @@ Regression rule (asymmetric — only flags regressions, not improvements):
 Noise floors: tokens 10 (deterministic, but tolerate small generator tweaks),
 latency 0.5ms (OS scheduler + GC jitter on non-realtime kernels).
 """
-
 from __future__ import annotations
 
 import json
 import os
 import platform
-from datetime import UTC, datetime, timezone
+from datetime import datetime, timezone
 from pathlib import Path
+
 
 BASELINE_VERSION = "1"
 RELATIVE_THRESHOLD = 0.20
 TOKEN_NOISE_FLOOR = 10
 LATENCY_NOISE_FLOOR_MS = 0.5
+
+# Platform-agnostic sentinel — used for metrics whose value doesn't depend
+# on host OS / hardware (token counts, byte counts via deterministic
+# JSON+tiktoken). A row with ``recorded_on=ANY_PLATFORM`` matches every
+# host. Latency metrics still record their actual platform.
+ANY_PLATFORM = "any"
 
 BASELINE_PATH = Path(__file__).resolve().parent / "cost_baseline.jsonl"
 
@@ -64,14 +71,12 @@ def load_baselines(path: Path = BASELINE_PATH) -> list[dict]:
 
 def write_baselines(rows: list[dict], path: Path = BASELINE_PATH) -> None:
     """Sorted, stable-key JSONL output to keep diffs minimal."""
-
     def _sort_key(row: dict) -> tuple:
         return (
             row.get("metric", ""),
             row.get("recorded_on", ""),
             row.get("n_features", -1),
         )
-
     rows_sorted = sorted(rows, key=_sort_key)
     body = "\n".join(json.dumps(r, sort_keys=True, ensure_ascii=False) for r in rows_sorted)
     path.write_text(body + "\n", encoding="utf-8")
@@ -84,10 +89,15 @@ def find_baseline(
     recorded_on: str,
     n_features: int | None = None,
 ) -> dict | None:
+    """Find a row matching ``metric`` + ``n_features``, where ``recorded_on``
+    matches either the current platform or the ``ANY_PLATFORM`` sentinel.
+    Platform-agnostic rows therefore validate on every host without needing
+    a separate row per OS."""
     for row in rows:
         if row.get("metric") != metric:
             continue
-        if row.get("recorded_on") != recorded_on:
+        row_platform = row.get("recorded_on")
+        if row_platform != ANY_PLATFORM and row_platform != recorded_on:
             continue
         if n_features is not None and row.get("n_features") != n_features:
             continue
@@ -156,4 +166,4 @@ def regression_check(
 
 
 def now_iso() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

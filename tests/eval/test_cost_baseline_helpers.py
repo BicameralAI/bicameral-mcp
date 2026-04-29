@@ -4,7 +4,6 @@ Pinned coverage for:
 - Synthetic ledger generator: determinism, shape, scaling, status distribution
 - Token counter: basic call, JSON-serialized payloads, monotonicity
 """
-
 from __future__ import annotations
 
 import sys
@@ -29,6 +28,7 @@ from _synthetic_ledger import (  # noqa: E402  (sibling module)
 )
 from _token_count import count_tokens, count_tokens_json  # noqa: E402
 
+
 # ── Generator: determinism ──────────────────────────────────────────────
 
 
@@ -50,11 +50,7 @@ def test_generator_diverges_for_different_seeds():
 def test_generator_top_level_shape():
     ledger = generate_ledger(n_features=10)
     assert set(ledger.keys()) >= {
-        "features",
-        "truncated",
-        "total_features",
-        "as_of",
-        "sync_metrics",
+        "features", "truncated", "total_features", "as_of", "sync_metrics",
         "_generator_version",
     }
     assert ledger["total_features"] == 10
@@ -82,7 +78,12 @@ def test_generator_decision_shape():
 
 def test_drifted_decision_has_drift_evidence_and_fulfillment():
     ledger = generate_ledger(n_features=200, seed=42)
-    drifted = [d for f in ledger["features"] for d in f["decisions"] if d["status"] == "drifted"]
+    drifted = [
+        d
+        for f in ledger["features"]
+        for d in f["decisions"]
+        if d["status"] == "drifted"
+    ]
     assert drifted, "expected at least one drifted decision at N=200"
     for d in drifted:
         assert d["drift_evidence"], "drifted decisions must carry drift_evidence"
@@ -92,7 +93,10 @@ def test_drifted_decision_has_drift_evidence_and_fulfillment():
 def test_ungrounded_decision_has_no_fulfillment():
     ledger = generate_ledger(n_features=200, seed=42)
     ungrounded = [
-        d for f in ledger["features"] for d in f["decisions"] if d["status"] == "ungrounded"
+        d
+        for f in ledger["features"]
+        for d in f["decisions"]
+        if d["status"] == "ungrounded"
     ]
     assert ungrounded, "expected at least one ungrounded decision at N=200"
     for d in ungrounded:
@@ -261,3 +265,66 @@ def test_upsert_appends_when_not_found():
     new = {"metric": "C1", "recorded_on": "linux", "n_features": 10, "tokens": 105}
     out = upsert_baseline(rows, new)
     assert len(out) == 2
+
+
+# ── Real-ledger seeder ─────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_seeder_creates_decisions_at_n10(monkeypatch):
+    """Seed at N=10 → ledger contains the expected decision count."""
+    from _seed_ledger import seed_ledger_from_synthetic
+    from ledger.adapter import SurrealDBLedgerAdapter
+
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
+
+    synthetic = generate_ledger(n_features=10, decisions_per_feature=3, seed=42)
+    created_count = await seed_ledger_from_synthetic(adapter, synthetic)
+
+    # 10 features × 3 decisions = 30 expected
+    assert created_count == 30, f"expected 30 created, got {created_count}"
+
+    decisions = await adapter.get_all_decisions()
+    assert len(decisions) == 30, f"ledger has {len(decisions)} decisions after seed"
+
+
+@pytest.mark.asyncio
+async def test_seeder_status_distribution_matches_synthetic(monkeypatch):
+    """The seeded ledger's status distribution should match the generator's
+    target distribution (70% reflected / 20% drifted / ~10% other)."""
+    from _seed_ledger import seed_ledger_from_synthetic
+    from ledger.adapter import SurrealDBLedgerAdapter
+
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
+
+    synthetic = generate_ledger(n_features=100, decisions_per_feature=3, seed=42)
+    await seed_ledger_from_synthetic(adapter, synthetic)
+
+    decisions = await adapter.get_all_decisions()
+    statuses = [d.get("status") for d in decisions]
+    n = len(statuses)
+    reflected_pct = statuses.count("reflected") / n
+    drifted_pct = statuses.count("drifted") / n
+
+    # Same tolerance as the generator's distribution test.
+    assert 0.6 < reflected_pct < 0.8, f"reflected={reflected_pct:.2f}"
+    assert 0.1 < drifted_pct < 0.3, f"drifted={drifted_pct:.2f}"
+
+
+@pytest.mark.asyncio
+async def test_seeder_handles_empty_synthetic(monkeypatch):
+    """Empty synthetic dict → no decisions created."""
+    from _seed_ledger import seed_ledger_from_synthetic
+    from ledger.adapter import SurrealDBLedgerAdapter
+
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    await adapter.connect()
+
+    synthetic = generate_ledger(n_features=0)
+    created_count = await seed_ledger_from_synthetic(adapter, synthetic)
+    assert created_count == 0
