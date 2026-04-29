@@ -54,8 +54,13 @@ _TELEMETRY_OFF = frozenset({"0", "false", "no", "off"})
 
 
 def _is_enabled() -> bool:
-    val = os.getenv("BICAMERAL_TELEMETRY", "1").strip().lower()
-    return val not in _TELEMETRY_OFF
+    """Single source of truth: defers to consent.telemetry_allowed().
+
+    Kept as a thin wrapper so existing callers don't need rewrites and
+    the env-var override (BICAMERAL_TELEMETRY=0) continues to work.
+    """
+    from consent import telemetry_allowed
+    return telemetry_allowed()
 
 
 def _get_device_id() -> str:
@@ -109,6 +114,16 @@ def send_event(version: str, diagnostic: dict | None = None, **properties: str |
                    duration_ms=412, errored=False,
                    diagnostic={"decisions_ingested": 3})
     """
+    # Always-local counter increment — runs regardless of network consent.
+    # Privacy-preserving: only the skill/tool name + 1 are written, no payload.
+    try:
+        from local_counters import increment as _local_increment
+        skill_name = properties.get("skill") or properties.get("tool")
+        if isinstance(skill_name, str):
+            _local_increment(skill_name)
+    except Exception as exc:
+        logger.debug("[telemetry] local-counter increment failed (non-fatal): %s", exc)
+
     if not _is_enabled():
         return
     try:

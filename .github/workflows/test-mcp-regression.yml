@@ -19,6 +19,7 @@ jobs:
     env:
       SURREAL_URL: 'memory://'
       REPO_PATH: ${{ github.workspace }}
+      BICAMERAL_SKIP_CONSENT_NOTICE: '1'
     steps:
       - uses: actions/checkout@v4
 

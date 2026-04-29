@@ -521,11 +521,19 @@ def _select_guided_mode() -> bool:
 
 
 def _select_telemetry() -> bool:
-    """Prompt user for anonymous telemetry consent.
+    """Prompt user for anonymous telemetry consent and persist the choice.
 
-    Shows the exact event schema before asking. Defaults to Yes (opt-in).
+    Shows the exact event schema before asking. On any answer (including
+    non-interactive auto-yes), writes ``~/.bicameral/consent.json`` via
+    consent.write_consent() so the in-server first-boot notice does not
+    fire on next start.
+
+    Hard-fails (raises) if the consent marker cannot be written — a "no"
+    answer must never silently leave telemetry on.
     """
     import questionary
+
+    from consent import write_consent
 
     print()
     print("  Anonymous telemetry — exact payload that would be sent:")
@@ -539,6 +547,7 @@ def _select_telemetry() -> bool:
     print()
 
     if not _is_interactive():
+        write_consent(telemetry=True, via="wizard")
         return True
 
     result = questionary.select(
@@ -550,7 +559,9 @@ def _select_telemetry() -> bool:
         default=True,
     ).ask()
 
-    return result if result is not None else True
+    choice = result if result is not None else True
+    write_consent(telemetry=choice, via="wizard")
+    return choice
 
 
 def _write_collaboration_config(
