@@ -769,6 +769,51 @@ SHA256(content_hash + previous_hash) = **`eacc6f89f707ce958fa2485177c9706808fdfe
 **Reality matches Promise.** Implementation conforms to the audit-PASSED specification (`79abcc2`) with **zero plan deviations**. Phase 0 (branch-scan CLI) + Phase 1 (setup_wizard hook install) + Phase 2 (CHANGELOG + user guide) sealed in sequence; 11/12 new tests + 16/16 regression green (1 Windows-only chmod skip). Chain integrity intact on this branch. Next phase: `/qor-document` then open PR `feat/48-pre-push-drift-hook → BicameralAI/dev`.
 
 ---
-*Chain integrity: VALID (18 entries on this branch)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89`*
-*Next required action: `/qor-document` then open PR to `BicameralAI/dev`*
+## Entry #19 — GATE TRIBUNAL: `plan-114-grounding-lint.md` (Issue #114)
+
+**Phase**: GATE / qor-audit
+**Date**: 2026-04-29
+**Branch**: `feat/114-grounding-lint` (off `BicameralAI/dev` post-#117)
+**Subject**: Issue #114 — *CI lint for unstructured references in plan files and PR bodies*
+**Risk Grade**: L1 (pure checker scripts + advisory CI workflow)
+**Change Class**: minor
+
+### Audit history
+
+| v | Plan commit | Verdict | Findings |
+|---|---|---|---|
+| v1 | `a5e6a05` | **VETO** | F-1 (BLOCKING, OWASP A03): `echo "$PR_BODY" > /tmp/pr-body.md` in `pr-body-refs-lint.yml` exposes Bash command-substitution injection. Contributor-editable PR body field becomes arbitrary code execution in CI. F-2: 6th test needed for env-var path. |
+| v2 | `4ea06be` | **PASS** | All findings remediated. Workflow command now `python ...py --from-env PR_BODY` (direct os.environ read, no shell interpreter). Test count 5 → 6. Inline security note documents the historical mistake. |
+
+### Plan content hash (v2)
+
+`sha256:1447b2ad1941d481e3837dc6caca9a33cbbc6a8921d1ae9ea1e6a33382075cf1`
+
+### Audit report content hash
+
+`sha256:8f20e9e00919db98efb7cf144592fd5ac24752e47d7be8911e2dd17486d3e2fd`
+
+### Previous chain hash
+
+`eacc6f89f707ce958fa2485177c9706808fdfeb32b8e4865aadc8bcda47cb645` (Entry #18, #48 SEAL on dev)
+
+### Chain hash
+
+`SHA256(plan_hash + audit_hash + prev_hash) =` **`850ec57faaded3e43059d7eb919b6ad861babd324e0eff27c47ac0e88406a40d`**
+
+### Decision
+
+PASS post-remediation. The audit's v1 catch (OWASP A03) was a real find — bash double-quote interpolation of user-controlled PR-body text is a classic GitHub Actions injection vector. Remediation eliminates the shell intermediate (`os.environ[NAME]` direct read).
+
+### Notable
+
+The plan is to build the lint that prevents one class of carelessness (filesystem-grounding drift). The plan itself contained a different class of carelessness (shell injection). Audit caught both classes. Reinforces the principle that the QOR cycle's defense-in-depth catches multiple failure modes — the durable countermeasure for SG-PLAN-GROUNDING-DRIFT can't also be a vehicle for OWASP A03.
+
+### SG-PLAN-GROUNDING-DRIFT prevention
+
+Instance #5 prevented at author-time via `ls -d */` before submission. Two consecutive plans (#117, #114) with author-time mitigation working.
+
+---
+*Chain integrity: VALID (19 entries on this branch)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #114 Audit (PASS, post-remediation): `850ec57f`*
+*Next required action: `/qor-implement` for `plan-114-grounding-lint.md`*
