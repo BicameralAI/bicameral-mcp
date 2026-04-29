@@ -206,6 +206,31 @@ def test_merge_deduplicates_by_decision_id():
 # ── Integration: handle_preflight fires on region hit with zero keyword overlap ─
 
 
+def _make_raw_search_row(
+    decision_id: str = "d:keyword",
+    description: str = "test",
+    status: str = "drifted",
+) -> dict:
+    """Raw row shape returned by ctx.ledger.search_by_query.
+
+    Matches the format consumed by handlers/_match_shaping._raw_to_decision_match:
+    flat top-level fields plus optional ``code_regions`` list.
+    """
+    return {
+        "decision_id": decision_id,
+        "description": description,
+        "status": status,
+        "confidence": 0.8,
+        "source_ref": "",
+        "code_regions": [],
+        "drift_evidence": "",
+        "related_constraints": [],
+        "source_excerpt": "",
+        "meeting_date": "",
+        "signoff": None,
+    }
+
+
 @pytest.mark.asyncio
 async def test_preflight_fires_on_region_hit_no_keyword():
     """Core regression: preflight surfaces a decision even when the ledger
@@ -214,17 +239,13 @@ async def test_preflight_fires_on_region_hit_no_keyword():
 
     Region-anchored path: caller passes file_paths → pinned decisions.
     """
-    ctx, search_resp = _make_ctx(
+    ctx, _ = _make_ctx(
         region_decisions=[_make_region_decision(status="reflected")],
         keyword_matches=[],
         guided_mode=True,
     )
 
-    with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
-    ):
+    with patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())):
         resp = await handle_preflight(
             ctx,
             topic="improve retrieval quality for the locator",
@@ -241,17 +262,13 @@ async def test_preflight_fires_on_region_hit_no_keyword():
 async def test_preflight_region_in_sources_chained():
     """sources_chained includes 'region' when caller passes file_paths and
     the ledger returns pinned decisions."""
-    ctx, search_resp = _make_ctx(
+    ctx, _ = _make_ctx(
         region_decisions=[_make_region_decision(status="drifted")],
         keyword_matches=[],
         guided_mode=False,  # normal mode — needs actionable signal
     )
 
-    with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
-    ):
+    with patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())):
         resp = await handle_preflight(
             ctx,
             topic="improve something in the locator logic",
@@ -263,35 +280,32 @@ async def test_preflight_region_in_sources_chained():
 
 @pytest.mark.asyncio
 async def test_preflight_topic_only_no_file_paths_still_works():
-    """Caller omits file_paths → preflight falls back to ledger keyword search only.
+    """Caller omits file_paths → preflight uses ledger keyword search only.
 
     Regression: the v0.6.3 default path (topic only, no file_paths) must still
-    surface keyword-matching decisions. This is the test-user trust contract —
-    existing skills that only pass topic keep working.
+    surface keyword-matching decisions. With the F4 fix, preflight calls
+    ctx.ledger.search_by_query directly (not handle_search_decisions, which
+    would re-trigger handle_link_commit and double-sync).
     """
-    keyword_match = _dm("d:keyword", status="drifted")
-    search_resp = SearchDecisionsResponse(
-        query="",
-        sync_status=_make_link_commit_response(),
-        matches=[keyword_match],
-        ungrounded_count=0,
-        suggested_review=[],
-    )
-    search_resp.action_hints = []
+    ledger = MagicMock()
+    ledger.ingest_commit = AsyncMock(return_value={
+        "commit_hash": "abc123",
+        "new_decisions_linked": 0,
+        "drift_detected": [],
+        "symbols_indexed": 0,
+    })
+    ledger.search_by_query = AsyncMock(return_value=[_make_raw_search_row(status="drifted")])
 
     ctx = SimpleNamespace(
         repo_path=".",
-        ledger=MagicMock(),
+        ledger=ledger,
         guided_mode=False,
         _sync_state={},
     )
 
-    with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
-    ):
+    with patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())):
         resp = await handle_preflight(ctx, topic="drifted stripe webhook handler")
 
     assert resp.fired is True
     assert "region" not in resp.sources_chained
+    assert "keyword" in resp.sources_chained

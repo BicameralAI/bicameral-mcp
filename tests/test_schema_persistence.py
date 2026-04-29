@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from ledger.adapter import _surrealkv_url_for_path
 from ledger.client import LedgerClient
 from ledger.schema import (
     SCHEMA_VERSION,
@@ -27,7 +28,7 @@ pytestmark = [pytest.mark.phase2]
 @pytest.fixture
 async def file_client(tmp_path):
     """Fresh file-backed LedgerClient for each test."""
-    url = f"surrealkv://{tmp_path / 'ledger.db'}"
+    url = _surrealkv_url_for_path(tmp_path / "ledger.db")
     client = LedgerClient(url=url, ns="bicameral", db="ledger")
     await client.connect()
     try:
@@ -57,7 +58,7 @@ async def test_migration_chain_from_scratch(tmp_path):
     Simulates a brand-new user who installs the latest binary against an
     empty database.
     """
-    url = f"surrealkv://{tmp_path / 'ledger.db'}"
+    url = _surrealkv_url_for_path(tmp_path / "ledger.db")
     client = LedgerClient(url=url, ns="bicameral", db="ledger")
     await client.connect()
     try:
@@ -80,7 +81,7 @@ async def test_destructive_migration_blocked(tmp_path):
     allow_destructive=False is safe when there are no destructive steps.
     """
     from ledger.schema import DESTRUCTIVE_MIGRATIONS
-    url = f"surrealkv://{tmp_path / 'ledger.db'}"
+    url = _surrealkv_url_for_path(tmp_path / "ledger.db")
     client = LedgerClient(url=url, ns="bicameral", db="ledger")
     await client.connect()
     try:
@@ -106,7 +107,7 @@ async def test_destructive_migration_blocked(tmp_path):
 @pytest.mark.asyncio
 async def test_destructive_migration_allowed(tmp_path):
     """allow_destructive=True lets the chain complete past a destructive step."""
-    url = f"surrealkv://{tmp_path / 'ledger.db'}"
+    url = _surrealkv_url_for_path(tmp_path / "ledger.db")
     client = LedgerClient(url=url, ns="bicameral", db="ledger")
     await client.connect()
     try:
@@ -126,7 +127,7 @@ async def test_destructive_migration_allowed(tmp_path):
 @pytest.mark.asyncio
 async def test_schema_version_too_new_raises(tmp_path):
     """DB schema newer than code raises SchemaVersionTooNew with upgrade hint."""
-    url = f"surrealkv://{tmp_path / 'ledger.db'}"
+    url = _surrealkv_url_for_path(tmp_path / "ledger.db")
     client = LedgerClient(url=url, ns="bicameral", db="ledger")
     await client.connect()
     try:

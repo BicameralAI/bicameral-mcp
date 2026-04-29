@@ -3,6 +3,82 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.12.0 — Triage batch: Windows compatibility, preflight wiring, schema FLEXIBLE — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Four-issue triage batch. Restores Windows usability (test suite was unrunnable
+at import time and persistent DBs would not open), wires up the keyword-match
+step that `bicameral.preflight` had documented but never executed, and fixes a
+schema field that silently dropped object payloads since v0.5.0.
+
+### Fixed
+
+- **Windows: `events/writer.py` no longer breaks on import** (#74) — the
+  top-level `import fcntl` was POSIX-only and crashed the entire test suite
+  at collection time on Windows. The import is now platform-gated, and a
+  cross-platform `_lock_exclusive` / `_unlock` helper pair takes the flock
+  on POSIX and no-ops on Windows. An additional in-process
+  `threading.Lock` serializes concurrent writes from threads sharing the
+  same `EventFileWriter` instance — necessary on Windows where short-write
+  atomicity guarantees are weaker than POSIX `O_APPEND`.
+- **Windows: `surrealkv://` URLs now parse correctly** (#68) — opening a
+  persistent ledger with a Windows path (e.g. `C:\Users\foo\.bicameral\ledger.db`)
+  raised `ValueError: Port could not be cast to integer value` because
+  `urllib` interpreted the drive-letter colon as a `host:port` separator.
+  New helper `ledger.adapter._surrealkv_url_for_path()` normalizes
+  backslashes to forward slashes (winning shape verified by direct probe
+  against the embedded datastore: `surrealkv://C:/Users/foo/ledger.db`).
+- **`binds_to.provenance` now persists structured payloads** (#72) — the
+  field was declared `TYPE object DEFAULT {}` without `FLEXIBLE`, so
+  SurrealDB v2 silently dropped any sub-keys at write time. Every row
+  created since v0.5.0 has `provenance = {}`. The new schema definition
+  uses `FLEXIBLE TYPE object` so future writes round-trip. The v11→v12
+  migration uses `DEFINE FIELD OVERWRITE` to redefine the field
+  non-destructively and stamps pre-existing rows with
+  `{"_pre_schema_v12": true}` so consumers can distinguish "lost
+  provenance at write time" from "genuinely empty / unpopulated".
+  Underscore-prefixed keys on `binds_to.provenance` are now reserved as
+  system metadata.
+
+### Changed
+
+- **`bicameral.preflight` keyword merge wired up** (#69) — the handler
+  docstring promised step 5: "merges region-anchored (higher precision)
+  with keyword matches" — but the merge step was never implemented and
+  preflight only consumed `region_matches`. Preflight now calls
+  `ctx.ledger.search_by_query` directly (NOT `handle_search_decisions`,
+  which would re-trigger `handle_link_commit` and double-sync), shapes
+  rows via the new `handlers/_match_shaping._raw_to_decision_match`
+  helper (factored out of `handle_search_decisions` for sharing), and
+  merges the two lists via `_merge_decision_matches` (region matches
+  win on `decision_id` collision).
+- **Preflight `fired` gating is now status-aware** (#69) — per the
+  handler's docstring step 8: in **normal mode**, `fired=True` only when
+  merged matches contain status `drifted` or `ungrounded` (or when there
+  are unresolved collisions / context-pending divergences); in **guided
+  mode**, `fired=True` on any merged match. This is a documented
+  broadening: keyword-only matches that reveal drift now fire preflight
+  where they did not before.
+- **Schema bump v11 → v12** — non-destructive migration runs on first
+  connect from a v11 DB. Users on older binaries will see the existing
+  `SchemaVersionTooNew` error directing them to upgrade. The migration
+  is idempotent and safe to re-run.
+- **`handlers/search_decisions.py` refactored** to use the shared
+  `_raw_to_decision_match` helper. Behavior preserved verbatim;
+  `tests/test_phase2_ledger.py` (15 tests) is the regression gate.
+
+### Internal
+
+- New helper module `handlers/_match_shaping.py` — pure value
+  transformation with no I/O, used by both `search_decisions` and
+  `preflight`.
+- `tests/test_v0412_preflight.py` adopted the same module-level
+  `pytest.skip` that `upstream/dev` (commit `b9faefc`) applied — the
+  module references `_has_actionable_signal_in_search`, removed in v0.10.0.
+
+### Closes
+
+#74, #69, #68, #72.
+
 ## v0.11.0 — CodeGenome Phase 1+2 (#59) — adapter boundary + identity records — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Foundation PR for the three-phase CodeGenome rollout (issues #59 / #60 / #61).

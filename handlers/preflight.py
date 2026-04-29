@@ -43,6 +43,7 @@ from contracts import (
     DecisionMatch,
     PreflightResponse,
 )
+from handlers._match_shaping import _raw_to_decision_match
 from handlers.analysis import _to_brief_decision
 from handlers.action_hints import generate_hints_from_findings
 
@@ -221,6 +222,19 @@ async def _region_anchored_preflight(
     return matches
 
 
+def _merge_decision_matches(
+    region_matches: list[DecisionMatch],
+    keyword_matches: list[DecisionMatch],
+) -> list[DecisionMatch]:
+    """Dedupe by decision_id; region matches win on collision (higher precision).
+
+    Region matches preserved in order, then keyword matches in order
+    skipping any whose decision_id already appeared in region.
+    """
+    seen: set[str] = {m.decision_id for m in region_matches}
+    extras = [m for m in keyword_matches if m.decision_id not in seen]
+    return list(region_matches) + extras
+
 
 async def handle_preflight(
     ctx,
@@ -266,8 +280,6 @@ async def handle_preflight(
 
     # Region-anchored lookup: caller-supplied file_paths → decisions pinned to those files.
     # High-precision direct pin — the caller LLM has scoped which files the task will touch.
-    # Topic-based keyword search is intentionally removed; the skill reads bicameral.history()
-    # directly and uses LLM reasoning to identify relevant feature groups.
     region_matches: list[DecisionMatch] = []
     if file_paths:
         try:
@@ -277,8 +289,24 @@ async def handle_preflight(
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 
-    decisions = [_to_brief_decision(m) for m in region_matches]
-    drift_candidates = [_to_brief_decision(m) for m in region_matches if m.status == "drifted"]
+    # Keyword path: call the ledger primitive directly. Do NOT call
+    # handle_search_decisions — it triggers handle_link_commit which
+    # double-syncs (ensure_ledger_synced already ran above).
+    keyword_matches: list[DecisionMatch] = []
+    try:
+        raw_kw = await ctx.ledger.search_by_query(
+            query=topic, max_results=10, min_confidence=0.5,
+        )
+        keyword_matches = [_raw_to_decision_match(m) for m in raw_kw]
+        if keyword_matches:
+            sources_chained.append("keyword")
+    except Exception as exc:
+        logger.debug("[preflight] keyword lookup failed: %s", exc)
+
+    merged = _merge_decision_matches(region_matches, keyword_matches)
+
+    decisions = [_to_brief_decision(m) for m in merged]
+    drift_candidates = [_to_brief_decision(m) for m in merged if m.status == "drifted"]
 
     # HITL annotations — topic-independent ledger health checks that fire regardless of topic.
     unresolved_collisions: list[BriefDecision] = []
@@ -310,7 +338,14 @@ async def handle_preflight(
     except Exception as exc:
         logger.debug("[preflight] HITL annotation queries failed: %s", exc)
 
-    fired = bool(region_matches or unresolved_collisions or context_pending_ready or guided_mode)
+    has_actionable_match = any(
+        m.status in ("drifted", "ungrounded") for m in merged
+    )
+    has_divergences_or_gaps = bool(unresolved_collisions or context_pending_ready)
+    if guided_mode:
+        fired = bool(merged or has_divergences_or_gaps)
+    else:
+        fired = has_actionable_match or has_divergences_or_gaps
     action_hints = generate_hints_from_findings([], drift_candidates, [], guided_mode)
 
     return PreflightResponse(

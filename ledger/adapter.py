@@ -116,10 +116,31 @@ def _get_branch_delta_files(authoritative_ref: str, commit_hash: str, repo_path:
 logger = logging.getLogger(__name__)
 
 
+def _surrealkv_url_for_path(db_path: "Path | PurePath") -> str:
+    """Build a SurrealDB-acceptable ``surrealkv://`` URL for any platform path.
+
+    Issue #68: the prior ``f"surrealkv://{db_path}"`` produced URLs like
+    ``surrealkv://C:\\Users\\foo\\ledger.db`` on Windows. urllib.parse
+    raises ``ValueError("Port could not be cast")`` when ``.port`` is
+    accessed (because the backslash run after the colon can't parse as
+    a port number). Replacing backslashes with forward slashes makes the
+    URL acceptable to both ``urlparse`` and the Rust embedded datastore.
+
+    The winning shape (verified by direct probe against AsyncEmbeddedDB
+    on Windows in tests/test_surrealkv_url_windows.py): no leading slash,
+    forward slashes only.
+
+    Examples:
+        ``/home/foo/ledger.db``         → ``surrealkv:///home/foo/ledger.db``
+        ``C:\\Users\\foo\\ledger.db``  → ``surrealkv://C:/Users/foo/ledger.db``
+    """
+    return f"surrealkv://{str(db_path).replace(chr(92), '/')}"
+
+
 def _default_db_url() -> str:
     db_path = Path.home() / ".bicameral" / "ledger.db"
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    return f"surrealkv://{db_path}"
+    return _surrealkv_url_for_path(db_path)
 
 
 _STATUS_PRIORITY = {"drifted": 3, "reflected": 2, "pending": 1, "ungrounded": 0}

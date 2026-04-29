@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -39,6 +39,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     8: "0.9.0",
     9: "0.9.3",
     11: "0.11.0",   # placeholder; release-eng pins final value at PR merge
+    12: "0.11.x",   # placeholder; release-eng pins final value at PR merge
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -295,7 +296,7 @@ _EDGES = [
     # decision → code_region (direct binding — decision tier only)
     "DEFINE TABLE binds_to SCHEMAFULL TYPE RELATION IN decision OUT code_region",
     "DEFINE FIELD confidence ON binds_to TYPE float ASSERT $value >= 0 AND $value <= 1",
-    "DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}",
+    "DEFINE FIELD provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}",
     "DEFINE FIELD created_at ON binds_to TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_binds_to_unique ON binds_to FIELDS in, out UNIQUE",
 
@@ -775,6 +776,32 @@ async def _migrate_v10_to_v11(client: LedgerClient) -> None:
     logger.info("[migration] v10 → v11: CodeGenome identity tables and edges defined")
 
 
+async def _migrate_v11_to_v12(client: LedgerClient) -> None:
+    """v11 → v12: add FLEXIBLE to ``binds_to.provenance`` and stamp legacy rows.
+
+    Issue #72: ``DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}``
+    silently dropped any object payload SurrealDB v2 didn't recognize as a
+    schema-defined sub-field — which, for an opaque metadata object, was
+    everything. Every row created since v0.5.0 has ``provenance = {}``.
+
+    Step 1: redefine the field with FLEXIBLE so future writes round-trip.
+    OVERWRITE replaces the existing definition without dropping the column.
+
+    Step 2: stamp pre-existing rows with ``{"_pre_schema_v12": true}`` so
+    consumers can distinguish "lost provenance at write time" from
+    "post-fix empty / unpopulated". The underscore prefix signals system
+    metadata; reserved keys for the ``provenance`` object.
+    """
+    await client.execute(
+        "DEFINE FIELD OVERWRITE provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}"
+    )
+    await client.execute(
+        'UPDATE binds_to SET provenance = {"_pre_schema_v12": true} '
+        "WHERE provenance = {} OR provenance = NONE"
+    )
+    logger.info("[migration] v11 → v12: binds_to.provenance now FLEXIBLE; legacy rows stamped")
+
+
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
 _MIGRATIONS: dict[int, ...] = {
@@ -785,6 +812,7 @@ _MIGRATIONS: dict[int, ...] = {
     9: _migrate_v8_to_v9,
     10: _migrate_v9_to_v10,
     11: _migrate_v10_to_v11,
+    12: _migrate_v11_to_v12,
 }
 
 

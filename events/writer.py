@@ -13,17 +13,40 @@ DB-level ``canonical_id`` UNIQUE index instead of filesystem collisions.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
 import subprocess
+import sys
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from pydantic import BaseModel, Field
 
+if sys.platform != "win32":
+    import fcntl
+else:
+    fcntl = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
+
+
+def _lock_exclusive(fp: IO[bytes]) -> None:
+    """Acquire an exclusive advisory lock on POSIX; no-op on Windows.
+
+    JSONL lines for these events are well under PIPE_BUF (~4KB), so the
+    OS-level append on a file opened "ab" is atomic on Windows even
+    without explicit locking.
+    """
+    if fcntl is not None:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock(fp: IO[bytes]) -> None:
+    """Release the lock acquired by _lock_exclusive; no-op on Windows."""
+    if fcntl is not None:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
 
 
 class EventEnvelope(BaseModel):
@@ -57,6 +80,9 @@ class EventFileWriter:
         self._events_dir = events_dir
         self._author = author_email
         self._path = events_dir / f"{author_email}.jsonl"
+        # In-process serialization: flock guards across processes; this Lock
+        # guards across threads that share the same writer instance.
+        self._mu = threading.Lock()
         events_dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -77,11 +103,12 @@ class EventFileWriter:
             event_type=event_type, author=self._author, payload=payload,
         )
         line = json.dumps(envelope.model_dump(), separators=(",", ":"), default=str) + "\n"
-        with open(self._path, "ab") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
-                f.write(line.encode("utf-8"))
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        with self._mu:
+            with open(self._path, "ab") as f:
+                _lock_exclusive(f)
+                try:
+                    f.write(line.encode("utf-8"))
+                finally:
+                    _unlock(f)
         logger.debug("[events] appended %s to %s.jsonl", event_type, self._author)
         return self._path
