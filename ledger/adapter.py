@@ -25,6 +25,7 @@ from .queries import (
     get_decisions_for_files,
     get_pending_decisions_with_regions,
     get_regions_for_files,
+    get_regions_with_ephemeral_verdicts,
     get_regions_without_hash,
     get_source_cursor,
     get_sync_state,
@@ -450,11 +451,56 @@ class SurrealDBLedgerAdapter:
                     })
             except Exception as exc:
                 logger.warning("[link_commit] could not surface pending decisions on already_synced: %s", exc)
+
+            # Repair stale ephemeral hashes on authoritative branches.
+            # A feature-branch bind sets code_region.content_hash = H_branch.
+            # When we return to main without merging, already_synced fires early,
+            # leaving the stale hash and causing decisions to show "reflected" even
+            # though the implementation hasn't landed on main.
+            #
+            # Two-pass approach: pass 1 updates all stale region hashes, pass 2
+            # re-projects status for each unique affected decision (deduped).
+            # get_regions_with_ephemeral_verdicts uses idx_cc_ephemeral to return
+            # only O(M_ephemeral) regions instead of scanning all code_regions.
+            regions_repaired = 0
+            if is_authoritative:
+                try:
+                    stale_regions = await get_regions_with_ephemeral_verdicts(self._client)
+                    # Pass 1: update hashes, collect affected decisions
+                    affected_decisions: dict[str, None] = {}
+                    for region in stale_regions:
+                        region_id = region.get("region_id", "")
+                        fp = region.get("file_path", "")
+                        sl = region.get("start_line", 0)
+                        el = region.get("end_line", 0)
+                        stored_hash = region.get("content_hash", "")
+                        actual_hash = compute_content_hash(fp, sl, el, repo_path, ref=commit_hash)
+                        if not actual_hash or actual_hash == stored_hash:
+                            continue
+                        await update_region_hash(self._client, region_id, actual_hash, commit_hash)
+                        regions_repaired += 1
+                        for decision in (region.get("decisions") or []):
+                            if decision is None:
+                                continue
+                            decision_id = str(decision.get("id", ""))
+                            if not decision_id:
+                                continue
+                            _signoff = decision.get("signoff") or {}
+                            if isinstance(_signoff, dict) and _signoff.get("state") == "superseded":
+                                continue
+                            affected_decisions[decision_id] = None
+                    # Pass 2: project status once per unique decision after all hashes are updated
+                    for decision_id in affected_decisions:
+                        projected = await project_decision_status(self._client, decision_id)
+                        await update_decision_status(self._client, decision_id, projected)
+                except Exception as exc:
+                    logger.warning("[link_commit] stale ephemeral hash repair failed: %s", exc)
+
             return {
                 "synced": True,
                 "commit_hash": commit_hash,
                 "reason": "already_synced",
-                "regions_updated": 0,
+                "regions_updated": regions_repaired,
                 "decisions_reflected": 0,
                 "decisions_drifted": 0,
                 "undocumented_symbols": [],

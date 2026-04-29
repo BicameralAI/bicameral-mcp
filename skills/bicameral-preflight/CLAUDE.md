@@ -8,5 +8,16 @@
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
 | #6672 | 6:03 PM | 🔵 | Complete architectural synthesis of bicameral-mcp system generated | ~765 |
-| #6670 | 6:01 PM | 🔵 | Drift detection and caller-LLM verification patterns deeply analyzed | ~634 |
+
+### Apr 28, 2026
+
+| ID | Time | T | Title | Read |
+|----|------|---|-------|------|
+| #7101 | 10:43 PM | ✅ | Added field name warning to preflight telemetry documentation | ~343 |
+| #7095 | 10:33 PM | 🔄 | Removed compliance verdict resolution from preflight workflow | ~437 |
+| #7048 | 7:28 PM | ✅ | Added guided mode guard to preflight finding confirmation step | ~374 |
+| #7045 | " | ✅ | Added telemetry opt-out guard to bicameral-preflight skill documentation | ~338 |
+| #7042 | 7:26 PM | 🟣 | Added G10 user override collection to bicameral-preflight skill | ~451 |
+| #7040 | 7:23 PM | ✅ | Added complete gate telemetry specification to bicameral-preflight skill | ~526 |
+| #6943 | 6:34 PM | ✅ | Telemetry documentation framework for LLM-gated quality metrics | ~540 |
 </claude-mem-context>

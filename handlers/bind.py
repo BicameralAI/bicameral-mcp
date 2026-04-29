@@ -40,6 +40,16 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
 
     repo = ctx.repo_path
     authoritative_sha = getattr(ctx, "authoritative_sha", "") or "HEAD"
+    head_sha = getattr(ctx, "head_sha", "") or ""
+    authoritative_ref = getattr(ctx, "authoritative_ref", "") or ""
+
+    # On a feature branch, validate and hash against the branch HEAD rather than
+    # authoritative_sha — files added on the branch don't exist at authoritative_sha yet.
+    effective_ref = authoritative_sha
+    if head_sha and head_sha not in ("HEAD", ""):
+        from handlers.link_commit import _is_ephemeral_commit
+        if _is_ephemeral_commit(head_sha, repo, authoritative_ref):
+            effective_ref = head_sha
 
     results: list[BindResult] = []
 
@@ -76,21 +86,21 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
 
         if start_line is None or end_line is None:
             from ledger.status import resolve_symbol_lines
-            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=authoritative_sha)
+            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=effective_ref)
             if resolved is None:
                 results.append(BindResult(
                     decision_id=decision_id, region_id="", content_hash="",
-                    error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha}",
+                    error=f"symbol '{symbol_name}' not found in {file_path} at {effective_ref}",
                 ))
                 continue
             start_line, end_line = resolved
         else:
             start_line, end_line = int(start_line), int(end_line)
             from ledger.status import get_git_content
-            if get_git_content(file_path, 1, 1, repo, ref=authoritative_sha) is None:
+            if get_git_content(file_path, 1, 1, repo, ref=effective_ref) is None:
                 results.append(BindResult(
                     decision_id=decision_id, region_id="", content_hash="",
-                    error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
+                    error=f"file '{file_path}' does not exist at {effective_ref} — only bind to existing code, never hypothetical files",
                 ))
                 continue
 
@@ -102,7 +112,7 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                 start_line=start_line,
                 end_line=end_line,
                 repo=repo,
-                ref=authoritative_sha,
+                ref=effective_ref,
                 purpose=purpose,
             )
         except Exception as exc:

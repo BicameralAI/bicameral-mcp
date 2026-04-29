@@ -999,6 +999,38 @@ async def get_regions_without_hash(
     return filtered
 
 
+async def get_regions_with_ephemeral_verdicts(client: LedgerClient) -> list[dict]:
+    """Return code_regions that have at least one ephemeral compliance verdict.
+
+    Uses idx_cc_ephemeral (indexed) to find candidate region_ids, then fetches
+    full details for only those regions. Far cheaper than scanning all code_regions
+    because the typical case is 0-3 ephemeral regions versus the full bound set.
+
+    Used by ingest_commit's already_synced path to detect stale ephemeral hashes
+    left by feature-branch binds when returning to an authoritative branch.
+    """
+    ep_rows = await client.query(
+        "SELECT region_id FROM compliance_check WHERE ephemeral = true GROUP BY region_id"
+    )
+    if not ep_rows:
+        return []
+    region_ids = list({r.get("region_id", "") for r in ep_rows if r.get("region_id")})
+    if not region_ids:
+        return []
+    rows = await client.query(
+        """
+        SELECT
+            type::string(id) AS region_id,
+            file_path, start_line, end_line, content_hash,
+            <-binds_to<-decision.{id, signoff} AS decisions
+        FROM code_region
+        WHERE type::string(id) IN $ids AND content_hash != NONE AND content_hash != ''
+        """,
+        {"ids": region_ids},
+    )
+    return [r for r in (rows or []) if r.get("decisions")]
+
+
 async def get_pending_decisions_with_regions(client: LedgerClient) -> list[dict]:
     """Return flat (decision, region) rows where decision status is 'pending'.
 

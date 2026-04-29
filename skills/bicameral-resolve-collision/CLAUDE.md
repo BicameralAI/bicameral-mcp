@@ -7,6 +7,5 @@
 
 | ID | Time | T | Title | Read |
 |----|------|---|-------|------|
-| #7052 | 7:37 PM | 🟣 | Released v0.13.0 with gate telemetry schema and liberal ingest filter | ~679 |
-| #6961 | 6:44 PM | 🟣 | Added telemetry instrumentation to capture-corrections skill | ~457 |
+| #6943 | 6:34 PM | ✅ | Telemetry documentation framework for LLM-gated quality metrics | ~540 |
 </claude-mem-context>
