@@ -701,6 +701,26 @@ async def list_tools() -> list[Tool]:
                 "required": ["skill", "trying_to", "attempted", "stuck_on"],
             },
         ),
+        Tool(
+            name="bicameral.usage_summary",
+            description=(
+                "Aggregate operational readout — counts and percentages over the last N days. "
+                "Returns ingest_calls, bind_calls_total, decision counts by status, "
+                "reflected/drift/cosmetic_drift percentages, and error_rate. "
+                "Privacy-preserving: aggregates only, no event rows, no user content. "
+                "Read-only over the local ledger plus the local-only counters file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Window size in days (default 7). Pass 0 for tool-call counts only.",
+                        "default": 7,
+                    },
+                },
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -845,6 +865,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             stuck_on=arguments.get("stuck_on", ""),
         )
         return [TextContent(type="text", text=json.dumps({"recorded": True}))]
+
+    if name == "bicameral.usage_summary":
+        from handlers.usage_summary import handle_usage_summary
+        data = await handle_usage_summary(ctx, days=int(arguments.get("days", 7)))
+        return [TextContent(type="text", text=json.dumps(data, indent=2))]
 
     # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
     # Returns the LinkCommitResponse when a new commit was just processed so we
@@ -1078,6 +1103,15 @@ async def serve_stdio() -> None:
     # It binds to a free port and stays running for the session.
     dashboard_srv = get_dashboard_server()
     await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
+
+    # First-boot telemetry consent notice (non-blocking, fires once per
+    # policy_version). Stderr-only here; MCP-channel surfacing happens
+    # below once the session is live.
+    try:
+        from consent import notify_if_first_run
+        notify_if_first_run()
+    except Exception:
+        pass
 
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
