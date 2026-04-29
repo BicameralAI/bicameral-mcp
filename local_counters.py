@@ -27,6 +27,7 @@ import threading
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import IO
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def _enabled() -> bool:
     return val not in _OFF_VALUES
 
 
-def _open_for_append_secure(path: Path) -> os.PathLike:
+def _open_for_append_secure(path: Path) -> IO[bytes]:
     """Open the counters file with 0o600 mode on POSIX (user-only)."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
     fd = os.open(str(path), flags, 0o600)
