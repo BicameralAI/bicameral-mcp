@@ -129,7 +129,7 @@ re-examine the same turns repeatedly).
 user messages.
 
 **2. Mechanical corrections:**
-Auto-ingest silently via `bicameral.ingest(source="conversation", decisions=[...])`.
+Auto-ingest silently via `bicameral.ingest(source="agent_session", decisions=[...])`.
 No user question asked.
 
 **3. Ask corrections:**
@@ -190,7 +190,7 @@ No pre-selections — user opts in to each correction. Loop through all batches 
 **8. For each confirmed decision, call:**
 ```
 bicameral.ingest(
-  source="conversation",
+  source="agent_session",
   decisions=[{
     "description": "<correction stated as a decision>",
     "source_ref": "session-correction-<YYYY-MM-DD>",
