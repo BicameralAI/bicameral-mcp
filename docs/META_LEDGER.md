@@ -769,6 +769,55 @@ SHA256(content_hash + previous_hash) = **`eacc6f89f707ce958fa2485177c9706808fdfe
 **Reality matches Promise.** Implementation conforms to the audit-PASSED specification (`79abcc2`) with **zero plan deviations**. Phase 0 (branch-scan CLI) + Phase 1 (setup_wizard hook install) + Phase 2 (CHANGELOG + user guide) sealed in sequence; 11/12 new tests + 16/16 regression green (1 Windows-only chmod skip). Chain integrity intact on this branch. Next phase: `/qor-document` then open PR `feat/48-pre-push-drift-hook → BicameralAI/dev`.
 
 ---
-*Chain integrity: VALID (18 entries on this branch)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89`*
-*Next required action: `/qor-document` then open PR to `BicameralAI/dev`*
+## Entry #19 — PLAN: `plan-124-post-commit-hook-fix.md` (Issue #124)
+
+**Phase**: PLAN / qor-plan
+**Date**: 2026-04-29
+**Branch**: `feat/124-link-commit-cli` (off `BicameralAI/dev` post-#119 governance v0.17.2 tip `8f0253d`)
+**Subject**: Issue #124 — *post-commit hook silently no-ops because `bicameral-mcp link_commit HEAD` is not a registered CLI subcommand*
+**Risk Grade**: L2
+**Change Class**: bug-fix (hotfix-shaped — restores advertised behavior)
+
+### Plan content hash
+
+`sha256:a82c62f58ba1e91bcf41d9dc82c983d59a41e09d8666e8a7acec7faf4f001432`
+
+### Previous chain hash
+
+`eacc6f89f707ce958fa2485177c9706808fdfeb32b8e4865aadc8bcda47cb645` (Entry #18, #48 SEAL on dev)
+
+Note: Entries #19/#20 on the `feat/114-grounding-lint` branch (PR #121, #114 audit + seal) are not yet on dev (PR #121 pending merge). This branch chains directly off dev's tip Entry #18.
+
+### Chain hash
+
+`SHA256(plan_hash + prev_hash) =` **`49044f4c55e0d70cf913e8dd649b193452a880fe1136791bbc60aeac42e9bffc`**
+
+### Plan summary
+
+Three-phase plan:
+
+- **Phase 0**: refactor-with-existing-coverage. Promote `cli/branch_scan.py:_invoke_link_commit` (lines 133–149) to a shared `cli/_link_commit_runner.py` module so a second caller (Phase 1) doesn't duplicate the lazy-import sync-wrapper pattern. ~30 LOC new, ~10 LOC removed from `cli/branch_scan.py`.
+- **Phase 1**: register `link_commit` as a top-level CLI subcommand in `server.py:cli_main`. Argparse subparser + dispatch + new `cli/link_commit_cli.py` (~35 LOC) entry point. JSON to stdout by default; `--quiet` flag for hooks/scripts. 6 unit tests.
+- **Phase 2**: harden the post-commit hook — replace `>/dev/null 2>&1 || true` with stderr-loud-but-non-blocking variant (writes to `/tmp/bicameral-hook.err`, surfaces summary on next commit, always exits 0). Add `tests/test_hook_command_registration.py` (3 tests) — a smoke test that walks every `bicameral-mcp <subcommand>` invocation in installed hook scripts and asserts each is registered. Would have caught the original bug at PR time.
+- **Phase 3**: `CHANGELOG.md` `[Unreleased]` Fixed entry.
+
+### Open questions (5)
+
+- **Q1**: Output shape on success. *Recommend JSON to stdout + `--quiet` flag.*
+- **Q2**: Migration for existing installs. *None needed — hook script content is correct; bug is server-side argparse.*
+- **Q3**: Bundle silent-suppression fix with registration fix. *Same PR — three reasons documented.*
+- **Q4**: Reuse `branch-scan` for post-commit. *No — distinct semantics; would overload CLI surface.*
+- **Q5**: Where does the shared runner helper live. *`cli/_link_commit_runner.py` (DRY, single source of truth).*
+
+### Grounding (manual — #114 lint not yet on dev)
+
+Verified all 10 referenced existing paths exist (`setup_wizard.py`, `server.py`, `handlers/link_commit.py`, `cli/branch_scan.py`, `contracts.py`, `context.py`, `tests/test_branch_scan_cli.py`, `tests/test_setup_pre_push_hook.py`, `CHANGELOG.md`, `pyproject.toml`). Verified all 4 declared-new paths correctly do NOT exist yet. Zero SG-PLAN-GROUNDING-DRIFT instances.
+
+### Next required action
+
+`/qor-audit` (mandatory for L2).
+
+---
+*Chain integrity: VALID (19 entries on this branch — Entry #19 is #124 PLAN; Entry #18 was #48 SEAL on dev)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c`*
+*Next required action: `/qor-audit` for `plan-124-post-commit-hook-fix.md`*
