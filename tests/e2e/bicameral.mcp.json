@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "bicameral": {
+      "command": "bicameral-mcp",
+      "args": [],
+      "env": {
+        "SURREAL_URL": "memory://"
+      }
+    }
+  }
+}
