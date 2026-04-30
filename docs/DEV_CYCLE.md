@@ -360,11 +360,31 @@ CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
 
 ### 5.1 Strategy
 
-**Squash-merge.** One commit per PR on `dev`. The squash subject = PR title; the
-body = PR body's `## Summary` + `Closes #X`.
+**Pick the merge style by triage-eligibility, not by habit.** The default until
+v0.18.0 was "always squash." That policy was retired after a backport conflict
+during the v0.18.0 cycle (PR #129 squashed into `dev`; the resulting opaque
+commit could not be cleanly cherry-picked into `triage-from-dev` because
+`triage-from-dev` lacked the intermediate ratify/resolve_collision refactors
+the squash carried as one indivisible blob).
 
-Why squash, not merge-commit: `dev` history is read by humans deciding
-"what's pending release". One line per shipped change keeps that view legible.
+The new rule:
+
+| Merge style | When to use | Rationale |
+|---|---|---|
+| **Rebase and merge** *(default for non-trivial work)* | Multi-commit features; any PR a maintainer might backport to `triage-from-dev`; any PR with a `Triage-Cc:` trailer (see §10.5) | Preserves atomic commits as individually-cherry-pickable SHAs on `dev`. GitHub's docs explicitly warn that squashing long-running branches "makes merge conflicts more likely … you'll have to resolve the same conflicts repeatedly." |
+| **Merge commit (`--no-ff`)** | Multi-commit features whose grouping matters historically (e.g. coordinated multi-handler refactor); any PR you may want to revert atomically with `git revert -m 1` | Preserves both individual commits *and* the merge boundary. Use sparingly — `dev` log gets noisy fast. |
+| **Squash** | Single-commit PRs; `risk:L1` typo/comment/dependabot fixes; any PR explicitly tagged **`no-triage-backport`** | Collapses opaque WIP. Acceptable only when nobody will ever cherry-pick from this. |
+
+**Author obligation, not just merger obligation.** If you write a PR that may be
+triage-eligible, write atomic commits — one logical change per commit, each
+individually buildable, each with a meaningful subject line. The Linux kernel's
+atomic-commit discipline ([Linus on commit messages](https://yarchive.net/comp/linux/commit_messages.html))
+exists precisely so cherry-pick is mechanical, not interpretive. Reviewers may
+ask you to reorganize.
+
+**Repo settings.** All three merge buttons remain enabled in GitHub settings;
+the *default button* should be set to "Rebase and merge" so the right choice is
+the path of least resistance.
 
 ### 5.2 Pre-merge checklist (for the merger)
 
@@ -380,9 +400,10 @@ Why squash, not merge-commit: `dev` history is read by humans deciding
 - Milestone progress bar advances.
 - Branch may be deleted (GitHub default).
 - If the work shipped a new tool / new tool field / changed default, the matching
-  `pilot/mcp/skills/<tool>/SKILL.md` **must** be in the same squash commit
-  (project rule from `CLAUDE.md`). Reviewers reject silently-mismatched skill
-  contracts.
+  `pilot/mcp/skills/<tool>/SKILL.md` **must** be in the same merge (the same
+  atomic commit if rebase-and-merge; the same squash blob if squash; one of the
+  commits in the PR if merge-commit) — project rule from `CLAUDE.md`. Reviewers
+  reject silently-mismatched skill contracts.
 
 ---
 
@@ -650,6 +671,111 @@ dev  ─────────────────────────
 
 Hotfixes never carry feature work — feature work goes through the normal
 feature → dev → release cycle.
+
+### 10.5 Triage lane (`dev` → `triage-from-dev` → `main`)
+
+`triage-from-dev` is a long-lived **curated stable lane** that ships a *subset*
+of `dev` to `main` between full releases. It exists for changes that should
+reach users faster than the next minor release allows, but that aren't
+emergency hotfixes (which use §10's path).
+
+```
+dev ────●────●────●────●────●────●─────▶
+            \         \    \
+             cherry-pick -x  (selected commits only)
+              \         \    \
+               ▼         ▼    ▼
+triage-from-dev ●────────●────●─────▶ ──── release PR ────▶ main
+```
+
+**Direction is one-way.** Cherry-picks flow `dev → triage-from-dev` only. Never
+develop on `triage-from-dev` directly; never cherry-pick `triage-from-dev →
+dev`. (Bugs introduced *only* on the triage lane get fixed on `dev` first, then
+re-cherry-picked.)
+
+#### 10.5.1 Eligibility — what gets triaged
+
+Modeled after the Linux kernel's `stable` tree rules
+([kernel.org stable rules](https://docs.kernel.org/process/stable-kernel-rules.html)).
+A commit is triage-eligible if **all** of:
+
+- It is small and self-contained (rough guideline: ≤ 100 lines of context-diff,
+  one logical change).
+- It is **obviously correct and tested** — the kernel's exact phrasing.
+- It fixes one of: a real user-facing bug, a security regression, a build break
+  on a supported platform, a data-loss/corruption bug, or a documented
+  cross-platform quirk. Or it is a small additive feature whose risk surface is
+  isolated (e.g. a new optional MCP tool field with a default).
+- It does not depend on `dev`-only refactors that haven't shipped to `main`. If
+  it does, the prerequisites must be triage-eligible too, and they all
+  cherry-pick as a coherent batch.
+
+**Not triage-eligible** by default: schema-migrating changes, breaking
+public-API changes, multi-PR feature epics, "v1 patches" (the catch-all
+`triage-from-dev` PR title uses for work explicitly held for the next major).
+
+When in doubt, the change waits for the next `dev → main` release.
+
+#### 10.5.2 Author trailer — `Triage-Cc:`
+
+If you (the author) believe a commit belongs on the triage lane, add a trailer:
+
+```
+Triage-Cc: triage-from-dev
+```
+
+For commits that fix an earlier commit (kernel-style), also add:
+
+```
+Fixes: <abbrev-sha> ("<subject of fixed commit>")
+```
+
+The release manager finds candidates with:
+
+```bash
+git log --grep='^Triage-Cc:' origin/dev ^origin/triage-from-dev
+```
+
+Trailers are advisory — the release manager makes the final call — but they
+make the candidate set legible without re-reading every commit message.
+
+#### 10.5.3 Cherry-pick mechanics
+
+Always use `cherry-pick -x` so the resulting commit message records its
+provenance (`(cherry picked from commit <dev-sha>)`):
+
+```bash
+git checkout triage-from-dev
+git fetch origin
+git cherry-pick -x <dev-sha>
+# resolve conflicts narrowly — do NOT pull in unrelated dev refactors
+git push origin triage-from-dev
+```
+
+If a cherry-pick conflicts because `triage-from-dev` is missing a
+prerequisite, **stop**. Either pick the prerequisite first (if it is itself
+triage-eligible) or hold the change for the next full `dev → main` release.
+Resolving conflicts by inventing replacement code is forbidden — the
+cherry-pick must remain a faithful subset of `dev`.
+
+The fact that `triage-from-dev` already carries some commits with **different
+SHAs than dev** (e.g. v0.14.0 telemetry, RFC #98) is sunk cost from the lane's
+pre-§10.5 era. Going forward every cherry-pick uses `-x` and the audit trail
+re-converges. Do **not** rewrite history on `triage-from-dev` to fix the
+divergence — it is a published branch.
+
+#### 10.5.4 Release PR (`triage-from-dev` → `main`)
+
+The triage release PR follows §6 with two adjustments:
+
+- **Title**: `release: v0.X.Y (triage)` — the patch version bumps; minor stays
+  pinned to whatever `main` last tagged from a full `dev → main` release.
+- **Flow label**: `flow:release` (same as a full release).
+- **Body** lists each cherry-picked commit with its source `dev-sha` and the
+  issue/PR it traces back to.
+
+After the triage release tags on `main`, sync `main` back to `dev` per §10
+(merge or cherry-pick — the next-release CHANGELOG flip absorbs the patch).
 
 ---
 
