@@ -17,7 +17,7 @@ import logging
 from datetime import UTC, datetime
 
 from contracts import RatifyResponse
-from ledger.queries import decision_exists, project_decision_status
+from ledger.queries import decision_exists, project_decision_status, update_decision_status
 from preflight_telemetry import telemetry_enabled, write_engagement
 
 logger = logging.getLogger(__name__)
@@ -107,9 +107,13 @@ async def handle_ratify(
             "note": note,
         }
 
-    # Routes through TeamWriteAdapter when in team mode so the signoff
-    # change is emitted as a decision_ratified.completed event.
-    projected = await ledger.apply_ratify(decision_id, signoff)
+    await client.query(
+        f"UPDATE {decision_id} SET signoff = $signoff",
+        {"signoff": signoff},
+    )
+
+    projected = await project_decision_status(client, decision_id)
+    await update_decision_status(client, decision_id, projected)
 
     logger.info(
         "[ratify] decision=%s action=%s signer=%s projected_status=%s",

@@ -186,20 +186,17 @@ async def test_ratify_passes_through_preflight_id(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ratify_handler, "project_decision_status", AsyncMock(return_value="reflected")
     )
+    monkeypatch.setattr(ratify_handler, "update_decision_status", AsyncMock())
 
     fake_client = MagicMock()
     fake_client.query = AsyncMock(
         side_effect=[
             [{"signoff": None}],  # initial select
+            None,  # update
         ]
     )
     fake_inner = SimpleNamespace(_client=fake_client)
-    # apply_ratify replaced the inline UPDATE + project + update_status sequence
-    # in handle_ratify (#97 event vocabulary refactor).
-    fake_ledger = SimpleNamespace(
-        _inner=fake_inner,
-        apply_ratify=AsyncMock(return_value="reflected"),
-    )
+    fake_ledger = SimpleNamespace(_inner=fake_inner)
 
     ctx = SimpleNamespace(
         ledger=fake_ledger,
