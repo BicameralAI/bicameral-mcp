@@ -360,31 +360,23 @@ CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
 
 ### 5.1 Strategy
 
-**Pick the merge style by triage-eligibility, not by habit.** The default until
-v0.18.0 was "always squash." That policy was retired after a backport conflict
-during the v0.18.0 cycle (PR #129 squashed into `dev`; the resulting opaque
-commit could not be cleanly cherry-picked into `triage-from-dev` because
-`triage-from-dev` lacked the intermediate ratify/resolve_collision refactors
-the squash carried as one indivisible blob).
-
-The new rule:
+**Squash merging is disabled at the repo level** (`allow_squash_merge: false`)
+so the wrong choice is unavailable, not just discouraged. Two options remain:
 
 | Merge style | When to use | Rationale |
 |---|---|---|
-| **Rebase and merge** *(default for non-trivial work)* | Multi-commit features; any PR a maintainer might backport to `triage-from-dev`; any PR with a `Triage-Cc:` trailer (see §10.5) | Preserves atomic commits as individually-cherry-pickable SHAs on `dev`. GitHub's docs explicitly warn that squashing long-running branches "makes merge conflicts more likely … you'll have to resolve the same conflicts repeatedly." |
+| **Rebase and merge** *(default — covers ~all PRs)* | Single-commit PRs; multi-commit features; any PR a maintainer might backport to `triage-from-dev`; any PR with a `Triage-Cc:` trailer (see §10.5); Dependabot bumps | Preserves atomic commits as individually-cherry-pickable SHAs on `dev`. For single-commit PRs, this is the literal squash equivalent (one commit on `dev`) without the opaque-blob failure mode. GitHub's docs explicitly warn that squashing long-running branches "makes merge conflicts more likely … you'll have to resolve the same conflicts repeatedly." |
 | **Merge commit (`--no-ff`)** | Multi-commit features whose grouping matters historically (e.g. coordinated multi-handler refactor); any PR you may want to revert atomically with `git revert -m 1` | Preserves both individual commits *and* the merge boundary. Use sparingly — `dev` log gets noisy fast. |
-| **Squash** | Single-commit PRs; `risk:L1` typo/comment/dependabot fixes; any PR explicitly tagged **`no-triage-backport`** | Collapses opaque WIP. Acceptable only when nobody will ever cherry-pick from this. |
 
 **Author obligation, not just merger obligation.** If you write a PR that may be
 triage-eligible, write atomic commits — one logical change per commit, each
 individually buildable, each with a meaningful subject line. The Linux kernel's
 atomic-commit discipline ([Linus on commit messages](https://yarchive.net/comp/linux/commit_messages.html))
 exists precisely so cherry-pick is mechanical, not interpretive. Reviewers may
-ask you to reorganize.
-
-**Repo settings.** All three merge buttons remain enabled in GitHub settings;
-the *default button* should be set to "Rebase and merge" so the right choice is
-the path of least resistance.
+ask you to reorganize. WIP messages like `wip`, `fix typo`, `address review`
+should be squashed locally with `git rebase -i` *before* the PR is merged —
+since repo-level squash is off, the rebase-and-merge button will preserve them
+verbatim otherwise.
 
 ### 5.2 Pre-merge checklist (for the merger)
 
@@ -400,10 +392,10 @@ the path of least resistance.
 - Milestone progress bar advances.
 - Branch may be deleted (GitHub default).
 - If the work shipped a new tool / new tool field / changed default, the matching
-  `pilot/mcp/skills/<tool>/SKILL.md` **must** be in the same merge (the same
-  atomic commit if rebase-and-merge; the same squash blob if squash; one of the
-  commits in the PR if merge-commit) — project rule from `CLAUDE.md`. Reviewers
-  reject silently-mismatched skill contracts.
+  `pilot/mcp/skills/<tool>/SKILL.md` **must** be in the same PR — for
+  rebase-and-merge, in the same atomic commit; for merge-commit, in one of the
+  commits being merged. Project rule from `CLAUDE.md`. Reviewers reject
+  silently-mismatched skill contracts.
 
 ---
 
