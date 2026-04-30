@@ -39,6 +39,7 @@ from .queries import (
     relate_has_identity,
     relate_has_version,
     relate_locates,
+    relate_supersedes,
     relate_yields,
     search_by_bm25,
     update_binds_to_region,
@@ -1277,3 +1278,66 @@ class SurrealDBLedgerAdapter:
             if db_path:
                 shutil.rmtree(db_path, ignore_errors=True)
         await self._ensure_connected()
+
+    # ── Decision signoff write path (#97 event vocabulary) ────────────
+    # Both methods are idempotent so the materializer can replay them
+    # safely. Handlers do their own pre-write idempotency / collision
+    # checks; the adapter just performs the write and re-projects status.
+
+    async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
+        """Write a ratify/reject signoff and re-project the decision's status.
+
+        Idempotent. Returns the projected decision status after the write.
+        """
+        await self._ensure_connected()
+        await self._client.query(
+            f"UPDATE {decision_id} SET signoff = $signoff",
+            {"signoff": signoff},
+        )
+        projected = await project_decision_status(self._client, decision_id)
+        await update_decision_status(self._client, decision_id, projected)
+        return projected
+
+    async def apply_supersede(
+        self,
+        new_id: str,
+        old_id: str,
+        signer: str = "",
+        signoff_note: str = "",
+        superseded_at: str = "",
+        session_id: str = "",
+    ) -> dict:
+        """Write the supersedes edge and freeze the old decision's signoff.
+
+        Idempotent: ``relate_supersedes`` upserts the edge and the signoff
+        UPDATE is a full overwrite. Returns ``{"old_status": "superseded"}``.
+        """
+        await self._ensure_connected()
+        await relate_supersedes(
+            self._client,
+            new_id,
+            old_id,
+            confidence=1.0,
+            reason=(
+                f"human-confirmed supersession via resolve_collision session={session_id}"
+            ),
+        )
+        rows = await self._client.query(f"SELECT signoff FROM {old_id} LIMIT 1")
+        old_signoff: dict = {}
+        if rows and isinstance(rows[0], dict):
+            old_signoff = rows[0].get("signoff") or {}
+        await self._client.execute(
+            f"UPDATE {old_id} SET signoff = $s",
+            {
+                "s": {
+                    **old_signoff,
+                    "state": "superseded",
+                    "superseded_by": new_id,
+                    "superseded_at": superseded_at,
+                    "session_id": session_id,
+                    "signer": signer,
+                    "note": signoff_note,
+                }
+            },
+        )
+        return {"old_status": "superseded"}

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from ledger.queries import find_decision_by_canonical_id, get_canonical_id
+
 from .materializer import EventMaterializer
 from .writer import EventFileWriter
 
@@ -138,6 +140,63 @@ class TeamWriteAdapter:
             repo=repo,
             ref=ref,
             purpose=purpose,
+        )
+
+    async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
+        """Emit decision_ratified event, then delegate to inner adapter.
+
+        The event payload carries ``canonical_id`` so cross-author replay
+        can resolve to the peer's local decision row.
+        """
+        await self._ensure_ready()
+        canonical_id = await get_canonical_id(self._inner._client, decision_id)
+        self._writer.write(
+            "decision_ratified.completed",
+            {
+                "canonical_id": canonical_id,
+                "decision_id": decision_id,
+                "signoff": signoff,
+            },
+        )
+        return await self._inner.apply_ratify(decision_id, signoff)
+
+    async def apply_supersede(
+        self,
+        new_id: str,
+        old_id: str,
+        signer: str = "",
+        signoff_note: str = "",
+        superseded_at: str = "",
+        session_id: str = "",
+    ) -> dict:
+        """Emit decision_superseded event, then delegate to inner adapter.
+
+        The event payload carries canonical_ids for both decisions so
+        cross-author replay can resolve to the peer's local rows.
+        """
+        await self._ensure_ready()
+        new_canonical = await get_canonical_id(self._inner._client, new_id)
+        old_canonical = await get_canonical_id(self._inner._client, old_id)
+        self._writer.write(
+            "decision_superseded.completed",
+            {
+                "new_canonical_id": new_canonical,
+                "old_canonical_id": old_canonical,
+                "new_id": new_id,
+                "old_id": old_id,
+                "signer": signer,
+                "signoff_note": signoff_note,
+                "superseded_at": superseded_at,
+                "session_id": session_id,
+            },
+        )
+        return await self._inner.apply_supersede(
+            new_id=new_id,
+            old_id=old_id,
+            signer=signer,
+            signoff_note=signoff_note,
+            superseded_at=superseded_at,
+            session_id=session_id,
         )
 
     async def wipe_all_rows(self, repo: str) -> None:
