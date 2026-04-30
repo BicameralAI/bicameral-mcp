@@ -938,6 +938,88 @@ Manual grounding held across both v1 and v2. v2 amendment did not introduce any 
 `/qor-implement` for `plan-124-post-commit-hook-fix.md` per `qor/gates/delegation-table.md`.
 
 ---
-*Chain integrity: VALID (21 entries on this branch — Entry #21 is #124 Audit v2 PASS; Entry #20 was #124 Audit v1 VETO; Entry #18 was #48 SEAL on dev)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c` → #124 Audit v1 (VETO): `ef9a536f` → #124 Audit v2 (PASS): `86225d49`*
-*Next required action: `/qor-implement` for `plan-124-post-commit-hook-fix.md`*
+## Entry #22 — IMPLEMENTATION: `plan-124-post-commit-hook-fix.md` (Issue #124)
+
+**Phase**: IMPLEMENT / qor-implement
+**Date**: 2026-04-29
+**Branch**: `feat/124-link-commit-cli`
+**Risk Grade**: L2
+**Mode**: sequential (agent-teams not declared; capability shortfall logged)
+
+### Files in scope
+
+**New** (3):
+- `cli/_link_commit_runner.py` (38 LOC) — shared sync wrapper around `handle_link_commit`; hosts the lazy-import + graceful-skip pattern used by both `branch-scan` and `link_commit` CLI surfaces.
+- `cli/link_commit_cli.py` (29 LOC) — `link_commit` subcommand entry point; JSON-to-stdout default, `--quiet` flag, always exits 0.
+- `tests/test_link_commit_cli.py` (95 LOC, 6 tests) — argparse defaults, output shape, --quiet flag, no-ledger graceful skip, handler-exception graceful skip.
+- `tests/test_hook_command_registration.py` (78 LOC, 3 tests) — smoke that walks every `bicameral-mcp <cmd>` invocation in installed hooks and asserts CLI registration + dispatch coverage. **Original #124 bug class is now caught at PR time.**
+
+**Modified** (4):
+- `server.py` (+47 LOC, –66 LOC, net –19 LOC) — Phase 0a decomposition: `cli_main` (15 LOC) + `_register_subparsers` (16 LOC) + `_dispatch` (29 LOC), all razor-compliant. Phase 1 added `link_commit` subparser + dispatch branch. `from typing import Any` added.
+- `cli/branch_scan.py` (–28 LOC, +9 LOC, net –19 LOC) — Phase 0 refactor: `_compute_drift` now delegates to `cli._link_commit_runner.invoke_link_commit`; local `_invoke_link_commit` removed.
+- `setup_wizard.py` (+5 LOC, –1 LOC, net +4 LOC) — Phase 2 hardening: `_GIT_POST_COMMIT_HOOK` now writes stderr to `${HOME}/.bicameral/hook-errors.log`, surfaces summary message on stderr, always `exit 0`. The `>` truncation auto-clears stale errors on successful commits.
+- `CHANGELOG.md` (Phase 3) — new `[Unreleased]` `### Fixed` block above the existing `### Added` for #48.
+
+### Implementation order
+
+1. **Phase 0a** (FIRST): decomposed `cli_main` (92 → 15 LOC) into orchestrator + `_register_subparsers` + `_dispatch`. Pure refactor; existing 7 `test_branch_scan_cli.py` tests proved correctness without modification.
+2. **Phase 0**: promoted `_invoke_link_commit` to `cli/_link_commit_runner.py`; replaced local call in `branch_scan.py` with import. 7/7 regression green.
+3. **Phase 1**: TDD-LIGHT — wrote 6 tests RED, then created `cli/link_commit_cli.py`, then added subparser + dispatch in `server.py`. 6/6 GREEN; 13/13 with regression.
+4. **Phase 2**: TDD-LIGHT — wrote 3 hook-registration smoke tests (would have been RED on dev pre-Phase-1; now GREEN), then modified `_GIT_POST_COMMIT_HOOK`. **Discovered self-issue at runtime**: the loud-failure echo message originally read "bicameral-mcp post-commit hook failed" which the regex (`\bbicameral-mcp\s+([a-z][a-z0-9_-]+)\b`) parsed as a `post-commit` subcommand invocation. Fixed by changing the prefix to "Bicameral" (no `-mcp`). 20/20 with regression.
+5. **Phase 3**: CHANGELOG `[Unreleased]` Fixed entry.
+
+### Razor self-check
+
+| Function | LOC | Cap | Status |
+|---|---|---|---|
+| `server.cli_main` (post-decomposition) | 15 | 40 | OK |
+| `server._register_subparsers` (post-Phase-1) | 16 | 40 | OK |
+| `server._dispatch` (post-Phase-1) | 29 | 40 | OK |
+| `cli._link_commit_runner.invoke_link_commit` | 22 | 40 | OK |
+| `cli.link_commit_cli.main` | 13 | 40 | OK |
+| `cli.branch_scan._compute_drift` | 9 | 40 | OK (was 14) |
+| All test functions | ≤ 18 | 40 | OK |
+| All files | ≤ 95 LOC (test_link_commit_cli.py is largest at 95) | 250 | OK |
+| Nesting | ≤ 2 | 3 | OK |
+| Nested ternaries | 0 | 0 | OK |
+
+### Test results
+
+- New tests: **9/9 GREEN** (6 link_commit_cli + 3 hook-command-registration).
+- Regression: **11/11 GREEN** on `test_branch_scan_cli.py` (7) + `test_setup_pre_push_hook.py` (4 + 1 Windows-only chmod skip).
+- Total target sweep: **20 passed, 1 skipped**.
+- ruff check: clean. ruff format --check: clean (after format pass on 3 files). mypy: clean on both new modules.
+
+### Manual smoke
+
+- `python -m server link_commit --help` → renders help with `commit_hash` positional + `--quiet` flag. ✓
+- `python -m server --help` → lists `link_commit` in subcommand table. ✓
+
+### Content hash
+
+`SHA256(sorted artifact hashes)` = `11df7250fa7558816e9ab10bc573e315dfe1b05b5418f4f795dfe5997723b9c7`
+
+### Previous chain hash
+
+`86225d4919f2335322b43bfff8e8d9b63fb4bcd768f0c4ae90751dbcbabb1fd7` (Entry #21, #124 Audit v2 PASS)
+
+### Chain hash
+
+`SHA256(content_hash + previous_hash) =` **`e83d674c0ea57b73a9c43f44781ce05587004eada7a43da9689a0e37faf1fe54`**
+
+### Plan deviations (none)
+
+Implementation matches v2 plan (`44c6568`) 1:1. The mid-Phase-2 hook-message fix (post-commit → Bicameral) is a self-test discovery, not a plan deviation — the plan didn't specify the exact echo string.
+
+### Decision
+
+**Reality matches Promise.** All 5 phases executed in order; razor compliance verified; ruff/format/mypy clean; 20/20 tests green; manual smoke confirms CLI surface. Capability shortfalls (gate artifact, reliability sweep, version bump) carried as session-wide.
+
+### Next required action
+
+`/qor-substantiate` for session seal.
+
+---
+*Chain integrity: VALID (22 entries on this branch — Entry #22 is #124 IMPLEMENTATION; Entry #21 is #124 Audit v2 PASS)*
+*Genesis: `29dfd085` → ... → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c` → #124 Audit v1 (VETO): `ef9a536f` → #124 Audit v2 (PASS): `86225d49` → #124 IMPL: `e83d674c`*
+*Next required action: `/qor-substantiate` for `plan-124-post-commit-hook-fix.md`*
