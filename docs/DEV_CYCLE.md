@@ -744,11 +744,50 @@ git cherry-pick -x <dev-sha>
 git push origin triage-from-dev
 ```
 
-If a cherry-pick conflicts because `triage-from-dev` is missing a
-prerequisite, **stop**. Either pick the prerequisite first (if it is itself
-triage-eligible) or hold the change for the next full `dev → main` release.
-Resolving conflicts by inventing replacement code is forbidden — the
-cherry-pick must remain a faithful subset of `dev`.
+When a cherry-pick conflicts, classify the conflict before resolving:
+
+- **Missing-prerequisite conflict** — the dev commit calls a function /
+  references a schema field / depends on a contract that does not exist on
+  `triage-from-dev` and is not introduced by this same commit. **Stop.** Either
+  pick the prerequisite first (if it is itself triage-eligible per §10.5.1) or
+  hold the change for the next full `dev → main` release.
+- **Diverged-surface conflict** — the change's *target file* has been
+  refactored on dev's path between triage's branch point and the cherry-pick
+  source, but every symbol / schema field / contract the cherry-picked commit
+  *actually depends on* either already exists on triage or is additively
+  introduced in this same commit. **Adaptable** — see below.
+
+##### Adaptation clause
+
+A diverged-surface conflict may be resolved by manually adapting the conflict
+hunks to triage's surrounding code, provided **all** of the following hold:
+
+1. The cherry-pick's *intent* (the conceptual change — e.g. "route through
+   new adapter method", "add replay case for new event type") is preserved.
+   The semantic effect on triage matches the semantic effect on dev from any
+   external caller's POV.
+2. No new logic is *invented* — every line in the resolution either comes
+   from the cherry-picked commit, exists on triage already, or is the
+   minimal mechanical glue to bridge the two (e.g. renaming a local variable
+   to match triage's existing identifier).
+3. Each adapted hunk is annotated:
+   - In the **commit message** under an `Adaptation:` trailer:
+     `Adaptation: handlers/ratify.py — rewrote against pre-#65 inline impl`
+   - In the **code itself**, where the adapted block isn't trivially obvious,
+     with `# triage-adapt: <one-line reason>` immediately above the block.
+
+If you find yourself writing a hunk that doesn't satisfy (2) — i.e. you're
+inventing logic to bridge the gap — the conflict is in fact a missing-
+prerequisite conflict in disguise. Stop and reclassify.
+
+The release manager reviews adapted commits with extra scrutiny at the
+§10.5.4 release PR; adapted commits should be a small fraction of any
+triage release, and a triage cycle that's mostly adaptations is a signal
+that the lane has drifted too far from `dev`.
+
+Resolving conflicts by inventing replacement code that does not satisfy the
+adaptation clause above is forbidden — the cherry-pick must remain a faithful
+subset of `dev`, modulo legitimate adaptation to a diverged surface.
 
 The fact that `triage-from-dev` already carries some commits with **different
 SHAs than dev** (e.g. v0.14.0 telemetry, RFC #98) is sunk cost from the lane's
