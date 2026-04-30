@@ -339,3 +339,75 @@ CHANGELOG.md                     # v0.11.0 entry; v0.12.0 entry to follow at PR-
 - BicameralAI/bicameral-mcp#70 — AssertionError cluster umbrella (~20 tests)
 - BicameralAI/bicameral-mcp#72 — `binds_to.provenance` schema needs FLEXIBLE keyword
 - MythologIQ-Labs-LLC/Qor-logic#18 — convention proposal: commit-trailer attribution
+
+---
+
+## #135 triage substantiation — addendum (2026-04-30)
+
+**Branch**: `triage/135-dashboard-tooltip-scope-cut` (off `BicameralAI/dev`)
+**Tracked PR**: will target `BicameralAI/dev` (issue `BicameralAI/bicameral-mcp#135`)
+**Seal**: Entry #26 — `efd0304b2f0e0b3ca28aa4620c2b8ea2eda5ab9e2828ca852ab9f3c5adda6eb5`
+
+### Scope (deliberately narrow — scope-cut from #135's original L2 proposal)
+
+| Surface | File | Δ LOC | Notes |
+|---|---|---|---|
+| Repo | `pilot/mcp/assets/dashboard.html` | +5/-1 | `renderStateCell()` ternary → if/else if; new `pending` branch with tooltip text *"Pending compliance — run /bicameral-sync in your Claude Code session to resolve."* |
+| Repo | `pilot/mcp/skills/bicameral-dashboard/SKILL.md` | +1/-0 | One bullet under **Notes** documenting the tooltip nudge contract |
+| External | `BicameralAI/bicameral-mcp#135` | — | `gh issue close` with scope-cut comment, post-merge |
+| External | `BicameralAI/bicameral#108` body | — | Flow 3 out-of-session paragraph + Flow 1 step 3 wording fix, post-merge |
+
+### Architectural decision recorded
+
+`bicameral-mcp#135`'s original P0 proposal called for a `--auto-resolve-trivial`
+flag on `link_commit` to close the post-commit drift→resolution loop without a
+caller LLM. Design enumeration produced 7 options (hash-equality, AST-equality,
+CodeGenome-classifier, Hosted GitHub App, pure-notification, tiered, defer).
+All require either an LLM in the deterministic core (violating the "selection
+over generation" guardrail) or trivial-cases enumeration with non-zero
+false-positive risk.
+
+**Cut**: accept the architectural limit. Post-commit hook stays sync-only.
+Resolution path = dashboard tooltip on `status === 'pending'` rows → user
+runs `/bicameral-sync` in their Claude Code session. No code is auto-resolved.
+
+### Section 4 razor (post-change)
+
+| Function | LOC | Cap | Status |
+|---|---|---|---|
+| `renderStateCell` | 19 | 40 | OK (was 13; +6 for if/else if) |
+
+`dashboard.html` is 786 LOC (HTML+CSS+JS bundle, delta-only evaluated per
+audit precedent).
+
+### Plan deviations
+
+Zero structural. Implementation matches Entry #24 audit blueprint 1:1.
+
+### Test verification
+
+- 0 new automated tests (acknowledged advisory per Entry #24 audit;
+  `dashboard.html` has no existing automated test infrastructure).
+- Mitigation: PR description includes manual verification step (composed
+  in `/qor-document`).
+- No console.log artifacts introduced.
+- Section 4 razor: clean.
+
+### Capability shortfalls (carried, no regression vs Entry #23)
+
+1. `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
+2. `tools/reliability/` validators absent — Steps 4.6–4.8 skipped.
+3. `agent-teams` capability not declared — sequential.
+4. `codex-plugin` capability not declared — solo audit/seal.
+5. Step 5.5 `intent_lock` capture skipped (no `qor.reliability.intent_lock`).
+
+### Outstanding (carried into next phase)
+
+- `bicameral-mcp#125` scope should be widened — 7 skills under
+  `pilot/mcp/.claude/skills/` are absent from canonical `pilot/mcp/skills/`
+  location claimed by `pilot/mcp/CLAUDE.md`.
+- `bicameral#108` Flow 1 step 3 spec drift: doc claimed
+  `IngestResponse.supersession_candidates` exists when it does not;
+  collision detection lives caller-side via `bicameral-context-sentry`
+  skill and surfaces via `bicameral.preflight.unresolved_collisions`.
+  Spec-text correction is a `/qor-document`-phase external `gh` action.
