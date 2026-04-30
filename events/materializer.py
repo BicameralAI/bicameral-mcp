@@ -94,6 +94,56 @@ class EventMaterializer:
                             payload.get("commit_hash", ""), payload.get("repo_path", ""),
                         )
                         replayed += 1
+                    elif etype == "decision_ratified.completed":
+                        # Resolve canonical_id → local decision_id; the
+                        # event was emitted by a peer whose local
+                        # decision_id is meaningless in this DB.
+                        from ledger.queries import find_decision_by_canonical_id
+
+                        local_id = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("canonical_id", ""),
+                        )
+                        if local_id is None:
+                            logger.warning(
+                                "[materializer] skipping decision_ratified — "
+                                "canonical_id %r not found locally (ingest event missing or out-of-order)",
+                                payload.get("canonical_id"),
+                            )
+                            continue
+                        await inner_adapter.apply_ratify(
+                            local_id,
+                            payload.get("signoff", {}),
+                        )
+                        replayed += 1
+                    elif etype == "decision_superseded.completed":
+                        from ledger.queries import find_decision_by_canonical_id
+
+                        local_new = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("new_canonical_id", ""),
+                        )
+                        local_old = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("old_canonical_id", ""),
+                        )
+                        if local_new is None or local_old is None:
+                            logger.warning(
+                                "[materializer] skipping decision_superseded — "
+                                "canonical_id resolution failed (new=%r old=%r)",
+                                payload.get("new_canonical_id"),
+                                payload.get("old_canonical_id"),
+                            )
+                            continue
+                        await inner_adapter.apply_supersede(
+                            new_id=local_new,
+                            old_id=local_old,
+                            signer=payload.get("signer", ""),
+                            signoff_note=payload.get("signoff_note", ""),
+                            superseded_at=payload.get("superseded_at", ""),
+                            session_id=payload.get("session_id", ""),
+                        )
+                        replayed += 1
                 new_offsets[author] = f.tell()
 
         if new_offsets != offsets:

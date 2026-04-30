@@ -942,6 +942,47 @@ async def update_decision_status(
     )
 
 
+# ── canonical_id ↔ decision_id resolution (#97 event replay) ──────────
+# Decision rows carry both a SurrealDB-generated ``id`` (e.g. ``decision:abc``)
+# and a content-addressed ``canonical_id`` (UUIDv5 from description +
+# source_type + source_ref). The local id is per-DB; canonical_id is
+# stable across authors and machines, so it's the only id safe to ship
+# across the JSONL event log.
+
+async def get_canonical_id(
+    client: LedgerClient,
+    decision_id: str,
+) -> str | None:
+    """Return the canonical_id for a local decision row, or None."""
+    rows = await client.query(
+        f"SELECT canonical_id FROM {decision_id} LIMIT 1",
+    )
+    if rows and isinstance(rows[0], dict):
+        cid = rows[0].get("canonical_id")
+        return str(cid) if cid else None
+    return None
+
+
+async def find_decision_by_canonical_id(
+    client: LedgerClient,
+    canonical_id: str,
+) -> str | None:
+    """Return the local decision id for a canonical_id, or None."""
+    if not canonical_id:
+        return None
+    rows = await client.query(
+        "SELECT id FROM decision WHERE canonical_id = $cid LIMIT 1",
+        {"cid": canonical_id},
+    )
+    if rows and isinstance(rows[0], dict):
+        did = rows[0].get("id")
+        return str(did) if did else None
+    return None
+
+
+# triage-adapt: dropped #77 update_decision_level block from auto-merge —
+# triage doesn't carry decision_level work (PR #107, v0.16.0); not part
+# of e6d4b8f's actual +38-line diff for #97
 async def update_region_hash(
     client: LedgerClient,
     region_id: str,
