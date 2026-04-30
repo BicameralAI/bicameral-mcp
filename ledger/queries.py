@@ -1004,6 +1004,7 @@ async def update_decision_status(
 # stable across authors and machines, so it's the only id safe to ship
 # across the JSONL event log.
 
+
 async def get_canonical_id(
     client: LedgerClient,
     decision_id: str,

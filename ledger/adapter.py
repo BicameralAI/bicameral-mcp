@@ -1318,9 +1318,7 @@ class SurrealDBLedgerAdapter:
             new_id,
             old_id,
             confidence=1.0,
-            reason=(
-                f"human-confirmed supersession via resolve_collision session={session_id}"
-            ),
+            reason=(f"human-confirmed supersession via resolve_collision session={session_id}"),
         )
         rows = await self._client.query(f"SELECT signoff FROM {old_id} LIMIT 1")
         old_signoff: dict = {}
