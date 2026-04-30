@@ -3,27 +3,6 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## v0.18.0 -- event vocabulary extension: ratify + supersede (#97)
-
-Extends the existing Phase 1 JSONL emitter with two new event types so the shipped vocabulary matches the v0 architecture description. Team-mode replay now restores ratify and supersede outcomes alongside the pre-existing ingest/bind/link_commit events.
-
-### Added
-
-- `events/team_adapter.py` -- `apply_ratify` and `apply_supersede` wrappers; emit `decision_ratified.completed` / `decision_superseded.completed` with `canonical_id` so cross-author replay can resolve to peer-local rows.
-- `events/materializer.py` -- replay cases for the two new event types; warns + skips on unresolved canonical_id (out-of-order cross-author replay).
-- `ledger/adapter.py` -- idempotent `apply_ratify(decision_id, signoff)` and `apply_supersede(new_id, old_id, ...)` adapter methods.
-- `ledger/queries.py` -- `get_canonical_id` and `find_decision_by_canonical_id` helpers.
-- `tests/test_team_event_replay.py` -- round-trip coverage for ratify, supersede (with edge replay), and an ingest regression guard.
-
-### Changed
-
-- `handlers/ratify.py` -- routes the actual write through `ledger.apply_ratify` instead of the inline UPDATE + project + update_status sequence. Pre-write idempotency check unchanged.
-- `handlers/resolve_collision.py` -- routes the supersede branch through `ledger.apply_supersede`. Frozen-signoff merge moves into the adapter so it's reachable from replay.
-
-### Closes
-
-Partial close of #97 -- event vocabulary wedge. CHANGEFEED extension to `code_subject` / `subject_identity` / `binds_to` / `code_region` and the SHA256 chain remain open.
-
 ## v0.17.2 -- governance architecture documentation (#111)
 
 New `docs/semantic-drift-governance.md` describing the shipped governance surface (Phases 1-4 from the #108-#112 plan): contracts, engine, config, HITL bypass flow, MCP tools, and the non-blocking absolute. Includes two Mermaid diagrams (lifecycle and inference-vs-determinism) and explicit cross-references to existing docs.

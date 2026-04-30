@@ -28,6 +28,7 @@ from ledger.queries import (
     decision_exists,
     project_decision_status,
     relate_context_for,
+    relate_supersedes,
     update_decision_status,
 )
 
@@ -72,20 +73,37 @@ async def handle_resolve_collision(
             if not await decision_exists(client, old_id):
                 raise ValueError(f"No decision row for old_id={old_id}")
 
-            # Routes through TeamWriteAdapter when in team mode so the
-            # supersession is emitted as a decision_superseded.completed
-            # event. The adapter handles edge creation + frozen-signoff
-            # merge so the old decision's prior ratification record is
-            # preserved (drift sweeps skip signoff.state='superseded').
-            result = await ledger.apply_supersede(
-                new_id=new_id,
-                old_id=old_id,
-                signer=_session_id,
-                signoff_note="",
-                superseded_at=_now_iso,
-                session_id=_session_id,
+            # Write supersedes edge (idempotent)
+            await relate_supersedes(
+                client,
+                new_id,
+                old_id,
+                confidence=1.0,
+                reason=f"human-confirmed supersession via resolve_collision session={_session_id}",
             )
-            old_status = result.get("old_status", "superseded")
+
+            # Mark old decision as superseded in signoff (not status).
+            # Supersession is a human editorial decision, not a code-compliance observation.
+            # The old decision's status field retains its last code-compliance value
+            # and is frozen — drift sweeps skip decisions where signoff.state='superseded'.
+            # Merge with existing signoff so a prior ratification record is preserved.
+            _existing_rows = await client.query(f"SELECT signoff FROM {old_id} LIMIT 1")
+            _old_signoff: dict = {}
+            if _existing_rows and isinstance(_existing_rows[0], dict):
+                _old_signoff = _existing_rows[0].get("signoff") or {}
+            await client.execute(
+                f"UPDATE {old_id} SET signoff = $s",
+                {
+                    "s": {
+                        **_old_signoff,
+                        "state": "superseded",
+                        "superseded_by": new_id,
+                        "superseded_at": _now_iso,
+                        "session_id": _session_id,
+                    }
+                },
+            )
+            old_status = "superseded"
 
             logger.info("[resolve_collision] supersede: %s supersedes %s", new_id, old_id)
 
