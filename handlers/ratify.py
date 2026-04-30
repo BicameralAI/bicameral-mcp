@@ -16,7 +16,11 @@ import logging
 from datetime import datetime, timezone
 
 from contracts import RatifyResponse
-from ledger.queries import decision_exists, project_decision_status, update_decision_status
+from ledger.queries import decision_exists, project_decision_status
+# triage-adapt: dropped preflight_telemetry import from auto-merge — module
+# is on dev (#65 preflight telemetry) but not on triage; the cherry-picked
+# body doesn't actually reference it (intent of e6d4b8f for this file is
+# routing through ledger.apply_ratify, not adding telemetry)
 
 logger = logging.getLogger(__name__)
 
@@ -90,13 +94,9 @@ async def handle_ratify(
             "note": note,
         }
 
-    await client.query(
-        f"UPDATE {decision_id} SET signoff = $signoff",
-        {"signoff": signoff},
-    )
-
-    projected = await project_decision_status(client, decision_id)
-    await update_decision_status(client, decision_id, projected)
+    # Routes through TeamWriteAdapter when in team mode so the signoff
+    # change is emitted as a decision_ratified.completed event.
+    projected = await ledger.apply_ratify(decision_id, signoff)
 
     logger.info(
         "[ratify] decision=%s action=%s signer=%s projected_status=%s",
