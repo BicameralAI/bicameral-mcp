@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from argparse import ArgumentParser
+from typing import Any
 
 import mcp.server.stdio
 from mcp.server import Server
@@ -1355,72 +1356,59 @@ async def serve_stdio() -> None:
 
 
 def cli_main(argv: list[str] | None = None) -> int:
+    """Entry point — orchestrates parser build, registration, parsing, dispatch.
+
+    Decomposed from a 92-LOC monolith (#124) into _register_subparsers
+    (subparser wiring) + _dispatch (command routing). Each piece stays
+    well under the 40-LOC razor cap; new subcommands add a single line
+    to each helper.
+    """
     parser = ArgumentParser(description="Bicameral MCP server")
     subparsers = parser.add_subparsers(dest="command")
-
-    # config subcommand
-    subparsers.add_parser(
-        "config",
-        help="interactive config editor — update mode, guided, and telemetry settings",
-    )
-
-    # reset subcommand
-    subparsers.add_parser(
-        "reset",
-        help="interactive ledger reset — wipes state with confirmation",
-    )
-
-    # setup subcommand
-    setup_parser = subparsers.add_parser(
-        "setup",
-        help="interactive setup — configure MCP client to use this server",
-    )
-    setup_parser.add_argument(
-        "repo_path",
-        nargs="?",
-        default=None,
-        help="path to the repo to analyze (auto-detected if omitted)",
-    )
-    setup_parser.add_argument(
-        "--history-path",
-        default=None,
-        metavar="PATH",
-        help="separate directory for .bicameral/ history storage (default: same as repo)",
-    )
-    setup_parser.add_argument(
-        "--with-push-hook",
-        action="store_true",
-        help="also install a git pre-push hook that surfaces drift before push (#48)",
-    )
-
-    # branch-scan subcommand (#48): terminal drift summary used by pre-push hook.
-    subparsers.add_parser(
-        "branch-scan",
-        help="surface bicameral drift for HEAD (used by the pre-push git hook)",
-    )
-
-    parser.add_argument(
-        "--smoke-test",
-        action="store_true",
-        help="validate package wiring and print the registered MCP tools, then exit",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {SERVER_VERSION}",
-    )
+    _register_subparsers(parser, subparsers)
     args = parser.parse_args(argv)
+    return _dispatch(args)
 
+
+def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
+    """Wire all subparser definitions + top-level flags onto parser."""
+    subparsers.add_parser("config", help="interactive config editor")
+    subparsers.add_parser("reset", help="interactive ledger reset — wipes state with confirmation")
+    setup = subparsers.add_parser("setup", help="interactive setup — configure MCP client")
+    setup.add_argument("repo_path", nargs="?", default=None, help="repo path (auto-detected)")
+    setup.add_argument(
+        "--history-path", default=None, metavar="PATH", help="separate .bicameral/ dir"
+    )
+    setup.add_argument(
+        "--with-push-hook", action="store_true", help="also install pre-push drift hook (#48)"
+    )
+    subparsers.add_parser("branch-scan", help="surface bicameral drift for HEAD (pre-push hook)")
+    link = subparsers.add_parser(
+        "link_commit",
+        help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
+    )
+    link.add_argument(
+        "commit_hash", nargs="?", default="HEAD", help="commit hash to link (default: HEAD)"
+    )
+    link.add_argument(
+        "--quiet", action="store_true", help="suppress JSON output (still exits 0 on success)"
+    )
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {SERVER_VERSION}")
+
+
+def _dispatch(args: Any) -> int:
+    """Route parsed args to the appropriate handler. Returns exit code."""
     if args.command == "config":
         from setup_wizard import run_config_wizard
 
         return run_config_wizard()
-
     if args.command == "reset":
         from setup_wizard import run_reset_wizard
 
         return run_reset_wizard()
-
     if args.command == "setup":
         from setup_wizard import run_setup
 
@@ -1429,19 +1417,20 @@ def cli_main(argv: list[str] | None = None) -> int:
             args.history_path,
             with_push_hook=args.with_push_hook,
         )
-
     if args.command == "branch-scan":
         from cli.branch_scan import main as branch_scan_main
 
         return branch_scan_main([])
+    if args.command == "link_commit":
+        from cli.link_commit_cli import main as link_commit_main
 
+        return link_commit_main(args.commit_hash, quiet=args.quiet)
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
         for tool_name in result["tool_names"]:
             print(tool_name)
         return 0
-
     asyncio.run(serve_stdio())
     return 0
 

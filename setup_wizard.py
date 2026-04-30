@@ -438,8 +438,14 @@ _GIT_POST_COMMIT_HOOK = """\
 #!/bin/sh
 # Bicameral MCP — post-commit hook (installed by bicameral-mcp setup, Guided mode)
 # Syncs the decision ledger after every commit so drift status is current immediately.
-# Silent on failure; only runs when .bicameral/ exists.
-[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>&1 || true
+# Loud-but-non-blocking failure: any stderr from link_commit is captured to
+# ${HOME}/.bicameral/hook-errors.log and surfaced on stderr in the same commit.
+# The `>` redirection truncates the log file each run, so successful commits
+# auto-clear stale errors from prior failed runs. Always exits 0 — the commit
+# itself never blocks on a sync hook failure (#124).
+[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>"${HOME}/.bicameral/hook-errors.log"
+[ -s "${HOME}/.bicameral/hook-errors.log" ] && echo "Bicameral post-commit hook failed; see ${HOME}/.bicameral/hook-errors.log" >&2
+exit 0
 """
 
 

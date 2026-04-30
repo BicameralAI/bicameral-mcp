@@ -73,6 +73,22 @@ Adds `governance/` package with the deterministic escalation policy engine, deci
 
 ## [Unreleased]
 
+### Fixed
+
+- **Post-commit hook now actually syncs the ledger (#124).** The
+  `bicameral-mcp setup` (Guided mode) post-commit hook called
+  `bicameral-mcp link_commit HEAD`, which was never a registered CLI
+  subcommand — every commit since the hook was introduced silently
+  failed via `>/dev/null 2>&1 || true` and the user never saw the
+  argparse error. This release adds the missing `link_commit`
+  subcommand (with a `--quiet` flag for hook scripts), replaces the
+  silent-failure suppression with stderr-loud reporting captured to
+  `${HOME}/.bicameral/hook-errors.log` (still exits 0 so commits never
+  block), and adds a smoke test that walks every command referenced
+  in installed hook scripts and asserts each is registered. **Existing
+  Guided-mode installs start working automatically; no reinstall
+  required.**
+
 ### Added
 
 - **`bicameral-mcp branch-scan` CLI + opt-in pre-push git hook (#48).**

@@ -116,37 +116,16 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _compute_drift() -> LinkCommitResponse | None:
-    """Run ``handle_link_commit`` against HEAD and return its
-    response. Returns ``None`` if the ledger is not configured (no
-    ``~/.bicameral/`` directory) OR the handler raises — graceful skip
-    matches the hook's non-blocking design.
+    """Run ``handle_link_commit`` against HEAD and return its response.
 
-    Lazy-imports the handler so unit tests can patch this whole
-    function without paying the SurrealDB import cost.
+    Delegates to ``cli._link_commit_runner.invoke_link_commit`` (the
+    shared sync-wrapper) which already handles the no-ledger graceful
+    skip and the handler-exception graceful skip. Both behaviors match
+    the hook's non-blocking design.
     """
-    try:
-        return _invoke_link_commit()
-    except Exception:  # noqa: BLE001 — graceful skip on any handler failure
-        return None
+    from cli._link_commit_runner import invoke_link_commit
 
-
-def _invoke_link_commit() -> LinkCommitResponse | None:
-    """Synchronous wrapper that drives the async ``handle_link_commit``.
-    Builds a minimal context, calls the handler against HEAD, returns
-    the response."""
-    import asyncio
-    from pathlib import Path
-
-    if not (Path.home() / ".bicameral" / "ledger.db").exists():
-        return None
-    from context import BicameralContext
-    from handlers.link_commit import handle_link_commit
-
-    async def _run() -> LinkCommitResponse:
-        ctx = BicameralContext.from_env()
-        return await handle_link_commit(ctx, commit_hash="HEAD")
-
-    return asyncio.run(_run())
+    return invoke_link_commit("HEAD")
 
 
 def _resolve_exit_code() -> int:
