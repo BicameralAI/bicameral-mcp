@@ -361,7 +361,11 @@ CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
 ### 5.1 Strategy
 
 **Squash merging is disabled at the repo level** (`allow_squash_merge: false`)
-so the wrong choice is unavailable, not just discouraged. Two options remain:
+so the wrong choice is unavailable, not just discouraged. The reason this
+matters at all — beyond style preference — is that squash collapses
+multi-commit PRs into opaque blobs that cannot be cleanly cherry-picked into
+the §10.5 triage lane. See §10.5.0 "Why this lane exists" for the full
+rationale. Two options remain:
 
 | Merge style | When to use | Rationale |
 |---|---|---|
@@ -670,6 +674,38 @@ feature → dev → release cycle.
 of `dev` to `main` between full releases. It exists for changes that should
 reach users faster than the next minor release allows, but that aren't
 emergency hotfixes (which use §10's path).
+
+#### 10.5.0 Why this lane exists
+
+The triage lane plus the §5.1 rebase-and-merge default (with squash disabled
+at the repo level) together **allow for parallel development of feature work
+on `dev` and selective incorporation into production based on live feedback**.
+
+That goal decomposes into three constraints the existing two-branch flow
+(feature → dev → main) cannot satisfy on its own:
+
+- **Fast iteration on `dev` shouldn't gate user-visible delivery on `main`.**
+  Without a triage lane, every minor-release cycle is "ship the whole
+  integrated batch or wait." A bug fix that's ready in week one of a six-week
+  release cycle waits five weeks for a milestone full of unrelated work to
+  close. The triage lane lets ready-and-eligible work reach users on its own
+  cadence.
+- **Live feedback should steer what reaches `main`, not just what reaches
+  `dev`.** When telemetry / a customer report / a security finding marks a
+  specific change as important, the maintainer needs to be able to ship that
+  change *without* shipping everything ahead of it on `dev`. Cherry-picking a
+  selected subset (under §10.5.1's eligibility rule) is that mechanism.
+- **The merge style on `dev` must preserve cherry-pickability.** Squash
+  collapses a multi-commit PR into one opaque blob — fine for `dev`'s log,
+  fatal for backport. Rebase-and-merge keeps each commit as an individually
+  addressable SHA, which is the unit the §10.5.3 cherry-pick mechanic operates
+  on. §5.1's "squash disabled at the repo level" exists to make this
+  guarantee structural rather than aspirational.
+
+Together these rules let the project hold two timelines: a fast-iteration
+trunk where features can land in pieces and the team can change its mind, and
+a slower curated trunk where users see only what's been deemed ready for
+broad delivery. Neither trunk forces the other's cadence.
 
 ```
 dev ────●────●────●────●────●────●─────▶
