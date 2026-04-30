@@ -818,6 +818,126 @@ Verified all 10 referenced existing paths exist (`setup_wizard.py`, `server.py`,
 `/qor-audit` (mandatory for L2).
 
 ---
-*Chain integrity: VALID (19 entries on this branch — Entry #19 is #124 PLAN; Entry #18 was #48 SEAL on dev)*
-*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c`*
-*Next required action: `/qor-audit` for `plan-124-post-commit-hook-fix.md`*
+## Entry #20 — GATE TRIBUNAL (v1): `plan-124-post-commit-hook-fix.md` (Issue #124)
+
+**Phase**: GATE / qor-audit
+**Date**: 2026-04-29
+**Branch**: `feat/124-link-commit-cli`
+**Subject**: Issue #124 — *post-commit hook silently no-ops because `bicameral-mcp link_commit HEAD` is not a registered CLI subcommand*
+**Risk Grade**: L2
+**Verdict**: **VETO** (v1)
+**Mode**: solo (codex-plugin shortfall logged)
+
+### Findings
+
+| # | Severity | Category | Finding |
+|---|---|---|---|
+| F-1 | **BLOCKING** | Section 4 Razor | `cli_main` will grow from 92 LOC (current) to ~120 LOC with this plan. Already 2.3x over the 40-LOC entry-function cap; plan makes it 3x over. The "mid-implement watchpoint" language is deferral, not commitment. Razor compliance is a binary pre-condition, not a contingency. |
+| F-2 | NON-BLOCKING | OWASP A01/A05 | `/tmp/bicameral-hook.err` is a predictable, world-discoverable path. Symlink-attack vector exists (limited blast radius — user can clobber files they already own). Race condition on shared/CI systems. Recommended: replace with `${HOME}/.bicameral/hook-errors.log` (user-controlled location, aligns with existing `.bicameral/` convention). |
+| F-3 | NON-BLOCKING | Plan completeness | Phase 2 hook hardening should explicitly state that the error file is overwritten on each hook run via `>` truncation. Removes ambiguity for reviewers. |
+
+### Plan content hash
+
+`sha256:a82c62f58ba1e91bcf41d9dc82c983d59a41e09d8666e8a7acec7faf4f001432`
+
+### Audit report content hash
+
+`sha256:f4702c28f763b39f43a5fbf591786c3a65915104268b9946108a87cba7a5443d`
+
+### Previous chain hash
+
+`49044f4c55e0d70cf913e8dd649b193452a880fe1136791bbc60aeac42e9bffc` (Entry #19, #124 PLAN)
+
+### Chain hash
+
+`SHA256(plan_hash + audit_hash + prev_hash) =` **`ef9a536f6a3abbe1bdd041dcc4a2de79c0f2f72d2631a5dd8ad077aa2406bb54`**
+
+### Decision
+
+**VETO**. Razor violation on `cli_main` is binary-fail. Plan must commit upfront to the function decomposition rather than defer it as a mid-implement contingency.
+
+### Remediation (F-1)
+
+**Option A (preferred)**: Add Phase 0a (`Decompose cli_main`) splitting the function into:
+- `cli_main` (≤ 10 LOC) — orchestrator that calls `_register_subparsers` and `_dispatch`.
+- `_register_subparsers(parser, subparsers)` (≤ 30 LOC) — wires all subparser definitions + top-level flags.
+- `_dispatch(args) -> int` (≤ 25 LOC) — if/elif chain over `args.command` + smoke-test branch.
+
+After Phase 0a, Phase 1's `link_commit` addition becomes one new subparser definition + one new dispatch branch — neither helper approaches the cap.
+
+**Option B (acceptable, weaker)**: Drop the "watchpoint" language; either (b1) file a separate `cli_main` refactor issue and cite it as known-deferred, or (b2) acknowledge the pre-existing violation explicitly and add only minimum plumbing.
+
+Option A is audit-favored — fixes the structural issue while we're already in the function.
+
+### Remediation (F-2)
+
+Replace `/tmp/bicameral-hook.err` → `${HOME}/.bicameral/hook-errors.log` in Phase 2's hook script. Same semantics, no symlink risk, no shared-system race.
+
+### Remediation (F-3)
+
+Add explicit sentence to Phase 2: "The error file is overwritten on each hook run (`>` truncates), so successful commits clear any stale error from a previous failed commit."
+
+### SG-PLAN-GROUNDING-DRIFT prevention
+
+Manual grounding held — author verified all 10 referenced existing paths exist; 4 declared-new paths correctly absent. No drift instances. #114's lint not yet on dev (PR #121 pending), so author-time `ls -d */` was the only mitigation. Discipline held this round.
+
+### Mandated next action
+
+Amend `plan-124-post-commit-hook-fix.md` per F-1 Option A (preferred) and optionally fold F-2 + F-3 into the same amendment. Re-submit for `/qor-audit` v2.
+
+---
+## Entry #21 — GATE TRIBUNAL (v2): `plan-124-post-commit-hook-fix.md` (Issue #124)
+
+**Phase**: GATE / qor-audit
+**Date**: 2026-04-29
+**Branch**: `feat/124-link-commit-cli`
+**Subject**: Issue #124 — *post-commit hook silently no-ops because `bicameral-mcp link_commit HEAD` is not a registered CLI subcommand*
+**Risk Grade**: L2
+**Verdict**: **PASS** (post-remediation)
+**Mode**: solo (codex-plugin shortfall logged)
+
+### Audit history
+
+| v | Plan commit | Verdict | Findings |
+|---|---|---|---|
+| v1 | `48d8db0` | **VETO** | F-1 (BLOCKING, Razor): `cli_main` 92 → 120 LOC, plan deferred split. F-2/F-3: NON-BLOCKING. |
+| v2 | `44c6568` | **PASS** | All findings remediated. New Phase 0a decomposes `cli_main` into `cli_main` (≤10) + `_register_subparsers` (≤30) + `_dispatch` (≤25). F-2: `${HOME}/.bicameral/hook-errors.log` replaces `/tmp/`. F-3: explicit truncation paragraph added. |
+
+### Plan content hash (v2)
+
+`sha256:4b25a8f995021080ca108e33397cdd7739ea332653a752fabc2fbd08fa825f32`
+
+### Audit report content hash
+
+`sha256:2bc161d2460918518bdc28e902bed66ba8047b4c459a6ad41e8c3f054b8dc840`
+
+### Previous chain hash
+
+`ef9a536f6a3abbe1bdd041dcc4a2de79c0f2f72d2631a5dd8ad077aa2406bb54` (Entry #20, #124 Audit v1 VETO)
+
+### Chain hash
+
+`SHA256(plan_hash + audit_hash + prev_hash) =` **`86225d4919f2335322b43bfff8e8d9b63fb4bcd768f0c4ae90751dbcbabb1fd7`**
+
+### Decision
+
+PASS post-remediation. Razor violation closed via explicit Phase 0a decomposition (audit-favored Option A). Non-blocking findings (predictable temp path; truncation semantics) also closed in same v2 amendment. v1→v2 remediation table at top of plan documents all three closures with audit-traceable cross-references.
+
+### Notable
+
+The structural cleanup (Phase 0a) is genuinely valuable beyond closing F-1: every future subcommand addition to `cli_main` now stays one-line in `_register_subparsers` and a few-line in `_dispatch`. The next #48-style work (whatever it is) won't re-hit the 40-LOC wall.
+
+This is a clean audit cycle — single VETO finding, surgical remediation, PASS on first re-submit. Total span: v1 audit `ef9a536f` → v2 audit `86225d49`.
+
+### SG-PLAN-GROUNDING-DRIFT prevention
+
+Manual grounding held across both v1 and v2. v2 amendment did not introduce any new path references. No drift instances.
+
+### Mandated next action
+
+`/qor-implement` for `plan-124-post-commit-hook-fix.md` per `qor/gates/delegation-table.md`.
+
+---
+*Chain integrity: VALID (21 entries on this branch — Entry #21 is #124 Audit v2 PASS; Entry #20 was #124 Audit v1 VETO; Entry #18 was #48 SEAL on dev)*
+*Genesis: `29dfd085` → Phase 1+2 Seal: `509b411d` → Phase 3 Seal: `89cac7ff` → Phase 4 Audit v1 (VETO): `231fe5f1` → Phase 4 Audit v2 (PASS): `332c72b2` → Phase 4 Audit v3 (PASS, post-rebase): `21ac210f` → Phase 4 SEAL: `0ebcf69b` → #44 Audit (PASS, post-remediation): `536dd15f` → #44 SEAL: `567170e0` → #48 Audit (PASS, first-attempt): `bf890347` → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c` → #124 Audit v1 (VETO): `ef9a536f` → #124 Audit v2 (PASS): `86225d49`*
+*Next required action: `/qor-implement` for `plan-124-post-commit-hook-fix.md`*
