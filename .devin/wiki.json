@@ -1,0 +1,300 @@
+{
+  "repo_notes": [
+    {
+      "content": "The way the wiki is structured should strongly conform to the lens laid out in the Bicameral Sales Enablement Positioning Playbook (in Knowledge), and capture the development emphasis tracked in docs/META_LEDGER.md"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "High-level introduction to bicameral-mcp: what it is, why it exists, key concepts, and how the major subsystems fit together. Links to all child sections for deeper exploration.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Getting Started & Installation",
+      "purpose": "Step-by-step guide for installing bicameral-mcp, running the setup wizard, configuring collaboration mode (solo vs. team), and integrating with supported AI agents (Claude Code, Cursor, Codex).",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Core Concepts & Terminology",
+      "purpose": "Defines the foundational vocabulary: Decision Ledger, grounding, drift, compliance, signoff states, decision levels (L1/L2/L3), ephemeral vs. authoritative branches, and the 'caller-LLM owned' model.",
+      "parent": "Overview",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Architecture",
+      "purpose": "Overview of the system's layered architecture: MCP server entrypoint, handler layer, adapter layer, ledger, code locator, and CodeGenome. Links to child pages for each major subsystem.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "MCP Server & Tool Registry",
+      "purpose": "Details the server.py entrypoint, the 18 registered MCP tools, the stdio transport, CLI commands, and the request lifecycle including sync middleware and the compliance verification loop.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Handler Layer",
+      "purpose": "Covers all handler modules in handlers/: ingest, link_commit, bind, preflight, detect_drift, resolve_compliance, ratify, history, search_decisions, resolve_collision, gap_judge, decision_status, reset, and action_hints.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Adapter & Port Layer",
+      "purpose": "Explains the adapters/ directory: how get_ledger(), get_code_locator(), and get_codegenome() factory functions create singletons, the ports.py Protocol interfaces (DriftAnalyzerPort, CodeIntelligencePort), and the BicameralContext frozen dataclass.",
+      "parent": "Architecture",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Decision Ledger",
+      "purpose": "Overview of the SurrealDB-backed decision ledger: its graph data model, schema, query layer, and the full lifecycle of a decision from ingestion to compliance. Links to child pages for schema, queries, and drift detection.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Schema & Data Model",
+      "purpose": "Deep dive into the SurrealDB schema: node types (input_span, decision, code_region, symbol, code_subject, subject_identity), relationship edges (yields, binds_to, locates, about), field constraints, full-text search analyzers, and the migration framework (v4–v11).",
+      "parent": "Decision Ledger",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Ingestion & Grounding Pipeline",
+      "purpose": "Explains how decisions flow from raw text (transcripts, PRDs, Slack) through normalization, symbol resolution, ledger persistence, and the post-ingest link_commit chain. Covers IngestPayload formats (Natural vs. Internal), canonical_id deduplication via JCS+UUIDv5, and source cursors.",
+      "parent": "Decision Ledger",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Drift Detection & Compliance",
+      "purpose": "Covers the three-layer drift detection pipeline (L1 hash, L2 AST/cosmetic, L3 LLM semantic), the compliance_check cache table, the three-way verdict model (compliant/drifted/not_relevant), project_decision_status aggregation logic, and the ephemeral vs. authoritative branch pollution guard.",
+      "parent": "Decision Ledger",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Ephemeral vs. Authoritative Branch Logic",
+      "purpose": "Explains the 'pollution guard' mechanism: how the system distinguishes feature-branch (ephemeral) commits from the authoritative ref (main), how ephemeral verdicts are marked and later promoted, and the ledger_sync / source_cursor tables.",
+      "parent": "Decision Ledger",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Code Locator",
+      "purpose": "Overview of the deterministic code intelligence subsystem: tree-sitter symbol extraction, SQLite-backed SymbolDB, fuzzy matching, structural graph traversal, and the cocoindex optional pipeline. Links to child pages for indexing and tools.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Symbol Indexing & Extraction",
+      "purpose": "Details the index_builder.py incremental indexing pipeline, symbol_extractor.py tree-sitter multi-language extraction (Python, JS/TS, Java, Go, Rust, C#), sqlite_store.py SymbolDB schema, graph_builder.py dependency edges, and the optional cocoindex_pipeline.py for vector embeddings.",
+      "parent": "Code Locator",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Symbol Tools & Runtime",
+      "purpose": "Covers the MCP-exposed code locator tools: validate_symbols (fuzzy matching via rapidfuzz), get_neighbors (1-hop graph traversal), extract_symbols (on-demand tree-sitter extraction), and the code_locator_runtime.py index lifecycle management (stale detection, rebuild orchestration).",
+      "parent": "Code Locator",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CodeGenome",
+      "purpose": "Overview of the CodeGenome subsystem for durable code identity tracking: how it survives refactors, moves, and renames using structural signatures and blake2b hashes. Links to child pages for the adapter interface and bind service.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CodeGenome Adapter & Identity Computation",
+      "purpose": "Details the CodeGenomeAdapter ABC, DeterministicCodeGenomeAdapter implementation, SubjectIdentity/SubjectCandidate dataclasses, structural_signature format (file_path:start:end), blake2b signature_hash, and the phase 1+2 implementation scope.",
+      "parent": "CodeGenome",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "CodeGenome Bind Service & Integration",
+      "purpose": "Explains how the bind_service.py integrates CodeGenome identity records into the ledger during bicameral.bind calls, the code_subject and subject_identity graph nodes, the codegenome.write_identity_records feature flag, and the L1 exemption policy.",
+      "parent": "CodeGenome",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Team Collaboration & Event Sourcing",
+      "purpose": "Overview of Team Mode: the dual-write architecture, append-only JSONL event files, event materialization/replay, and how the system enables distributed teams to share decision history via git. Links to child pages for the event system and reset/replay.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Event System (Writer, Materializer, TeamWriteAdapter)",
+      "purpose": "Details EventFileWriter (per-author JSONL files, O_APPEND + flock atomicity), EventEnvelope schema, EventMaterializer peer-event replay, and TeamWriteAdapter dual-write composition pattern.",
+      "parent": "Team Collaboration & Event Sourcing",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Reset, Replay & Migration",
+      "purpose": "Covers the reset handler (ledger-only vs. full wipe), event-sourced replay for ledger reconstruction, destructive migration handling (DestructiveMigrationRequired), the _MIGRATION_SCRIPT subprocess pattern, and the replay_plan returned to the agent.",
+      "parent": "Team Collaboration & Event Sourcing",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Skills & Agent Workflows",
+      "purpose": "Overview of the skills subsystem: Markdown-based workflow definitions for Claude Code slash commands, how skills are installed into .claude/skills/, and the major skill categories. Links to child pages for each major skill workflow.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "bicameral-ingest Skill",
+      "purpose": "Deep dive into the bicameral-ingest workflow: the 7-step pipeline (boundary detection, extraction grammar, Gate 1 business-tie filter, Gate 2 fork test, symbol grounding, collision resolution, ratification), decision level classification (L1/L2/L3), and the AskUserQuestion interaction points.",
+      "parent": "Skills & Agent Workflows",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "bicameral-preflight & bicameral-history Skills",
+      "purpose": "Covers the preflight skill (pre-implementation context surfacing, guided vs. normal mode gating, fired=false trust contract) and the history skill (balance-sheet ledger view, feature grouping, HistoryFeature/HistoryFulfillment structure).",
+      "parent": "Skills & Agent Workflows",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Supporting Skills (capture-corrections, config, sync, judge-gaps, resolve-collision)",
+      "purpose": "Covers the remaining skills: bicameral-capture-corrections (session-end design change capture), bicameral-config (interactive mode/telemetry configuration), bicameral-sync/update (version management), bicameral-judge-gaps (requirements gap analysis rubric), and bicameral-resolve-collision (supersession workflow).",
+      "parent": "Skills & Agent Workflows",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Dashboard & Telemetry",
+      "purpose": "Covers the live web dashboard (asyncio HTTP sidecar, SSE streaming, dashboard.html self-contained bundle) and the anonymous telemetry system (PostHog relay, privacy invariants, opt-out, skill timing metrics).",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Dashboard Server",
+      "purpose": "Details the DashboardServer asyncio HTTP implementation, SSE event streaming for live ledger updates, the /events and /history endpoints, port file management (~/.bicameral/dashboard.port), and how write handlers (ingest, link_commit) push notifications.",
+      "parent": "Dashboard & Telemetry",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Telemetry & Privacy",
+      "purpose": "Explains the telemetry architecture: Cloudflare Worker relay contract, PostHog integration, device_id UUID generation, what IS and IS NOT collected, the BICAMERAL_TELEMETRY opt-out env var, and skill_begin/skill_end diagnostic metrics (g2–g6 gate counters).",
+      "parent": "Dashboard & Telemetry",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Update & Configuration Management",
+      "purpose": "Covers the version lifecycle: RECOMMENDED_VERSION remote fetch, update cache TTL, pipx/pip reinstallation, skill refresh via subprocess, auto-migration on update, and the bicameral-config interactive wizard for mode/guided/telemetry settings.",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    },
+    {
+      "title": "Setup Wizard & Git Hooks",
+      "purpose": "Details run_setup, run_config_wizard, run_reset_wizard CLI flows, agent-specific MCP config file generation (.mcp.json, .cursor/mcp.json, .codex/config.toml), PostToolUse/SessionEnd hook installation, and the git post-commit hook for guided mode.",
+      "parent": "Update & Configuration Management",
+      "page_notes": [
+        {
+          "content": ""
+        }
+      ]
+    }
+  ]
+}
