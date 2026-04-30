@@ -452,7 +452,12 @@ function renderStateCell(d) {
     ungrounded: { cls: 'fs-ungrounded', text: '○ tracked'   },
   };
   const c = conf[d.status] || conf.ungrounded;
-  const tip = d.status === 'drifted' && d.drift_evidence ? ` data-tip="${esc(d.drift_evidence)}"` : '';
+  let tip = '';
+  if (d.status === 'drifted' && d.drift_evidence) {
+    tip = ` data-tip="${esc(d.drift_evidence)}"`;
+  } else if (d.status === 'pending') {
+    tip = ' data-tip="Pending compliance — run /bicameral-sync in your Claude Code session to resolve."';
+  }
   const branchBadge = d.ephemeral
     ? `<span class="branch-badge" title="Status from feature branch — not yet verified on main">⎇</span>`
     : '';
