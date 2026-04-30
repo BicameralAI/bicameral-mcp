@@ -1115,6 +1115,255 @@ All under cap with headroom. F-1 fully closed; future subcommand additions stay 
 **Next required action**: `/qor-document` for PR description authoring → `gh pr create` targeting `BicameralAI/dev`.
 
 ---
-*Chain integrity: VALID (23 entries on this branch)*
-*Genesis: `29dfd085` → ... → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c` → #124 Audit v1 (VETO): `ef9a536f` → #124 Audit v2 (PASS): `86225d49` → #124 IMPL: `e83d674c` → #124 SEAL: `950f362c`*
-*Next required action: `/qor-document` → open PR to `BicameralAI/dev`*
+
+### Entry #24: GATE TRIBUNAL
+
+**Timestamp**: 2026-04-30T21:50:00Z
+**Phase**: GATE
+**Author**: Judge (executed via `/qor-audit`)
+**Risk Grade**: L1
+**Verdict**: PASS (with three plan additions baked in as preconditions)
+**Mode**: solo (codex-plugin shortfall logged)
+
+**Scope**: Triage PR plan for `BicameralAI/bicameral-mcp#135` scope-cut +
+`BicameralAI/bicameral#108` spec correctness. Three changes:
+(1) `pilot/mcp/assets/dashboard.html` tooltip on `status === 'pending'`
+rows pointing at `/bicameral-sync`; (2) close #135 with scope-cut
+comment (auto-resolve loop abandoned — no caller-LLM in hook context,
+MCP sampling not viable); (3) edit #108 spec — Flow 3 out-of-session
+committer handoff, Flow 1 step 3 `supersession_candidates` wording fix.
+
+**Content Hash**:
+SHA256(AUDIT_REPORT.md) = `8c2e5d472538d2a6cfc1433ecdf156ef402cdc3e9c081b2fd6d0785953655327`
+
+**Previous Hash**: `950f362cb700da5a4db85c545f6b55bb725502a5744bfbb2c2eb3a9c9728661a` (Entry #23, #124 SEAL)
+
+**Chain Hash**:
+SHA256(content_hash + previous_hash) = `1de1fac7926e9f75967b3b7d0c215984d9b3cf6d72e219bb881c80f1e6ac5536`
+
+**Decision**: PASS. Ten audit passes verified clean (Security, OWASP,
+Ghost UI, Razor, Dependency, Macro-Architecture, Infrastructure
+Alignment, Orphan Detection) with two advisories (Test Functionality:
+no automated test for the UI delta, mitigated by mandatory manual
+verification step in PR; Documentation Drift: README/docs deferral
+status must be explicit in #135 close comment). All five infrastructure
+claims grep-verified against current code (`data-tip` pattern at
+dashboard.html:187–198 + 455, `IngestResponse.context_for_candidates`
+at contracts.py:574, `bicameral.preflight.unresolved_collisions` at
+contracts.py:657, `bicameral-sync` skill at pilot/mcp/skills/, absence
+of `IngestResponse.supersession_candidates` confirms #108 spec drift).
+
+**Required plan additions before implementation**:
+1. PR description must include manual dashboard verification step
+   (dev server + ingest + modify + commit + observe tooltip).
+2. One-line note in `pilot/mcp/skills/bicameral-dashboard/SKILL.md`
+   mentioning the tooltip nudge.
+3. #135 close comment must explicitly state README/docs deferral
+   status (likely "N/A — original direction never landed").
+
+**Surfaced for follow-up (not blocking this PR)**: `bicameral-mcp#125`
+scope should be widened. Five skills (`bicameral-context-sentry`,
+`bicameral-capture-corrections`, `bicameral-dashboard`,
+`bicameral-history`, `bicameral-resolve-collision`) live only under
+`pilot/mcp/.claude/skills/`, not at the canonical `pilot/mcp/skills/`
+location claimed by `pilot/mcp/CLAUDE.md`. Issue #125 currently scopes
+only the stale references in CLAUDE.md / DEV_CYCLE.md / TODO.md, not
+the missing canonical files themselves.
+
+**Capability shortfalls** (pre-existing repo state, match Entry #23):
+- `qor/scripts/` runtime helpers absent — gate-chain artifact at
+  `.qor/gates/<sid>/audit.json` not written.
+- `.qor/gates/` directory absent.
+- `qor/reliability/` enforcement absent — Step 4.6 sweep skipped.
+- `agent-teams` not declared — sequential.
+- `codex-plugin` not declared — solo audit, no adversarial pass.
+
+**Artifact**: `.agent/staging/AUDIT_REPORT.md` (this audit's full report)
+
+**Next required action**: `/qor-implement` — Governor proceeds to
+implementation with the three plan additions baked in.
+
+---
+
+### Entry #25: IMPLEMENTATION
+
+**Timestamp**: 2026-04-30T22:00:00Z
+**Phase**: IMPLEMENT
+**Author**: Specialist (executed via `/qor-implement`)
+**Risk Grade**: L1 (inherited from Entry #24 audit verdict)
+**Mode**: sequential (agent-teams capability not declared — shortfall logged)
+
+**Scope**: Triage PR for `BicameralAI/bicameral-mcp#135` scope-cut +
+`BicameralAI/bicameral#108` spec correctness. Repo-side code changes
+only; the external `gh` actions (#135 close, #108 body edit) defer to
+post-merge per normal repo flow.
+
+**Files modified**:
+- `pilot/mcp/assets/dashboard.html` — `renderStateCell()` (lines 447–465).
+  Replaced inline ternary at line 455 with explicit `if`/`else if` over
+  `d.status` to support a `pending` branch alongside the existing
+  `drifted` branch. New `pending` tooltip text:
+  *"Pending compliance — run /bicameral-sync in your Claude Code
+  session to resolve."* Static literal — no `esc()` needed (tooltip
+  text contains no HTML special chars).
+- `pilot/mcp/skills/bicameral-dashboard/SKILL.md` — added one bullet
+  under **Notes** documenting the tooltip nudge contract. Per the
+  `pilot/mcp/CLAUDE.md` "tool changes ship with skill updates" rule
+  (the skill's user-facing behavior changed; the underlying
+  `bicameral.dashboard` tool's response shape did not).
+
+**Files NOT modified (deferred to post-merge or separate PRs)**:
+- External: `gh issue close BicameralAI/bicameral-mcp#135` with
+  scope-cut comment (executes after PR merge).
+- External: `gh issue edit BicameralAI/bicameral#108` body — Flow 3
+  out-of-session committer paragraph + Flow 1 step 3 wording fix
+  (executes after PR merge).
+- `sim_issue_108_flows.py` — separate follow-up PR after this triage
+  lands on `dev`.
+
+**Plan additions baked in (per Entry #24 audit preconditions)**:
+1. ✅ SKILL.md tooltip note added (precondition #2).
+2. 🟡 PR description manual verification step (precondition #1) —
+   composed in `/qor-document` phase, included in PR body.
+3. 🟡 #135 close comment README/docs deferral status (precondition #3)
+   — composed in `/qor-document` phase, included with `gh issue close`.
+
+The two 🟡 items are scheduled for the next phase; the audit gate
+required them as PRECONDITIONS for IMPLEMENTATION, which they are
+(both will be present before the PR is published, just not authored
+in this phase).
+
+**Section 4 Razor (final check)**:
+
+| Function | LOC | Cap | Status |
+|---|---|---|---|
+| `renderStateCell` (post-change) | 19 | 40 | OK (was 13; +6 for if/else if) |
+| Nesting depth | 1 | 3 | OK |
+| Nested ternaries | 0 | 0 | OK (replaced ternary with if/else if) |
+
+File-level: `dashboard.html` is 786 lines (was 781), HTML+CSS+JS bundle —
+delta-only evaluated per Entry #24 audit pass. `SKILL.md` is 43 lines.
+
+**Test verification**:
+- No automated test added for the UI delta. Justified per Entry #24
+  audit `Test Functionality Audit`: `dashboard.html` has zero existing
+  automated tests; UI test infrastructure absent; manual verification
+  step in PR description is the agreed mitigation.
+- Section 4 razor: clean.
+- No `console.log` artifacts introduced.
+- Existing test suite unaffected (no Python/server code touched).
+
+**Artifact hashes**:
+- `pilot/mcp/assets/dashboard.html` — `49b39db88f2966ea6908c8703ef15f4339a8cd1bfdfab6930bc22d9fd80eae06`
+- `pilot/mcp/skills/bicameral-dashboard/SKILL.md` — `152c20032c860e4c58a4e5e44f8e4958e804e7c3ecf3c59d41e7b321a426ea17`
+- `.agent/staging/AUDIT_REPORT.md` — `8c2e5d472538d2a6cfc1433ecdf156ef402cdc3e9c081b2fd6d0785953655327`
+
+**Content hash** (sorted-concat of all 3 artifact hashes):
+`SHA256(sorted(hashes))` = `38c5c939dd4c65cfa31462f8d4d23f83152a27c1ece3964f8a6b6ea8c53b8b5b`
+
+**Previous hash**: `1de1fac7926e9f75967b3b7d0c215984d9b3cf6d72e219bb881c80f1e6ac5536` (Entry #24, #135-triage Audit PASS)
+
+**Chain hash**:
+SHA256(content_hash + previous_hash) = `51c8a45ca31cf1aa5830ea0251e73632037dac3af7af3bab90becf6a6ca6aad0`
+
+**Capability shortfalls** (pre-existing, match Entries #23 + #24):
+- `qor/scripts/` runtime helpers absent — gate-chain artifact at
+  `.qor/gates/<sid>/implement.json` not written.
+- `qor/reliability/intent_lock` absent — Step 5.5 intent-lock capture
+  skipped.
+- `agent-teams` capability not declared — sequential mode.
+
+**Decision**: IMPLEMENTATION complete. Reality matches audited blueprint.
+
+**Next required action**: `/qor-substantiate` (Judge re-verifies implementation
+against blueprint and seals the session) → then `/qor-document` (PR
+description authoring with manual verification step + #135 close
+comment composition) → `gh pr create` targeting `BicameralAI/dev`.
+
+---
+
+### Entry #26: SUBSTANTIATION SEAL
+
+**Timestamp**: 2026-04-30T22:10:00Z
+**Phase**: SUBSTANTIATE
+**Author**: Judge (executed via `/ql-substantiate`)
+**Risk Grade**: L1 (inherited)
+**Verdict**: PASS — Reality matches Promise; session sealed.
+**Mode**: solo (codex-plugin shortfall logged)
+
+**Substantiation evidence**:
+- ✅ Step 2 — AUDIT_REPORT verdict PASS (Entry #24, hash `1de1fac7`)
+- ✅ Step 2.5 — Version validation N/A (triage PR, no version bump per
+  DEV_CYCLE.md §10.5.0; aggregates into next release cut)
+- ✅ Step 3 — Reality audit clean: 3 planned changes present
+  (`assets/dashboard.html` tooltip, `skills/bicameral-dashboard/SKILL.md`
+  note, `docs/META_LEDGER.md` entries); no MISSING; no UNPLANNED in
+  staged diff
+- ⚠️ Step 3.5 — One open Security Blocker `[S1]` (no `SECURITY.md`
+  in repo root) is pre-existing, unrelated to this triage; advisory
+  only, does not block seal
+- ✅ Step 4 — Functional verification: no console.log artifacts in
+  staged diff; no automated test added (acknowledged advisory per
+  Entry #24 audit; mitigation = manual verification step in PR body)
+- ✅ Step 4.5 — Skill file integrity: `bicameral-dashboard/SKILL.md`
+  modification is additive (one bullet under Notes); structure intact
+- ⏭️ Steps 4.6/4.7/4.8 — Deferred (no `tools/reliability/` scripts)
+- ✅ Step 5 — Section 4 razor: clean (`renderStateCell` 19 LOC ≤ 40,
+  nesting 1 ≤ 3, nested ternaries 0; replaced ternary with if/else if)
+
+**Artifact hashes** (same as Entry #25 IMPL; content unchanged at seal time):
+- `pilot/mcp/assets/dashboard.html` — `49b39db88f2966ea6908c8703ef15f4339a8cd1bfdfab6930bc22d9fd80eae06`
+- `pilot/mcp/skills/bicameral-dashboard/SKILL.md` — `152c20032c860e4c58a4e5e44f8e4958e804e7c3ecf3c59d41e7b321a426ea17`
+- `.agent/staging/AUDIT_REPORT.md` — `8c2e5d472538d2a6cfc1433ecdf156ef402cdc3e9c081b2fd6d0785953655327`
+
+**Content hash** (sorted-concat of all 3): `38c5c939dd4c65cfa31462f8d4d23f83152a27c1ece3964f8a6b6ea8c53b8b5b`
+
+**Previous hash**: `51c8a45ca31cf1aa5830ea0251e73632037dac3af7af3bab90becf6a6ca6aad0` (Entry #25 IMPL)
+
+**Merkle seal**:
+SHA256(content_hash + previous_hash) = **`efd0304b2f0e0b3ca28aa4620c2b8ea2eda5ab9e2828ca852ab9f3c5adda6eb5`**
+
+**Capability shortfalls** (carried, no regression):
+- `qor/scripts/` runtime helpers absent — gate-chain artifact at
+  `.qor/gates/<sid>/substantiate.json` not written
+- `tools/reliability/` validators absent — Steps 4.6–4.8 skipped
+- `agent-teams` not declared — sequential mode
+- `codex-plugin` not declared — solo seal, no adversarial pass
+
+**Plan addition tracking** (Entry #24 preconditions, final state):
+- ✅ #2 — SKILL.md tooltip note (delivered in IMPL, sealed here)
+- 🟡 #1 — PR description manual verification step (composed in
+  `/qor-document`, included in PR body before merge)
+- 🟡 #3 — #135 close comment README/docs deferral status (composed
+  in `/qor-document`, included with `gh issue close` post-merge)
+
+The two 🟡 items are scheduled for `/qor-document`; both will be
+present before the PR is published. The seal is valid because the
+audit's preconditions explicitly accepted them as
+`/qor-document`-phase deliverables, not implementation artifacts.
+
+**Surfaced for follow-up** (carried from Entry #24):
+- `bicameral-mcp#125` scope should be widened — 7 skills (not 5 as
+  initially counted) live only under `pilot/mcp/.claude/skills/`
+  (`bicameral-context-sentry`, `bicameral-capture-corrections`,
+  `bicameral-brief`, `bicameral-doctor`, `bicameral-guided`,
+  `bicameral-scan-branch`, `bicameral-search`, `bicameral-status`).
+  `pilot/mcp/CLAUDE.md`'s "single canonical location" claim does not
+  match disk reality.
+
+**Decision**: **PASS, sealed**. Triage gate-cleared for PR.
+
+**Next required action**: `/qor-document` for PR description authoring
+(must include manual verification step + #135 close comment composition)
+→ `git commit` on `triage/135-dashboard-tooltip-scope-cut` →
+`git push -u origin triage/135-dashboard-tooltip-scope-cut` →
+`gh pr create` targeting `BicameralAI/dev`.
+
+Post-merge external actions (deferred to `/qor-document`):
+- `gh issue close BicameralAI/bicameral-mcp#135 --comment "..."`
+- `gh issue edit BicameralAI/bicameral#108 --body-file -`
+
+---
+*Chain integrity: VALID (26 entries on this branch)*
+*Genesis: `29dfd085` → ... → #124 SEAL: `950f362c` → #135-triage Audit (PASS): `1de1fac7` → #135-triage IMPL: `51c8a45c` → #135-triage SEAL: `efd0304b`*
+*Next required action: `/qor-document` → topic-branch commit + push + PR to `BicameralAI/dev`*
