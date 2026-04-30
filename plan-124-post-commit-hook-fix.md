@@ -6,6 +6,14 @@
 **Risk grade**: L2 — touches user-facing CLI surface and an installed shell hook script. Affects every Guided-mode user since the hook was added.
 **Change class**: bug-fix (hotfix-shaped — restores advertised behavior).
 
+## v1 → v2 audit remediation
+
+| Audit finding (v1, META_LEDGER #20, chain `ef9a536f`) | Severity | Remediation in v2 |
+|---|---|---|
+| F-1: `cli_main` razor — function would grow to 120 LOC (3x over 40-LOC cap); plan deferred split as mid-implement watchpoint | BLOCKING | Added **Phase 0a** that decomposes `cli_main` into `cli_main` (≤10) + `_register_subparsers` (≤30) + `_dispatch` (≤25) before Phase 1. Razor watchpoint language removed; pre-check table updated with explicit per-helper LOC. |
+| F-2: `/tmp/bicameral-hook.err` predictable path — symlink-attack vector + shared-system race | NON-BLOCKING | Replaced with `${HOME}/.bicameral/hook-errors.log`. Aligns with existing `.bicameral/` convention. Added rationale paragraph documenting the OWASP A01/A05 hazard of `/tmp/`. |
+| F-3: Phase 2 should explicitly state `>` truncation semantics | NON-BLOCKING | Added explicit paragraph in Phase 2 describing the truncate-on-open semantics and how it self-clears stale errors on successful commits. |
+
 ---
 
 ## Open Questions
@@ -66,6 +74,83 @@ Two options:
 - `tests/test_setup_pre_push_hook.py` (#48, 92 LOC, 5 tests) is the pattern reference for hook-script installer tests.
 
 **Anti-finding**: `qor/scripts/`, `qor/reliability/`, `pilot/mcp/skills/` all do not exist on dev (verified via `ls -d`). No plan reference will assume their presence.
+
+---
+
+## Phase 0a: Decompose `cli_main` for razor compliance
+
+TDD-light: existing CLI tests (e.g. `test_branch_scan_cli.py`) prove dispatch correctness. This is a refactor under existing coverage.
+
+### Affected files
+
+- `server.py` — **modify**, –75 LOC entry function / +60 LOC across two helpers. Net file change ~–15 LOC (removal of duplicate parser definitions consolidates).
+
+### Why
+
+`server.py:cli_main` currently spans 92 LOC (lines 1357–1448 on `dev` tip `8f0253d`), 2.3x over the 40-LOC entry-function razor cap. Adding the `link_commit` subparser in Phase 1 would push it to ~120 LOC (3x over cap). Split now, before Phase 1's addition lands, so the function is in a maintainable shape for both this PR and the next subcommand addition.
+
+### Decomposition
+
+```python
+def cli_main(argv: list[str] | None = None) -> int:
+    """Entry point. ≤ 10 LOC orchestrator."""
+    parser = ArgumentParser(description="Bicameral MCP server")
+    subparsers = parser.add_subparsers(dest="command")
+    _register_subparsers(parser, subparsers)
+    args = parser.parse_args(argv)
+    return _dispatch(args)
+
+
+def _register_subparsers(parser: ArgumentParser, subparsers) -> None:
+    """Wire all subparser definitions + top-level flags. ≤ 30 LOC."""
+    subparsers.add_parser("config", help="...")
+    subparsers.add_parser("reset", help="...")
+    setup_parser = subparsers.add_parser("setup", help="...")
+    setup_parser.add_argument("repo_path", nargs="?", default=None, help="...")
+    setup_parser.add_argument("--history-path", default=None, metavar="PATH", help="...")
+    setup_parser.add_argument("--with-push-hook", action="store_true", help="...")
+    subparsers.add_parser("branch-scan", help="...")
+    parser.add_argument("--smoke-test", action="store_true", help="...")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {SERVER_VERSION}")
+
+
+def _dispatch(args) -> int:
+    """Dispatch parsed args to handler. ≤ 25 LOC."""
+    if args.command == "config":
+        from setup_wizard import run_config_wizard
+        return run_config_wizard()
+    if args.command == "reset":
+        from setup_wizard import run_reset_wizard
+        return run_reset_wizard()
+    if args.command == "setup":
+        from setup_wizard import run_setup
+        return run_setup(args.repo_path, args.history_path, with_push_hook=args.with_push_hook)
+    if args.command == "branch-scan":
+        from cli.branch_scan import main as branch_scan_main
+        return branch_scan_main([])
+    if args.smoke_test:
+        result = asyncio.run(run_smoke_test())
+        print(f"{result['server_name']} {result['server_version']} smoke test passed")
+        for tool_name in result["tool_names"]:
+            print(tool_name)
+        return 0
+    asyncio.run(serve_stdio())
+    return 0
+```
+
+### Razor
+
+| Function | Target LOC | Cap | OK? |
+|---|---|---|---|
+| `cli_main` | ≤ 10 | 40 | yes |
+| `_register_subparsers` | ≤ 30 | 40 | yes |
+| `_dispatch` | ≤ 25 | 40 | yes |
+
+After Phase 0a, Phase 1 adds **one line** to `_register_subparsers` and **three lines** to `_dispatch`. Both helpers stay well under the cap permanently.
+
+### Test coverage
+
+Existing CLI tests (`test_branch_scan_cli.py`, the smoke-test path, any `test_setup_*` tests that exercise argparse) prove dispatch correctness. No new tests for this phase — pure refactor under existing coverage.
 
 ---
 
@@ -275,14 +360,25 @@ Helper: `_extract_bicameral_mcp_commands(hook_script: str) -> set[str]` — rege
 [ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>&1 || true
 
 # Line 442 AFTER:
-[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>/tmp/bicameral-hook.err
-[ -s /tmp/bicameral-hook.err ] && echo "bicameral-mcp post-commit hook failed; see /tmp/bicameral-hook.err" >&2
+[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>"${HOME}/.bicameral/hook-errors.log"
+[ -s "${HOME}/.bicameral/hook-errors.log" ] && echo "bicameral-mcp post-commit hook failed; see ${HOME}/.bicameral/hook-errors.log" >&2
 exit 0  # never block the commit
 ```
 
-Stderr is captured to a temp file so the user sees a one-line summary on the next commit, but the commit itself never blocks. The temp file is overwritten each commit (no log accumulation).
+Stderr is captured to `${HOME}/.bicameral/hook-errors.log` so the user sees a one-line summary in the same commit, but the commit itself never blocks.
+
+**On error-file overwrite semantics**: the `>` redirection in `2>"${HOME}/.bicameral/hook-errors.log"` truncates the file on every hook run. Successful commits (where `link_commit` produces no stderr) clear the file via the truncate-on-open semantics — even if a previous commit failed and left content in the log, the next successful one wipes it. The `[ -s ... ]` check then sees an empty file and stays silent. No log accumulation across commits.
+
+**On the location choice (`${HOME}/.bicameral/` vs `/tmp/`)**:
+
+- User-controlled location, no shared-system race condition (multiple developer accounts on the same shared host don't collide on `/tmp/bicameral-hook.err`).
+- No symlink-attack vector (`/tmp/` is a sticky-bit directory writable by all users; a malicious co-tenant could pre-create a symlink at the predictable path that the hook would clobber when redirecting). Per OWASP A01/A05 — limited blast radius (user already owns the files they could clobber via this vector), but standard Bash anti-pattern worth avoiding.
+- Aligns with existing `.bicameral/` convention — the hook already gates on `[ -d .bicameral ]` (the per-repo dir); placing the error log in `${HOME}/.bicameral/` (the user's global config dir, which is the SurrealKV ledger location) is the same convention scaled up.
+- Persists across reboot (better debugging signal — `/tmp/` may be cleared on session reset).
 
 **Alternative considered, rejected**: piping stderr directly to `>&2` from inside the `&&` chain. Rejected because shell semantics around redirecting to multiple destinations across `&&` boundaries vary subtly between dash, bash, zsh — capturing to a file then re-reading is portable.
+
+**Alternative considered, rejected**: `mktemp`-generated unique-per-run path. Rejected because the file would accumulate across commits (no truncation semantics) and would clutter `/tmp/`. Single fixed path with `>` truncation is simpler and sufficient for the use case.
 
 ### Razor
 
@@ -347,7 +443,10 @@ mypy cli/_link_commit_runner.py cli/link_commit_cli.py
 |---|---|---|---|
 | `cli/_link_commit_runner.py` | ~30 LOC | ≤ 250 | yes |
 | `cli/link_commit_cli.py` | ~35 LOC | ≤ 250 | yes |
-| `server.py` (delta only) | +28 LOC | ≤ 250 (file already much larger; razor on `cli_main` function specifically) | yes — `cli_main` was ~90 LOC before; +28 = ~118 LOC. **Splits into helpers if it crosses 40-LOC entry-function cap on the `cli_main` body itself.** Mid-implement check required. |
+| `server.py` (delta — Phase 0a + Phase 1 combined) | net –15 LOC | ≤ 250 (file-level) | yes |
+| `cli_main` (post-Phase-0a) | ≤ 10 LOC | 40 | yes |
+| `_register_subparsers` (Phase 0a) | ≤ 30 LOC | 40 | yes (one-line growth in Phase 1) |
+| `_dispatch` (Phase 0a) | ≤ 25 LOC | 40 | yes (three-line growth in Phase 1) |
 | `setup_wizard.py` (delta only) | +3 LOC | n/a (constant string) | yes |
 | `tests/test_link_commit_cli.py` | ~80 LOC | ≤ 250 | yes |
 | `tests/test_hook_command_registration.py` | ~50 LOC | ≤ 250 | yes |
@@ -355,7 +454,7 @@ mypy cli/_link_commit_runner.py cli/link_commit_cli.py
 
 **Function-level**: every new function ≤ 25 LOC entry / ≤ 20 LOC helpers / nesting ≤ 2 / no nested ternaries.
 
-**Mid-implement watchpoint**: `cli_main` is now an orchestrator function that's getting close to the 40-LOC entry-function cap. If adding the `link_commit` subparser pushes it over, **split it**: factor each subparser into a `_register_<cmd>_parser(subparsers)` helper + a `_dispatch(args)` function. Refactor pre-emptively if the integrated count exceeds 35 LOC.
+**Razor remediation upfront, not contingent**: Phase 0a explicitly decomposes `cli_main` into `cli_main` + `_register_subparsers` + `_dispatch` before Phase 1 adds the new subcommand. After Phase 0a all three are well under the 40-LOC cap; Phase 1's additions are one line to `_register_subparsers` and three to `_dispatch`. No mid-implement contingency required.
 
 ---
 
