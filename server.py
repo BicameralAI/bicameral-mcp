@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from argparse import ArgumentParser
+from typing import Any
 
 import mcp.server.stdio
 from mcp.server import Server
@@ -1129,22 +1130,31 @@ async def serve_stdio() -> None:
 
 
 def cli_main(argv: list[str] | None = None) -> int:
+    """Entry point — build parser, register subcommands via _register_subparsers, dispatch via _dispatch."""
     parser = ArgumentParser(description="Bicameral MCP server")
     subparsers = parser.add_subparsers(dest="command")
+    _register_subparsers(parser, subparsers)
+    args = parser.parse_args(argv)
+    return _dispatch(args)
 
-    # config subcommand
+
+def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
+    """Wire all subparser definitions + top-level flags onto parser.
+
+    triage-adapt: omits dev's branch-scan subparser and the setup
+    --with-push-hook flag — both are #48 prerequisites that aren't on
+    this branch. Keeps dev's link_commit subparser (the actual #124 fix)
+    and the helper-extraction shape (so test_hook_command_registration.py
+    can introspect registered subcommands).
+    """
     subparsers.add_parser(
         "config",
         help="interactive config editor — update mode, guided, and telemetry settings",
     )
-
-    # reset subcommand
     subparsers.add_parser(
         "reset",
         help="interactive ledger reset — wipes state with confirmation",
     )
-
-    # setup subcommand
     setup_parser = subparsers.add_parser(
         "setup",
         help="interactive setup — configure MCP client to use this server",
@@ -1161,7 +1171,21 @@ def cli_main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="separate directory for .bicameral/ history storage (default: same as repo)",
     )
-
+    link_parser = subparsers.add_parser(
+        "link_commit",
+        help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
+    )
+    link_parser.add_argument(
+        "commit_hash",
+        nargs="?",
+        default="HEAD",
+        help="commit hash to link (default: HEAD)",
+    )
+    link_parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="suppress JSON output (still exits 0 on success)",
+    )
     parser.add_argument(
         "--smoke-test",
         action="store_true",
@@ -1172,27 +1196,31 @@ def cli_main(argv: list[str] | None = None) -> int:
         action="version",
         version=f"%(prog)s {SERVER_VERSION}",
     )
-    args = parser.parse_args(argv)
 
+
+def _dispatch(args: Any) -> int:
+    """Route parsed args to the appropriate handler. Returns exit code."""
     if args.command == "config":
         from setup_wizard import run_config_wizard
         return run_config_wizard()
-
     if args.command == "reset":
         from setup_wizard import run_reset_wizard
         return run_reset_wizard()
-
     if args.command == "setup":
         from setup_wizard import run_setup
         return run_setup(args.repo_path, args.history_path)
-
+    # triage-adapt: link_commit dispatch — added per #124 backport without
+    # the broader _register_subparsers/_dispatch refactor or the branch-scan
+    # / --with-push-hook prerequisites
+    if args.command == "link_commit":
+        from cli.link_commit_cli import main as link_commit_main
+        return link_commit_main(args.commit_hash, quiet=args.quiet)
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
         for tool_name in result["tool_names"]:
             print(tool_name)
         return 0
-
     asyncio.run(serve_stdio())
     return 0
 
