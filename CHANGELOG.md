@@ -3,51 +3,70 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## v0.14.0 — Local-only telemetry counters + usage summary + first-boot consent — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+## v0.13.5 — Triage: post-commit hook fix + event vocabulary + carry-forward bug fixes — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
-Privacy-first observability foundation. Adds a local-only counter sink
-that runs alongside (not replacing) the existing network relay, a new
-`bicameral.usage_summary` MCP tool that aggregates ledger and counter
-state into actionable percentages, and a non-blocking first-boot notice
-so users upgrading to this binary see the telemetry policy before any
-data flows.
+Triage release per [DEV_CYCLE.md §10.5](DEV_CYCLE.md). Restores Guided-mode
+post-commit hook behavior (#124) and ships event vocabulary extension for
+cross-author replay (#97), alongside earlier carry-forward fixes (#74
+Windows ingest, #95 telemetry counters + first-boot consent, #98 RFC docs).
+Full triage provenance and §10.5.3 adaptation notes in
+[PR #128](https://github.com/BicameralAI/bicameral-mcp/pull/128).
+
+### Fixed
+
+- **Post-commit hook silent no-op** (#124) — the hook installed by
+  `bicameral-mcp setup` (Guided mode) called `bicameral-mcp link_commit
+  HEAD`, but `link_commit` was never registered as a CLI subcommand. Every
+  commit since the hook was added silently failed. This release registers
+  the subcommand and hardens the hook to write stderr to
+  `${HOME}/.bicameral/hook-errors.log` and surface a one-line summary.
+  Architectural caveat: `link_commit` syncs ledger state but does NOT
+  auto-resolve drift — pending-compliance indicators still need
+  `resolve_compliance` to clear them.
+- **Windows ingest crash** (#74) — `events/writer.py` top-level
+  `import fcntl` blocked all ingest-using tests on Windows. Cross-platform
+  shim (POSIX fcntl + Windows msvcrt) lands here.
 
 ### Added
 
-- **`local_counters.py`** (#39) — append-only JSONL sink at
+- **Event vocabulary extension** (#97) — adds `decision_ratified` and
+  `decision_superseded` event types to the JSONL + materializer pipeline,
+  with `canonical_id` (UUIDv5) for cross-author replay. Foundation work for
+  the event-sourced ledger RFC tracked in #97.
+- **Local-only telemetry counters** (#95) — append-only JSONL sink at
   `~/.bicameral/counters.jsonl`. Records only `{tool_name, delta=1, ts}`
   per call. Mode `0o600` on POSIX; thread-safe; no network egress.
-  Always-on regardless of network telemetry consent — counters are
-  local introspection, distinct from the relay. Kill-switch:
+  Always-on regardless of network telemetry consent — counters are local
+  introspection, distinct from the relay. Kill-switch:
   `BICAMERAL_LOCAL_COUNTERS=0`. API: `increment(tool_name)` and
   `read_counters() -> dict[str, int]`.
-- **`consent.py`** (#39) — owns `~/.bicameral/consent.json`,
-  `telemetry_allowed()` predicate, and `notify_if_first_run()`. Marker
-  shape: `{telemetry, policy_version, acknowledged_at, acknowledged_via}`
-  with `acknowledged_via` distinguishing `"wizard"` (explicit choice)
-  from `"first_boot_notice"` (passive ack). `POLICY_VERSION` constant
-  re-fires the notice for everyone once when telemetry policy changes.
-- **`bicameral.usage_summary`** MCP tool (#42) — aggregate readout over
-  the last N days (default 7). Returns ingest/bind call counts (from
-  the local counters file), decision counts by status (from ledger),
-  reflected/drift percentages, cosmetic-drift percentage (from
-  compliance_check verdicts), and error rate. Privacy-preserving:
-  aggregate counts and floats only.
-- **First-boot consent notice** — non-blocking, fires once per
+- **First-boot consent flow** (#95) — `consent.py` owns
+  `~/.bicameral/consent.json`, `telemetry_allowed()` predicate, and
+  `notify_if_first_run()`. Marker shape: `{telemetry, policy_version,
+  acknowledged_at, acknowledged_via}` with `acknowledged_via`
+  distinguishing `"wizard"` (explicit choice) from `"first_boot_notice"`
+  (passive ack). `POLICY_VERSION` re-fires the notice for everyone once
+  when telemetry policy changes. Notice is non-blocking: fires once per
   `policy_version` via stderr (always) and MCP `notifications/message`
-  (when an active session is available). Server keeps running; if
-  marker write fails, notice is logged at debug and the server
-  continues. Test escape hatch: `BICAMERAL_SKIP_CONSENT_NOTICE=1`.
+  (when an active session is available). Test escape hatch:
+  `BICAMERAL_SKIP_CONSENT_NOTICE=1`.
+- **`bicameral.usage_summary`** MCP tool (#95) — aggregate readout over
+  the last N days (default 7). Returns ingest/bind call counts (from the
+  local counters file), decision counts by status (from ledger),
+  reflected/drift percentages, cosmetic-drift percentage (from
+  `compliance_check` verdicts), and error rate. Privacy-preserving:
+  aggregate counts and floats only.
+- **Event-sourced ledger RFC** (#98) — backlog entry tracking #97.
 
 ### Changed
 
-- **`telemetry.send_event` now uses `consent.telemetry_allowed()`** as
-  the single gating predicate. Behavior preserved for users without a
-  marker (default-on); newly opted-out users (marker says `disabled`
-  via the wizard) suppress the relay even when env var is unset.
+- **`telemetry.send_event` now uses `consent.telemetry_allowed()`** as the
+  single gating predicate. Behavior preserved for users without a marker
+  (default-on); newly opted-out users (marker says `disabled` via the
+  wizard) suppress the relay even when env var is unset.
 - **`telemetry.send_event` always increments the local counter** before
-  the relay path — never raises, wrapped in try/except. Counter
-  failure cannot affect the caller; relay path runs independently.
+  the relay path — never raises, wrapped in try/except. Counter failure
+  cannot affect the caller; relay path runs independently.
 - **`setup_wizard._select_telemetry`** now calls
   `consent.write_consent(via="wizard")` after the user's choice. Hard
   fails (raises `OSError`) if the marker cannot be written — guarantees
@@ -56,18 +75,26 @@ data flows.
   during startup. Wrapped in try/except — startup is never blocked by
   notice machinery.
 
+### Breaking changes
+
+None in the API/data sense. The post-commit hook in #124 newly surfaces
+failures on stderr (was silent); observable behavior change for users who
+had silent failures, but no API/data change. Existing installs that had
+been silently failing will start surfacing errors — interpret these as the
+system telling you something was already broken, not a new regression.
+
 ### CI
 
 - `BICAMERAL_SKIP_CONSENT_NOTICE: "1"` added to the test job env in
   `.github/workflows/test-mcp-regression.yml` so test runs do not emit
   notices into job logs.
-- `tests/conftest.py` adds a session-scoped autouse fixture that
-  reroutes `~/.bicameral/` to a per-session tmp dir and sets the skip
-  env var. Stdlib only — no third-party fixture plugin.
+- `tests/conftest.py` adds a session-scoped autouse fixture that reroutes
+  `~/.bicameral/` to a per-session tmp dir. Stdlib only — no third-party
+  fixture plugin.
 
 ### Closes
 
-#39, #42.
+#74, #95, #97, #98, #124.
 
 ---
 
