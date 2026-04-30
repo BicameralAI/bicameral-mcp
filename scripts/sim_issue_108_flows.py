@@ -8,7 +8,7 @@ bicameral-mcp implementation:
   Flow 2  — Begin to write code (preflight)
   Flow 3  — Commit code → compliance verdict → "reflected"  (incl. out-of-session committer case)
   Flow 3a — Feature branch nuance (ephemeral bind)
-  Flow 4  — End a coding session  (server-side: source="conversation" ingest)
+  Flow 4  — End a coding session  (server-side: source="agent_session" ingest)
   Flow 5  — Review what's been tracked  (history axes)
 
 Each flow asserts the spec invariants and reports PASS/FAIL.
@@ -91,9 +91,7 @@ def commit_file(repo: str, relpath: str, content: str, message: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
     subprocess.run(["git", "add", relpath], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True)
 
 
 # ── Flow 1: Record decisions from a meeting ────────────────────────────
@@ -359,7 +357,11 @@ async def flow_3_commit_to_reflected() -> None:
         )
         bind_ok = bind_r.bindings and not bind_r.bindings[0].error
         if not bind_ok:
-            section("Flow 3", "FAIL", f"bind failed: {bind_r.bindings[0].error if bind_r.bindings else '?'}")
+            section(
+                "Flow 3",
+                "FAIL",
+                f"bind failed: {bind_r.bindings[0].error if bind_r.bindings else '?'}",
+            )
             return
 
         # Out-of-session committer simulation: modify file, commit, detect_drift
@@ -397,17 +399,11 @@ async def flow_3_commit_to_reflected() -> None:
             for c in pending_checks
         ]
         if verdicts:
-            await handle_resolve_compliance(
-                ctx, phase="drift", verdicts=verdicts, flow_id=flow_id
-            )
+            await handle_resolve_compliance(ctx, phase="drift", verdicts=verdicts, flow_id=flow_id)
 
         status_after = await project_decision_status(inner._client, decision_id)
 
-        passed = (
-            out_of_session_state_correct
-            and bool(flow_id)
-            and status_after == "reflected"
-        )
+        passed = out_of_session_state_correct and bool(flow_id) and status_after == "reflected"
 
         body = (
             f"Pre-resolve (out-of-session committer state):\n"
@@ -442,7 +438,9 @@ async def flow_3a_ephemeral_branch() -> None:
     commit_file(tmpdir, "feat.py", "def feature():\n    return 'main'\n", "init")
 
     # Create feature branch
-    subprocess.run(["git", "checkout", "-b", "feature/x"], cwd=tmpdir, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "checkout", "-b", "feature/x"], cwd=tmpdir, check=True, capture_output=True
+    )
     commit_file(tmpdir, "feat.py", "def feature():\n    return 'branch'\n", "feat: branch impl")
 
     try:
@@ -496,7 +494,12 @@ async def flow_3a_ephemeral_branch() -> None:
 
         # Force fresh sync sweep: handle_bind doesn't invalidate the sync cache,
         # so we add a noop commit between bind and detect_drift (same pattern as Run 8/11).
-        commit_file(tmpdir, "feat.py", "def feature():\n    return 'branch'\n# noop touch\n", "noop: trigger sync")
+        commit_file(
+            tmpdir,
+            "feat.py",
+            "def feature():\n    return 'branch'\n# noop touch\n",
+            "noop: trigger sync",
+        )
 
         # detect_drift on branch → resolve compliant → status=reflected ephemeral=True
         drift_r = await handle_detect_drift(ctx, file_path="feat.py")
@@ -518,9 +521,7 @@ async def flow_3a_ephemeral_branch() -> None:
                 }
                 for c in pending_checks
             ]
-            await handle_resolve_compliance(
-                ctx, phase="drift", verdicts=verdicts, flow_id=flow_id
-            )
+            await handle_resolve_compliance(ctx, phase="drift", verdicts=verdicts, flow_id=flow_id)
 
         inner = getattr(ctx.ledger, "_inner", ctx.ledger)
         status_on_branch = await project_decision_status(inner._client, did)
@@ -732,9 +733,7 @@ async def flow_5_history_axes() -> None:
         }
 
         all_have_status = all(d.status in valid_status for d in all_decisions)
-        all_have_signoff = all(
-            (d.signoff_state in valid_signoff) for d in all_decisions
-        )
+        all_have_signoff = all((d.signoff_state in valid_signoff) for d in all_decisions)
         feature_count = len(hist.features)
 
         # Verify the orthogonalization: the ratified decision should show
@@ -747,17 +746,16 @@ async def flow_5_history_axes() -> None:
         )
 
         passed = (
-            feature_count >= 2
-            and all_have_status
-            and all_have_signoff
-            and ratified_axes_correct
+            feature_count >= 2 and all_have_status and all_have_signoff and ratified_axes_correct
         )
 
         body = f"Feature groups: {feature_count}\n\n"
         for fg in hist.features:
             body += f"  [{fg.name}] — {len(fg.decisions)} decision(s)\n"
             for d in fg.decisions:
-                body += f"    status={d.status}  signoff_state={d.signoff_state}  '{d.summary[:50]}'\n"
+                body += (
+                    f"    status={d.status}  signoff_state={d.signoff_state}  '{d.summary[:50]}'\n"
+                )
 
         body += (
             f"\nSpec invariant — orthogonal axes:\n"
