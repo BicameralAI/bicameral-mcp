@@ -1,0 +1,110 @@
+name: v0 user flow e2e
+
+# End-to-end validation of BicameralAI/bicameral#108's six canonical user
+# flows via real Claude Code CLI sessions with bicameral-mcp registered.
+# See tests/e2e/README.md for the design.
+#
+# Note: when this workflow file lands, it will not run on the PR that
+# adds it — pull_request workflows execute the version on the base
+# branch (main). First execution is on the next qualifying PR after merge.
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'tests/e2e/**'
+      - 'handlers/**'
+      - 'ledger/**'
+      - 'contracts.py'
+      - 'skills/bicameral-**'
+      - 'server.py'
+      - 'pyproject.toml'
+      - '.github/workflows/v0-user-flow-e2e.yml'
+  workflow_dispatch:  # allow manual trigger for debugging
+
+env:
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '20'
+  # Pinned commit of github.com/desktop/desktop. Bump when the roadmap.md
+  # shape drifts in ways that break prompts, or when bind targets change.
+  DESKTOP_PINNED_COMMIT: 'e6c50fb028171e9cec03594273c8116bb135847e'
+
+jobs:
+  v0-user-flow-e2e:
+    name: v0 User Flow E2E (Claude Code CLI session)
+    runs-on: ubuntu-latest
+    # production environment provides CLAUDE_CODE_OAUTH_TOKEN for the
+    # Claude Code CLI sessions.
+    environment: production
+    timeout-minutes: 25
+    env:
+      DESKTOP_REPO_PATH: /tmp/desktop-clone
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup Node.js (for Claude Code CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install bicameral-mcp + test deps
+        run: pip install -e ".[test]"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Verify CLI tooling on PATH
+        run: |
+          which claude && claude --version
+          which bicameral-mcp
+
+      # ── Test fixture: github.com/desktop/desktop at a pinned commit ─
+      - name: Clone desktop/desktop at pinned commit
+        run: |
+          mkdir -p ${{ env.DESKTOP_REPO_PATH }}
+          cd ${{ env.DESKTOP_REPO_PATH }}
+          git init -q
+          git remote add origin https://github.com/desktop/desktop
+          git fetch --depth 1 origin "${DESKTOP_PINNED_COMMIT}"
+          git checkout FETCH_HEAD
+          # Stamp a real 'main' branch so flows that branch off it work
+          git checkout -b main
+          git config user.email ci@bicameral.test
+          git config user.name CI
+          # Sanity: required files present
+          test -f docs/process/roadmap.md
+          test -f app/src/lib/git/cherry-pick.ts
+
+      # ── Diagnostic probe: confirm OAuth token is non-empty without leaking it ─
+      - name: Claude Code OAuth token visibility probe
+        run: |
+          set +e
+          if [ -n "${CLAUDE_CODE_OAUTH_TOKEN}" ]; then
+            echo "CLAUDE_CODE_OAUTH_TOKEN: present (length=${#CLAUDE_CODE_OAUTH_TOKEN})"
+          else
+            echo "CLAUDE_CODE_OAUTH_TOKEN: EMPTY or UNSET"
+            echo "  secret expression non-empty: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}"
+            exit 1
+          fi
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+
+      # ── Drive the five flows through Claude Code CLI sessions ─
+      - name: Run v0 user flow e2e
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: python tests/e2e/run_e2e_flows.py
+
+      # ── Forensics: keep transcripts even on failure ─
+      - name: Upload e2e transcripts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0-user-flow-e2e-transcripts
+          path: test-results/e2e/
+          retention-days: 30
