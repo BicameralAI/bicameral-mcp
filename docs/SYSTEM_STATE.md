@@ -1,3 +1,93 @@
+# System State — post-#124-substantiation snapshot
+
+**Generated**: 2026-04-29
+**HEAD**: `7c210b4` (Issue #124 implementation; seal pending commit)
+**Branch**: `feat/124-link-commit-cli` (off `BicameralAI/dev` post-#119 governance v0.17.2)
+**Tracked PR**: will target `BicameralAI/dev` (Issue #124); aggregate `dev → main` PR is downstream
+**Genesis hash**: `29dfd085...`
+**#124 seal**: Entry #23 — `950f362cb700da5a4db85c545f6b55bb725502a5744bfbb2c2eb3a9c9728661a`
+**#114 seal** (other in-flight branch): Entry #20 — `a19a04de...` (PR #121 pending merge)
+**#48 seal** (last-on-dev): Entry #18 — `eacc6f89...`
+
+## #124 (post-commit hook bug fix — link_commit CLI subcommand) implementation — 8 files, ~398 LOC delta, 9 new tests, 20/21 targeted regression
+
+| Phase | Files | New tests | Notes |
+|---|---|---|---|
+| 0a — Decompose `cli_main` | 1 modified | 0 | `server.py:cli_main` 92 → 15 LOC; new `_register_subparsers` (16 LOC) + `_dispatch` (29 LOC). Pure refactor under existing coverage. |
+| 0 — Promote `_invoke_link_commit` | 1 new + 1 modified | 0 | `cli/_link_commit_runner.py` (38 LOC, shared sync wrapper). Pure refactor. |
+| 1 — Register `link_commit` subcommand | 1 new prod + 1 modified + 1 new test | 6 | `cli/link_commit_cli.py` (29 LOC); JSON-to-stdout + `--quiet` flag; always exit 0. |
+| 2 — Hook hardening | 1 modified + 1 new test | 3 | `${HOME}/.bicameral/hook-errors.log` capture + stderr-loud + always exit 0. Smoke test asserts every hook subcommand is registered + dispatched. |
+| 3 — Documentation | 1 modified | 0 | `CHANGELOG.md` `[Unreleased]` Fixed entry. |
+
+### Files in scope
+
+**New** (5):
+- `cli/_link_commit_runner.py` (38 LOC) — shared sync wrapper around `handle_link_commit`; lazy-imports SurrealDB-touching modules; collapses no-ledger and handler-exception cases to `None` for graceful skip.
+- `cli/link_commit_cli.py` (29 LOC) — `link_commit` CLI entry point.
+- `tests/test_link_commit_cli.py` (95 LOC, 6 tests).
+- `tests/test_hook_command_registration.py` (78 LOC, 3 tests). **Original #124 bug class is now caught at PR time.**
+- `plan-124-post-commit-hook-fix.md` (477 LOC, plan committed at `44c6568`).
+
+**Modified** (4):
+- `server.py` — Phase 0a decomposition (cli_main 92 → 15 + new helpers) + Phase 1 link_commit subparser/dispatch + `from typing import Any`. Net –19 LOC.
+- `cli/branch_scan.py` — Phase 0 refactor (delegates to `_link_commit_runner`). Net –19 LOC.
+- `setup_wizard.py` — Phase 2 hook hardening. Net +4 LOC.
+- `CHANGELOG.md` — `[Unreleased]` Fixed entry.
+
+### Plan deviations (none structural)
+
+Implementation matches v2 plan (`44c6568`) 1:1. Mid-Phase-2 hook-message fix ("bicameral-mcp post-commit" → "Bicameral post-commit") was a self-test discovery — the smoke-test regex caught a false-positive subcommand match in the loud-failure echo string. Plan didn't pin the exact message wording, so it's a refinement, not a deviation.
+
+### Architectural decisions retained from plan (Q1–Q5)
+
+- **Q1**: JSON to stdout default + `--quiet` flag.
+- **Q2**: No migration needed — existing Guided-mode hooks start working automatically.
+- **Q3**: Bundled silent-suppression + registration fix in same PR (smoke-test interdependence).
+- **Q4**: Separate subcommand (not reusing `branch-scan`) — distinct semantics.
+- **Q5**: Promoted `_invoke_link_commit` to shared module — DRY at 2 callers.
+
+### Audit findings remediated (v1 → v2 → IMPL)
+
+- **F-1 (BLOCKING — Section 4 razor)**: `cli_main` 92 → 120 LOC was 3x over cap. **Closed**: Phase 0a decomposed before Phase 1 added the subcommand. All three resulting functions razor-compliant.
+- **F-2 (NON-BLOCKING — OWASP A01/A05)**: `/tmp/bicameral-hook.err` predictable-path symlink risk. **Closed**: replaced with `${HOME}/.bicameral/hook-errors.log`.
+- **F-3 (NON-BLOCKING — completeness)**: `>` truncation semantics not stated. **Closed**: explicit paragraph added.
+
+### Capability shortfalls (carried)
+
+- `qor/scripts/`, `qor/reliability/` absent — gate-chain artifacts not written; reliability sweep skipped.
+- `agent-teams`, `codex-plugin` not declared — sequential + solo modes.
+- #114 grounding lint not yet on dev (PR #121 pending) — author-time `ls -d */` discipline.
+- Step 7.5 version-bump-and-tag skipped — ships in next aggregate release PR.
+
+### Test state (post-implementation)
+
+- 20 passed, 1 skipped (Windows chmod from #48).
+- 9 new (6 link_commit_cli + 3 hook-command-registration) all green.
+- 11 regression (7 branch_scan_cli + 4 setup_pre_push_hook) all green.
+- All test functions ≤ 18 LOC. Largest file 95 LOC.
+- ruff check + format + mypy: clean.
+
+### Razor self-check
+
+| Function | LOC | Cap | Headroom |
+|---|---|---|---|
+| `server.cli_main` | 15 | 40 | 25 |
+| `server._register_subparsers` | 16 | 40 | 24 (≈ 8 more subcommands) |
+| `server._dispatch` | 29 | 40 | 11 (≈ 3 more if/branches before refactor) |
+| `cli._link_commit_runner.invoke_link_commit` | 22 | 40 | 18 |
+| `cli.link_commit_cli.main` | 13 | 40 | 27 |
+| `cli.branch_scan._compute_drift` | 9 | 40 | 31 (was 14 pre-Phase-0) |
+
+### Workflow security review
+
+- Hook writes to `${HOME}/.bicameral/hook-errors.log` — user-owned, no shared-system race, no `/tmp/` symlink-attack vector.
+- No shell interpolation of user-controlled input.
+- `exit 0` invariant preserved — failed sync never blocks user's commit.
+- `[ -d .bicameral ]` guard preserved — no-op when ledger directory absent.
+- File mode `0o755` on installed hook (#48 pattern unchanged).
+
+---
+
 # System State — post-#48-substantiation snapshot
 
 **Generated**: 2026-04-29

@@ -1020,6 +1020,101 @@ Implementation matches v2 plan (`44c6568`) 1:1. The mid-Phase-2 hook-message fix
 `/qor-substantiate` for session seal.
 
 ---
-*Chain integrity: VALID (22 entries on this branch — Entry #22 is #124 IMPLEMENTATION; Entry #21 is #124 Audit v2 PASS)*
-*Genesis: `29dfd085` → ... → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c` → #124 Audit v1 (VETO): `ef9a536f` → #124 Audit v2 (PASS): `86225d49` → #124 IMPL: `e83d674c`*
-*Next required action: `/qor-substantiate` for `plan-124-post-commit-hook-fix.md`*
+## Entry #23 — SUBSTANTIATION (SESSION SEAL): `plan-124-post-commit-hook-fix.md` (Issue #124)
+
+**Phase**: SUBSTANTIATE / qor-substantiate
+**Date**: 2026-04-29
+**Branch**: `feat/124-link-commit-cli`
+**Subject**: Issue #124 — *post-commit hook silently no-ops because `bicameral-mcp link_commit HEAD` is not a registered CLI subcommand*
+**Risk Grade**: L1 (CI/CLI/hook tooling — bug-fix, no production code paths, no schema, no MCP tools, no contract changes; downgraded from initial L2 registration after seeing the surgical scope at impl time)
+**Verdict**: **PASS** — Reality matches Promise
+
+### Reality vs Promise
+
+| Plan phase | Files | Status |
+|---|---|---|
+| Phase 0a: decompose `cli_main` | `server.py` modify | EXISTS — `cli_main` 92→15 LOC, `_register_subparsers` 16 LOC, `_dispatch` 29 LOC |
+| Phase 0: shared runner | `cli/_link_commit_runner.py` (38 LOC) + `cli/branch_scan.py` modify | EXISTS — both as planned |
+| Phase 1: link_commit subcommand | `cli/link_commit_cli.py` (29 LOC) + `tests/test_link_commit_cli.py` (95 LOC, 6 tests) + `server.py` subparser/dispatch | EXISTS — JSON-to-stdout default, `--quiet` flag, always exit 0 |
+| Phase 2: hook hardening | `setup_wizard.py` modify + `tests/test_hook_command_registration.py` (78 LOC, 3 tests) | EXISTS — `${HOME}/.bicameral/hook-errors.log` capture, stderr-loud, always exit 0 |
+| Phase 3: CHANGELOG | `CHANGELOG.md` `[Unreleased]` Fixed entry | EXISTS |
+
+**Plan deviations**: zero structural. Implementation matches v2 plan (`44c6568`) 1:1. Mid-Phase-2 hook-message fix was a refinement caught by self-test, not a plan deviation.
+
+### Test verification
+
+- 20 passed, 1 skipped (Windows chmod skip from #48 setup-pre-push-hook regression).
+- 9 new tests (6 link_commit_cli + 3 hook-command-registration) all green.
+- 11 regression (7 branch_scan_cli + 4 setup_pre_push_hook) all green.
+- ruff check + ruff format --check + mypy: clean across all 8 touched files.
+- Manual smoke: `python -m server link_commit --help` + `python -m server --help` both render correctly.
+- Console.log artifacts: 0.
+
+### Razor final check
+
+| Function | LOC | Cap |
+|---|---|---|
+| `server.cli_main` | 15 | 40 |
+| `server._register_subparsers` | 16 | 40 |
+| `server._dispatch` | 29 | 40 |
+| `cli._link_commit_runner.invoke_link_commit` | 22 | 40 |
+| `cli.link_commit_cli.main` | 13 | 40 |
+| `cli.branch_scan._compute_drift` | 9 | 40 |
+| All test functions | ≤ 18 | 40 |
+| All files | ≤ 95 LOC | 250 |
+
+All under cap with headroom. F-1 fully closed; future subcommand additions stay one-line.
+
+### Artifact hashes
+
+- `plan-124-post-commit-hook-fix.md` — `4b25a8f995021080ca108e33397cdd7739ea332653a752fabc2fbd08fa825f32`
+- `cli/_link_commit_runner.py` — `87158d68d22905f6dd2c87c85376e997872bd43da9e6df74dfac99973c4179fe`
+- `cli/link_commit_cli.py` — `aa0a014e6927dcf0034e26bb2d518560bcebe7e6e1b2fef15b11211c1d3f754d`
+- `cli/branch_scan.py` — current SHA after Phase 0 refactor
+- `server.py` — current SHA after Phase 0a + Phase 1 changes
+- `setup_wizard.py` — current SHA after Phase 2 hardening
+- `tests/test_link_commit_cli.py` — `c394fb136f1b47a81b193bff520b420ebdc9d91da766643c6fd731727d445b01`
+- `tests/test_hook_command_registration.py` — `e3935b91dd8e761d093584ad6a7fb646438b90e09ac7f13dec8f644e91fd5ce2`
+- `CHANGELOG.md` — current SHA after `[Unreleased]` Fixed entry
+- `.agent/staging/AUDIT_REPORT.md` (v2 PASS) — `2bc161d2460918518bdc28e902bed66ba8047b4c459a6ad41e8c3f054b8dc840`
+
+### Content hash (sorted-concat of all 10 artifact hashes)
+
+`SHA256(sorted(hashes))` = `c4b578cc90f93f237ba56fd933df1320baf4d175af66d3bb87cb08592a234fbe`
+
+### Previous chain hash
+
+`e83d674c0ea57b73a9c43f44781ce05587004eada7a43da9689a0e37faf1fe54` (Entry #22, #124 IMPLEMENTATION)
+
+### Merkle seal
+
+`SHA256(content_hash + previous_hash) =` **`950f362cb700da5a4db85c545f6b55bb725502a5744bfbb2c2eb3a9c9728661a`**
+
+### Capability shortfalls
+
+- `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
+- `qor/reliability/` enforcement scripts absent — Step 4.6 reliability sweep skipped.
+- `agent-teams` capability not declared — sequential mode.
+- `codex-plugin` capability not declared — solo audit mode.
+- Step 7.5 version-bump-and-tag skipped — bug-fix ships in next aggregate release PR (Jin's call at v0.18.x cut time).
+- #114 grounding lint not on dev (PR #121 pending) — author-time `ls -d */` discipline used.
+
+### Notable
+
+#124 closes a real silent-failure regression that shipped in CHANGELOG entries #643-648 (post-commit hook addition) and went undetected until audit on #48 noted the latent bug. The defense-in-depth shipped here:
+
+1. **The fix itself**: `link_commit` is now a real CLI subcommand. Existing Guided-mode hooks start working immediately on next release.
+2. **The structural hardening**: `cli_main` decomposition (Phase 0a) makes the next subcommand addition trivial — the wall this PR hit won't trap the next contributor.
+3. **The smoke-test trap**: `tests/test_hook_command_registration.py` walks every hook script's `bicameral-mcp <cmd>` invocations and asserts CLI registration + dispatch coverage. The exact bug class that took #124 to discover is now caught at PR time.
+4. **The loud-but-non-blocking hook**: replaces `>/dev/null 2>&1 || true` (silent on failure) with stderr-loud capture to `${HOME}/.bicameral/hook-errors.log`. The next regression of this class will surface immediately to the user instead of disappearing.
+
+### Decision
+
+**PASS, sealed**. Implementation gate-cleared for PR.
+
+**Next required action**: `/qor-document` for PR description authoring → `gh pr create` targeting `BicameralAI/dev`.
+
+---
+*Chain integrity: VALID (23 entries on this branch)*
+*Genesis: `29dfd085` → ... → #48 SEAL: `eacc6f89` → #124 PLAN: `49044f4c` → #124 Audit v1 (VETO): `ef9a536f` → #124 Audit v2 (PASS): `86225d49` → #124 IMPL: `e83d674c` → #124 SEAL: `950f362c`*
+*Next required action: `/qor-document` → open PR to `BicameralAI/dev`*
