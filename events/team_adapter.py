@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 
-from ledger.queries import find_decision_by_canonical_id, get_canonical_id
+from ledger.queries import get_canonical_id
 
 from .materializer import EventMaterializer
 from .writer import EventFileWriter
