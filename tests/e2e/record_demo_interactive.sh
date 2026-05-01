@@ -146,21 +146,41 @@ PY
 }
 
 # wait_for_claude_ready <session>
-# Poll the bottom of the tmux pane for the input-box border characters
-# (╭ ╰ │) or the legacy `>` indicator. Pinned TUI version (in workflow)
-# keeps the regex stable.
+# Two real states to handle on first run, both verified locally against
+# claude 2.1.x:
+#   1. "Quick safety check: ... trust this folder" — workspace trust dialog.
+#      `-p` mode skips it (per `claude --help`); interactive mode prompts.
+#      Option 1 ("Yes, I trust this folder") is preselected, so Enter
+#      dismisses. Persists in ~/.claude state for subsequent scenes.
+#   2. The input prompt renders as `❯ ` at a fixed row near the middle of
+#      the pane (not the bottom — the welcome banner sits above it). Search
+#      the whole pane, not just `tail -3`, otherwise the indicator is
+#      invisible to grep on a tall pane.
 wait_for_claude_ready() {
   local session=$1
   local i=0
+  local trust_dismissed=0
   while [ $i -lt $READY_TIMEOUT ]; do
-    if tmux capture-pane -t "$session" -p 2>/dev/null \
-        | tail -3 | grep -q '^[╭╰│ ]\|^>'; then
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+      echo "  warning: $session died before TUI was ready" >&2
+      return 1
+    fi
+    local pane
+    pane="$(tmux capture-pane -t "$session" -p 2>/dev/null || true)"
+    if [ "$trust_dismissed" -eq 0 ] && printf '%s' "$pane" | grep -q 'trust this folder'; then
+      tmux send-keys -t "$session" Enter
+      trust_dismissed=1
+      sleep 2
+      i=$((i+2))
+      continue
+    fi
+    if printf '%s' "$pane" | grep -q '^❯'; then
       return 0
     fi
     sleep 1
     i=$((i+1))
   done
-  echo "  warning: claude TUI never showed input box for $session" >&2
+  echo "  warning: claude TUI never showed input prompt for $session" >&2
   return 1
 }
 
@@ -179,16 +199,23 @@ paste_prompt() {
 }
 
 # wait_for_agent_idle <session>
-# "Done" = the input indicator persists for IDLE_STABLE_FOR consecutive
-# samples (1s each). Resets on any non-match — protects against false
-# positives if the agent pauses briefly between tool calls.
+# Claude TUI keeps the `❯ ` input prompt rendered at a fixed row even while
+# streaming, so the prompt-visible test is necessary but not sufficient. The
+# real signal that the agent stopped is pane stability — when the streaming
+# output stops mutating for IDLE_STABLE_FOR consecutive samples, we're idle.
 wait_for_agent_idle() {
   local session=$1
   local stable_count=0
   local i=0
+  local prev=""
   while [ $i -lt $IDLE_MAX_WAIT ]; do
-    if tmux capture-pane -t "$session" -p 2>/dev/null \
-        | tail -3 | grep -q '^[╭╰│ ]\|^>'; then
+    if ! tmux has-session -t "$session" 2>/dev/null; then
+      echo "  warning: $session died mid-response" >&2
+      return 1
+    fi
+    local pane
+    pane="$(tmux capture-pane -t "$session" -p 2>/dev/null || true)"
+    if [ "$pane" = "$prev" ] && printf '%s' "$pane" | grep -q '^❯'; then
       stable_count=$((stable_count+1))
       if [ $stable_count -ge $IDLE_STABLE_FOR ]; then
         return 0
@@ -196,6 +223,7 @@ wait_for_agent_idle() {
     else
       stable_count=0
     fi
+    prev=$pane
     sleep 1
     i=$((i+1))
   done
@@ -294,76 +322,111 @@ DASHBOARD_PREAMBLE='Before doing anything else, call bicameral.dashboard so a li
 
 '
 
-for entry in "${SCENES[@]}"; do
-  N="${entry%%:*}"
-  FILE="${entry#*:}"
-  SESSION="scene-${N}"
-  PROMPT_FILE="$PROMPTS_DIR/$FILE"
+run_scene() {
+  local N=$1
+  local FILE=$2
+  local SESSION="scene-${N}"
+  local PROMPT_FILE="$PROMPTS_DIR/$FILE"
+  local CLAUDE_LOG="$RESULTS_DIR/claude-scene-${N}.stderr"
+  local CLAUDE_EXIT="$RESULTS_DIR/claude-scene-${N}.exit"
+  local PANE_DUMP="$RESULTS_DIR/scene-${N}-pane.txt"
+  local RUNNER="$RESULTS_DIR/claude-scene-${N}.sh"
   echo "=== Scene ${N} (${FILE}) ==="
 
   # New MCP process per scene → port may change. Wipe stale port file so the
   # poll below only sees this scene's value.
-  rm -f "$PORT_FILE"
+  rm -f "$PORT_FILE" "$CLAUDE_LOG" "$CLAUDE_EXIT"
 
   echo "scene_${N}_start=$(now_offset)" >> "$SCENE_BOUNDS_FILE"
 
-  # 1. Detached tmux running interactive claude (no -p) with the same MCP +
-  #    allowed-tools shape as run_e2e_flows.py.
-  CLAUDE_CMD="claude \
-      --mcp-config $(printf %q "$MCP_CONFIG_MATERIALIZED") \
-      --strict-mcp-config \
-      --allowed-tools mcp__bicameral,Read,Grep \
-      --add-dir $(printf %q "$DESKTOP_REPO_PATH") \
-      --no-session-persistence \
-      --max-budget-usd 5.0 \
-      --dangerously-skip-permissions"
+  # Per-scene runner: redirects claude's stderr to a log and writes its exit
+  # code to a sibling file, so a startup failure (bad flag, missing OAuth,
+  # MCP crash) leaves actionable diagnostics instead of a silent dead pane.
+  # `--no-session-persistence` and `--max-budget-usd` are intentionally NOT
+  # passed — both are documented as `--print`-only and cause an immediate
+  # exit-1 in interactive mode (verified locally against claude 2.1.x).
+  cat > "$RUNNER" <<EOF
+#!/usr/bin/env bash
+cd "$DESKTOP_REPO_PATH"
+exec 2>"$CLAUDE_LOG"
+claude \\
+    --mcp-config "$MCP_CONFIG_MATERIALIZED" \\
+    --strict-mcp-config \\
+    --allowed-tools mcp__bicameral,Read,Grep \\
+    --add-dir "$DESKTOP_REPO_PATH" \\
+    --dangerously-skip-permissions
+echo "exit=\$?" > "$CLAUDE_EXIT"
+EOF
+  chmod +x "$RUNNER"
 
-  tmux new-session -d -s "$SESSION" -x 110 -y 40 \
-    "cd $(printf %q "$DESKTOP_REPO_PATH") && $CLAUDE_CMD"
+  tmux new-session -d -s "$SESSION" -x 110 -y 40 "$RUNNER" || {
+    echo "  ERROR: tmux new-session failed for $SESSION" >&2
+    echo "scene_${N}_end=$(now_offset)" >> "$SCENE_BOUNDS_FILE"
+    return 1
+  }
 
-  # 2. xterm attached to the tmux pane (left half). `;` (not `&&`) so the
-  #    closing `sleep 2` runs even when tmux attach exits non-zero (which
-  #    happens when the session dies underneath it).
   xterm -geometry 100x40+0+0 -fa Monospace -fs 11 \
     -bg black -fg white -title "claude — scene ${N}: ${FILE}" \
     -e bash -lc "tmux attach -t $SESSION; sleep 2" \
     >/tmp/xterm-scene-${N}.log 2>&1 &
   XTERM_PIDS+=($!)
 
-  # 3. Wait for claude TUI to render its input box.
-  wait_for_claude_ready "$SESSION" || true
+  if ! wait_for_claude_ready "$SESSION"; then
+    {
+      echo "--- last pane capture ---"
+      tmux capture-pane -t "$SESSION" -p 2>/dev/null || echo "(no pane — session dead)"
+      echo "--- claude stderr ---"
+      cat "$CLAUDE_LOG" 2>/dev/null || echo "(no stderr log)"
+      echo "--- claude exit ---"
+      cat "$CLAUDE_EXIT" 2>/dev/null || echo "(no exit file — process may still be alive)"
+    } > "$PANE_DUMP"
+    echo "  ERROR: scene ${N} did not reach ready state — diagnostics in $PANE_DUMP" >&2
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    echo "scene_${N}_end=$(now_offset)" >> "$SCENE_BOUNDS_FILE"
+    return 1
+  fi
 
-  # 4. Paste the dashboard preamble + flow prompt, then submit.
   PROMPT_BODY="${DASHBOARD_PREAMBLE}$(cat "$PROMPT_FILE")"
   paste_prompt "$SESSION" "$PROMPT_BODY"
 
-  # 5. The dashboard tool writes the port file once it runs. Poll for it,
-  #    then (re)launch chromium on the right half.
   if PORT="$(poll_port_file)"; then
     refresh_chromium_for_port "$PORT"
   else
     echo "  warning: scene ${N} dashboard.port never appeared — right pane may be stale" >&2
   fi
 
-  # 6. Wait for the agent to finish responding.
   wait_for_agent_idle "$SESSION" || true
 
-  # 7. Pause so the dashboard SSE settles into its final state for this
-  #    scene (also masks the chromium reload flicker on the next scene
-  #    behind a still frame of the closing state).
+  # Pause so the dashboard SSE settles into its final state for this scene
+  # (also masks the chromium reload flicker on the next scene behind a still
+  # frame of the closing state).
   sleep 3
 
-  # 8. Trigger SessionEnd hook (capture-corrections may auto-fire here),
-  #    then wait for the tmux session to die naturally.
+  # Trigger SessionEnd hook (capture-corrections may auto-fire here), then
+  # wait for the tmux session to die naturally.
   tmux send-keys -t "$SESSION" '/exit' Enter
   wait_for_session_dead "$SESSION"
 
-  # Capture pane contents for diagnostics (best-effort — session may already
-  # be gone if force-killed).
-  tmux capture-pane -t "$SESSION" -p -S - 2>/dev/null \
-    > "$RESULTS_DIR/scene-${N}-pane.txt" || true
+  tmux capture-pane -t "$SESSION" -p -S - 2>/dev/null > "$PANE_DUMP" || true
 
   echo "scene_${N}_end=$(now_offset)" >> "$SCENE_BOUNDS_FILE"
+  return 0
+}
+
+# `set +e` around each scene so a single failure doesn't abort the whole run —
+# we still want the partial recording + diagnostics for the scenes that did
+# work. Failed scenes still emit start/end bounds (zero-length window) so the
+# downstream split logic walks them as empty cuts.
+for entry in "${SCENES[@]}"; do
+  N="${entry%%:*}"
+  FILE="${entry#*:}"
+  set +e
+  run_scene "$N" "$FILE"
+  rc=$?
+  set -e
+  if [ $rc -ne 0 ]; then
+    echo "  (scene ${N} failed; continuing to next)" >&2
+  fi
 done
 
 # Tail pause so ffmpeg captures a clean closing frame after scene 5.
@@ -420,10 +483,19 @@ ENC_FLAGS=(
   -an
 )
 
+# Failed scenes produce a zero-length (or near-zero) window. Skip them so we
+# don't emit empty mp4s that break the downstream concat.
 cut_scene() {
   local from=$1 to=$2 dst=$3
-  ffmpeg -y -i "$FULL_MP4" -ss "$from" -to "$to" "${ENC_FLAGS[@]}" "$dst" \
-    >>/tmp/ffmpeg-int-split.log 2>&1
+  local span
+  span="$(python3 -c "print(max(0.0, float('$to') - float('$from')))")"
+  if python3 -c "import sys; sys.exit(0 if float('$span') >= 0.5 else 1)"; then
+    ffmpeg -y -i "$FULL_MP4" -ss "$from" -to "$to" "${ENC_FLAGS[@]}" "$dst" \
+      >>/tmp/ffmpeg-int-split.log 2>&1 || rm -f "$dst"
+  else
+    echo "  skip: $(basename "$dst") window=${span}s (scene likely failed)" >&2
+    rm -f "$dst"
+  fi
 }
 
 S1="$OUT_DIR/scene-1.mp4"
@@ -452,27 +524,39 @@ ffmpeg -y \
   "${ENC_FLAGS[@]}" -t "$TRANSITION_DURATION" "$TRANSITION" \
   >>/tmp/ffmpeg-int-transition.log 2>&1
 
-# ── pm.mp4 = scene-1 + transition + scene-5 ─────────────────────────────
+# pm/dev concat — only include scene mp4s that actually exist (a failed scene
+# leaves no file behind; see cut_scene). Skip the concat entirely if every
+# input is missing.
+write_concat_list() {
+  local list=$1
+  shift
+  : > "$list"
+  for f in "$@"; do
+    if [ -s "$f" ]; then
+      echo "file '$f'" >> "$list"
+    fi
+  done
+}
+
+run_concat() {
+  local list=$1 out=$2
+  if [ ! -s "$list" ]; then
+    echo "  warning: $(basename "$out") concat list empty — skipping" >&2
+    return 0
+  fi
+  ffmpeg -y -f concat -safe 0 -i "$list" "${ENC_FLAGS[@]}" "$out" \
+    >>/tmp/ffmpeg-int-concat.log 2>&1
+}
+
 PM_OUT="$OUT_DIR/pm.mp4"
 PM_LIST="$RESULTS_DIR/pm-int-concat.txt"
-{
-  echo "file '$S1'"
-  echo "file '$TRANSITION'"
-  echo "file '$S5'"
-} > "$PM_LIST"
-ffmpeg -y -f concat -safe 0 -i "$PM_LIST" "${ENC_FLAGS[@]}" "$PM_OUT" \
-  >>/tmp/ffmpeg-int-concat.log 2>&1
+write_concat_list "$PM_LIST" "$S1" "$TRANSITION" "$S5"
+run_concat "$PM_LIST" "$PM_OUT"
 
-# ── dev.mp4 = scene-2 + scene-3 + scene-4 ───────────────────────────────
 DEV_OUT="$OUT_DIR/dev.mp4"
 DEV_LIST="$RESULTS_DIR/dev-int-concat.txt"
-{
-  echo "file '$S2'"
-  echo "file '$S3'"
-  echo "file '$S4'"
-} > "$DEV_LIST"
-ffmpeg -y -f concat -safe 0 -i "$DEV_LIST" "${ENC_FLAGS[@]}" "$DEV_OUT" \
-  >>/tmp/ffmpeg-int-concat.log 2>&1
+write_concat_list "$DEV_LIST" "$S2" "$S3" "$S4"
+run_concat "$DEV_LIST" "$DEV_OUT"
 
 # Clean up scratch files; keep per-scene mp4s + pm.mp4 + dev.mp4 + full-int.mp4.
 rm -f "$PM_LIST" "$DEV_LIST" "$TRANSITION"
