@@ -29,11 +29,6 @@ on:
       - 'pyproject.toml'
       - '.github/workflows/v0-user-flow-e2e.yml'
   workflow_dispatch:
-    inputs:
-      record_demo:
-        description: "Record split-screen demo videos for each flow (manual only; requires recording-approval reviewer)."
-        type: boolean
-        default: false
 
 env:
   PYTHON_VERSION: '3.11'
@@ -124,7 +119,13 @@ jobs:
     # meant to showcase the agentic gap as well as the wins, and the two
     # paths have independent value (assertion = MCP-tool callability,
     # recording = visual validation of the agentic layer).
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+    #
+    # The `recording-approval` environment's required-reviewers rule is
+    # the SOLE gate. No `if:` predicate — adding one would skip the job
+    # on PR triggers (or on dispatch without an extra input toggle), so
+    # reviewers would never see the approval prompt. Letting the job
+    # always queue means it sits in "Waiting" until someone with reviewer
+    # permission clicks Approve in the Actions UI.
     runs-on: ubuntu-latest
     # `recording-approval` env should have required reviewers configured
     # in repo settings → that's the manual gate. Inherits OAuth token from
