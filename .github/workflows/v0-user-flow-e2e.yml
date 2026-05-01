@@ -185,11 +185,13 @@ jobs:
 
       # continue-on-error: a recording flake should not propagate as a hard
       # failure. The artifact upload below preserves whatever was captured.
-      - name: Record demo videos (split-screen)
+      # Uses the interactive (tmux-driven real claude TUI) path; legacy
+      # `tests/e2e/record_demo.sh` is retained as a fallback.
+      - name: Record demo videos (split-screen, interactive TUI)
         continue-on-error: true
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: bash tests/e2e/record_demo.sh
+        run: bash tests/e2e/record_demo_interactive.sh
 
       - name: Upload demo videos
         if: always()
