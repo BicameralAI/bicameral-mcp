@@ -146,19 +146,24 @@ PY
 }
 
 # wait_for_claude_ready <session>
-# Two real states to handle on first run, both verified locally against
+# Three real states to handle on first run, all verified locally against
 # claude 2.1.x:
-#   1. "Quick safety check: ... trust this folder" — workspace trust dialog.
+#   1. Theme picker ("Choose the text style ... To change this later, run
+#      /theme") — fires when ~/.claude has no saved theme. Option 2 ("Dark
+#      mode") is preselected, so Enter accepts. Sticks across scenes once
+#      chosen.
+#   2. Workspace trust dialog ("Quick safety check: ... trust this folder").
 #      `-p` mode skips it (per `claude --help`); interactive mode prompts.
 #      Option 1 ("Yes, I trust this folder") is preselected, so Enter
 #      dismisses. Persists in ~/.claude state for subsequent scenes.
-#   2. The input prompt renders as `❯ ` at a fixed row near the middle of
-#      the pane (not the bottom — the welcome banner sits above it). Search
+#   3. Input prompt: renders as `❯ ` at a fixed row near the middle of the
+#      pane (not the bottom — the welcome banner sits above it). Search
 #      the whole pane, not just `tail -3`, otherwise the indicator is
 #      invisible to grep on a tall pane.
 wait_for_claude_ready() {
   local session=$1
   local i=0
+  local theme_dismissed=0
   local trust_dismissed=0
   while [ $i -lt $READY_TIMEOUT ]; do
     if ! tmux has-session -t "$session" 2>/dev/null; then
@@ -167,6 +172,14 @@ wait_for_claude_ready() {
     fi
     local pane
     pane="$(tmux capture-pane -t "$session" -p 2>/dev/null || true)"
+    if [ "$theme_dismissed" -eq 0 ] && \
+       printf '%s' "$pane" | grep -qE 'Choose the text style|run /theme'; then
+      tmux send-keys -t "$session" Enter
+      theme_dismissed=1
+      sleep 2
+      i=$((i+2))
+      continue
+    fi
     if [ "$trust_dismissed" -eq 0 ] && printf '%s' "$pane" | grep -q 'trust this folder'; then
       tmux send-keys -t "$session" Enter
       trust_dismissed=1
