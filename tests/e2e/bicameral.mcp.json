@@ -4,7 +4,7 @@
       "command": "bicameral-mcp",
       "args": [],
       "env": {
-        "SURREAL_URL": "memory://",
+        "SURREAL_URL": "surrealkv://${LEDGER_DIR}",
         "REPO_PATH": "${DESKTOP_REPO_PATH}"
       }
     }
