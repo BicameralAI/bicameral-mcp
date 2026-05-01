@@ -102,18 +102,18 @@ Adds `governance/` package with the deterministic escalation policy engine, deci
   exists. New module `cli/branch_scan.py`; new
   `_install_git_pre_push_hook` in `setup_wizard.py`; new `--with-push-hook`
   flag in `bicameral-mcp setup`. Issue #48.
-- **GitHub Action — sticky PR-comment drift report (#49).** New advisory
-  workflow `.github/workflows/drift-report.yml` posts a sticky Markdown
-  comment on every PR open/synchronize with the drift state computed
-  from `link_commit`. Stateless sticky strategy via HTML marker; the
-  comment edits in place on each push instead of accumulating new ones.
-  Path C maintainer call: workflow gracefully skips with a
-  configuration-prompt comment when no `bicameral/decisions.yaml`
-  manifest exists in repo root (manifest format spec deferred to a
-  follow-up issue). New module `cli/drift_report.py` — pure-function
-  Markdown renderer with a CLI entry point invoked by the workflow.
-  New helper `.github/scripts/post_drift_comment.py` — stdlib-only
-  GitHub API client (no new dependencies). Issue #49.
+
+### Removed
+
+- **Sticky PR-comment drift-report GitHub Action (#49 / PR #113).**
+  Reverted before reaching a numbered release. The action was
+  installed under `.github/workflows/` of `bicameral-mcp` itself,
+  which conflated dogfooding with delivery: the feature is meant to
+  ship to *customer* repos, not police our own CI. Removed the
+  workflow, the `cli/drift_report.py` renderer, the
+  `.github/scripts/post_drift_comment.py` poster, and their tests.
+  A future re-introduction will package the same artifacts as a
+  template under a non-CI path so users opt in by copying it.
 
 ## v0.16.0 -- decision_level classifier + MCP primitives (#77 + Phase 5+6 of #76 in sibling PR)
 

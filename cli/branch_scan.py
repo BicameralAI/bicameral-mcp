@@ -13,11 +13,6 @@ Stderr carries the warning text so the user sees it before any
 prompt; stdout is reserved for status messages the hook may want
 to capture or filter.
 
-Sibling of ``cli/drift_report.py`` (which renders Markdown for PR
-sticky comments). The two are intentionally parallel — different
-output formats, different exit-code semantics. Sharing a common
-formatter would be premature abstraction with only two consumers.
-
 Design rule: this module imports only from ``contracts`` and (via
 the ``_compute_drift`` indirection) ``handlers.link_commit``. No
 imports of GitHub API clients, no Markdown rendering. Pure terminal
