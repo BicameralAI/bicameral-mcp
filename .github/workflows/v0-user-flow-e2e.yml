@@ -108,12 +108,20 @@ jobs:
         run: python tests/e2e/run_e2e_flows.py
 
       # ── Optional: install split-screen recording deps (manual dispatch only) ─
-      - name: Install recording dependencies (Xvfb + chromium + ffmpeg + xterm)
+      # NOTE: do NOT install `chromium-browser` here — on Ubuntu 22.04+ the apt
+      # package is a snap-store wrapper that hangs the runner (no snap store
+      # connectivity). GitHub's ubuntu-latest image ships google-chrome-stable
+      # pre-installed; record_demo.sh auto-detects it.
+      - name: Install recording dependencies (Xvfb + ffmpeg + xterm)
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            xvfb fluxbox xterm chromium-browser ffmpeg fonts-dejavu
+            xvfb fluxbox xterm ffmpeg fonts-dejavu
+          # Sanity check: confirm a chromium-compatible browser is on PATH.
+          command -v google-chrome-stable || command -v google-chrome || \
+            command -v chromium || command -v chromium-browser || \
+            { echo "ERROR: no chromium-compatible browser found on PATH" >&2; exit 1; }
 
       # ── Optional: record split-screen demo videos per flow ─
       # continue-on-error so a recording flake never gates merge — assertion
