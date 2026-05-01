@@ -40,7 +40,8 @@ FRAMERATE=10
 TRANSITION_DURATION=4
 
 # Per-scene polling caps (see spec §6.1, §6.3, §6.4).
-READY_TIMEOUT=30        # claude TUI must show input box within this
+READY_TIMEOUT=90        # claude TUI must show input box within this — longer
+                        # because fresh-runner state walks 5+ onboarding dialogs
 IDLE_MAX_WAIT=300       # 5 min cap per scene for agent finish
 IDLE_STABLE_FOR=8       # input box must persist for N consecutive samples
 SESSION_DEAD_GRACE=60   # post-/exit grace for SessionEnd hook to run
@@ -83,39 +84,15 @@ if [ -z "$CHROME_BIN" ]; then
 fi
 echo "[demo] using browser: $CHROME_BIN"
 
-# ── Pre-populate credentials for interactive claude in CI ───────────────
-# Interactive mode reads OAuth from `$CLAUDE_CONFIG_DIR/.credentials.json`
-# (default `~/.claude/.credentials.json`) on Linux. The `CLAUDE_CODE_OAUTH_TOKEN`
-# env var works in `--print` mode but is unreliable in interactive mode — the
-# CI runs in this PR observed the login picker even with the env var set.
-# Writing the credentials file directly is the documented headless path.
-# Source: https://code.claude.com/docs/en/authentication
-if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-  CRED_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-  CRED_FILE="$CRED_DIR/.credentials.json"
-  mkdir -p "$CRED_DIR"
-  python3 - "$CLAUDE_CODE_OAUTH_TOKEN" "$CRED_FILE" <<'PY'
-import json, os, sys
-token, dst = sys.argv[1], sys.argv[2]
-# Shape mirrors the macOS Keychain "Claude Code-credentials" blob; expiresAt
-# pushed to year 2286 so the recording's ~25 min wall time never triggers an
-# auto-refresh that would need refreshToken (which isn't in CI's env).
-payload = {
-    "claudeAiOauth": {
-        "accessToken": token,
-        "refreshToken": "",
-        "expiresAt": 9999999999000,
-        "scopes": ["user:inference", "user:profile"],
-        "subscriptionType": "max",
-    }
-}
-with open(dst, "w") as f:
-    json.dump(payload, f)
-os.chmod(dst, 0o600)
-PY
-  echo "[demo] wrote $CRED_FILE (mode 0600) from CLAUDE_CODE_OAUTH_TOKEN"
-else
-  echo "[demo] CLAUDE_CODE_OAUTH_TOKEN unset — interactive claude will hit the login picker" >&2
+# ── Auth: ANTHROPIC_API_KEY (NOT CLAUDE_CODE_OAUTH_TOKEN) ──────────────
+# Verified locally and matches GH issue #32463: interactive `claude` reads
+# but does NOT honour `CLAUDE_CODE_OAUTH_TOKEN`. It DOES honour
+# `ANTHROPIC_API_KEY`, but on first run it shows a "Detected a custom API
+# key in your environment / Do you want to use this API key?" picker that
+# we have to dismiss in `wait_for_claude_ready`. The assertions job keeps
+# using OAuth (its `claude -p` path honours that env var fine).
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "[demo] WARNING: ANTHROPIC_API_KEY unset — interactive claude will hit the 'Select login method' picker with no way to advance" >&2
 fi
 
 # ── Materialize MCP config (mirrors run_e2e_flows.py) ───────────────────
@@ -181,25 +158,32 @@ PY
 }
 
 # wait_for_claude_ready <session>
-# Three real states to handle on first run, all verified locally against
-# claude 2.1.x:
-#   1. Theme picker ("Choose the text style ... To change this later, run
-#      /theme") — fires when ~/.claude has no saved theme. Option 2 ("Dark
-#      mode") is preselected, so Enter accepts. Sticks across scenes once
-#      chosen.
-#   2. Workspace trust dialog ("Quick safety check: ... trust this folder").
-#      `-p` mode skips it (per `claude --help`); interactive mode prompts.
-#      Option 1 ("Yes, I trust this folder") is preselected, so Enter
-#      dismisses. Persists in ~/.claude state for subsequent scenes.
-#   3. Input prompt: renders as `❯ ` at a fixed row near the middle of the
-#      pane (not the bottom — the welcome banner sits above it). Search
-#      the whole pane, not just `tail -3`, otherwise the indicator is
-#      invisible to grep on a tall pane.
+# Walks the first-run onboarding dialog stack on a fresh CI runner.
+# Verified locally against claude 2.1.126 with HOME=tmpdir, ANTHROPIC_API_KEY
+# set: dismissals reach the `^❯ ` input prompt at t≈7s.
+#
+# Sequence (each fires at most once per session):
+#   1. Theme picker  ("Choose the text style ... run /theme")
+#        — Enter (default option 2 = Dark mode is preselected)
+#   2. API key picker ("Detected a custom API key in your environment")
+#        — '1' (override the preselected "No (recommended)" with "Yes")
+#   3. Security notes ("Security notes: ... Press Enter to continue…")
+#        — Enter
+#   4. Trust folder  ("Quick safety check ... trust this folder")
+#        — Enter (default option 1 = Yes is preselected)
+#   5. New MCP server prompt ("New MCP server found in .mcp.json")
+#        — Enter (default option 1 = Use this and all future)
+#   6. Bypass-permissions warning ("Claude Code running in Bypass Permissions mode")
+#        — '2' (override the preselected "No, exit" with "Yes, I accept")
+#
+# Detection: search WHOLE pane (not `tail -3`) — claude renders dialogs at a
+# fixed row near the middle of a tall pane. The `^❯` anchor at column 0
+# matches only the actual input prompt, not the menu rows ` ❯ 2. ...` which
+# have a leading space.
 wait_for_claude_ready() {
   local session=$1
   local i=0
-  local theme_dismissed=0
-  local trust_dismissed=0
+  declare -A dismissed=()
   while [ $i -lt $READY_TIMEOUT ]; do
     if ! tmux has-session -t "$session" 2>/dev/null; then
       echo "  warning: $session died before TUI was ready" >&2
@@ -207,24 +191,44 @@ wait_for_claude_ready() {
     fi
     local pane
     pane="$(tmux capture-pane -t "$session" -p 2>/dev/null || true)"
-    if [ "$theme_dismissed" -eq 0 ] && \
-       printf '%s' "$pane" | grep -qE 'Choose the text style|run /theme'; then
-      tmux send-keys -t "$session" Enter
-      theme_dismissed=1
-      sleep 2
-      i=$((i+2))
-      continue
-    fi
-    if [ "$trust_dismissed" -eq 0 ] && printf '%s' "$pane" | grep -q 'trust this folder'; then
-      tmux send-keys -t "$session" Enter
-      trust_dismissed=1
-      sleep 2
-      i=$((i+2))
-      continue
-    fi
+
+    # Ready
     if printf '%s' "$pane" | grep -q '^❯'; then
       return 0
     fi
+
+    # Onboarding dialogs — each at most once per session
+    if [ -z "${dismissed[theme]:-}" ] && \
+       printf '%s' "$pane" | grep -qE 'Choose the text style|run /theme'; then
+      tmux send-keys -t "$session" Enter
+      dismissed[theme]=1; sleep 2; i=$((i+2)); continue
+    fi
+    if [ -z "${dismissed[api_key]:-}" ] && \
+       printf '%s' "$pane" | grep -q 'Detected a custom API key'; then
+      tmux send-keys -t "$session" '1'
+      dismissed[api_key]=1; sleep 2; i=$((i+2)); continue
+    fi
+    if [ -z "${dismissed[security]:-}" ] && \
+       printf '%s' "$pane" | grep -q 'Security notes:'; then
+      tmux send-keys -t "$session" Enter
+      dismissed[security]=1; sleep 2; i=$((i+2)); continue
+    fi
+    if [ -z "${dismissed[trust]:-}" ] && \
+       printf '%s' "$pane" | grep -q 'trust this folder'; then
+      tmux send-keys -t "$session" Enter
+      dismissed[trust]=1; sleep 2; i=$((i+2)); continue
+    fi
+    if [ -z "${dismissed[mcp]:-}" ] && \
+       printf '%s' "$pane" | grep -q 'New MCP server found'; then
+      tmux send-keys -t "$session" Enter
+      dismissed[mcp]=1; sleep 2; i=$((i+2)); continue
+    fi
+    if [ -z "${dismissed[bypass]:-}" ] && \
+       printf '%s' "$pane" | grep -q 'Bypass Permissions mode'; then
+      tmux send-keys -t "$session" '2'
+      dismissed[bypass]=1; sleep 2; i=$((i+2)); continue
+    fi
+
     sleep 1
     i=$((i+1))
   done
