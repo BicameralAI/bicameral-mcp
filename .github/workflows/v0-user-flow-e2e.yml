@@ -119,11 +119,12 @@ jobs:
   # ── Stage 2: recording — manual approval required ────────────────────
   recording:
     name: split-screen demo recording (manual approval)
-    needs: assertions
-    # Run only on manual dispatch with record_demo=true. `always()` so
-    # advisory failures in the assertion job don't block recording — the
-    # demo is meant to showcase the agentic gap as well as the wins.
-    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+    # No `needs:` — runs in parallel with `assertions`. Advisory failures
+    # in the assertion harness must NOT block recording: the demo is
+    # meant to showcase the agentic gap as well as the wins, and the two
+    # paths have independent value (assertion = MCP-tool callability,
+    # recording = visual validation of the agentic layer).
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
     runs-on: ubuntu-latest
     # `recording-approval` env should have required reviewers configured
     # in repo settings → that's the manual gate. Inherits OAuth token from
