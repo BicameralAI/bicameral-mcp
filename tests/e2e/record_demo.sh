@@ -50,12 +50,27 @@ if [ ! -d "$DESKTOP_REPO_PATH" ]; then
   exit 2
 fi
 
-for bin in Xvfb fluxbox xterm ffmpeg chromium-browser claude bicameral-mcp python3; do
+for bin in Xvfb fluxbox xterm ffmpeg claude bicameral-mcp python3; do
   if ! command -v "$bin" >/dev/null 2>&1; then
     echo "ERROR: required binary '$bin' not found on PATH." >&2
     exit 2
   fi
 done
+
+# Pick whichever chromium-compatible browser is available. GitHub's
+# ubuntu-latest runners ship google-chrome-stable; Linux desktops often
+# have chromium via snap. All four accept the same Chromium-style flags.
+CHROME_BIN="$(command -v google-chrome-stable \
+  || command -v google-chrome \
+  || command -v chromium \
+  || command -v chromium-browser \
+  || true)"
+if [ -z "$CHROME_BIN" ]; then
+  echo "ERROR: no chromium-compatible browser found on PATH." >&2
+  echo "  tried: google-chrome-stable, google-chrome, chromium, chromium-browser" >&2
+  exit 2
+fi
+echo "[demo] using browser: $CHROME_BIN"
 
 # ── Materialize MCP config (mirrors run_e2e_flows.py) ───────────────────
 sed "s|\${DESKTOP_REPO_PATH}|$DESKTOP_REPO_PATH|g" \
@@ -146,7 +161,7 @@ done
 
 CHROMIUM_PID=""
 if [ -n "$PORT" ]; then
-  chromium-browser --no-sandbox --disable-gpu \
+  "$CHROME_BIN" --no-sandbox --disable-gpu \
     --window-size="${HALF_W},${RES_H}" \
     --window-position="${HALF_W},0" \
     --user-data-dir="/tmp/chromium-composite" \
