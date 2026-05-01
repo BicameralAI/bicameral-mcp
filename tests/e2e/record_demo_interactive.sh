@@ -101,6 +101,41 @@ sed \
   -e "s|\${LEDGER_DIR}|$LEDGER_DIR|g" \
   "$MCP_CONFIG_TEMPLATE" > "$MCP_CONFIG_MATERIALIZED"
 
+# ── PostToolUse hook: surface "new commit detected" so bicameral-sync
+#    auto-fires link_commit after the agent runs git commit/merge/pull.
+#    Imports the EXACT command string from setup_wizard.py so the recording
+#    exercises what a real bicameral-mcp setup installs — single source of
+#    truth, no drift between test and production. ─────────────────────────
+SETTINGS_FILE="$RESULTS_DIR/claude-settings-with-hook.json"
+python3 - "$MCP_DIR" "$SETTINGS_FILE" <<'PY'
+import json, sys, pathlib
+mcp_root, dst = sys.argv[1], sys.argv[2]
+sys.path.insert(0, mcp_root)
+from setup_wizard import _BICAMERAL_POST_COMMIT_COMMAND
+settings = {
+    "hooks": {
+        "PostToolUse": [
+            {
+                "matcher": "Bash",
+                "hooks": [{"type": "command", "command": _BICAMERAL_POST_COMMIT_COMMAND}],
+            }
+        ]
+    }
+}
+pathlib.Path(dst).write_text(json.dumps(settings, indent=2))
+PY
+
+# ── Reset desktop-clone to the pinned HEAD between scenes — flow 3 makes
+#    a real commit, so without a reset the second-onwards run starts off a
+#    polluted base. Pinned commit is the workflow's DESKTOP_PINNED_COMMIT. ─
+reset_desktop_repo() {
+  if [ -d "$DESKTOP_REPO_PATH/.git" ]; then
+    (cd "$DESKTOP_REPO_PATH" && git reset --hard FETCH_HEAD 2>/dev/null \
+      || git reset --hard HEAD 2>/dev/null) >/dev/null 2>&1 || true
+  fi
+}
+reset_desktop_repo
+
 # Wipe persistent ledger between runs (state must persist across the 5 scenes
 # within a run, but not leak across runs — same contract as run_e2e_flows.py).
 rm -rf "$LEDGER_DIR"
@@ -236,17 +271,31 @@ wait_for_claude_ready() {
   return 1
 }
 
-# paste_prompt <session> <body>
-# Bracketed paste preserves multi-line prompts as one input chunk; the agent
-# only submits when the trailing Enter is sent separately. printf %s avoids
-# tacking a stray trailing newline onto the buffer.
-paste_prompt() {
+# type_prompt <session> <body> [total_seconds]
+# Types body character-by-character so the recording shows a human-paced
+# typing animation (default ~3s total regardless of length, like the user
+# asked). Embedded newlines are inserted via M-Enter (Alt+Return) — the
+# only escape that preserves newlines in claude TUI's input box without
+# submitting (verified locally). Final Enter submits.
+type_prompt() {
   local session=$1
   local body=$2
-  local buf="prompt-$session"
-  printf '%s' "$body" | tmux load-buffer -b "$buf" -
-  tmux paste-buffer -t "$session" -b "$buf" -d -p
-  sleep 1
+  local total_secs=${3:-3}
+  local len=${#body}
+  if [ "$len" -le 0 ]; then return; fi
+  local delay
+  delay=$(python3 -c "print(round(max(0.005, ${total_secs} / ${len}), 4))")
+  local i ch
+  for ((i=0; i<len; i++)); do
+    ch="${body:$i:1}"
+    if [ "$ch" = $'\n' ]; then
+      tmux send-keys -t "$session" M-Enter
+    else
+      tmux send-keys -t "$session" -l "$ch"
+    fi
+    sleep "$delay"
+  done
+  sleep 0.3
   tmux send-keys -t "$session" Enter
 }
 
@@ -404,7 +453,8 @@ exec 2>"$CLAUDE_LOG"
 claude \\
     --mcp-config "$MCP_CONFIG_MATERIALIZED" \\
     --strict-mcp-config \\
-    --allowed-tools mcp__bicameral,Read,Grep \\
+    --settings "$SETTINGS_FILE" \\
+    --allowed-tools mcp__bicameral,Read,Grep,Edit,Bash \\
     --add-dir "$DESKTOP_REPO_PATH" \\
     --dangerously-skip-permissions
 echo "exit=\$?" > "$CLAUDE_EXIT"
@@ -439,7 +489,7 @@ EOF
   fi
 
   PROMPT_BODY="${DASHBOARD_PREAMBLE}$(cat "$PROMPT_FILE")"
-  paste_prompt "$SESSION" "$PROMPT_BODY"
+  type_prompt "$SESSION" "$PROMPT_BODY" 3
 
   if PORT="$(poll_port_file)"; then
     refresh_chromium_for_port "$PORT"

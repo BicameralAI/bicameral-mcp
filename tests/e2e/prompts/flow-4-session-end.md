@@ -1,7 +1,3 @@
-I want to capture a constraint we should be tracking for the cherry-pick implementation:
+One thing while we're here — we need to make sure the cherry-pick implementation never blocks on stdin prompts during conflict resolution. The visual conflict UI has to be the only path; if the implementation ever asks the user to resolve a conflict via terminal input, that's a regression we have to prevent.
 
-> "The cherry-pick implementation should never require interactive prompts during conflict resolution — conflicts must always be resolvable through the visual conflict UI, not via stdin."
-
-It's a load-bearing decision (it affects how the conflict-handling code path can evolve), and right now it lives only in conversation. Capture it as a session-end correction and ingest it into the bicameral ledger using the `agent_session` source — it's coming from this current conversation rather than a doc or transcript.
-
-After ingesting, confirm the decision_id and the signoff state.
+Worth tracking alongside the cherry-pick work so it doesn't get lost in conversation.
