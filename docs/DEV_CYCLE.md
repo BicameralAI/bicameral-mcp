@@ -21,6 +21,172 @@ merges to `main` except `dev` (and the rare hotfix — see §10).
 
 ---
 
+## 0. Workflow Feature Release Cycle
+
+**Audience**: anyone proposing a new agentic workflow capability — a new
+skill, a new lifecycle hook, a new auto-fire trigger, a new dashboard
+surface. Distinct from §6 (engineering version release): §6 covers how a
+finished change reaches users; **§0 covers how a workflow idea becomes a
+finished change worth releasing.**
+
+**Why this exists separately**: most of our P0 misses (#146 preflight
+auto-fire, #147 SessionEnd capture-corrections, the e2e harness churn
+across 2026-04 → 2026-05) trace back to the same root cause — we shipped
+the implementation BEFORE we wrote down what success looks like and
+BEFORE we had any way to observe whether it actually worked in the wild.
+The fix is to put validation in front of implementation, not behind it.
+
+### The cycle
+
+```
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│  1.      │  │  2.      │  │  3.      │  │  4.      │  │  5.      │  │  6.      │
+│ Friction │─▶│Candidate │─▶│  Test    │─▶│Functional│─▶│Telemetry │─▶│Optimized │
+│ capture  │  │ workflow │  │ harness  │  │ solution │  │collection│  │ solution │
+└──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
+                                  ▲                            │
+                                  │   ◀─── feedback loop ──────┘
+                                  │   (telemetry surfaces gaps the harness should have caught)
+```
+
+**Anti-pattern (the trap we keep falling into)**: jump from step 1
+directly to step 4. Build the skill. Ship it. Discover the harness can't
+observe the auto-fire and telemetry surfaces nothing. Now you're
+retrofitting phases 2/3/5 onto a thing already in production — every
+iteration loses fidelity because the spec and the implementation are
+entangled. (See: every revision history of `tests/e2e/run_e2e_flows.py`.)
+
+### Phases
+
+#### 1. Friction capture
+
+Observable evidence that a real user / agent / contributor stubbed their
+toe on something that should "just work." Symptoms, not fixes.
+
+Examples:
+- Slack thread from a design partner showing `claude -p '/bicameral:sync'`
+  exiting silently (#124).
+- Dashboard footage of a mid-session constraint orphaning as a parallel
+  decision instead of linking to its parent.
+- An e2e harness flow that fails for a reason no one can immediately
+  explain.
+
+Captured as a GitHub issue with `friction` or `desync:*` label, in the
+repo where the friction was observed. Body answers: *what was the user
+trying to do, what happened instead, what would "right" look like.*
+
+**Out of scope at this stage**: solution shape, file paths, schema
+changes. Don't pre-commit to an implementation in the friction note.
+
+#### 2. Candidate workflow
+
+A short prose spec of what the new workflow should look like end-to-end,
+written from the user/agent perspective, NOT the implementation
+perspective. Lives in a source-of-truth issue (e.g.
+`BicameralAI/bicameral#108` for the v0 user flow spec).
+
+Format:
+- **Trigger**: what does the user do or say to enter this workflow?
+- **Sequence**: numbered list of agent-observable steps — tool calls,
+  hook fires, status transitions. Reference the spec; do NOT inline
+  implementation details (file paths, function names, schema columns).
+- **Success outcome**: what visible state proves the workflow worked?
+  Status flip, ledger row, dashboard panel, ratification record.
+- **Failure modes**: what should the user see when each step fails, and
+  what's the recovery path?
+
+The spec is the contract for phases 3–6. If the spec is wrong, the
+harness validates the wrong thing and the implementation chases the
+wrong target.
+
+#### 3. Test harness
+
+A real e2e test that exercises the spec from step 2 against a real
+claude session (not mocks). For bicameral-mcp this lives at
+`tests/e2e/run_e2e_flows.py`.
+
+**Required before any implementation work begins.** The harness fails on
+day one — that's the point. A failing harness with a clear assertion
+message is the spec made executable.
+
+Harness rules:
+- Assert on the spec's success outcome, not the implementation path.
+  ("After commit, decision X is in `pending` state" is good. "Agent
+  called `link_commit` then `resolve_compliance` in that order" is
+  brittle and couples the test to the substrate.)
+- Use natural prompts — never name the tool the agent is supposed to
+  auto-fire. Naming the tool defeats the trigger that IS the product.
+- When success isn't observable in stream-json (e.g. a SessionEnd
+  subprocess writes to the ledger out-of-band), validate via post-hoc
+  ledger query. Document the indirection in the asserter docstring.
+- When a flow fails: distinguish test-harness bug from product gap. If
+  the asserter is wrong about the spec, fix the asserter (no GitHub
+  issue needed). If the spec says X happens and X doesn't happen, that's
+  a product gap — open or update an issue, leave the harness asserting
+  the spec, mark the failure as expected until the implementation lands.
+
+#### 4. Functional solution
+
+Implementation pass that makes the harness pass. Optimize for spec
+correctness — not performance, not polish. Skill description, tool
+contract, lifecycle hooks all in scope.
+
+Done when:
+- Harness PASSes against the unmodified natural prompt from step 3.
+- A real user can complete the flow end-to-end without hitting any of
+  the friction from step 1.
+- Implementation is documented at the level needed for phase 5 telemetry
+  to know what to count.
+
+#### 5. Telemetry collection
+
+Instrument the new workflow with PostHog events /
+`bicameral.skill_begin/end` calls / structured logs that answer: *is
+this actually being used, by whom, and does it work in their hands?*
+
+Telemetry contract is part of the spec, not an afterthought. Each step
+in the candidate workflow (phase 2) should map to a telemetry event the
+dashboard can query.
+
+Wire telemetry BEFORE merging the implementation PR. A workflow you
+can't observe in production is a workflow that's never validated in
+production.
+
+#### 6. Optimized solution
+
+Iterate based on what telemetry shows:
+- Drop-off after step N → step N is unclear or broken in real
+  conditions. Could be a description fix or a substrate change.
+- Auto-fire rate &lt;X% → trigger discipline is losing the priority race;
+  restate the skill description, change the trigger phrasing, or move to
+  a deterministic hook.
+- Compliance verdict mix unexpected → either the rubric is wrong or the
+  user is using the workflow differently than the spec assumed.
+
+Optimization changes route through the same cycle: telemetry-observed
+friction → updated workflow spec → updated harness → new functional
+pass → new telemetry. Don't optimize without re-passing the harness.
+
+### Audit trail
+
+Every workflow feature gets a short META_LEDGER entry at each phase
+boundary:
+
+```
+2026-05-01  workflow:bicameral-capture-corrections  phase=3→4
+  harness PR: BicameralAI/bicameral-mcp#147 (SKIP→SETUP)
+  spec: BicameralAI/bicameral#108 § Flow 4
+  next: implementation PR + telemetry wiring
+```
+
+This makes it possible to look at any open workflow feature and
+immediately see which phase it's in, what's blocking the next phase, and
+where the spec lives. It's also the first place to look when a feature
+ships and silently regresses — phase boundaries are where the harness
+should pass before/after the change.
+
+---
+
 ## 1. Lifecycle map
 
 ```
