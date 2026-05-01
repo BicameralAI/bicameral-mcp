@@ -20,7 +20,12 @@ on:
       - 'server.py'
       - 'pyproject.toml'
       - '.github/workflows/v0-user-flow-e2e.yml'
-  workflow_dispatch:  # allow manual trigger for debugging
+  workflow_dispatch:
+    inputs:
+      record_demo:
+        description: "Record split-screen demo videos for each flow (manual only)."
+        type: boolean
+        default: false
 
 env:
   PYTHON_VERSION: '3.11'
@@ -36,7 +41,9 @@ jobs:
     # production environment provides CLAUDE_CODE_OAUTH_TOKEN for the
     # Claude Code CLI sessions.
     environment: production
-    timeout-minutes: 25
+    # Recording adds ~5 min/flow + chromium/ffmpeg/Xvfb setup; bump the budget
+    # when record_demo is on. github.event.inputs.* are strings.
+    timeout-minutes: ${{ github.event.inputs.record_demo == 'true' && 60 || 25 }}
     env:
       DESKTOP_REPO_PATH: /tmp/desktop-clone
     steps:
@@ -95,10 +102,28 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
       # ── Drive the five flows through Claude Code CLI sessions ─
-      - name: Run v0 user flow e2e
+      - name: Run v0 user flow e2e (assertion-only, blocking)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: python tests/e2e/run_e2e_flows.py
+
+      # ── Optional: install split-screen recording deps (manual dispatch only) ─
+      - name: Install recording dependencies (Xvfb + chromium + ffmpeg + xterm)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            xvfb fluxbox xterm chromium-browser ffmpeg fonts-dejavu
+
+      # ── Optional: record split-screen demo videos per flow ─
+      # continue-on-error so a recording flake never gates merge — assertion
+      # step above is the sole authority on workflow conclusion.
+      - name: Record demo videos (split-screen, optional)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+        continue-on-error: true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: bash tests/e2e/record_demo.sh
 
       # ── Forensics: keep transcripts even on failure ─
       - name: Upload e2e transcripts
@@ -108,3 +133,14 @@ jobs:
           name: v0-user-flow-e2e-transcripts
           path: test-results/e2e/
           retention-days: 30
+
+      # ── Optional: upload demo MP4s for download (manual dispatch only) ─
+      - name: Upload demo videos
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: v0-user-flow-e2e-demos
+          path: docs/demos/v0-userflow-e2e/*.mp4
+          retention-days: 90
+          if-no-files-found: warn
