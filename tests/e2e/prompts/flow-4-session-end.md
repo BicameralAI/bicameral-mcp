@@ -1,3 +1,5 @@
-One thing while we're here — we need to make sure the cherry-pick implementation never blocks on stdin prompts during conflict resolution. The visual conflict UI has to be the only path; if the implementation ever asks the user to resolve a conflict via terminal input, that's a regression we have to prevent.
+Hmm wait — quick aside before we go further on the reorder.ts refactor.
 
-Worth tracking alongside the cherry-pick work so it doesn't get lost in conversation.
+Reading through the cherry-pick conflict path I committed earlier, I realized that handler shouldn't ever fall back to a stdin prompt when there's a merge conflict. The visual conflict UI has to be the only resolution path — if the implementation drifts toward a terminal prompt, that's wrong and we'd have to roll it back.
+
+Anyway — back to `app/src/lib/git/reorder.ts`. Please continue the refactor we started: keep pulling out the `reorder()` function for the new text-editor flow.
