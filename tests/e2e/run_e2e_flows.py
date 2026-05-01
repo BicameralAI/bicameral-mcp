@@ -298,16 +298,12 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
     if "error" in after:
         flow3.verdict = "ERROR"
         flow3.body += (
-            f"\n— Ledger validation —\n"
-            f"failed to open ledger at {LEDGER_DIR}: {after['error']}\n"
+            f"\n— Ledger validation —\nfailed to open ledger at {LEDGER_DIR}: {after['error']}\n"
         )
         return
     if "error" in baseline:
         flow3.verdict = "ERROR"
-        flow3.body += (
-            f"\n— Ledger validation —\n"
-            f"baseline snapshot failed: {baseline['error']}\n"
-        )
+        flow3.body += f"\n— Ledger validation —\nbaseline snapshot failed: {baseline['error']}\n"
         return
 
     # The honest V1-lifecycle assertion: by the end of the dev_session run
@@ -336,9 +332,7 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
     drifted_before = baseline.get("by_status", {}).get("drifted", 0)
     drifted_after = after.get("by_status", {}).get("drifted", 0)
 
-    verdicts_written = (reflected_after - reflected_before) + (
-        drifted_after - drifted_before
-    )
+    verdicts_written = (reflected_after - reflected_before) + (drifted_after - drifted_before)
     pending_drained = pending_before - pending_after
 
     # Flow 3's verdict is now purely ledger-based per the user-flow design:
@@ -377,8 +371,7 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
     status_after = after.get("by_status", {})
     all_statuses = sorted(set(status_before) | set(status_after))
     status_lines = "\n".join(
-        f"  {s:<22} {status_before.get(s, 0)} → {status_after.get(s, 0)}"
-        for s in all_statuses
+        f"  {s:<22} {status_before.get(s, 0)} → {status_after.get(s, 0)}" for s in all_statuses
     )
     commit_note = (
         "agent committed in Flow 3 (precondition met)"
@@ -456,10 +449,7 @@ def run_claude_session(
 
     chain_tag = ""
     if session_id is not None:
-        chain_tag = (
-            f" [session={session_id[:8]} "
-            f"{'first' if is_first_in_group else 'resume'}]"
-        )
+        chain_tag = f" [session={session_id[:8]} {'first' if is_first_in_group else 'resume'}]"
     # cwd MUST be DESKTOP_REPO_PATH. The agent treats cwd as the primary
     # codebase and resolves prompt-relative paths there. Iteration 2 used
     # pilot/mcp as cwd → agent saw the Python MCP server, refused to act
@@ -520,9 +510,7 @@ def run_scaffolding_turn(session_id: str, label: str, prompt: str) -> int:
         "--resume",
         session_id,
     ]
-    print(
-        f"\n=== Scaffolding ({label}) — injecting into session={session_id[:8]} ==="
-    )
+    print(f"\n=== Scaffolding ({label}) — injecting into session={session_id[:8]} ===")
     proc = subprocess.run(
         cmd,
         cwd=DESKTOP_REPO_PATH,
@@ -968,19 +956,11 @@ def main() -> int:
         # Snapshot baseline once, immediately before the first dev_session
         # flow. This means Flow 1's effects are baked in but Flow 2/3/4's
         # effects (the ones we want to measure) are not.
-        if (
-            dev_session_baseline is None
-            and spec.session_group == "dev_session"
-            and not spec.skip
-        ):
-            print(
-                "\n=== Snapshotting ledger baseline before dev_session ==="
-            )
+        if dev_session_baseline is None and spec.session_group == "dev_session" and not spec.skip:
+            print("\n=== Snapshotting ledger baseline before dev_session ===")
             dev_session_baseline = _snapshot_ledger()
             if "error" in dev_session_baseline:
-                sys.stderr.write(
-                    f"baseline snapshot failed: {dev_session_baseline['error']}\n"
-                )
+                sys.stderr.write(f"baseline snapshot failed: {dev_session_baseline['error']}\n")
             else:
                 print(
                     f"    baseline: {dev_session_baseline.get('total_decisions', 0)} decisions, "
@@ -1013,9 +993,7 @@ def main() -> int:
         prompt_path = PROMPTS_DIR / spec.prompt_file
         prompt = prompt_path.read_text(encoding="utf-8")
         session_id = group_session_ids.get(spec.session_group) if spec.session_group else None
-        is_first = (
-            spec.session_group is not None and spec.session_group not in group_seen
-        )
+        is_first = spec.session_group is not None and spec.session_group not in group_seen
         if spec.session_group is not None:
             group_seen.add(spec.session_group)
         try:
@@ -1079,11 +1057,7 @@ def main() -> int:
         # still measures auto-fire reliability honestly — this scaffolding
         # is only state recovery for downstream flows. The scaffolding turn
         # is allowed to name the tool because it isn't a tested flow.
-        if (
-            spec.flow_id == "Flow 2"
-            and spec.session_group == "dev_session"
-            and not passed
-        ):
+        if spec.flow_id == "Flow 2" and spec.session_group == "dev_session" and not passed:
             run_scaffolding_turn(
                 session_id=group_session_ids["dev_session"],
                 label="post-flow2-preflight",
@@ -1103,9 +1077,7 @@ def main() -> int:
     if "dev_session" in group_session_ids:
         if dev_session_baseline is None:
             dev_session_baseline = {"error": "baseline never captured"}
-        _validate_flow3_via_ledger(
-            group_session_ids["dev_session"], dev_session_baseline
-        )
+        _validate_flow3_via_ledger(group_session_ids["dev_session"], dev_session_baseline)
 
     _print_report()
 
