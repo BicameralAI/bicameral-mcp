@@ -58,7 +58,13 @@ bicameral-mcp-classify = "cli.classify:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-exclude = ["tests", "visual-plan", "mocks", "test-results"]
+exclude = [
+  "tests",
+  "visual-plan",
+  "mocks",
+  "test-results",
+  "docs/demos/**/*.mp4",
+]
 artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
 
 [tool.ruff]
