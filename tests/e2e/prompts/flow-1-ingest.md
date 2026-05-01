@@ -10,4 +10,6 @@ Here are three roadmap items:
 
 Please ingest these as decisions into the bicameral ledger. The source is `desktop/desktop:docs/process/roadmap.md`.
 
-After ingesting, briefly confirm what was captured (decision IDs and signoff state) so I know they landed.
+Then bind the cherry-pick decision to `app/src/lib/git/cherry-pick.ts` — specifically the `CherryPickResult` enum near the top of that file (lines 31–60). That gives us a code anchor to validate against in later flows.
+
+Finally, ratify all three decisions via `bicameral.ratify` so they move from `proposed` to `ratified` — the team has reviewed and adopted them. Briefly confirm what landed (decision IDs, signoff state, and which decision is bound where) so the rest of this session can build on a clean ratified ledger.

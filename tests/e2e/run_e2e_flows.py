@@ -263,12 +263,18 @@ def _ingest_items(call: dict) -> list[dict]:
 
 
 def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
+    """Flow 1: PM ingests the seed roadmap decisions, binds the cherry-pick
+    decision to cherry-pick.ts, and ratifies all three. Subsequent flows
+    depend on a CLEAN, RATIFIED, BOUND ledger as their baseline — they must
+    not re-ingest or re-bind the same decisions.
+    """
     bcalls = _bicameral_tool_calls(calls)
+    names = [c["name"].split("__")[-1] for c in bcalls]
+
     ingest_calls = _calls_named(bcalls, "bicameral_ingest")
     if not ingest_calls:
         return False, (
-            f"expected bicameral.ingest to be called; saw {len(bcalls)} bicameral "
-            f"calls: {[c['name'] for c in bcalls]}"
+            f"expected bicameral.ingest; saw {len(bcalls)} bicameral calls: {names}"
         )
 
     items = _ingest_items(ingest_calls[0])
@@ -278,8 +284,38 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
             f"ingest called without decisions/mappings (payload keys: {list(payload.keys())})"
         )
 
+    # Bind: cherry-pick decision must anchor to cherry-pick.ts so flow 3 has
+    # something to link_commit against. Without this, flow 3 finds nothing
+    # pending and resolve_compliance has no work — the test would have to
+    # set up its own bound decision (the anti-pattern this consolidates).
+    bind_calls = _calls_named(bcalls, "bicameral_bind")
+    if not bind_calls:
+        return False, f"expected bicameral.bind on cherry-pick.ts; saw: {names}"
+    bind_targets = []
+    for c in bind_calls:
+        binp = c.get("input") or {}
+        bpayload = binp.get("payload") or binp
+        for span in bpayload.get("spans") or bpayload.get("bindings") or []:
+            path = (span or {}).get("file_path") or (span or {}).get("path") or ""
+            if path:
+                bind_targets.append(path)
+    if not any("cherry-pick.ts" in p for p in bind_targets):
+        return False, (
+            f"bind called but not against cherry-pick.ts; targets={bind_targets}"
+        )
+
+    # Ratify: PM blesses the just-ingested decisions. Flow 5 walks the
+    # `proposed` queue — flow 1's seeds must NOT remain in `proposed` or
+    # they'd contaminate flow 5's "what's queued for adoption" view.
+    ratify_calls = _calls_named(bcalls, "bicameral_ratify")
+    if not ratify_calls:
+        return False, (
+            f"expected bicameral.ratify after ingest (PM blesses adoption); saw: {names}"
+        )
+
     return True, (
-        f"bicameral.ingest called with {len(items)} item(s); total bicameral calls: {len(bcalls)}"
+        f"ingest({len(items)} items) + bind(cherry-pick.ts) + "
+        f"ratify({len(ratify_calls)}); sequence: {names}"
     )
 
 
