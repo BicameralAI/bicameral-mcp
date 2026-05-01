@@ -4,6 +4,14 @@ name: v0 user flow e2e
 # flows via real Claude Code CLI sessions with bicameral-mcp registered.
 # See tests/e2e/README.md for the design.
 #
+# Two-stage workflow:
+#   1. assertions  — always runs (PR + dispatch), no manual gate. Validates
+#                    MCP tool callability + surfaces agentic-layer advisories.
+#   2. recording   — manual dispatch only, gated by an environment with
+#                    required reviewers (`recording-approval`). Produces
+#                    split-screen demo MP4s; expensive (~30-45 min wall +
+#                    API spend), so worth gating behind explicit approval.
+#
 # Note: when this workflow file lands, it will not run on the PR that
 # adds it — pull_request workflows execute the version on the base
 # branch (main). First execution is on the next qualifying PR after merge.
@@ -23,7 +31,7 @@ on:
   workflow_dispatch:
     inputs:
       record_demo:
-        description: "Record split-screen demo videos for each flow (manual only)."
+        description: "Record split-screen demo videos for each flow (manual only; requires recording-approval reviewer)."
         type: boolean
         default: false
 
@@ -33,19 +41,17 @@ env:
   # Pinned commit of github.com/desktop/desktop. Bump when the roadmap.md
   # shape drifts in ways that break prompts, or when bind targets change.
   DESKTOP_PINNED_COMMIT: 'e6c50fb028171e9cec03594273c8116bb135847e'
+  DESKTOP_REPO_PATH: /tmp/desktop-clone
 
 jobs:
-  v0-user-flow-e2e:
-    name: v0 User Flow E2E (Claude Code CLI session)
+  # ── Stage 1: assertions — always runs ───────────────────────────────
+  assertions:
+    name: e2e assertions (auto)
     runs-on: ubuntu-latest
-    # production environment provides CLAUDE_CODE_OAUTH_TOKEN for the
-    # Claude Code CLI sessions.
+    # production env provides CLAUDE_CODE_OAUTH_TOKEN. No required reviewers
+    # on this env → PR triggers flow through automatically.
     environment: production
-    # Recording adds ~5 min/flow + chromium/ffmpeg/Xvfb setup; bump the budget
-    # when record_demo is on. github.event.inputs.* are strings.
-    timeout-minutes: ${{ github.event.inputs.record_demo == 'true' && 60 || 25 }}
-    env:
-      DESKTOP_REPO_PATH: /tmp/desktop-clone
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -70,7 +76,6 @@ jobs:
           which claude && claude --version
           which bicameral-mcp
 
-      # ── Test fixture: github.com/desktop/desktop at a pinned commit ─
       - name: Clone desktop/desktop at pinned commit
         run: |
           mkdir -p ${{ env.DESKTOP_REPO_PATH }}
@@ -79,15 +84,12 @@ jobs:
           git remote add origin https://github.com/desktop/desktop
           git fetch --depth 1 origin "${DESKTOP_PINNED_COMMIT}"
           git checkout FETCH_HEAD
-          # Stamp a real 'main' branch so flows that branch off it work
           git checkout -b main
           git config user.email ci@bicameral.test
           git config user.name CI
-          # Sanity: required files present
           test -f docs/process/roadmap.md
           test -f app/src/lib/git/cherry-pick.ts
 
-      # ── Diagnostic probe: confirm OAuth token is non-empty without leaking it ─
       - name: Claude Code OAuth token visibility probe
         run: |
           set +e
@@ -101,39 +103,11 @@ jobs:
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 
-      # ── Drive the five flows through Claude Code CLI sessions ─
       - name: Run v0 user flow e2e (assertion-only, blocking)
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: python tests/e2e/run_e2e_flows.py
 
-      # ── Optional: install split-screen recording deps (manual dispatch only) ─
-      # NOTE: do NOT install `chromium-browser` here — on Ubuntu 22.04+ the apt
-      # package is a snap-store wrapper that hangs the runner (no snap store
-      # connectivity). GitHub's ubuntu-latest image ships google-chrome-stable
-      # pre-installed; record_demo.sh auto-detects it.
-      - name: Install recording dependencies (Xvfb + ffmpeg + xterm)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            xvfb fluxbox xterm ffmpeg fonts-dejavu
-          # Sanity check: confirm a chromium-compatible browser is on PATH.
-          command -v google-chrome-stable || command -v google-chrome || \
-            command -v chromium || command -v chromium-browser || \
-            { echo "ERROR: no chromium-compatible browser found on PATH" >&2; exit 1; }
-
-      # ── Optional: record split-screen demo videos per flow ─
-      # continue-on-error so a recording flake never gates merge — assertion
-      # step above is the sole authority on workflow conclusion.
-      - name: Record demo videos (split-screen, optional)
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
-        continue-on-error: true
-        env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-        run: bash tests/e2e/record_demo.sh
-
-      # ── Forensics: keep transcripts even on failure ─
       - name: Upload e2e transcripts
         if: always()
         uses: actions/upload-artifact@v4
@@ -142,10 +116,81 @@ jobs:
           path: test-results/e2e/
           retention-days: 30
 
-      # ── Optional: upload demo MP4s for download (manual dispatch only) ─
-      - name: Upload demo videos
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+  # ── Stage 2: recording — manual approval required ────────────────────
+  recording:
+    name: split-screen demo recording (manual approval)
+    needs: assertions
+    # Run only on manual dispatch with record_demo=true. `always()` so
+    # advisory failures in the assertion job don't block recording — the
+    # demo is meant to showcase the agentic gap as well as the wins.
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.record_demo == true }}
+    runs-on: ubuntu-latest
+    # `recording-approval` env should have required reviewers configured
+    # in repo settings → that's the manual gate. Inherits OAuth token from
+    # the same env (or repo-level secrets).
+    environment: recording-approval
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup Node.js (for Claude Code CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install bicameral-mcp + test deps
+        run: pip install -e ".[test]"
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Verify CLI tooling on PATH
+        run: |
+          which claude && claude --version
+          which bicameral-mcp
+
+      - name: Clone desktop/desktop at pinned commit
+        run: |
+          mkdir -p ${{ env.DESKTOP_REPO_PATH }}
+          cd ${{ env.DESKTOP_REPO_PATH }}
+          git init -q
+          git remote add origin https://github.com/desktop/desktop
+          git fetch --depth 1 origin "${DESKTOP_PINNED_COMMIT}"
+          git checkout FETCH_HEAD
+          git checkout -b main
+          git config user.email ci@bicameral.test
+          git config user.name CI
+          test -f docs/process/roadmap.md
+          test -f app/src/lib/git/cherry-pick.ts
+
+      # NOTE: do NOT install `chromium-browser` here — on Ubuntu 22.04+ the
+      # apt package is a snap-store wrapper that hangs the runner. GitHub's
+      # ubuntu-latest image ships google-chrome-stable pre-installed;
+      # record_demo.sh auto-detects it.
+      - name: Install recording dependencies (Xvfb + ffmpeg + xterm + tmux)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            xvfb fluxbox xterm ffmpeg tmux fonts-dejavu
+          command -v google-chrome-stable || command -v google-chrome || \
+            command -v chromium || command -v chromium-browser || \
+            { echo "ERROR: no chromium-compatible browser found on PATH" >&2; exit 1; }
+
+      # continue-on-error: a recording flake should not propagate as a hard
+      # failure. The artifact upload below preserves whatever was captured.
+      - name: Record demo videos (split-screen)
         continue-on-error: true
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: bash tests/e2e/record_demo.sh
+
+      - name: Upload demo videos
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: v0-user-flow-e2e-demos
