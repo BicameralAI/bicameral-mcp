@@ -83,6 +83,41 @@ if [ -z "$CHROME_BIN" ]; then
 fi
 echo "[demo] using browser: $CHROME_BIN"
 
+# ── Pre-populate credentials for interactive claude in CI ───────────────
+# Interactive mode reads OAuth from `$CLAUDE_CONFIG_DIR/.credentials.json`
+# (default `~/.claude/.credentials.json`) on Linux. The `CLAUDE_CODE_OAUTH_TOKEN`
+# env var works in `--print` mode but is unreliable in interactive mode — the
+# CI runs in this PR observed the login picker even with the env var set.
+# Writing the credentials file directly is the documented headless path.
+# Source: https://code.claude.com/docs/en/authentication
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  CRED_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+  CRED_FILE="$CRED_DIR/.credentials.json"
+  mkdir -p "$CRED_DIR"
+  python3 - "$CLAUDE_CODE_OAUTH_TOKEN" "$CRED_FILE" <<'PY'
+import json, os, sys
+token, dst = sys.argv[1], sys.argv[2]
+# Shape mirrors the macOS Keychain "Claude Code-credentials" blob; expiresAt
+# pushed to year 2286 so the recording's ~25 min wall time never triggers an
+# auto-refresh that would need refreshToken (which isn't in CI's env).
+payload = {
+    "claudeAiOauth": {
+        "accessToken": token,
+        "refreshToken": "",
+        "expiresAt": 9999999999000,
+        "scopes": ["user:inference", "user:profile"],
+        "subscriptionType": "max",
+    }
+}
+with open(dst, "w") as f:
+    json.dump(payload, f)
+os.chmod(dst, 0o600)
+PY
+  echo "[demo] wrote $CRED_FILE (mode 0600) from CLAUDE_CODE_OAUTH_TOKEN"
+else
+  echo "[demo] CLAUDE_CODE_OAUTH_TOKEN unset — interactive claude will hit the login picker" >&2
+fi
+
 # ── Materialize MCP config (mirrors run_e2e_flows.py) ───────────────────
 sed \
   -e "s|\${DESKTOP_REPO_PATH}|$DESKTOP_REPO_PATH|g" \
