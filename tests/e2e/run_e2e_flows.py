@@ -101,7 +101,55 @@ def _clean_ledger() -> None:
         shutil.rmtree(LEDGER_DIR, ignore_errors=True)
 
 
+def _reset_desktop_repo() -> None:
+    """Reset desktop-clone to its pinned HEAD between runs. Flow 3 makes a
+    real commit; without a reset, the second-onwards run starts from a
+    polluted base.
+    """
+    repo = pathlib.Path(DESKTOP_REPO_PATH)
+    if not (repo / ".git").exists():
+        return
+    for args in (("git", "reset", "--hard", "FETCH_HEAD"), ("git", "reset", "--hard", "HEAD")):
+        try:
+            subprocess.run(args, cwd=repo, check=True, capture_output=True, timeout=20)
+            return
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            continue
+
+
+def _materialize_settings_with_hook() -> pathlib.Path:
+    """Write a project-style ``settings.json`` carrying the PostToolUse/Bash
+    hook bicameral's setup-wizard installs in real projects. The hook command
+    is imported from ``setup_wizard`` so the e2e harness exercises the EXACT
+    string a freshly-onboarded user would have — single source of truth, no
+    drift between test and production. The bicameral-sync skill listens for
+    the hook's "new commit detected" output to auto-fire ``link_commit``.
+    """
+    # setup_wizard.py is at pilot/mcp root (two levels up from this file).
+    mcp_root = pathlib.Path(__file__).resolve().parents[2]
+    if str(mcp_root) not in sys.path:
+        sys.path.insert(0, str(mcp_root))
+    from setup_wizard import _BICAMERAL_POST_COMMIT_COMMAND  # noqa: E402
+
+    settings = {
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [
+                        {"type": "command", "command": _BICAMERAL_POST_COMMIT_COMMAND}
+                    ],
+                }
+            ]
+        }
+    }
+    out = RESULTS_DIR / "claude-settings-with-hook.json"
+    out.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    return out
+
+
 MCP_CONFIG_PATH = _materialize_mcp_config()
+SETTINGS_PATH = _materialize_settings_with_hook()
 
 
 @dataclass
@@ -167,11 +215,13 @@ def run_claude_session(flow_id: str, prompt: str) -> tuple[list[dict], pathlib.P
         "--mcp-config",
         str(MCP_CONFIG_PATH),
         "--strict-mcp-config",
-        # Allow bicameral MCP tools + Read/Grep so skills can inspect bound files.
-        # Bash is intentionally NOT allowed — bicameral skills shouldn't need shell.
-        # Comma-separated single arg is unambiguous vs space-separated variadic.
+        "--settings",
+        str(SETTINGS_PATH),
+        # Bash + Edit are required for flow 3 to make a real commit, which
+        # is how the PostToolUse hook + bicameral-sync skill exercise the
+        # link_commit auto-fire path. Read/Grep cover skill file inspection.
         "--allowed-tools",
-        "mcp__bicameral,Read,Grep",
+        "mcp__bicameral,Read,Grep,Edit,Bash",
         "--add-dir",
         DESKTOP_REPO_PATH,
         "--output-format",
@@ -284,13 +334,16 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
             f"ingest called without decisions/mappings (payload keys: {list(payload.keys())})"
         )
 
-    # Bind: cherry-pick decision must anchor to cherry-pick.ts so flow 3 has
-    # something to link_commit against. Without this, flow 3 finds nothing
-    # pending and resolve_compliance has no work — the test would have to
-    # set up its own bound decision (the anti-pattern this consolidates).
+    # Bind: cherry-pick → cherry-pick.ts AND reorder/improved-commit-history
+    # → reorder.ts. Both anchors are needed:
+    #   - cherry-pick.ts so flow 3's commit lands on a tracked region.
+    #   - reorder.ts so flow 2's preflight has a real binding to surface
+    #     against the dev's "refactor reorder.ts" request (semantic
+    #     grounding through preflight isn't wired today; the binding is
+    #     what bridges the decision to the file path).
     bind_calls = _calls_named(bcalls, "bicameral_bind")
     if not bind_calls:
-        return False, f"expected bicameral.bind on cherry-pick.ts; saw: {names}"
+        return False, f"expected bicameral.bind on cherry-pick.ts and reorder.ts; saw: {names}"
     bind_targets = []
     for c in bind_calls:
         binp = c.get("input") or {}
@@ -299,10 +352,14 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
             path = (span or {}).get("file_path") or (span or {}).get("path") or ""
             if path:
                 bind_targets.append(path)
-    if not any("cherry-pick.ts" in p for p in bind_targets):
-        return False, (
-            f"bind called but not against cherry-pick.ts; targets={bind_targets}"
-        )
+    has_cp = any("cherry-pick.ts" in p for p in bind_targets)
+    has_reorder = any("reorder.ts" in p for p in bind_targets)
+    if not (has_cp and has_reorder):
+        missing = [
+            f for f, present in (("cherry-pick.ts", has_cp), ("reorder.ts", has_reorder))
+            if not present
+        ]
+        return False, f"bind missing target(s): {missing}; saw bound paths: {bind_targets}"
 
     # Ratify: PM blesses the just-ingested decisions. Flow 5 walks the
     # `proposed` queue — flow 1's seeds must NOT remain in `proposed` or
@@ -336,8 +393,11 @@ def assert_flow_2(calls: list[dict]) -> tuple[bool, str]:
         return False, f"expected preflight (auto-fired); saw: {names}"
 
     file_paths = preflight_calls[0]["input"].get("file_paths") or []
-    if not file_paths or not any("cherry-pick.ts" in p for p in file_paths):
-        return False, f"preflight called without cherry-pick.ts in file_paths; got: {file_paths}"
+    if not file_paths or not any("reorder.ts" in p for p in file_paths):
+        return False, (
+            f"preflight called without reorder.ts in file_paths (the file the dev "
+            f"asked to refactor); got: {file_paths}"
+        )
 
     # 2. ingest fired with agent_session source — the refinement
     ingest_calls = _calls_named(bcalls, "bicameral_ingest")
@@ -367,42 +427,45 @@ def assert_flow_2(calls: list[dict]) -> tuple[bool, str]:
 
 
 def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:
+    """Flow 3: dev makes a real edit + commit; the PostToolUse hook surfaces
+    "bicameral: new commit detected" and the agent's bicameral-sync skill
+    auto-fires `link_commit`. Auto resolve_compliance isn't implemented yet,
+    so this asserter does NOT require it — only that link_commit fires
+    automatically off the commit signal (no explicit prompt naming it).
+    """
     bcalls = _bicameral_tool_calls(calls)
     names = [c["name"].split("__")[-1] for c in bcalls]
 
-    has_link_commit = any("link_commit" in n for n in names)
-    has_resolve = any("resolve_compliance" in n for n in names)
-
-    if not has_link_commit:
-        return False, f"expected link_commit; saw: {names}"
-    if not has_resolve:
-        return False, f"expected resolve_compliance; saw: {names}"
-
-    # Verify resolve_compliance carried verdicts of expected shape
-    # (input may wrap in 'payload' depending on tool schema version)
-    resolve_calls = _calls_named(bcalls, "bicameral_resolve_compliance")
-    if resolve_calls:
-        rinput = resolve_calls[0]["input"] or {}
-        rpayload = rinput.get("payload") or rinput
-        verdicts = rpayload.get("verdicts") or []
-    else:
-        verdicts = []
-    if not verdicts:
-        return False, "resolve_compliance called without verdicts"
-
+    link_calls = _calls_named(bcalls, "bicameral_link_commit")
+    if not link_calls:
+        return False, (
+            f"expected link_commit to auto-fire after the commit (PostToolUse hook + "
+            f"bicameral-sync skill); saw: {names}"
+        )
     return True, (
-        f"link_commit + resolve_compliance both called; verdicts={len(verdicts)}; sequence: {names}"
+        f"link_commit auto-fired ({len(link_calls)} call(s)) after commit; sequence: {names}"
     )
 
 
 def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
+    """Flow 4: PM captures a session-end constraint about the cherry-pick
+    implementation. The constraint is NEW content, but it semantically
+    relates to the cherry-pick decision flow 1 ratified — bicameral.ingest
+    should surface a context_for_candidate (or supersession_candidate)
+    pointing at the existing cherry-pick decision, and the agent should
+    call bicameral.resolve_collision to wire the linkage.
+
+    The previous version of this assertion only checked that ingest fired
+    with `agent_session` source, which let a parallel-decision regression
+    pass silently — observed in the dashboard footage as the constraint
+    sitting orphaned next to the cherry-pick feature decision.
+    """
     bcalls = _bicameral_tool_calls(calls)
+    names = [c["name"].split("__")[-1] for c in bcalls]
+
     ingest_calls = _calls_named(bcalls, "bicameral_ingest")
     if not ingest_calls:
-        return (
-            False,
-            f"expected ingest with agent_session source; saw: {[c['name'] for c in bcalls]}",
-        )
+        return False, f"expected ingest with agent_session source; saw: {names}"
 
     # Source can live at payload.source (top-level) or per-decision via
     # span.source_type. Check both, since the MCP tool schema wraps in payload.
@@ -421,8 +484,23 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
             f"top_source={top_source!r}, span_source_types={span_sources}"
         )
 
+    # The constraint is content-related to the existing cherry-pick decision.
+    # Either ingest surfaces context_for_candidates (and the agent resolves
+    # them) or supersession_candidates (also resolved via the same tool).
+    # Without resolve_collision firing, the constraint orphans into a
+    # parallel decision — the regression flagged by the dashboard footage.
+    resolve_calls = _calls_named(bcalls, "bicameral_resolve_collision")
+    if not resolve_calls:
+        return False, (
+            "expected resolve_collision linking the constraint to the existing "
+            "cherry-pick decision (context_for or supersession). Without it, the "
+            "constraint orphans as a parallel decision. "
+            f"sequence: {names}"
+        )
+
     return True, (
-        f"bicameral.ingest called with agent_session source (payload.source={top_source!r})"
+        f"ingest(agent_session) + resolve_collision({len(resolve_calls)}) both fired; "
+        f"sequence: {names}"
     )
 
 
@@ -488,12 +566,21 @@ FLOW_PLAN: list[FlowSpec] = [
         asserter=assert_flow_4,
         category="agentic_layer",
         advisory=(
-            "COMPROMISED PASS: this flow only succeeds because the prompt explicitly tells "
-            "the agent to ingest with `agent_session` source. The bicameral-capture-corrections "
-            "skill itself was NOT auto-fired. To genuinely validate session-end correction "
-            "capture, the prompt would need to state a load-bearing constraint conversationally "
-            "(without tool-name hints) and rely on the SessionEnd hook to invoke the skill. "
-            "That dynamic is not testable in headless mode today."
+            "TWO GAPS this assertion now catches strictly (no more 'compromised pass'):\n"
+            "  (1) AUTO-FIRE: the bicameral-capture-corrections skill should fire on "
+            "SessionEnd without the prompt naming `agent_session` source. This flow "
+            "still hand-holds that param. Validating natural auto-fire requires the "
+            "interactive recording path (tmux TUI + real SessionEnd hook).\n"
+            "  (2) CONTEXT-FOR LINKAGE: the constraint about cherry-pick conflict "
+            "resolution semantically relates to the cherry-pick decision flow 1 "
+            "ratified. ingest should surface a context_for_candidate (or "
+            "supersession_candidate) and the agent should call resolve_collision "
+            "to wire them. The dashboard footage from PR #144 showed this NOT "
+            "happening — the constraint orphaned as a parallel decision. The "
+            "asserter now requires resolve_collision; if it doesn't fire, the "
+            "test FAILS, which points at either (a) a semantic-grounding gap in "
+            "ingest's candidate surfacing or (b) the agent ignoring surfaced "
+            "candidates. Either way it is a real product gap, not test design."
         ),
     ),
     FlowSpec(
@@ -517,6 +604,7 @@ def main() -> int:
     print(f"Flows:              {len(FLOW_PLAN)}\n")
 
     _clean_ledger()
+    _reset_desktop_repo()
 
     for spec in FLOW_PLAN:
         prompt_path = PROMPTS_DIR / spec.prompt_file
