@@ -183,6 +183,22 @@ jobs:
             command -v chromium || command -v chromium-browser || \
             { echo "ERROR: no chromium-compatible browser found on PATH" >&2; exit 1; }
 
+      # ANTHROPIC_API_KEY (NOT CLAUDE_CODE_OAUTH_TOKEN) — interactive `claude`
+      # ignores the OAuth env var (verified against 2.1.126; matches GH issue
+      # #32463). The assertions job's `claude -p` path keeps using OAuth.
+      - name: Anthropic API key visibility probe
+        run: |
+          set +e
+          if [ -n "${ANTHROPIC_API_KEY}" ]; then
+            echo "ANTHROPIC_API_KEY: present (length=${#ANTHROPIC_API_KEY})"
+          else
+            echo "ANTHROPIC_API_KEY: EMPTY or UNSET"
+            echo "  secret expression non-empty: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
+            exit 1
+          fi
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
       # continue-on-error: a recording flake should not propagate as a hard
       # failure. The artifact upload below preserves whatever was captured.
       # Uses the interactive (tmux-driven real claude TUI) path; legacy
@@ -190,7 +206,7 @@ jobs:
       - name: Record demo videos (split-screen, interactive TUI)
         continue-on-error: true
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: bash tests/e2e/record_demo_interactive.sh
 
       - name: Upload demo videos
