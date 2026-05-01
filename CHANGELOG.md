@@ -3,6 +3,54 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.13.6 — Triage: dashboard tooltip + capture-corrections source fix + #108 sim — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Triage release per [DEV_CYCLE.md §10.5](DEV_CYCLE.md). Forwards three
+commits from `dev`: a small additive UI nudge on the dashboard (#135) and
+a real bug fix in the capture-corrections skill (#108) plus its
+end-to-end simulation. Full provenance and §10.5.3 adaptation note in
+[PR #140](https://github.com/BicameralAI/bicameral-mcp/pull/140).
+
+### Fixed
+
+- **`bicameral-capture-corrections` skill used a silently-broken `source`
+  value** (#108) — the skill instructed callers to ingest with
+  `source="conversation"`, but `_SOURCE_TYPE_MAP` in `handlers/history.py`
+  has no entry for `"conversation"`, so it silently fell through to
+  `"manual"`. Canonical value for AI-surfaced session decisions is
+  `"agent_session"`. The skill now uses the correct value, and end-to-end
+  simulation confirms the round-trip.
+
+### Added
+
+- **Dashboard tooltip on pending-compliance rows** (#135) — when a commit
+  shows `status === 'pending'` because it was made outside an active
+  Claude Code session, the dashboard now attaches a hover tooltip
+  (`Pending compliance — run /bicameral-sync in your Claude Code session
+  to resolve.`). Reuses the existing `data-tip` CSS pattern; static
+  string literal, no escaping required. Scope-cut from #135's original
+  `--auto-resolve-trivial` proposal — accepts the architectural limit
+  that the post-commit hook stays sync-only.
+- **`scripts/sim_issue_108_flows.py`** — end-to-end simulation harness
+  that walks the six canonical flows from BicameralAI/bicameral#108
+  against the live MCP implementation. All six flows pass on this
+  release. Surfaces two spec drifts already filed for upstream issue
+  edit: Flow 2 (topic-BM25 removed in v0.10.0) and Flow 4 (the
+  `agent_session` source rename above).
+
+### Adaptation (§10.5.3)
+
+- `style(#108): ruff format scripts/sim_issue_108_flows.py + docstring sync`
+  carries an `Adaptation:` trailer because triage-from-dev's
+  `pyproject.toml` doesn't customize `line-length`, defaulting to ruff's
+  88 (vs dev's 100). Format-only re-wraps; no semantic change.
+
+### Closes
+
+- Closes [#135](https://github.com/BicameralAI/bicameral-mcp/issues/135).
+
+---
+
 ## v0.13.5 — Triage: post-commit hook fix + event vocabulary + carry-forward bug fixes — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Triage release per [DEV_CYCLE.md §10.5](DEV_CYCLE.md). Restores Guided-mode
