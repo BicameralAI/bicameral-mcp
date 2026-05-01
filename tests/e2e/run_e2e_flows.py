@@ -34,8 +34,8 @@ import pathlib
 import shutil
 import subprocess
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 E2E_ROOT = pathlib.Path(__file__).resolve().parent
 PROMPTS_DIR = E2E_ROOT / "prompts"
@@ -62,8 +62,7 @@ if not shutil.which("claude"):
 
 if not shutil.which("bicameral-mcp"):
     sys.stderr.write(
-        "ERROR: 'bicameral-mcp' command not found on PATH.\n"
-        "Install via: pip install -e .\n"
+        "ERROR: 'bicameral-mcp' command not found on PATH.\nInstall via: pip install -e .\n"
     )
     sys.exit(2)
 
@@ -234,13 +233,11 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
     if len(items) < 1:
         payload = _ingest_payload(ingest_calls[0])
         return False, (
-            f"ingest called without decisions/mappings "
-            f"(payload keys: {list(payload.keys())})"
+            f"ingest called without decisions/mappings (payload keys: {list(payload.keys())})"
         )
 
     return True, (
-        f"bicameral.ingest called with {len(items)} item(s); "
-        f"total bicameral calls: {len(bcalls)}"
+        f"bicameral.ingest called with {len(items)} item(s); total bicameral calls: {len(bcalls)}"
     )
 
 
@@ -255,10 +252,7 @@ def assert_flow_2(calls: list[dict]) -> tuple[bool, str]:
 
     file_paths = preflight_calls[0]["input"].get("file_paths") or []
     if not file_paths or not any("cherry-pick.ts" in p for p in file_paths):
-        return False, (
-            f"preflight called without expected file_paths; "
-            f"got: {file_paths}"
-        )
+        return False, (f"preflight called without expected file_paths; got: {file_paths}")
 
     return True, (
         f"bicameral.preflight called with file_paths={file_paths}; "
@@ -291,8 +285,7 @@ def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:
         return False, "resolve_compliance called without verdicts"
 
     return True, (
-        f"link_commit + resolve_compliance both called; verdicts={len(verdicts)}; "
-        f"sequence: {names}"
+        f"link_commit + resolve_compliance both called; verdicts={len(verdicts)}; sequence: {names}"
     )
 
 
@@ -300,7 +293,10 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
     bcalls = _bicameral_tool_calls(calls)
     ingest_calls = _calls_named(bcalls, "bicameral_ingest")
     if not ingest_calls:
-        return False, f"expected ingest with agent_session source; saw: {[c['name'] for c in bcalls]}"
+        return (
+            False,
+            f"expected ingest with agent_session source; saw: {[c['name'] for c in bcalls]}",
+        )
 
     # Source can live at payload.source (top-level) or per-decision via
     # span.source_type. Check both, since the MCP tool schema wraps in payload.
@@ -320,8 +316,7 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
         )
 
     return True, (
-        f"bicameral.ingest called with agent_session source "
-        f"(payload.source={top_source!r})"
+        f"bicameral.ingest called with agent_session source (payload.source={top_source!r})"
     )
 
 
@@ -346,8 +341,7 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
         )
 
     return True, (
-        f"bicameral.history called; ingest seeded={len(ingest_calls)}, "
-        f"ratified={len(ratify_calls)}"
+        f"bicameral.history called; ingest seeded={len(ingest_calls)}, ratified={len(ratify_calls)}"
     )
 
 
