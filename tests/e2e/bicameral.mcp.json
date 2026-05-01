@@ -4,7 +4,8 @@
       "command": "bicameral-mcp",
       "args": [],
       "env": {
-        "SURREAL_URL": "memory://"
+        "SURREAL_URL": "memory://",
+        "REPO_PATH": "${DESKTOP_REPO_PATH}"
       }
     }
   }

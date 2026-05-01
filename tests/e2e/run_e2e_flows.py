@@ -39,7 +39,7 @@ from typing import Callable
 
 E2E_ROOT = pathlib.Path(__file__).resolve().parent
 PROMPTS_DIR = E2E_ROOT / "prompts"
-MCP_CONFIG_PATH = E2E_ROOT / "bicameral.mcp.json"
+MCP_CONFIG_TEMPLATE = E2E_ROOT / "bicameral.mcp.json"
 RESULTS_DIR = pathlib.Path(__file__).resolve().parents[2] / "test-results" / "e2e"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -66,6 +66,25 @@ if not shutil.which("bicameral-mcp"):
         "Install via: pip install -e .\n"
     )
     sys.exit(2)
+
+
+def _materialize_mcp_config() -> pathlib.Path:
+    """Read the MCP config template, substitute env-var placeholders, write
+    a runtime copy. The template uses ``${DESKTOP_REPO_PATH}`` so it works
+    locally (any clone path) and in CI (the workflow's clone path).
+
+    Claude Code's MCP spawn behaviour for env replacement vs merge is
+    implementation-defined; passing REPO_PATH explicitly via the config
+    avoids that ambiguity.
+    """
+    raw = MCP_CONFIG_TEMPLATE.read_text(encoding="utf-8")
+    materialized = raw.replace("${DESKTOP_REPO_PATH}", DESKTOP_REPO_PATH)
+    out = RESULTS_DIR / "bicameral.mcp.materialized.json"
+    out.write_text(materialized, encoding="utf-8")
+    return out
+
+
+MCP_CONFIG_PATH = _materialize_mcp_config()
 
 
 @dataclass
@@ -186,6 +205,22 @@ def _calls_named(calls: list[dict], suffix: str) -> list[dict]:
 # ── Per-flow assertions ─────────────────────────────────────────────────
 
 
+def _ingest_payload(call: dict) -> dict:
+    """Extract the inner payload from an ingest tool call.
+
+    The MCP tool schema wraps the IngestPayload in a ``payload`` key. Some
+    skill versions also list mappings under ``decisions`` (the natural-LLM
+    spelling) rather than ``mappings`` (the internal field). Handle both.
+    """
+    inp = call.get("input") or {}
+    return inp.get("payload") or inp
+
+
+def _ingest_items(call: dict) -> list[dict]:
+    p = _ingest_payload(call)
+    return p.get("decisions") or p.get("mappings") or []
+
+
 def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
     bcalls = _bicameral_tool_calls(calls)
     ingest_calls = _calls_named(bcalls, "bicameral_ingest")
@@ -195,12 +230,16 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
             f"calls: {[c['name'] for c in bcalls]}"
         )
 
-    mappings = ingest_calls[0]["input"].get("mappings") or []
-    if len(mappings) < 1:
-        return False, f"ingest called without mappings (input keys: {list(ingest_calls[0]['input'].keys())})"
+    items = _ingest_items(ingest_calls[0])
+    if len(items) < 1:
+        payload = _ingest_payload(ingest_calls[0])
+        return False, (
+            f"ingest called without decisions/mappings "
+            f"(payload keys: {list(payload.keys())})"
+        )
 
     return True, (
-        f"bicameral.ingest called with {len(mappings)} mapping(s); "
+        f"bicameral.ingest called with {len(items)} item(s); "
         f"total bicameral calls: {len(bcalls)}"
     )
 
@@ -240,8 +279,14 @@ def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:
         return False, f"expected resolve_compliance; saw: {names}"
 
     # Verify resolve_compliance carried verdicts of expected shape
+    # (input may wrap in 'payload' depending on tool schema version)
     resolve_calls = _calls_named(bcalls, "bicameral_resolve_compliance")
-    verdicts = (resolve_calls[0]["input"].get("verdicts") if resolve_calls else None) or []
+    if resolve_calls:
+        rinput = resolve_calls[0]["input"] or {}
+        rpayload = rinput.get("payload") or rinput
+        verdicts = rpayload.get("verdicts") or []
+    else:
+        verdicts = []
     if not verdicts:
         return False, "resolve_compliance called without verdicts"
 
@@ -257,11 +302,12 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
     if not ingest_calls:
         return False, f"expected ingest with agent_session source; saw: {[c['name'] for c in bcalls]}"
 
-    # Check that the source field somewhere indicates agent_session
-    payload = ingest_calls[0]["input"]
+    # Source can live at payload.source (top-level) or per-decision via
+    # span.source_type. Check both, since the MCP tool schema wraps in payload.
+    payload = _ingest_payload(ingest_calls[0])
     top_source = payload.get("source", "")
-    span_sources = []
-    for m in payload.get("mappings") or []:
+    span_sources: list[str] = []
+    for m in _ingest_items(ingest_calls[0]):
         span = m.get("span") or {}
         if "source_type" in span:
             span_sources.append(span["source_type"])
@@ -273,7 +319,10 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
             f"top_source={top_source!r}, span_source_types={span_sources}"
         )
 
-    return True, f"bicameral.ingest called with agent_session source"
+    return True, (
+        f"bicameral.ingest called with agent_session source "
+        f"(payload.source={top_source!r})"
+    )
 
 
 def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
