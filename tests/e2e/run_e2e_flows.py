@@ -72,152 +72,48 @@ if not shutil.which("bicameral-mcp"):
     sys.exit(2)
 
 
-def _materialize_mcp_config() -> pathlib.Path:
-    """Read the MCP config template, substitute env-var placeholders, write
-    a runtime copy. The template uses ``${DESKTOP_REPO_PATH}`` so it works
-    locally (any clone path) and in CI (the workflow's clone path).
+# Setup helpers live in _harness_setup.py — single source of truth shared with
+# tests/e2e/record_demo_interactive.sh so the recording job and the assertion
+# job materialize byte-identical hook substrate. See _harness_setup.py docstring.
+sys.path.insert(0, str(E2E_ROOT))
+# fmt: off
+# isort: off
+from _harness_setup import (  # noqa: E402,I001  # path tweak above
+    bootstrap_bicameral_dir as _bootstrap_helper,
+    clean_ledger as _clean_ledger_helper,
+    materialize_mcp_config,
+    materialize_settings_with_hooks,
+    reset_desktop_repo as _reset_desktop_helper,
+)
+# fmt: on
+# isort: on
 
-    Claude Code's MCP spawn behaviour for env replacement vs merge is
-    implementation-defined; passing REPO_PATH explicitly via the config
-    avoids that ambiguity.
-    """
-    raw = MCP_CONFIG_TEMPLATE.read_text(encoding="utf-8")
-    materialized = raw.replace("${DESKTOP_REPO_PATH}", DESKTOP_REPO_PATH).replace(
-        "${LEDGER_DIR}", str(LEDGER_DIR)
-    )
-    out = RESULTS_DIR / "bicameral.mcp.materialized.json"
-    out.write_text(materialized, encoding="utf-8")
-    return out
+_MCP_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def _clean_ledger() -> None:
-    """Wipe the persistent ledger between harness runs.
-
-    State must persist across the 5 sequential claude sessions within a run
-    (so the PM in flow 5 sees decisions from flows 1/2/4), but must NOT leak
-    across runs (so each run is reproducible and CI is deterministic).
-    """
-    if LEDGER_DIR.exists():
-        shutil.rmtree(LEDGER_DIR, ignore_errors=True)
+    _clean_ledger_helper(LEDGER_DIR)
 
 
 def _reset_desktop_repo() -> None:
-    """Reset desktop-clone to its pinned HEAD between runs. Flow 3 makes a
-    real commit; without a reset, the second-onwards run starts from a
-    polluted base.
-    """
-    repo = pathlib.Path(DESKTOP_REPO_PATH)
-    if not (repo / ".git").exists():
-        return
-    for args in (("git", "reset", "--hard", "FETCH_HEAD"), ("git", "reset", "--hard", "HEAD")):
-        try:
-            subprocess.run(args, cwd=repo, check=True, capture_output=True, timeout=20)
-            return
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            continue
+    _reset_desktop_helper(DESKTOP_REPO_PATH)
 
 
 def _bootstrap_bicameral_dir() -> None:
-    """Create a minimal ``.bicameral/`` inside ``DESKTOP_REPO_PATH`` so the
-    SessionEnd hook's ``[ -d .bicameral ]`` guard passes when the parent
-    claude session exits. Without this, the hook short-circuits silently
-    and Flow 4's path-X-(b) ledger validation has nothing to observe.
-
-    Reuses ``setup_wizard._write_collaboration_config`` to write the same
-    minimal ``config.yaml`` (mode=solo, guided=false, telemetry=false) a
-    fresh end-user install would produce — single source of truth.
-
-    Wiped + recreated each run so flows do not inherit cross-run state.
-    """
-    mcp_root = pathlib.Path(__file__).resolve().parents[2]
-    if str(mcp_root) not in sys.path:
-        sys.path.insert(0, str(mcp_root))
-    from setup_wizard import _write_collaboration_config  # noqa: E402
-
-    bicameral_dir = pathlib.Path(DESKTOP_REPO_PATH) / ".bicameral"
-    if bicameral_dir.exists():
-        shutil.rmtree(bicameral_dir, ignore_errors=True)
-    _write_collaboration_config(
-        data_path=pathlib.Path(DESKTOP_REPO_PATH),
-        mode="solo",
-        guided=False,
-        telemetry=False,
-    )
+    _bootstrap_helper(DESKTOP_REPO_PATH, _MCP_ROOT)
 
 
-def _materialize_settings_with_hook() -> pathlib.Path:
-    """Write a project-style ``settings.json`` carrying the hooks bicameral's
-    setup-wizard installs in real projects. The PostToolUse and
-    UserPromptSubmit commands are the same byte-exact strings a
-    freshly-onboarded user would have — single source of truth, no drift.
-
-    The SessionEnd command is built via ``setup_wizard._build_session_end_command``
-    with ``mcp_config_path=MCP_CONFIG_PATH``. Production end-users have
-    ``bicameral`` registered in their default Claude Code MCP config so the
-    spawned subprocess inherits it without an explicit flag; the harness
-    overrides ``SURREAL_URL`` via the materialized MCP config to point at
-    a test-results ledger, so we MUST pass that config explicitly to the
-    subprocess or its ``capture-corrections`` writes land in the user's
-    default ledger and ``_validate_flow4_via_ledger`` finds zero rows.
-
-    Hooks installed:
-      - PostToolUse/Bash: bicameral-sync listens for "new commit detected"
-        output to auto-fire ``link_commit``.
-      - SessionEnd: spawns a subprocess running
-        ``/bicameral:capture-corrections --auto-ingest`` (with the test
-        MCP config) to scan the just-ended session for uningested
-        mid-session corrections. Note: the spawned subprocess's tool calls
-        do NOT appear in this harness's stream-json — the subprocess
-        writes to the ledger out-of-band. For observable in-stream
-        auto-fire, capture-corrections is also invoked by
-        ``bicameral-preflight`` step 3.5 — that path IS visible.
-      - UserPromptSubmit: deterministic verb-list classifier injects a
-        <system-reminder> elevating bicameral.preflight above the agent's
-        default tool-selection priority on code-implementation prompts.
-        This is what makes Flow 2 / Flow 4 auto-fire preflight in
-        headless ``claude -p``.
-    """
-    # setup_wizard.py is at pilot/mcp root (two levels up from this file).
-    mcp_root = pathlib.Path(__file__).resolve().parents[2]
-    if str(mcp_root) not in sys.path:
-        sys.path.insert(0, str(mcp_root))
-    from setup_wizard import (  # noqa: E402
-        _BICAMERAL_POST_COMMIT_COMMAND,
-        _BICAMERAL_PREFLIGHT_REMINDER_COMMAND,
-        _build_session_end_command,
-    )
-
-    session_end_command = _build_session_end_command(mcp_config_path=str(MCP_CONFIG_PATH))
-
-    settings = {
-        "hooks": {
-            "PostToolUse": [
-                {
-                    "matcher": "Bash",
-                    "hooks": [{"type": "command", "command": _BICAMERAL_POST_COMMIT_COMMAND}],
-                }
-            ],
-            "SessionEnd": [
-                {
-                    "hooks": [{"type": "command", "command": session_end_command}],
-                }
-            ],
-            "UserPromptSubmit": [
-                {
-                    "hooks": [
-                        {"type": "command", "command": _BICAMERAL_PREFLIGHT_REMINDER_COMMAND}
-                    ],
-                }
-            ],
-        }
-    }
-    out = RESULTS_DIR / "claude-settings-with-hook.json"
-    out.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    return out
-
-
-MCP_CONFIG_PATH = _materialize_mcp_config()
-SETTINGS_PATH = _materialize_settings_with_hook()
+MCP_CONFIG_PATH = materialize_mcp_config(
+    template=MCP_CONFIG_TEMPLATE,
+    out_dir=RESULTS_DIR,
+    desktop_repo_path=DESKTOP_REPO_PATH,
+    ledger_dir=LEDGER_DIR,
+)
+SETTINGS_PATH = materialize_settings_with_hooks(
+    out_dir=RESULTS_DIR,
+    mcp_config_path=MCP_CONFIG_PATH,
+    mcp_root=_MCP_ROOT,
+)
 
 
 @dataclass
