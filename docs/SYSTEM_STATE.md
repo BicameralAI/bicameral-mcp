@@ -26,6 +26,8 @@ Files modified:
 - `.claude/settings.json` — `UserPromptSubmit` hook wired
 - `skills/bicameral-preflight/SKILL.md` — `### Hook reinforcement` subsection (honest v0 verb-list duplication per Audit Advisory #1)
 - `docs/META_LEDGER.md` — Entries #11 (PLAN), #12 (GATE PASS), #13 (IMPLEMENT), #14 (SEAL)
+- `setup_wizard.py` — `_install_claude_hooks` extended to install the `UserPromptSubmit` hook on end-user installs (post-merge follow-up to align production install path with the dogfood path)
+- `pyproject.toml` — adds `bicameral-mcp-preflight-reminder` console script entrypoint so the hook is invokable from any pip-installed environment
 
 Test state: 11 / 11 unit tests PASS in 1.72s. Authoritative integration test on `dev`: `tests/e2e/run_e2e_flows.py::test_flow_2`.
 
