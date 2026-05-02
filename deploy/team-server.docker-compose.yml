@@ -1,0 +1,23 @@
+services:
+  bicameral-team-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.team-server
+    image: bicameral-team-server:dev
+    ports:
+      - "${TEAM_SERVER_PORT:-8765}:8765"
+    environment:
+      BICAMERAL_TEAM_SERVER_SURREAL_URL: "surrealkv:///data/team-server.db"
+      BICAMERAL_TEAM_SERVER_SECRET_KEY: "${BICAMERAL_TEAM_SERVER_SECRET_KEY:?secret-key required}"
+    volumes:
+      - team-server-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/health').read()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  team-server-data:

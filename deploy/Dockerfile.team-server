@@ -1,0 +1,28 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system deps for cryptography/build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libffi-dev \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy team-server requirements + install
+COPY team_server/requirements.txt /app/team_server/requirements.txt
+RUN pip install --no-cache-dir -r /app/team_server/requirements.txt
+
+# Copy the team_server package + its runtime deps from the bicameral-mcp repo
+COPY team_server /app/team_server
+COPY ledger /app/ledger
+COPY events /app/events
+COPY contracts.py /app/contracts.py
+
+# Run as a non-root user for the standard self-managing-backend hygiene
+RUN useradd --create-home --shell /bin/bash teamserver
+USER teamserver
+
+EXPOSE 8765
+
+CMD ["uvicorn", "team_server.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8765"]
