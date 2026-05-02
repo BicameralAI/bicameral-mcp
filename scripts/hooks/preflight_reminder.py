@@ -4,9 +4,12 @@ When the user prompt indicates code-implementation intent, inject a
 system-reminder elevating bicameral.preflight above the agent's default
 tool-selection priority.
 
-Per Claude Code hook contract: read JSON from stdin, write JSON to
-stdout. additionalContext is appended to the prompt before the LLM
-sees it. Errors are swallowed silently (exit 0, empty response) so a
+Per Claude Code 2.x hook contract: read JSON from stdin, write JSON to
+stdout shaped as ``{"hookSpecificOutput": {"hookEventName":
+"UserPromptSubmit", "additionalContext": "..."}}``. The legacy top-level
+``{"additionalContext": ...}`` shape is silently ignored by the CLI —
+the hook still runs and exits 0, but the context never reaches the
+model. Errors are swallowed silently (exit 0, empty response) so a
 broken hook never blocks a user.
 """
 
@@ -38,7 +41,15 @@ def main() -> int:
         return 0
     prompt = payload.get("prompt", "") if isinstance(payload, dict) else ""
     if should_fire_preflight(prompt):
-        json.dump({"additionalContext": REMINDER_TEXT}, sys.stdout)
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": REMINDER_TEXT,
+                }
+            },
+            sys.stdout,
+        )
     return 0
 
 
