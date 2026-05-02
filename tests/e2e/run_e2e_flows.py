@@ -290,6 +290,70 @@ def _snapshot_ledger() -> dict:
         return {"error": repr(exc)}
 
 
+def _count_agent_session_decisions(snapshot: dict) -> int | None:
+    """Wrapper around the pure helper in ``_ledger_helpers``. The helper
+    lives in its own module so unit tests can import it without triggering
+    the harness's top-level env-var / CLI-presence guards.
+    """
+    from _ledger_helpers import count_agent_session_decisions
+
+    return count_agent_session_decisions(snapshot)
+
+
+def _validate_flow4_via_ledger() -> None:
+    """Path-X-(b) validation per #147: open the ledger after the harness
+    completes and check for decisions written with source_type='agent_session'.
+
+    The SessionEnd hook spawns a separate ``claude -p`` subprocess whose
+    tool calls are NOT visible in the parent stream-json; the subprocess
+    writes to the ledger with source_type='agent_session', so its effect
+    IS observable post-hoc. This function merges that signal into Flow 4's
+    FlowResult, in-place.
+
+    Behavior matrix:
+    - Asserter PASS + ledger has agent_session: append confirmation note;
+      verdict unchanged.
+    - Asserter FAIL + ledger has agent_session: UPGRADE to PASS with note
+      'in-stream signal absent but SessionEnd subprocess effect observed
+      in ledger (path-X-b)'.
+    - Asserter result + ledger error: append INCONCLUSIVE note; verdict
+      unchanged.
+    - Asserter PASS + ledger has zero agent_session: verdict unchanged.
+    - Asserter FAIL + ledger has zero agent_session: verdict unchanged
+      (real failure; both observable signals absent).
+    """
+    flow4 = next((r for r in RESULTS if r.flow_id == "Flow 4"), None)
+    if flow4 is None:
+        return
+
+    print("\n=== Flow 4 — querying ledger state for path-X-(b) signal ===")
+    after = _snapshot_ledger()
+    count = _count_agent_session_decisions(after)
+
+    if count is None:
+        flow4.body += (
+            f"\n— Ledger validation —\nINCONCLUSIVE: ledger query failed: {after.get('error')}\n"
+        )
+        return
+
+    if count > 0:
+        if flow4.verdict != "PASS":
+            flow4.verdict = "PASS"
+        flow4.body += (
+            f"\n— Ledger validation —\n"
+            f"PASS: {count} decision(s) with source_type='agent_session' "
+            f"present in ledger after harness completion (path-X-b: SessionEnd "
+            f"subprocess and/or in-session capture-corrections wrote them).\n"
+        )
+    else:
+        flow4.body += (
+            "\n— Ledger validation —\n"
+            "path-X-b absent: zero decisions with source_type='agent_session' "
+            "after harness completion. SessionEnd subprocess either did not "
+            "fire, did not detect uningested corrections, or failed silently.\n"
+        )
+
+
 def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
     """Validate the V1 lifecycle outcome by opening the ledger directly
     after the chained dev_session has fully completed.
@@ -1227,6 +1291,9 @@ def main() -> int:
         if dev_session_baseline is None:
             dev_session_baseline = {"error": "baseline never captured"}
         _validate_flow3_via_ledger(group_session_ids["dev_session"], dev_session_baseline)
+        # Phase 1 of plan-147-flow4-ledger-validation.md: path-X-(b)
+        # post-hoc ledger query for the SessionEnd subprocess effect.
+        _validate_flow4_via_ledger()
 
     _print_report()
 
