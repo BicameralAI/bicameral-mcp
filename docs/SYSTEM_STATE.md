@@ -7,6 +7,25 @@
 **Tracked PR**: [BicameralAI/bicameral-mcp#71](https://github.com/BicameralAI/bicameral-mcp/pull/71)
 **Genesis hash**: `29dfd085...`
 
+## Preflight auto-fire hook session (2026-05-01, sealed `33007d2a`)
+
+Resolves issue [#146](https://github.com/BicameralAI/bicameral-mcp/issues/146) — preflight does not auto-fire on natural refactor prompts in headless `claude -p`.
+
+Files added:
+- `scripts/__init__.py`, `scripts/hooks/__init__.py` — package markers
+- `scripts/hooks/preflight_intent.py` (50 lines) — verb list + `should_fire_preflight()` classifier; canonical SSOT for hook
+- `scripts/hooks/preflight_reminder.py` (46 lines) — `UserPromptSubmit` hook entry point; injects `<system-reminder>` directive
+- `tests/test_preflight_intent.py` (6 functionality tests) + `tests/test_preflight_hook.py` (5 functionality tests via subprocess)
+- `tests/fixtures/flow2_prompt.json` — pinned Flow 2 contradiction prompt fixture
+- `plan-preflight-autofire-hook.md`, `.qor/gates/2026-05-02T0052-2d49b8/{plan,audit,implement,substantiate}.json`
+
+Files modified:
+- `.claude/settings.json` — `UserPromptSubmit` hook wired
+- `skills/bicameral-preflight/SKILL.md` — `### Hook reinforcement` subsection (honest v0 verb-list duplication per Audit Advisory #1)
+- `docs/META_LEDGER.md` — Entries #11 (PLAN), #12 (GATE PASS), #13 (IMPLEMENT), #14 (SEAL)
+
+Test state: 11 / 11 unit tests PASS in 1.72s. Authoritative integration test on `dev`: `tests/e2e/run_e2e_flows.py::test_flow_2`.
+
 ## v0 process cleanup session (2026-05-01)
 
 Files added by this session:

@@ -20,6 +20,16 @@
           }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/preflight_reminder.py"
+          }
+        ]
+      }
     ]
   }
 }
