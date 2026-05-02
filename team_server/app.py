@@ -16,8 +16,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from team_server.auth import notion_client as nc
-from team_server.config import DEFAULT_CONFIG_PATH
+from team_server.config import DEFAULT_CONFIG_PATH, TeamServerConfig
 from team_server.db import TeamServerDB
+from team_server.extraction.corpus_learner import run_corpus_learner_iteration
 from team_server.extraction.llm_extractor import extract as _interim_extractor
 from team_server.schema import SCHEMA_VERSION, ensure_schema
 from team_server.workers.notion_runner import run_notion_iteration
@@ -28,6 +29,19 @@ logger = logging.getLogger(__name__)
 
 SLACK_POLL_INTERVAL_SECONDS = int(os.environ.get("SLACK_POLL_INTERVAL_SECONDS", "60"))
 NOTION_POLL_INTERVAL_SECONDS = int(os.environ.get("NOTION_POLL_INTERVAL_SECONDS", "60"))
+
+
+def _load_config_or_default() -> TeamServerConfig:
+    """Load TeamServerConfig from DEFAULT_CONFIG_PATH if it exists,
+    else return a default-empty config (corpus learner off, no rules)."""
+    if not DEFAULT_CONFIG_PATH.exists():
+        return TeamServerConfig()
+    from team_server.config import load_rules_from_config
+    try:
+        return load_rules_from_config(str(DEFAULT_CONFIG_PATH))
+    except Exception:  # noqa: BLE001
+        logger.exception("[team-server] config load failed; using defaults")
+        return TeamServerConfig()
 
 
 @asynccontextmanager
@@ -57,6 +71,17 @@ async def lifespan(app: FastAPI):
         logger.info("[team-server] notion worker registered")
     except nc.NotionAuthError:
         logger.info("[team-server] notion ingest disabled (no token)")
+
+    # Corpus learner — opt-in via config.corpus_learner.enabled
+    config = _load_config_or_default()
+    app.state.team_server_config = config
+    if config.corpus_learner.enabled:
+        tasks.append(worker_loop(
+            name="corpus-learner",
+            interval_seconds=config.corpus_learner.interval_seconds,
+            work_fn=lambda: run_corpus_learner_iteration(db.client, config),
+        ))
+        logger.info("[team-server] corpus learner registered")
 
     app.state.worker_tasks = tasks
     logger.info(

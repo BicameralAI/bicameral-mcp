@@ -19,7 +19,7 @@ from ledger.client import LedgerClient
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _BASE_STMTS: tuple[str, ...] = (
     # workspace — one row per Slack workspace.
@@ -76,6 +76,16 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE TABLE schema_version SCHEMAFULL",
     "DEFINE FIELD version    ON schema_version TYPE int",
     "DEFINE FIELD updated_at ON schema_version TYPE datetime DEFAULT time::now()",
+
+    # learned_heuristic_terms — Phase 5 corpus learner output.
+    # Per (source_type, term) UNIQUE; support_count is the n-gram
+    # frequency in the source corpus at learn time.
+    "DEFINE TABLE learned_heuristic_terms SCHEMAFULL",
+    "DEFINE FIELD source_type   ON learned_heuristic_terms TYPE string",
+    "DEFINE FIELD term          ON learned_heuristic_terms TYPE string",
+    "DEFINE FIELD support_count ON learned_heuristic_terms TYPE int",
+    "DEFINE FIELD learned_at    ON learned_heuristic_terms TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_learned_heuristic_terms_key ON learned_heuristic_terms FIELDS source_type, term UNIQUE",
 )
 
 
