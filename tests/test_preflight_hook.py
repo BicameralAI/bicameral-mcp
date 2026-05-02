@@ -2,6 +2,13 @@
 
 The hook is invoked as a subprocess by Claude Code. Tests run it the
 same way to exercise stdin/stdout exactly as production does.
+
+Claude Code 2.x requires UserPromptSubmit hook output shaped as
+``{"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+"additionalContext": "..."}}``. The legacy top-level
+``{"additionalContext": ...}`` shape is silently dropped by the CLI,
+so these tests assert against the nested shape — anything else is a
+broken contract regardless of whether the hook process exits cleanly.
 """
 
 from __future__ import annotations
@@ -27,31 +34,43 @@ def _run_hook(stdin_text: str) -> tuple[int, str, str]:
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def _hook_output(parsed: dict) -> dict:
+    """Extract the hookSpecificOutput payload, asserting the envelope shape."""
+    assert "hookSpecificOutput" in parsed, (
+        f"hook must emit hookSpecificOutput envelope (Claude Code 2.x contract); got {parsed!r}"
+    )
+    inner = parsed["hookSpecificOutput"]
+    assert inner.get("hookEventName") == "UserPromptSubmit"
+    return inner
+
+
 def test_emits_additional_context_on_match():
     """Fire-worthy prompt produces additionalContext containing the directive."""
     payload = {"prompt": "Please refactor the rate limiter to sliding window."}
     rc, out, _ = _run_hook(json.dumps(payload))
     assert rc == 0
-    parsed = json.loads(out)
-    assert "additionalContext" in parsed
-    assert "<system-reminder>" in parsed["additionalContext"]
-    assert "bicameral.preflight" in parsed["additionalContext"]
+    inner = _hook_output(json.loads(out))
+    assert "additionalContext" in inner
+    assert "<system-reminder>" in inner["additionalContext"]
+    assert "bicameral.preflight" in inner["additionalContext"]
 
 
 def test_emits_empty_on_no_match():
-    """Skip-worthy prompt produces empty response (no additionalContext)."""
+    """Skip-worthy prompt produces empty response (no hookSpecificOutput)."""
     payload = {"prompt": "fix the typo in README"}
     rc, out, _ = _run_hook(json.dumps(payload))
     assert rc == 0
     parsed = json.loads(out) if out.strip() else {}
-    assert "additionalContext" not in parsed
+    assert "hookSpecificOutput" not in parsed
 
 
 def test_handles_malformed_stdin():
     """Non-JSON stdin returns rc 0 with empty/no response — never blocks user."""
     rc, out, _ = _run_hook("this is not JSON at all {[}")
     assert rc == 0
-    assert out.strip() == "" or json.loads(out) == {} or "additionalContext" not in json.loads(out)
+    if out.strip():
+        parsed = json.loads(out)
+        assert "hookSpecificOutput" not in parsed
 
 
 def test_idempotent_on_double_fire():
@@ -74,6 +93,6 @@ def test_handles_natural_contradiction_prompt():
     }
     rc, out, _ = _run_hook(json.dumps(payload))
     assert rc == 0
-    parsed = json.loads(out)
-    assert "additionalContext" in parsed
-    assert "bicameral.preflight" in parsed["additionalContext"]
+    inner = _hook_output(json.loads(out))
+    assert "additionalContext" in inner
+    assert "bicameral.preflight" in inner["additionalContext"]
