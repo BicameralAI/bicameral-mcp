@@ -340,9 +340,40 @@ def _install_for_agent(
     return True
 
 
-_BICAMERAL_SESSION_END_COMMAND = (
-    "[ -d .bicameral ] && claude -p '/bicameral:capture-corrections' || true"
-)
+def _build_session_end_command(mcp_config_path: str | None = None) -> str:
+    """Build the SessionEnd hook command, optionally with `--mcp-config` flags.
+
+    Production end-users have ``bicameral`` registered in their default
+    Claude Code MCP config (via the setup wizard's `claude mcp add`), so
+    the spawned subprocess inherits it without an explicit flag. Test
+    harnesses that drive ``claude -p`` against a non-default ledger
+    (e.g. ``tests/e2e/run_e2e_flows.py`` pointing SURREAL_URL at a
+    test-results path) must pass ``--mcp-config`` so the spawned
+    subprocess writes to the same ledger that the parent session and
+    post-hoc validators use; otherwise capture-corrections lands its
+    ``source=agent_session`` decisions in ``~/.bicameral/ledger.db``
+    instead of the harness's test ledger.
+
+    The no-args call returns the canonical command prescribed by
+    ``skills/bicameral-capture-corrections/SKILL.md:207`` byte-exact —
+    that's what end-user installs ship.
+    """
+    import shlex
+
+    extra_flags = ""
+    if mcp_config_path:
+        extra_flags = f" --mcp-config {shlex.quote(str(mcp_config_path))} --strict-mcp-config"
+    return (
+        '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
+        "BICAMERAL_SESSION_END_RUNNING=1 "
+        f"claude -p '/bicameral:capture-corrections --auto-ingest'{extra_flags} || true"
+    )
+
+
+# Canonical no-args form — what `_install_claude_hooks` writes to a fresh
+# end-user's ``.claude/settings.json``. Re-derived from the helper so the
+# function is the single source of truth.
+_BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
 
 # Fires after every Bash tool use. When the command is a git write-op
 # (commit / merge / pull / rebase --continue), prints a trigger line that
