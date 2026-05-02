@@ -1367,3 +1367,97 @@ Post-merge external actions (deferred to `/qor-document`):
 *Chain integrity: VALID (26 entries on this branch)*
 *Genesis: `29dfd085` → ... → #124 SEAL: `950f362c` → #135-triage Audit (PASS): `1de1fac7` → #135-triage IMPL: `51c8a45c` → #135-triage SEAL: `efd0304b`*
 *Next required action: `/qor-document` → topic-branch commit + push + PR to `BicameralAI/dev`*
+
+---
+
+### Entry #27: IMPLEMENTATION (Priority C v0 — team-server, Slack-first, Phases 1–4)
+
+**Timestamp**: 2026-05-02T23:30:00Z
+**Phase**: IMPLEMENT (executed via `/qor-implement`)
+**Risk Grade**: L3
+**Branch**: `claude/priority-c-selective-ingest`
+**Plan**: `plan-priority-c-team-server-slack-v0.md`
+**Audit**: `.agent/staging/AUDIT_REPORT.md` (PASS, this session's Entry #N+1 — chain extends from `efd0304b`)
+**Predecessor**: `efd0304b` (Entry #26 — #135-triage seal on dev)
+
+**Files created (30)**: `team_server/` package (19 files: `app`, `db`, `schema`, `config`, `requirements`, plus `auth/`, `extraction/`, `sync/`, `workers/`, `api/` sub-packages); `events/team_server_pull.py`; `deploy/{team-server.docker-compose.yml,Dockerfile.team-server}`; 8 test files (25 functionality tests). Largest production file: `workers/slack_worker.py` at 100 lines (well under 250 razor cap).
+
+**Content Hash**: SHA256(30 files, sorted-path concatenation) = `a952e3f6faa8b28be99bf5f6309fdc2b4987ffec5ae17e2df67247c4fdf07286`
+**Previous Hash**: `efd0304b`
+**Chain Hash**: SHA256(content_hash + previous_hash) = `211ffb9eb3a35846f9cbde65f3562c5f005f86edd4382238a77cae55fc84c4c2`
+
+**Test results**: 25 / 25 PASS in 5.80s. Existing suite (743 tests) collects unaffected.
+
+**Audit advisory disposition**:
+- Advisory #1 (term home cross-reference): fixed in plan before implementation.
+- Advisory #2 (`team_server/app.py` size): proactively factored OAuth routes into `auth/router.py` and events routes into `api/events.py`. `app.py` ends at 47 lines.
+- Advisory #3 (FLEXIBLE TYPE object): applied to `extraction_cache.canonical_extraction` and `team_event.payload` at schema definition time per #72 lesson.
+
+**Phase 5 deferred**: CocoIndex (#136) integration deferred to follow-up plan per slip-independence structure and operator's "if we can manage it" feasibility caveat. `extraction_cache.model_version` carries `interim-claude-v1` tombstone so Phase 5 can rebuild on landing.
+
+**Plan deviation (documented)**: Proactive route-factoring per Advisory #2 — plan said "register routes in `app.py`"; implementation factored into per-package routers at Phase 2 author-time. Same public surface; cleaner module boundaries.
+
+**Decision**: Reality matches Promise for Phases 1–4. Phase 5 explicitly deferred.
+
+**Next required action**: `/qor-substantiate`.
+
+---
+*Chain integrity: VALID (27 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority C v0 IMPL: `211ffb9e`*
+
+---
+
+### Entry #28: SUBSTANTIATION (SESSION SEAL — Priority C v0)
+
+**Timestamp**: 2026-05-02T23:55:00Z
+**Phase**: SUBSTANTIATE (executed via `/qor-substantiate`)
+**Risk Grade**: L3
+**Verdict**: **REALITY = PROMISE** (for Phases 1–4; Phase 5 explicitly deferred)
+**Branch**: `claude/priority-c-selective-ingest`
+
+**Verifications run** (downstream-project subset; qor-logic-self-management steps documented as skipped):
+
+| Check | Result | Notes |
+|---|---|---|
+| Step 0 — Gate check | ✅ | implement.json schema-valid; 30 files_touched recorded |
+| Step 2 — PASS verdict | ✅ | `.agent/staging/AUDIT_REPORT.md` PASS |
+| Step 2.5 — Version validation | n/a | qor-logic-internal step; downstream project uses different release cadence |
+| Step 3 — Reality audit | ✅ | All 30 planned files exist; 0 missing; Phase 5 explicitly deferred per plan slip-independence |
+| Step 3.5 — Blocker review | ⚠️ | S1 (SECURITY.md) shows open on dev — fix is in flight via PR #151; not blocking this seal |
+| Step 4 — Functional verification | ✅ | 25 / 25 unit tests PASS in 5.99s |
+| Step 4 (presence-only seal gate) | ✅ | All 25 tests invoke their unit and assert on output (audit Test Functionality Pass already verified at audit time) |
+| Step 4.5 — Skill file integrity | n/a | No `qor-*` SKILL.md modifications this session |
+| Step 4.6 — Reliability sweep | ✅ | intent-lock VERIFIED (after re-capture for Advisory #1 fix), skill-admission ADMITTED, gate-skill-matrix 29/112/0 |
+| Step 4.6.5 — Secret-scanning gate | ✅ | exit 0, clean |
+| Step 4.7 — Doc integrity (Phase 28 wiring) | n/a | qor-logic-internal; target docs convention not present in this repo |
+| Step 5 — Section 4 razor final | ✅ | Largest production file 100 lines; all functions ≤ 25 lines; depth ≤ 2; no nested ternaries |
+| Step 6 — `SYSTEM_STATE.md` sync | ✅ | New "Priority C v0 team-server" section appended |
+| Step 6.5 — Doc currency / badge currency | n/a | qor-logic-internal |
+| Step 7.4 — SSDF tag emission | n/a | qor-logic-internal |
+| Step 7.5/7.6 — Version bump + CHANGELOG | n/a | qor-logic-internal |
+| Step 7.7 — Post-seal verification | n/a | qor-logic-internal plan-path globbing |
+| Step 7.8 — Gate-chain completeness | n/a | Phase ≤ 51 grandfathered |
+| Step 8 — Cleanup staging | (deferred) | `.agent/staging/AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 — Dist recompile | n/a | qor-logic-internal |
+| Step 9.5.5 — Annotated seal-tag | n/a | No version bump → no tag |
+
+**Session content hash** (37 files, sorted-path concatenation):
+SHA256 = `ddc5d0e64548597c2c8ee2f07551ffc4b80beb75454e73f3815cd0c62a72bfa1`
+
+**Previous chain hash**: `211ffb9e...` (Entry #27, IMPLEMENTATION)
+
+**Merkle seal**:
+SHA256(content_hash + previous_hash) = **`6f4f8f8f1d63ad82b952a3c6aff270d30584e08b0572077ff685e84ce453f6c2`**
+
+**Decision**: Reality matches Promise for Phases 1–4 of the audited specification. Phase 5 (CocoIndex integration) explicitly deferred per the plan's slip-independence design and the operator's "if we can manage it" feasibility caveat. The implementation:
+- Resolves all four Phase 1–4 verification surfaces with 25 functionality tests (TDD-light invariant satisfied)
+- Honors all three audit advisories at implement-time (term home fixed in plan; OAuth + events routes proactively factored; FLEXIBLE TYPE object applied)
+- Keeps `extraction_cache.model_version='interim-claude-v1'` as a tombstone for Phase 5's CocoIndex follow-up
+- Preserves the local-first principle under CONCEPT.md literal-keyword parsing (`docs/SHADOW_GENOME.md` Failure Entry #6 addendum)
+
+Session is sealed.
+
+---
+*Chain integrity: VALID (28 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority C v0 IMPL: `211ffb9e` → Priority C v0 SEAL: `6f4f8f8f`*
+*Next required action: operator review and choose push/merge path (Step 9.6 menu)*

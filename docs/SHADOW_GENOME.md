@@ -281,3 +281,119 @@ SG-PLAN-GROUNDING-DRIFT
 ```
 
 ---
+
+## Failure Entry #6
+
+**Date**: 2026-05-02T22:00:00Z
+**Verdict ID**: research-brief-priority-c-selective-ingest-2026-05-02.md (deleted) — operator-rejected during dialogue
+**Failure Mode**: INVARIANT_FROM_IMPLEMENTATION (Hallucination-class; SG-1 family)
+
+### What Failed
+
+`/qor-research` for v0 Priority C (selective source ingest) read the current
+`bicameral.ingest` code surface (`handlers/ingest.py:217`), observed that
+the server accepts pre-extracted text and has no source-fetcher / OAuth /
+API-client code, and elevated this **v0 implementation state** to a
+**product principle**:
+
+> "Architecture invariant: bicameral-mcp does not fetch source content;
+> the agent fetches via host's tools. Any future 'source connector'
+> proposal should be VETO'd at audit unless it explicitly bypasses this
+> invariant for a documented reason."
+
+The brief recommended an entire framing reversal of the user's stated
+priority — from "build selective ingest for sources" to "build a
+curation/quality-gate UX over what the agent already fetches" — based on
+this invented invariant. The brief was about to be filed as advisory
+input to the follow-on `/qor-plan` and the invariant about to be saved
+as a project memory entry.
+
+### Why It Failed
+
+The Sales Enablement & Positioning Playbook (operator-supplied during
+post-research dialogue) explicitly positions Bicameral as the
+**destination** of a `Decision Sources → Bicameral.LEDGER` arrow in
+its ecosystem-fit diagram. Decision continuity at multi-developer,
+multi-agent scale is **Value Pillar #1**. The agent-fetches-only model
+fragments the ledger across sessions: Dev A's Cursor session, Dev B's
+Claude Code session, and Dev C's Claude Desktop session each produce
+independent reads of the same Slack thread, with independent extractions.
+Two devs preflighting the same code path against the same conversational
+source can get different drift verdicts.
+
+The product principle is **decision continuity at scale**. The v0 code's
+agent-fetches-only pattern is a solo-developer simplification, not a
+load-bearing invariant. Treating the simplification as a principle
+would have shipped a plan whose executive summary directly contradicts
+the product positioning the team is selling against.
+
+### Pattern to Avoid
+
+**Distinguish "what the code does today" from "what the product principle
+is."** A v0 simplification is evidence of a design choice at a moment in
+time — not evidence of the load-bearing rule. Authoritative product
+principles live in:
+
+- `docs/CONCEPT.md` (project DNA)
+- `docs/ARCHITECTURE_PLAN.md` (interface contracts + risk grade)
+- Sales Enablement & Positioning Playbook (operator-curated, off-repo)
+- Founder/maintainer dialogue when the artifacts are silent or
+  contradictory
+
+Code-state observations may *suggest* an invariant, but the invariant must
+be checked against authoritative sources before being ascribed product
+weight. When code and product positioning diverge, the code is the
+v0-state, not the contract.
+
+### Detection Heuristic
+
+Before writing the phrase "architecture invariant" or "product principle"
+or "by design" in a research brief, ask:
+
+1. Is this claim grounded in a non-code authoritative source? (CONCEPT.md,
+   ARCHITECTURE_PLAN.md, positioning doc, founder dialogue.)
+2. If only grounded in code, am I sure the code reflects the product
+   principle and not just a v0 simplification?
+3. Could this claim, if elevated to a project memory, contradict the
+   product's market positioning if the team scales?
+
+A "no" or "unsure" on any of these means the claim is unproven. **Anything
+unproven is only theater.** Quote it as observation, not as principle.
+
+### Remediation
+
+- Research brief deleted (no archival; the failure mode is more useful
+  preserved here than the false brief is in the docs tree).
+- Project memory entry "bicameral does not fetch source content" was
+  about to be saved; intercepted before write.
+- Operator-supplied playbook treated as primary substrate for the
+  re-research that follows.
+- Doctrine "anything unproven is only theater" saved as project memory
+  feedback for future research/audit phases.
+
+
+### Addendum to Entry #6 (2026-05-02T22:30:00Z)
+
+The pattern catalogued above is **symmetric**: it applies as much to project doctrine documents as to source code. After the v1 brief failure, dialogue with the operator revealed CONCEPT.md anti-goals were also being read too generously — specifically *"No remote DB, no managed backend"* was treated as "no server-side components at organizational scale," which conflicts with multi-org sync requirements implied by the playbook.
+
+The operator parsed the anti-goal literally: the load-bearing keyword is **"managed"**, not "backend." A managed backend is one that requires human ops (DBA tasks, on-call, capacity planning, manual migration) — i.e., a SaaS the customer pays an ops tax for. A **self-managing** backend (self-hosted, schema-migrating itself, deterministic, no on-call surface) is fully compatible. Sentry self-hosted, Supabase self-host, embedded-SurrealDB-already-in-repo are the precedents.
+
+### Pattern to Avoid (extension)
+
+When parsing project doctrine documents (CONCEPT.md anti-goals, ARCHITECTURE_PLAN.md interface contracts, positioning playbooks), identify the **load-bearing keyword** in each clause and read the rest as gloss on that keyword. Do NOT generalize the clause beyond what the keyword warrants:
+
+- *"No managed backend"* — load-bearing word: **managed**. Allows server-side that's self-managing.
+- *"No cloud, no network calls in the deterministic core"* — load-bearing words: **deterministic core**. Allows network calls outside the deterministic core (e.g., source ingest workers, telemetry).
+- *"Not an LLM-powered ledger"* — load-bearing words: **ledger**. Allows LLMs as callers, classifiers, and orchestrators around the ledger.
+
+When the operator's product positioning implies a feature that seems to violate an anti-goal, do not assume the anti-goal blocks the feature — first parse the keyword and see whether the feature actually trips it.
+
+### Detection Heuristic (extension)
+
+Before declaring "this anti-goal forbids X," ask:
+1. What is the load-bearing keyword in the anti-goal clause?
+2. Does X trip that specific keyword, or just the broader gloss around it?
+3. Is there an industry precedent (self-hosted Sentry, Supabase OSS, etc.) where a system honors this anti-goal-keyword while still implementing X?
+
+If 2 says "just the gloss" or 3 surfaces a precedent, X is not blocked — it's compatible with the anti-goal under literal-keyword parsing.
+

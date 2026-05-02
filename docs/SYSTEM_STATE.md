@@ -411,3 +411,85 @@ Zero structural. Implementation matches Entry #24 audit blueprint 1:1.
   collision detection lives caller-side via `bicameral-context-sentry`
   skill and surfaces via `bicameral.preflight.unresolved_collisions`.
   Spec-text correction is a `/qor-document`-phase external `gh` action.
+
+---
+
+# System State — Priority C v0 team-server (2026-05-02, sealed `6f4f8f8f`)
+
+**Generated**: 2026-05-02
+**HEAD**: branch `claude/priority-c-selective-ingest` off `upstream/dev`
+**Tracked PR**: not yet opened (operator decision at Step 9.6)
+**Predecessor seal**: `efd0304b` (Entry #26, #135-triage)
+**Implementation seal**: `211ffb9e` (Entry #27)
+**Substantiation seal**: `6f4f8f8f` (Entry #28 — this seal)
+
+## Priority C v0 — self-managing team-server, Slack-first
+
+Implements `plan-priority-c-team-server-slack-v0.md` Phases 1–4. Phase 5 (CocoIndex #136) deferred to follow-up plan per slip-independence design and operator's "if we can manage it" feasibility caveat.
+
+### Files added (30)
+
+**Production — `team_server/` package**:
+- `__init__.py`, `app.py` (47 LOC), `db.py` (41), `schema.py` (80), `config.py` (40), `requirements.txt`
+- `auth/`: `__init__.py`, `encryption.py`, `slack_oauth.py` (58), `router.py` (73)
+- `extraction/`: `__init__.py`, `canonical_cache.py` (45), `llm_extractor.py`
+- `sync/`: `__init__.py`, `peer_writer.py` (42)
+- `workers/`: `__init__.py`, `slack_worker.py` (100)
+- `api/`: `__init__.py`, `events.py`
+
+**Production — `events/` extension**:
+- `events/team_server_pull.py` (57 LOC) — failure-isolated `EventMaterializer` extension
+
+**Deployment**:
+- `deploy/team-server.docker-compose.yml`
+- `deploy/Dockerfile.team-server`
+
+**Tests** (8 files / 25 functionality tests):
+- `tests/test_team_server_app.py` (5), `tests/test_team_server_deploy.py` (1)
+- `tests/test_team_server_slack_oauth.py` (5), `tests/test_team_server_channel_allowlist.py` (2)
+- `tests/test_team_server_canonical_cache.py` (3), `tests/test_team_server_slack_worker.py` (3)
+- `tests/test_team_server_events_api.py` (3), `tests/test_materializer_team_server_pull.py` (3)
+
+### Test state
+
+- Priority C v0: **25 / 25 PASS** in 5.99s
+- Existing dev suite (743 tests): collects unaffected
+- Razor: largest production file 100 LOC; all functions ≤ 25 LOC; depth ≤ 2; no nested ternaries
+
+### Schema additions (team-server's own DB; separate from per-repo bicameral ledger)
+
+`SCHEMA_VERSION = 1` in `team_server/schema.py` (independent of `ledger/schema.py`'s SCHEMA_VERSION). Tables:
+- `workspace` — one row per Slack workspace (id, name, slack_team_id, oauth_token_encrypted, created_at)
+- `channel_allowlist` — workspace × channel allow-list
+- `extraction_cache` — `FLEXIBLE TYPE object` for `canonical_extraction` (per #72 lesson + audit Advisory #3); keyed UNIQUE on `(source_type, source_ref, content_hash)`
+- `team_event` — append-only event log; `FLEXIBLE TYPE object` for `payload`; sequence ordered
+
+### Architectural properties achieved
+
+- **Self-managing**: schema migrates on startup via `ensure_schema()` (idempotent); restart is no-op; no human ops surface
+- **Failure-isolated**: `events/team_server_pull.py` swallows transport errors; per-dev preflight does not cascade on team-server outage
+- **Multi-dev convergence**: same Slack message → same canonical extraction across devs via `(source_type, source_ref, content_hash)` cache key
+- **Local-first per CONCEPT.md literal-keyword parsing**: server-side component is self-managing (compatible) not vendor-managed (forbidden)
+- **Section 4 razor**: all functions ≤ 25 lines, all files ≤ 100 lines
+
+### Audit advisory disposition
+
+- Advisory #1 (term home cross-reference) — fixed in plan before implementation
+- Advisory #2 (`app.py` size monitoring) — proactively factored OAuth + events routes into per-package routers; `app.py` ends at 47 lines
+- Advisory #3 (FLEXIBLE TYPE object) — applied to `extraction_cache.canonical_extraction` and `team_event.payload` at schema definition time
+
+### Phase 5 deferred state
+
+CocoIndex (#136) integration deferred. `extraction_cache.model_version` carries `interim-claude-v1` tombstone so Phase 5 can identify+rebuild interim entries when it lands.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+- Step 2.5 — Version bump: no `pyproject.toml` Target Version in plan; downstream project uses different release cadence
+- Step 4.7 — Doc integrity (Phase 28 wiring): targets qor-logic's `docs/Planning/plan-qor-phase{NN}*.md` convention not present in this repo
+- Step 6.5 — Doc currency / badge currency: targets qor-logic's `docs/architecture.md`/`docs/lifecycle.md` system docs not present
+- Step 7.4 — SSDF tag emission: targets qor-logic's own SESSION SEAL convention
+- Step 7.5/7.6 — Version bump + CHANGELOG stamp: no `## [Unreleased]` block convention in this repo's CHANGELOG
+- Step 7.7 — Post-seal verification: targets qor-logic's plan-path globbing
+- Step 7.8 — Gate-chain completeness (Phase 52+): grandfathered for entries < 52
+- Step 8.5 — Dist recompile: qor-logic-internal variant compile
+- Step 9.5.5 — Annotated seal-tag: no version bump → no tag
