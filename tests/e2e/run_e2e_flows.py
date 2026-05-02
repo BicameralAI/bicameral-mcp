@@ -119,9 +119,10 @@ def _reset_desktop_repo() -> None:
 
 def _materialize_settings_with_hook() -> pathlib.Path:
     """Write a project-style ``settings.json`` carrying the hooks bicameral's
-    setup-wizard installs in real projects. Both hook commands are imported
-    from ``setup_wizard`` so the harness exercises the EXACT strings a
-    freshly-onboarded user would have — single source of truth, no drift.
+    setup-wizard installs in real projects. All three hook commands are
+    imported from ``setup_wizard`` so the harness exercises the EXACT
+    strings a freshly-onboarded user would have — single source of truth,
+    no drift.
 
     Hooks installed:
       - PostToolUse/Bash: bicameral-sync listens for "new commit detected"
@@ -133,6 +134,11 @@ def _materialize_settings_with_hook() -> pathlib.Path:
         stream-json — the subprocess writes to the ledger out-of-band.
         For observable in-stream auto-fire, capture-corrections is also
         invoked by ``bicameral-preflight`` step 3.5 — that path IS visible.
+      - UserPromptSubmit: deterministic verb-list classifier injects a
+        <system-reminder> elevating bicameral.preflight above the agent's
+        default tool-selection priority on code-implementation prompts.
+        This is what makes Flow 2 / Flow 4 auto-fire preflight in
+        headless ``claude -p``.
     """
     # setup_wizard.py is at pilot/mcp root (two levels up from this file).
     mcp_root = pathlib.Path(__file__).resolve().parents[2]
@@ -140,6 +146,7 @@ def _materialize_settings_with_hook() -> pathlib.Path:
         sys.path.insert(0, str(mcp_root))
     from setup_wizard import (  # noqa: E402
         _BICAMERAL_POST_COMMIT_COMMAND,
+        _BICAMERAL_PREFLIGHT_REMINDER_COMMAND,
         _BICAMERAL_SESSION_END_COMMAND,
     )
 
@@ -154,6 +161,13 @@ def _materialize_settings_with_hook() -> pathlib.Path:
             "SessionEnd": [
                 {
                     "hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}],
+                }
+            ],
+            "UserPromptSubmit": [
+                {
+                    "hooks": [
+                        {"type": "command", "command": _BICAMERAL_PREFLIGHT_REMINDER_COMMAND}
+                    ],
                 }
             ],
         }
