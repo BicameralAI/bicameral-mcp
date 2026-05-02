@@ -570,3 +570,73 @@ tests/test_team_server_canonical_cache.py  — rewritten under v2 upsert contrac
 ### qor-logic-internal steps skipped (downstream-project rationale, same as v0 entry)
 
 Same set as v0 (Steps 2.5, 4.7, 6.5, 7.4–7.8, 8.5, 9.5.5) — this repo does not author qor-logic phase plans nor maintain the system-tier doc set / dist-compile pipeline that those wirings expect. The fundamental S.H.I.E.L.D. checks (PASS verdict prerequisite, Reality vs Promise, Section 4 Razor, Merkle seal calculation, ledger entry) all run.
+
+---
+
+## Priority C v1.1 — Real heuristic+LLM extractor (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-real-extractor-v1.md`](../plan-priority-c-team-server-real-extractor-v1.md). First-round PASS audit; 102/102 team-server tests passing.
+
+### Files added (10)
+
+```
+team_server/extraction/heuristic_classifier.py — deterministic Stage 1 classifier (105 LOC)
+team_server/extraction/pipeline.py             — Stage 1 → Stage 2 wiring (59 LOC)
+team_server/extraction/corpus_learner.py       — option-c feedback loop (114 LOC)
+
+tests/test_team_server_classifier_version.py        — 5 tests
+tests/test_team_server_heuristic_classifier.py      — 9 tests
+tests/test_team_server_rules.py                     — 5 tests
+tests/test_team_server_llm_extractor.py             — 7 tests
+tests/test_team_server_pipeline.py                  — 5 tests
+tests/test_team_server_corpus_learner.py            — 5 tests
+tests/test_team_server_corpus_learner_lifecycle.py  — 2 tests
+```
+
+### Files modified (9)
+
+```
+team_server/schema.py                       — SCHEMA_VERSION 2→4; classifier_version field; learned_heuristic_terms table
+team_server/extraction/canonical_cache.py   — upsert second-axis (content_hash + classifier_version) cache identity
+team_server/extraction/llm_extractor.py     — full rewrite: Anthropic SDK call, _one_attempt helper, fail-loud + fail-soft + retry-on-429
+team_server/config.py                       — HeuristicGlobalRules / SlackHeuristics / NotionHeuristics; resolve_rules_for_{slack,notion}; CorpusLearnerConfig
+team_server/workers/slack_worker.py         — pipeline-routed with thread/reaction context; legacy fallback when config=None
+team_server/workers/notion_worker.py        — pipeline-routed with last_edited_by/edit_count context; legacy fallback when config=None
+team_server/app.py                          — config loaded from DEFAULT_CONFIG_PATH; corpus learner registered when enabled
+
+tests/test_team_server_cache_upsert.py     — adapted to classifier_version= keyword-only argument
+tests/test_team_server_canonical_cache.py  — adapted to classifier_version= keyword-only argument
+```
+
+### Test state
+
+- 102/102 team-server tests passing (full suite, up from 64 at v1.0)
+- 38 net-new functionality tests across Phases 0–5
+- Razor: max file 180 LOC (notion_worker); max function ~30 (extract via _one_attempt helper); depth ≤3; zero nested ternaries
+
+### Schema state (team-server v4)
+
+`SCHEMA_VERSION = 4`. New tables (additions in **bold**):
+- `extraction_cache` — gains `classifier_version` field (default `'legacy-pre-v3'`); cache hit requires both content_hash AND classifier_version match
+- **`learned_heuristic_terms`** — corpus learner output; UNIQUE (source_type, term)
+- All v1.0 tables retained: `workspace`, `channel_allowlist`, `team_event`, `source_watermark`, `schema_version`
+
+### Architectural properties achieved (v1.1)
+
+- **Heuristic-first determinism**: Stage 1 classifier is pure-function over (message, context, rules); zero API calls on chatter
+- **LLM-only-when-needed**: Stage 2 (Anthropic Haiku 4.5 default) runs only on heuristic-positive messages; cache locks results so each unique input costs once
+- **Rule-version-driven cache invalidation**: classifier_version is a SHA256 of the rule set; operator config edits → automatic cache invalidation on next poll
+- **All four "dynamic" angles wired**: per-workspace YAML (a) / per-channel/db override (b) / corpus-learned terms (c) / context-aware boosters (d)
+- **Anti-goal alignment**: heuristic Stage 1 grows the deterministic core; LLM call is scoped narrowly outside the deterministic core (network calls permitted there per CONCEPT.md literal-keyword parsing)
+- **Auditability**: every positive classification stores `matched_triggers` array (which keyword/reaction/thread-position fired)
+
+### Audit advisories addressed during implementation
+
+1. `extract()` split into `_one_attempt(client, model, prompt) -> (status, payload)` helper; main `extract` body is ~14 lines (well under Razor)
+2. `TeamServerRules` resolved as `TeamServerConfig` (single rename in implementation, not a new type)
+3. Corpus learner reads from `team_event` rows (per OQ-1) whose `payload.extraction.decisions` is non-empty; does NOT query a `decision` table that doesn't exist on the team-server's ledger
+
+### Implementation deviations from plan (logged)
+
+1. `team_server/workers/{slack_worker,notion_worker}.py` keep a backwards-compat path: when `config=None`, fall back to the legacy `extractor(text)` callable. Preserves v1.0 worker tests + provides a clean cutover path. When `config` is provided, the pipeline runs.
+2. Anthropic SDK imported lazily inside `extract()` (matches the slack_sdk lazy-import pattern from v1.0 Phase 0.5) so the package imports cleanly when `anthropic` is in `requirements.txt` but not installed in dev venv.

@@ -1641,6 +1641,138 @@ Session is sealed.
 | Step 9.5.5 — Annotated seal-tag | n/a | No version bump → no tag |
 
 ---
-*Chain integrity: VALID (33 entries on this branch)*
-*Genesis: `29dfd085` → ... → Priority C v0 SEAL: `6f4f8f8f` → Priority C v1 SEAL: `dcb61910`*
+
+### Entry #34: GATE TRIBUNAL (Priority C v1.1 — Real heuristic+LLM extractor)
+
+- **Date**: 2026-05-02
+- **Session**: `2026-05-02T2043-3fb042` (new session — prior session sealed v1.0 at Entry #33)
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-c-team-server-real-extractor-v1.md`
+- **Verdict**: **PASS**
+- **Risk Grade**: L2
+- **Findings**: none
+- **Advisories**: 3 (non-blocking — extract function at Razor boundary; TeamServerRules→TeamServerConfig typo; corpus learner table-source needs OQ-1 resolution)
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-02T2043-3fb042/audit.json`
+
+**All ten audit passes clean**: Prompt Injection, Security L3, OWASP, Ghost UI, Razor (with one boundary advisory), Test Functionality (38 planned tests across 6 phases all functionality-shaped), Dependency, Macro Architecture, Infrastructure Alignment (every cited symbol grep-verified against current state including Anthropic SDK API surface), Orphan Detection.
+
+**Pattern observation**: SHADOW_GENOME #7's in-sketch detection heuristic from the prior session (signature + type-boundary + helper-symmetry checks) was applied this round and produced clean results. The Governor's grep-verified-symbols discipline shows the heuristic is durable across sessions.
+
+**Decision**: Implementation may proceed. Next phase per `qor/gates/chain.md` is `/qor-implement`. Six-phase modular commit plan; Phase 5 (corpus learner) ships independently if it slips.
+
+**Previous chain hash**: `dcb61910...` (Entry #33, Priority C v1 SEAL)
+
+---
+
+### Entry #35: IMPLEMENTATION (Priority C v1.1 — Real heuristic+LLM extractor)
+
+- **Date**: 2026-05-02
+- **Session**: `2026-05-02T2043-3fb042`
+- **Phase**: IMPLEMENT
+- **Skill**: `/qor-implement`
+- **Plan**: `plan-priority-c-team-server-real-extractor-v1.md`
+- **Audit predecessor**: Entry #34 (round-1 PASS, L2)
+- **Gate artifact**: `.qor/gates/2026-05-02T2043-3fb042/implement.json`
+
+**Files created (10)**: `team_server/extraction/{heuristic_classifier,pipeline,corpus_learner}.py` + 7 functionality test files (Phase 0/1/2/3/4/5/5-lifecycle).
+
+**Files modified (9)**: `team_server/{schema,app,config}.py`, `team_server/extraction/{canonical_cache,llm_extractor}.py`, `team_server/workers/{slack_worker,notion_worker}.py`, plus 2 v1.0 test files adapted to the new `classifier_version=` keyword-only argument on upsert.
+
+**Test outcomes**:
+- Phase 0 cache contract evolution: 5/5 PASS
+- Phase 1 heuristic classifier: 9/9 PASS
+- Phase 2 trigger rules schema: 5/5 PASS
+- Phase 3 real LLM extractor (Anthropic SDK): 7/7 PASS
+- Phase 4 pipeline integration: 5/5 PASS
+- Phase 5 corpus learner: 5/5 PASS
+- Phase 5 corpus learner lifecycle: 2/2 PASS
+- **Team-server full suite: 102/102 PASS**
+
+**Section 4 Razor compliance**: max file 180 LOC (notion_worker.py); max function ~30 LOC (extract via _one_attempt helper, addressing Advisory 1); nesting ≤3; zero nested ternaries.
+
+**Reality vs Promise alignment**:
+- Schema v2→v3 added `classifier_version` column; v3→v4 added `learned_heuristic_terms` table. Both migrations idempotent.
+- `upsert_canonical_extraction` now requires `classifier_version` keyword-only; both axes (content_hash + classifier_version) gate cache hits.
+- Heuristic classifier deterministic by construction; rule-set hash drives cache invalidation when operator config edits land.
+- Pipeline routes Stage 1 → optional Stage 2; chatter short-circuits before any Anthropic call.
+- LLM extractor: lazy anthropic import, fail-loud on missing API key, exponential backoff on 429, fail-soft on 5xx and parse failures.
+- Corpus learner reads from team-server's own `team_event` table (per OQ-1 resolution, not the per-repo `decision` table that doesn't exist server-side).
+- All four "dynamic" angles wired: per-workspace YAML, per-channel/db overrides, learned-keyword merge into `TriggerRules.learned_keywords`, context-aware boosters (Slack reactions + thread position; Notion last_edited_by + edit_count).
+
+**Audit advisories all addressed in implementation**:
+1. `extract()` split into `_one_attempt` helper from the start.
+2. `TeamServerRules` resolved as `TeamServerConfig` (existing type, extended).
+3. Corpus learner reads `team_event` rows, not `decision` table.
+
+**Decision**: Reality matches Promise across all six phases. Six-commit modular structure ready to land. Phase 5 corpus learner ships independently if Phases 0–4 stand alone (the worker is opt-in via `corpus_learner.enabled` config).
+
+**Previous chain hash**: `<entry-34-hash>` (Entry #34 — round-1 PASS audit)
+
+---
+
+### Entry #36: SUBSTANTIATION (SESSION SEAL — Priority C v1.1: Real heuristic+LLM extractor)
+
+- **Date**: 2026-05-02
+- **Session**: `2026-05-02T2043-3fb042`
+- **Phase**: SUBSTANTIATE
+- **Skill**: `/qor-substantiate`
+- **Plan**: `plan-priority-c-team-server-real-extractor-v1.md`
+- **Audit**: round 1 PASS, L2 risk grade
+- **Implement**: Entry #35
+
+**Reality vs Promise verification**:
+
+| Audit pass | Outcome |
+|---|---|
+| PASS verdict prerequisite | ✅ Round 1 PASS sealed at Entry #34 |
+| Version validation | n/a — plan declares no target version; pre-existing pyproject/tag drift out of scope |
+| Reality audit (Reality = Promise) | ✅ All 10 planned-CREATE + 9 planned-MUTATE files present; no orphans, no missing, no unplanned |
+| Blocker review (BACKLOG.md) | ✅ Open S1 (SECURITY.md) acknowledged; not in scope for this PR |
+| Test audit | ✅ 102/102 team-server tests passing; 38 net-new functionality tests across Phases 0–5 |
+| Presence-only seal gate | ✅ Every new test invokes the unit and asserts on observable output |
+| Section 4 Razor final check | ✅ Max file 180 LOC; max function ~30 (extract via _one_attempt helper, addressing Advisory 1 inline); nesting ≤3; zero nested ternaries |
+| SYSTEM_STATE.md sync | ✅ "Priority C v1.1 — Real heuristic+LLM extractor (2026-05-02)" section appended |
+| Skill file integrity | n/a — no skill files modified |
+
+**Files sealed**: 20 source/test/plan + 1 governance ledger update = 21 staged. Tests: 38 net-new (Phase 0: 5 / Phase 1: 9 / Phase 2: 5 / Phase 3: 7 / Phase 4: 5 / Phase 5: 7).
+
+**Session content hash** (20 files, sorted-path concatenation):
+SHA256 = `e8b1b6b65147f2b2a5b05295a60a78b1468d77b88d32c7487a6d206f39da44ff`
+
+**Previous chain hash**: `dcb61910...` (Entry #33, Priority C v1 SEAL)
+
+**Merkle seal**:
+SHA256(content_hash + previous_hash) = **`b37003661820e2ef80591b9d0cfdeac3df092d6d9b4b5d87e3036e7ccf37d95b`**
+
+**Decision**: Reality matches Promise across all six phases. The v0 paragraph-split placeholder (`text.split("\n\n")`) is replaced by a real heuristic+LLM pipeline: deterministic Stage 1 keyword/reaction/thread classifier, optional Stage 2 Anthropic Haiku call gated on Stage 1 positives, classifier-version-driven cache invalidation, corpus learner reading the team-server's own event log to seed learned keywords. All four "dynamic" angles from the design dialogue (per-workspace YAML / per-channel-or-db override / corpus-learned terms / context-aware boosters) wired into the same TriggerRules data shape.
+
+The first-round PASS audit is the productive deposit beyond the code: the SHADOW_GENOME #7 detection heuristic — extended in the prior session after two rounds of VETO — held this round. The Governor's grep-verified-symbols discipline produced clean infrastructure-alignment results on first pass; all three audit advisories were addressed inline during implementation rather than in a separate amendment cycle.
+
+CocoIndex (#136) remains parked. The current architecture provides a clean unparking path: the heuristic Stage 1 is the operator-implementable interim of CocoIndex's Layer A pre-classifier; replacing it later only swaps the classifier module without changing the cache contract.
+
+Session is sealed.
+
+**qor-logic-internal steps skipped** (downstream-project rationale, same as Entries #28 and #33):
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | n/a | No target version in plan |
+| Step 4.6 | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 | not run | No staged secrets (Fernet test key is generated fixture; ANTHROPIC_API_KEY env-sourced; no constants) |
+| Step 4.6.6 | not run | qor-logic-internal procedural fidelity check |
+| Step 4.7 | not run | Targets qor-logic phase-plan path convention |
+| Step 6.5 | not run | No system-tier docs (architecture.md/lifecycle.md) maintained here |
+| Step 7.4 | not run | qor-logic-internal SSDF tag emission |
+| Step 7.5/7.6 | not run | No `## [Unreleased]` block convention; not user-facing-CLI changes |
+| Step 7.7 | not run | qor-logic-internal seal-entry-check |
+| Step 7.8 | n/a | Phase ≤ 51 grandfathered; this session's gate dir at `.qor/gates/2026-05-02T2043-3fb042/` carries plan.json, audit.json, implement.json, substantiate.json |
+| Step 8 | (deferred) | `.agent/staging/AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 | n/a | qor-logic-internal dist-compile |
+| Step 9.5.5 | n/a | No version bump → no tag |
+
+---
+*Chain integrity: VALID (36 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority C v1 SEAL: `dcb61910` → Priority C v1.1 SEAL: `b3700366`*
 *Next required action: operator review and choose push/merge path (Step 9.6 menu).*
