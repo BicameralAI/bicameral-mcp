@@ -747,9 +747,7 @@ def assert_flow_2(calls: list[dict]) -> tuple[bool, str]:
             f"first preflight at idx {first_preflight_idx}, first write at idx {first_write_idx}"
         )
 
-    return True, (
-        f"preflight auto-fired on reorder.ts; preceded first write op; sequence: {names}"
-    )
+    return True, (f"preflight auto-fired on reorder.ts; preceded first write op; sequence: {names}")
 
 
 def assert_flow_2a(calls: list[dict]) -> tuple[bool, str]:
@@ -791,9 +789,7 @@ def assert_flow_2a(calls: list[dict]) -> tuple[bool, str]:
     if not resolve_calls:
         return False, f"expected resolve_collision after refinement ingest; saw: {names}"
 
-    return True, (
-        f"agent_session ingest + resolve_collision both fired; sequence: {names}"
-    )
+    return True, (f"agent_session ingest + resolve_collision both fired; sequence: {names}")
 
 
 def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:
@@ -1239,9 +1235,7 @@ def main() -> int:
     # surface loudly in the report but do not red-light CI. This lets the
     # harness keep running these assertions every PR (so we notice when a
     # gap silently CLOSES) without making every PR also pay for the open gap.
-    blocking_failures = [
-        r for r in RESULTS if r.verdict in ("FAIL", "ERROR") and not r.advisory
-    ]
+    blocking_failures = [r for r in RESULTS if r.verdict in ("FAIL", "ERROR") and not r.advisory]
     return 0 if not blocking_failures else 1
 
 
@@ -1278,9 +1272,7 @@ def _print_report() -> None:
         what = _flow_one_line(r.flow_id)
         print(f"{r.flow_id:<14} {layer_label:<14} {marker} {r.verdict:<8} {what}")
 
-    blocking_failures = [
-        r for r in RESULTS if r.verdict in ("FAIL", "ERROR") and not r.advisory
-    ]
+    blocking_failures = [r for r in RESULTS if r.verdict in ("FAIL", "ERROR") and not r.advisory]
     advisory_failures = [r for r in RESULTS if r.verdict == "FAIL" and r.advisory]
     overall_pass = not blocking_failures
     overall_marker = "✅" if overall_pass else "❌"
