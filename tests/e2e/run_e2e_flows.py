@@ -996,10 +996,13 @@ FLOW_PLAN: list[FlowSpec] = [
         category="agentic_layer",
         session_group="dev_session",
         advisory=(
-            "Same skill-layer gap as Flow 2a: preflight auto-fires but the "
-            "agent doesn't walk Step 3.5 to invoke capture-corrections, so "
-            "the in-session correction isn't ingested. Tracked as P0 — see "
-            "BicameralAI/bicameral-mcp#154."
+            "Flow 4 captures an emerging constraint via correction markers "
+            '("wait", "shouldn\'t") — no collision-detection involved, so '
+            "this is NOT the same gap as #154 (which is Flow 2a / contradiction-"
+            "with-prior-decision specific). Flow 4's path-X-(b) substrate "
+            "(SessionEnd subprocess + post-hoc ledger query) is fixed in #147 "
+            "/ PR #152 (.bicameral/ bootstrap + --mcp-config passthrough). "
+            "Once that lands on dev, this advisory becomes obsolete."
         ),
     ),
     FlowSpec(
