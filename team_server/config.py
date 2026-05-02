@@ -6,10 +6,15 @@ the message to the operator at startup).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
+
+DEFAULT_CONFIG_PATH = Path(
+    os.environ.get("BICAMERAL_CONFIG_PATH", "/etc/bicameral-team-server/config.yml")
+)
 
 
 class WorkspaceConfig(BaseModel):
