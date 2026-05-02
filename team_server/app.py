@@ -39,4 +39,7 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok", "schema_version": SCHEMA_VERSION}
 
+    from team_server.auth.router import router as auth_router
+    app.include_router(auth_router)
+
     return app
