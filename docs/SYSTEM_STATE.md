@@ -493,3 +493,80 @@ CocoIndex (#136) integration deferred. `extraction_cache.model_version` carries 
 - Step 7.8 — Gate-chain completeness (Phase 52+): grandfathered for entries < 52
 - Step 8.5 — Dist recompile: qor-logic-internal variant compile
 - Step 9.5.5 — Annotated seal-tag: no version bump → no tag
+
+---
+
+## Priority C v1 — Notion ingest + cache contract migration (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-notion-v1.md`](../plan-priority-c-team-server-notion-v1.md). Three-round audit cycle (VETO → VETO → PASS); 64/64 team-server tests passing.
+
+### Files added (13)
+
+```
+team_server/workers/runner.py             — worker_loop lifecycle helper (29 LOC)
+team_server/workers/slack_runner.py       — workspace iteration + per-WS fan-out (67 LOC)
+team_server/workers/notion_worker.py      — Notion polling + watermark (123 LOC)
+team_server/workers/notion_runner.py      — Notion task wrapper (23 LOC)
+team_server/auth/notion_client.py         — internal-integration auth + API (110 LOC)
+team_server/extraction/notion_serializer.py — deterministic row serialization (64 LOC)
+
+tests/test_team_server_cache_upsert.py        — 4 tests
+tests/test_team_server_schema_migration.py    — 4 tests
+tests/test_team_server_worker_lifecycle.py    — 7 tests
+tests/test_team_server_notion_client.py       — 7 tests
+tests/test_team_server_notion_serializer.py   — 3 tests
+tests/test_team_server_notion_worker.py       — 9 tests
+tests/test_team_server_notion_lifecycle.py    — 4 tests
+```
+
+### Files modified (7)
+
+```
+team_server/schema.py                      — schema v1→v2 + schema_version table + callable migration dispatch
+team_server/extraction/canonical_cache.py  — get_or_compute() → upsert_canonical_extraction() -> tuple[dict, bool]
+team_server/workers/slack_worker.py        — adapted to new tuple-return contract; _cache_row_exists deleted
+team_server/app.py                         — lifespan registers worker tasks via worker_loop helper
+team_server/config.py                      — DEFAULT_CONFIG_PATH constant with env-var fallback
+
+tests/test_team_server_slack_worker.py     — adapted; new no-event-on-unchanged + event-on-changed pair
+tests/test_team_server_canonical_cache.py  — rewritten under v2 upsert contract
+```
+
+### Test state
+
+- 64/64 team-server tests passing (full suite)
+- 695/703 non-team-server regression: 8 pre-existing failures in unrelated tests (`test_alpha_flow`, `test_bind`, `test_ephemeral_authoritative`, `test_v0417_jargon_hygiene`); none touch files modified in this implementation
+- Razor: largest production file 139 LOC (schema.py); all functions ≤ 25 LOC; depth ≤ 3; no nested ternaries
+
+### Schema state (team-server v2)
+
+`SCHEMA_VERSION = 2` in `team_server/schema.py`. Tables (additions in **bold**):
+- `workspace` — one row per Slack workspace
+- `channel_allowlist` — workspace × channel allow-list
+- `extraction_cache` — UNIQUE keyed on `(source_type, source_ref)` ONLY (was `(source_type, source_ref, content_hash)` in v1); `content_hash` becomes a tracked column; UPSERT semantics
+- `team_event` — append-only event log; payload now includes `notion_database_row` source_type
+- **`source_watermark`** — generic per-source / per-resource watermark; used by Notion polling
+- **`schema_version`** — single-row table holding the current `SCHEMA_VERSION` after migrations apply (DELETE-then-CREATE preserves single-row invariant)
+
+### Architectural properties achieved (v1 additions)
+
+- **Cache contract uniformity**: both Slack and Notion use the same `upsert_canonical_extraction` contract; cache holds latest snapshot (bounded growth), `team_event` log preserves history
+- **Worker-task lifecycle pattern**: `worker_loop` is the single source of truth for the asyncio.create_task / cancel-on-shutdown pattern; Slack and Notion both delegate
+- **Slack worker no longer dormant**: v0 plan claimed an active Slack ingest worker but v0 code shipped a function with no production caller. Phase 0.5 closes this gap by wiring `slack_runner.run_slack_iteration` into `lifespan` via `worker_loop`. The encryption round-trip is verified end-to-end by `test_slack_runner_decrypts_workspace_token_with_loaded_key`.
+- **Notion ingest of database rows**: deterministic serialization (title + sorted properties + body), per-database watermark, peer-author identity (`team-server@notion.bicameral`), per-database failure isolation
+- **Internal-integration auth**: no OAuth router for Notion; allow-list derived from `databases.list` (operator's act of sharing a database with the integration is the signal)
+
+### Audit cycle outcomes
+
+- Round 1 VETO (4 findings, missing/undeclared symbols) — closed in amendment round 2
+- Round 2 VETO (1 finding, wrong-call-shape for `decrypt_token`) — closed in amendment round 3 with explicit encrypt-side precedent mirror + round-trip test
+- Round 3 PASS (2 non-blocking advisories) — both addressed during implementation
+
+### Implementation deviations from plan (logged)
+
+1. `PEER_AUTHOR_EMAIL` renamed `PEER_WORKSPACE_ID = "notion"` — `write_team_event` wraps as `team-server@<workspace_id>.bicameral`, so passing the literal email would have double-wrapped to `team-server@team-server@notion.bicameral.bicameral`.
+2. `slack_sdk` import made lazy in `slack_runner.py` (inside `run_slack_iteration`) — declared in `team_server/requirements.txt` but not always installed in dev venvs; lazy import lets the team_server package be importable in tests for unrelated code paths. Production runtime path unaffected.
+
+### qor-logic-internal steps skipped (downstream-project rationale, same as v0 entry)
+
+Same set as v0 (Steps 2.5, 4.7, 6.5, 7.4–7.8, 8.5, 9.5.5) — this repo does not author qor-logic phase plans nor maintain the system-tier doc set / dist-compile pipeline that those wirings expect. The fundamental S.H.I.E.L.D. checks (PASS verdict prerequisite, Reality vs Promise, Section 4 Razor, Merkle seal calculation, ledger entry) all run.

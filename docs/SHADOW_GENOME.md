@@ -397,3 +397,80 @@ Before declaring "this anti-goal forbids X," ask:
 
 If 2 says "just the gloss" or 3 surfaces a precedent, X is not blocked — it's compatible with the anti-goal under literal-keyword parsing.
 
+---
+
+## Failure Entry #7
+
+**Date**: 2026-05-02T06:55:00Z
+**Session**: `2026-05-02T0625-8ea4cc`
+**Skill that produced the artifact**: `/qor-plan` (`plan-priority-c-team-server-notion-v1.md`)
+**Skill that detected**: `/qor-audit`
+**Verdict**: VETO (`infrastructure-mismatch`)
+
+### Pattern Observed: PARALLEL_STRUCTURE_ASSUMED
+
+The plan extended a v0 codebase by repeatedly assuming the v0 had implemented patterns *symmetric* with the v1 ambition. In four places:
+
+1. The plan referenced a `schema-version row` that was never added to v0's schema (`SCHEMA_VERSION` is an in-code constant only).
+2. The plan changed `_MIGRATIONS`'s type signature from tuple-of-stmts to dict-of-callables without acknowledging the corresponding `ensure_schema` dispatch loop change — assuming the dispatch was already callable-shaped.
+3. The plan said "extend the existing `lifespan` to spawn a Notion-worker task" — assuming a Slack-worker task was already registered. It was not. The Slack worker shipped in v0 Phase 3 has no production caller and is invoked only by tests.
+4. The plan referenced `_resolve_extractor()` and `DEFAULT_CONFIG_PATH` in a code sketch — assuming Slack precedents existed. They did not.
+
+The common signature: "the plan generalizes from a Slack-shaped pattern that the plan author *imagined* the v0 had built, rather than the pattern the v0 actually built." This is a class of plan-text drift specifically tied to writing v1 plans against v0 codebases without grep-verifying every named symbol.
+
+### Root Cause
+
+The Governor was treating the v0 plan document (`plan-priority-c-team-server-slack-v0.md`) as the ground truth for v0 state, rather than the v0 *code*. The v0 plan promised a worker-task lifecycle pattern in §Phase 3; the v0 code shipped the worker function but never wired it. The Governor read the plan, not the code. The audit caught it because Step 2 verified state against the code itself.
+
+### Pattern to Avoid
+
+When writing a v1 plan that extends a landed v0:
+
+1. Do NOT cite a v0 symbol in a v1 plan without `grep`-verifying it exists in the current code tree. The audit's Infrastructure Alignment Pass enforces this; the plan should pre-empt it.
+2. Do NOT use phrasing like "extend the existing X" without identifying the exact file/line where X is registered. If you cannot point to a registration site, X may not exist — and "extend" becomes "establish."
+3. Do NOT change a type signature of landed code without an explicit Affected-Files entry naming every dispatch / consumption site that must change.
+4. Do NOT write code sketches with helper-function references (`_helper()`, `CONST`) unless the helper / constant is either declared in Affected Files or already exists at a cited path.
+
+### Detection Heuristic
+
+For every Affected-Files line in a v1 plan that says MUTATE:
+1. Read the file. Confirm the cited symbol exists.
+2. Confirm the cited type signature matches reality.
+3. If the mutation is type-changing, list every consumption site of the changed type and add it as a sub-bullet to the Affected-Files entry.
+
+For every code sketch in §Changes:
+1. Every imported symbol must trace to either an Affected-Files entry OR a current-tree path.
+2. Every `_helper()` call must be either local (defined within the same sketch) or declared.
+3. Every constant reference (`UPPERCASE_CONST`) must be either local or declared in Affected Files.
+
+### Project Memory Implication
+
+This pattern is the natural consequence of treating a previous-phase plan document as evidence about current state. Plans drift from code as soon as the implement phase ends. **Only the code is ground truth for the next plan's state-of-the-world claims.** Every plan referencing prior-phase symbols should grep-verify those symbols against current HEAD before submission.
+
+The remediation pattern is uniform: the plan amendment must replace each unsupported claim with either (a) a citation to current code, or (b) an explicit Affected-Files entry establishing the missing infrastructure.
+
+### Addendum to Entry #7 (2026-05-02T07:25:00Z)
+
+The amended plan that followed Entry #7 (audit round 2 of `plan-priority-c-team-server-notion-v1.md`) closed all four original findings successfully but introduced a sibling failure under the same root cause: `slack_runner.run_slack_iteration` called `decrypt_token(ws["oauth_token_encrypted"])` with one argument, where the actual signature is `decrypt_token(ciphertext: bytes, key: bytes) -> str`.
+
+The pattern surfaced in Entry #7 was *missing/undeclared symbols*. The amendment correctly closed that pattern by either declaring or grounding every symbol — but the round-2 sketch invoked an *existing, declared* symbol with the wrong call shape. The verification heuristic in Entry #7 ("for every cited symbol... confirm the cited type signature matches reality") was correct in principle but underspecified in practice: it covered `MUTATE` Affected-Files entries but not the in-line code sketches in §Changes blocks.
+
+### Pattern to Avoid (extension)
+
+Extending Entry #7's heuristic — for every code sketch in §Changes:
+
+1. **Existence check**: every `from X import Y` traces to a real module + symbol. (Original Entry #7 contract.)
+2. **Signature check**: every call to `Y(...)` matches `Y`'s actual signature: arity, positional-vs-keyword discipline, and argument types. The audit's Infrastructure Alignment Pass should `inspect.signature(Y)` against the call shape. (New extension.)
+3. **Type-boundary check**: when a value crosses a persistence boundary (DB column type ↔ in-memory Python type), the conversion must be explicit in the sketch. Specifically: any `str` field stored from a `bytes` source must be encoded back at the read site (e.g. `ws["x"].encode("utf-8")`); any `bytes` field stored from a `str` source must be decoded at the read site. (New extension.)
+4. **Helper-symmetry check**: if a write-side path (e.g. `team_server/auth/router.py`'s OAuth callback) uses `helper_a` + `helper_b` to perform the encode + persist combination, the read-side path must use the symmetric `helper_b_inverse` + `helper_a_inverse` chain — not a single helper missing one argument. The existing precedent in the repo IS the contract.
+
+### Detection Heuristic (extension)
+
+For every code sketch with an external function call:
+
+1. Read the function's actual definition. Confirm arity matches.
+2. Confirm argument types match. If a literal or named variable in the sketch is the wrong type for the function, name the conversion explicitly in the sketch.
+3. Find the symmetric existing precedent in the repo (e.g. the encrypt-side for a decrypt call). If the precedent exists, model the sketch after it.
+
+Adding these to the round-3 amendment closes the documented residual.
+
