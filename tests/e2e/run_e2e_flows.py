@@ -117,23 +117,60 @@ def _reset_desktop_repo() -> None:
             continue
 
 
+def _bootstrap_bicameral_dir() -> None:
+    """Create a minimal ``.bicameral/`` inside ``DESKTOP_REPO_PATH`` so the
+    SessionEnd hook's ``[ -d .bicameral ]`` guard passes when the parent
+    claude session exits. Without this, the hook short-circuits silently
+    and Flow 4's path-X-(b) ledger validation has nothing to observe.
+
+    Reuses ``setup_wizard._write_collaboration_config`` to write the same
+    minimal ``config.yaml`` (mode=solo, guided=false, telemetry=false) a
+    fresh end-user install would produce — single source of truth.
+
+    Wiped + recreated each run so flows do not inherit cross-run state.
+    """
+    mcp_root = pathlib.Path(__file__).resolve().parents[2]
+    if str(mcp_root) not in sys.path:
+        sys.path.insert(0, str(mcp_root))
+    from setup_wizard import _write_collaboration_config  # noqa: E402
+
+    bicameral_dir = pathlib.Path(DESKTOP_REPO_PATH) / ".bicameral"
+    if bicameral_dir.exists():
+        shutil.rmtree(bicameral_dir, ignore_errors=True)
+    _write_collaboration_config(
+        data_path=pathlib.Path(DESKTOP_REPO_PATH),
+        mode="solo",
+        guided=False,
+        telemetry=False,
+    )
+
+
 def _materialize_settings_with_hook() -> pathlib.Path:
     """Write a project-style ``settings.json`` carrying the hooks bicameral's
-    setup-wizard installs in real projects. All three hook commands are
-    imported from ``setup_wizard`` so the harness exercises the EXACT
-    strings a freshly-onboarded user would have — single source of truth,
-    no drift.
+    setup-wizard installs in real projects. The PostToolUse and
+    UserPromptSubmit commands are the same byte-exact strings a
+    freshly-onboarded user would have — single source of truth, no drift.
+
+    The SessionEnd command is built via ``setup_wizard._build_session_end_command``
+    with ``mcp_config_path=MCP_CONFIG_PATH``. Production end-users have
+    ``bicameral`` registered in their default Claude Code MCP config so the
+    spawned subprocess inherits it without an explicit flag; the harness
+    overrides ``SURREAL_URL`` via the materialized MCP config to point at
+    a test-results ledger, so we MUST pass that config explicitly to the
+    subprocess or its ``capture-corrections`` writes land in the user's
+    default ledger and ``_validate_flow4_via_ledger`` finds zero rows.
 
     Hooks installed:
       - PostToolUse/Bash: bicameral-sync listens for "new commit detected"
         output to auto-fire ``link_commit``.
       - SessionEnd: spawns a subprocess running
-        ``/bicameral:capture-corrections`` to scan the just-ended session
-        for uningested mid-session corrections. Note: the spawned
-        subprocess's tool calls do NOT appear in this harness's
-        stream-json — the subprocess writes to the ledger out-of-band.
-        For observable in-stream auto-fire, capture-corrections is also
-        invoked by ``bicameral-preflight`` step 3.5 — that path IS visible.
+        ``/bicameral:capture-corrections --auto-ingest`` (with the test
+        MCP config) to scan the just-ended session for uningested
+        mid-session corrections. Note: the spawned subprocess's tool calls
+        do NOT appear in this harness's stream-json — the subprocess
+        writes to the ledger out-of-band. For observable in-stream
+        auto-fire, capture-corrections is also invoked by
+        ``bicameral-preflight`` step 3.5 — that path IS visible.
       - UserPromptSubmit: deterministic verb-list classifier injects a
         <system-reminder> elevating bicameral.preflight above the agent's
         default tool-selection priority on code-implementation prompts.
@@ -147,8 +184,10 @@ def _materialize_settings_with_hook() -> pathlib.Path:
     from setup_wizard import (  # noqa: E402
         _BICAMERAL_POST_COMMIT_COMMAND,
         _BICAMERAL_PREFLIGHT_REMINDER_COMMAND,
-        _BICAMERAL_SESSION_END_COMMAND,
+        _build_session_end_command,
     )
+
+    session_end_command = _build_session_end_command(mcp_config_path=str(MCP_CONFIG_PATH))
 
     settings = {
         "hooks": {
@@ -160,7 +199,7 @@ def _materialize_settings_with_hook() -> pathlib.Path:
             ],
             "SessionEnd": [
                 {
-                    "hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}],
+                    "hooks": [{"type": "command", "command": session_end_command}],
                 }
             ],
             "UserPromptSubmit": [
@@ -1088,6 +1127,7 @@ def main() -> int:
 
     _clean_ledger()
     _reset_desktop_repo()
+    _bootstrap_bicameral_dir()
 
     # One UUID per session_group, allocated lazily as we encounter the group.
     # ``group_seen`` tracks which groups have already had their first flow run
