@@ -1,9 +1,9 @@
 """Slack ingest worker — polls allowlisted channels, runs canonical
-extraction (cache-keyed by message content), writes a peer-authored
-team_event per new message.
+extraction (upsert-keyed by source_ref), writes a peer-authored
+team_event per change.
 
-Idempotent: same Slack message ts produces a cache hit on second poll,
-so no duplicate team_event row is written.
+Idempotent: same Slack message ts with unchanged content yields no new
+team_event row (the upsert returns changed=False on cache hit).
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from typing import Awaitable, Callable, Iterable
 
 from ledger.client import LedgerClient
 
-from team_server.extraction.canonical_cache import get_or_compute
+from team_server.extraction.canonical_cache import upsert_canonical_extraction
 from team_server.extraction.llm_extractor import INTERIM_MODEL_VERSION
 from team_server.sync.peer_writer import write_team_event
 
@@ -61,12 +61,7 @@ async def _ingest_message(
     ts = message.get("ts", "")
     source_ref = _source_ref_for_message(channel, ts)
     content_hash = _content_hash(text)
-    # Cache-keyed: if we've already extracted this exact content for this
-    # source_ref, get_or_compute returns cached and we don't re-write.
-    cache_existed_before = await _cache_row_exists(
-        db_client, "slack", source_ref, content_hash
-    )
-    extraction = await get_or_compute(
+    extraction, changed = await upsert_canonical_extraction(
         db_client,
         source_type="slack",
         source_ref=source_ref,
@@ -74,8 +69,8 @@ async def _ingest_message(
         compute_fn=lambda: extractor(text),
         model_version=INTERIM_MODEL_VERSION,
     )
-    if cache_existed_before:
-        return  # idempotent — already ingested
+    if not changed:
+        return
     await write_team_event(
         db_client,
         workspace_team_id=workspace_team_id,
@@ -87,14 +82,3 @@ async def _ingest_message(
             "extraction": extraction,
         },
     )
-
-
-async def _cache_row_exists(
-    client: LedgerClient, source_type: str, source_ref: str, content_hash: str
-) -> bool:
-    rows = await client.query(
-        "SELECT id FROM extraction_cache WHERE source_type = $st "
-        "AND source_ref = $sr AND content_hash = $ch LIMIT 1",
-        {"st": source_type, "sr": source_ref, "ch": content_hash},
-    )
-    return bool(rows)

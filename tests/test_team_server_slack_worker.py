@@ -136,3 +136,66 @@ async def test_worker_dedups_via_message_ts():
         assert len(rows) == 1
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_slack_worker_writes_team_event_only_on_changed_returns(monkeypatch):
+    """Behavior: when upsert_canonical_extraction returns changed=False,
+    no team_event is written; when it returns changed=True, exactly one
+    team_event is written. Validates the worker's adaptation to the new
+    tuple-return contract from Phase 0."""
+    from team_server import workers
+    from team_server.db import build_client
+    from team_server.schema import ensure_schema
+    from team_server.workers.slack_worker import poll_once
+
+    client = build_client()
+    await client.connect()
+    try:
+        await ensure_schema(client)
+        slack = _FakeSlackClient({
+            "C1": [{"ts": "1.0", "text": "msg"}],
+        })
+
+        async def stub_extractor(text):
+            return {"decisions": [text]}
+
+        async def fake_upsert_unchanged(*args, **kwargs):
+            return ({"decisions": ["cached"]}, False)
+
+        monkeypatch.setattr(
+            "team_server.workers.slack_worker.upsert_canonical_extraction",
+            fake_upsert_unchanged,
+        )
+        await poll_once(
+            db_client=client,
+            slack_client=slack,
+            workspace_team_id="T-A",
+            channels=["C1"],
+            extractor=stub_extractor,
+        )
+        rows = await client.query(
+            "SELECT * FROM team_event WHERE author_email = 'team-server@T-A.bicameral'"
+        )
+        assert len(rows) == 0
+
+        async def fake_upsert_changed(*args, **kwargs):
+            return ({"decisions": ["new"]}, True)
+
+        monkeypatch.setattr(
+            "team_server.workers.slack_worker.upsert_canonical_extraction",
+            fake_upsert_changed,
+        )
+        await poll_once(
+            db_client=client,
+            slack_client=slack,
+            workspace_team_id="T-B",
+            channels=["C1"],
+            extractor=stub_extractor,
+        )
+        rows = await client.query(
+            "SELECT * FROM team_event WHERE author_email = 'team-server@T-B.bicameral'"
+        )
+        assert len(rows) == 1
+    finally:
+        await client.close()
