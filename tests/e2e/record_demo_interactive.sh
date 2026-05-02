@@ -95,50 +95,20 @@ if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   echo "[demo] WARNING: ANTHROPIC_API_KEY unset — interactive claude will hit the 'Select login method' picker with no way to advance" >&2
 fi
 
-# ── Materialize MCP config (mirrors run_e2e_flows.py) ───────────────────
-sed \
-  -e "s|\${DESKTOP_REPO_PATH}|$DESKTOP_REPO_PATH|g" \
-  -e "s|\${LEDGER_DIR}|$LEDGER_DIR|g" \
-  "$MCP_CONFIG_TEMPLATE" > "$MCP_CONFIG_MATERIALIZED"
-
-# ── PostToolUse hook: surface "new commit detected" so bicameral-sync
-#    auto-fires link_commit after the agent runs git commit/merge/pull.
-#    Imports the EXACT command string from setup_wizard.py so the recording
-#    exercises what a real bicameral-mcp setup installs — single source of
-#    truth, no drift between test and production. ─────────────────────────
+# ── Setup substrate — single source of truth shared with run_e2e_flows.py.
+#    `_harness_setup.py` materializes the MCP config, writes claude-settings
+#    with all three hooks (PostToolUse / SessionEnd / UserPromptSubmit) wired
+#    via setup_wizard, bootstraps `.bicameral/` inside DESKTOP_REPO_PATH so
+#    the SessionEnd guard passes, wipes the ledger, and resets the desktop
+#    clone. The recording job and the assertion job both call this — no
+#    inline duplication, no drift between the two paths. ──────────────────
 SETTINGS_FILE="$RESULTS_DIR/claude-settings-with-hook.json"
-python3 - "$MCP_DIR" "$SETTINGS_FILE" <<'PY'
-import json, sys, pathlib
-mcp_root, dst = sys.argv[1], sys.argv[2]
-sys.path.insert(0, mcp_root)
-from setup_wizard import _BICAMERAL_POST_COMMIT_COMMAND
-settings = {
-    "hooks": {
-        "PostToolUse": [
-            {
-                "matcher": "Bash",
-                "hooks": [{"type": "command", "command": _BICAMERAL_POST_COMMIT_COMMAND}],
-            }
-        ]
-    }
-}
-pathlib.Path(dst).write_text(json.dumps(settings, indent=2))
-PY
-
-# ── Reset desktop-clone to the pinned HEAD between scenes — flow 3 makes
-#    a real commit, so without a reset the second-onwards run starts off a
-#    polluted base. Pinned commit is the workflow's DESKTOP_PINNED_COMMIT. ─
-reset_desktop_repo() {
-  if [ -d "$DESKTOP_REPO_PATH/.git" ]; then
-    (cd "$DESKTOP_REPO_PATH" && git reset --hard FETCH_HEAD 2>/dev/null \
-      || git reset --hard HEAD 2>/dev/null) >/dev/null 2>&1 || true
-  fi
-}
-reset_desktop_repo
-
-# Wipe persistent ledger between runs (state must persist across the 5 scenes
-# within a run, but not leak across runs — same contract as run_e2e_flows.py).
-rm -rf "$LEDGER_DIR"
+python3 "$E2E_DIR/_harness_setup.py" \
+  --desktop-repo-path "$DESKTOP_REPO_PATH" \
+  --results-dir "$RESULTS_DIR" \
+  --mcp-config-template "$MCP_CONFIG_TEMPLATE" \
+  --mcp-root "$MCP_DIR" \
+  >/dev/null
 rm -f "$PORT_FILE"
 
 # ── Start Xvfb + minimal WM ─────────────────────────────────────────────
