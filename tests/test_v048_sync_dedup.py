@@ -55,8 +55,12 @@ def _seed_repo(repo_root: Path, body: str) -> None:
     _git(repo_root, "add", ".")
     _git(
         repo_root,
-        "-c", "commit.gpgsign=false",
-        "commit", "-q", "-m", "seed",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "seed",
     )
 
 
@@ -65,8 +69,12 @@ def _commit_edit(repo_root: Path, new_body: str, message: str) -> None:
     _git(repo_root, "add", "pricing.py")
     _git(
         repo_root,
-        "-c", "commit.gpgsign=false",
-        "commit", "-q", "-m", message,
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        message,
     )
 
 
@@ -114,8 +122,7 @@ async def test_dedup_second_call_normalizes_reason(_isolated_ledger):
     r2 = await handle_link_commit(ctx, "HEAD")
 
     assert r2.reason == "already_synced", (
-        f"Dedup hit must normalize reason to 'already_synced', "
-        f"got {r2.reason!r}"
+        f"Dedup hit must normalize reason to 'already_synced', got {r2.reason!r}"
     )
     # Cached fields should match the first call's real values (B23).
     assert r2.commit_hash == r1.commit_hash
@@ -149,9 +156,7 @@ async def test_invalidate_forces_fresh_sync(_isolated_ledger, monkeypatch):
 
     ctx = _ctx()
     await handle_link_commit(ctx, "HEAD")
-    assert call_count["n"] == 1, (
-        f"First call should hit the ledger once, got {call_count['n']}"
-    )
+    assert call_count["n"] == 1, f"First call should hit the ledger once, got {call_count['n']}"
 
     # Second call WITHOUT invalidate — dedup short-circuits, no ledger hit.
     await handle_link_commit(ctx, "HEAD")
@@ -202,8 +207,7 @@ async def test_head_advance_bypasses_dedup(_isolated_ledger):
         f"trusting it instead of re-reading git HEAD."
     )
     assert r2.commit_hash != r1.commit_hash, (
-        f"New HEAD SHA should differ from old. r1={r1.commit_hash!r}, "
-        f"r2={r2.commit_hash!r}"
+        f"New HEAD SHA should differ from old. r1={r1.commit_hash!r}, r2={r2.commit_hash!r}"
     )
 
 
@@ -224,7 +228,6 @@ async def test_explicit_sha_dedup(_isolated_ledger):
     r2 = await handle_link_commit(ctx, head_sha)
 
     assert r2.reason == "already_synced", (
-        f"Second call with same explicit SHA should dedup — "
-        f"got reason={r2.reason!r}"
+        f"Second call with same explicit SHA should dedup — got reason={r2.reason!r}"
     )
     assert r2.commit_hash == r1.commit_hash

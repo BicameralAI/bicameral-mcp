@@ -55,7 +55,7 @@ def _detect_history_path(repo_path: Path, hint: str | None = None) -> Path:
         return repo_path
 
     raw = input(
-        f"\n  History storage path (default: same as repo — press Enter to skip):\n  > "
+        "\n  History storage path (default: same as repo — press Enter to skip):\n  > "
     ).strip()
     if not raw:
         return repo_path
@@ -127,6 +127,7 @@ def _detect_agents() -> list[str]:
 def _is_interactive() -> bool:
     """Check if stdin is a terminal (not piped)."""
     import sys
+
     return sys.stdin.isatty()
 
 
@@ -306,11 +307,17 @@ def _install_for_agent(
         config_json = json.dumps(config)
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
-            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(repo_path),
         )
         result = subprocess.run(
             ["claude", "mcp", "add-json", "bicameral", "--scope", "project", config_json],
-            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(repo_path),
         )
         if result.returncode == 0:
             print(f"  {agent['name']}: installed via CLI")
@@ -323,8 +330,15 @@ def _install_for_agent(
         for k, v in config["env"].items():
             env_args.extend(["--env", f"{k}={v}"])
         result = subprocess.run(
-            ["codex", "mcp", "add", "bicameral"] + env_args + ["--"] + [config["command"]] + config["args"],
-            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+            ["codex", "mcp", "add", "bicameral"]
+            + env_args
+            + ["--"]
+            + [config["command"]]
+            + config["args"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(repo_path),
         )
         if result.returncode == 0:
             print(f"  {agent['name']}: installed via CLI")
@@ -332,9 +346,13 @@ def _install_for_agent(
 
     # Fallback: write config file directly
     if agent.get("config_format") == "toml":
-        _write_toml_config(repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry)
+        _write_toml_config(
+            repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry
+        )
     else:
-        _write_json_config(repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry)
+        _write_json_config(
+            repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry
+        )
 
     print(f"  {agent['name']}: wrote {config_path}")
     return True
@@ -349,13 +367,13 @@ _BICAMERAL_SESSION_END_COMMAND = (
 # causes the agent to invoke /bicameral:sync — running the full
 # link_commit → compliance check flow so status is authoritative immediately.
 _BICAMERAL_POST_COMMIT_COMMAND = (
-    "python3 -c \""
+    'python3 -c "'
     "import json,sys; "
     "d=json.load(sys.stdin); "
     "c=d.get('tool_input',{}).get('command',''); "
     "ops=('git commit','git merge ','git pull','git rebase --continue'); "
     "[print('bicameral: new commit detected — run /bicameral:sync to resolve compliance and get authoritative reflected/drifted status') "
-    "for _ in [1] if any(op in c for op in ops)]\""
+    'for _ in [1] if any(op in c for op in ops)]"'
 )
 
 
@@ -386,9 +404,7 @@ def _install_claude_hooks(repo_path: Path) -> bool:
 
     # ── PostToolUse / Bash — git write-op reminder ───────────────────
     post_tool_use: list = hooks.setdefault("PostToolUse", [])
-    bash_entry = next(
-        (e for e in post_tool_use if e.get("matcher") == "Bash"), None
-    )
+    bash_entry = next((e for e in post_tool_use if e.get("matcher") == "Bash"), None)
     if bash_entry is None:
         bash_entry = {"matcher": "Bash", "hooks": []}
         post_tool_use.append(bash_entry)
@@ -404,7 +420,8 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     session_end: list = hooks.setdefault("SessionEnd", [])
     # Remove any stale bicameral SessionEnd entries, then write current.
     non_bic_se = [
-        e for e in session_end
+        e
+        for e in session_end
         if not any("bicameral" in h.get("command", "") for h in e.get("hooks", []))
     ]
     new_se_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}]}
@@ -421,8 +438,14 @@ _GIT_POST_COMMIT_HOOK = """\
 #!/bin/sh
 # Bicameral MCP — post-commit hook (installed by bicameral-mcp setup, Guided mode)
 # Syncs the decision ledger after every commit so drift status is current immediately.
-# Silent on failure; only runs when .bicameral/ exists.
-[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>&1 || true
+# Loud-but-non-blocking failure: any stderr from link_commit is captured to
+# ${HOME}/.bicameral/hook-errors.log and surfaced on stderr in the same commit.
+# The `>` redirection truncates the log file each run, so successful commits
+# auto-clear stale errors from prior failed runs. Always exits 0 — the commit
+# itself never blocks on a sync hook failure (#124).
+[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>"${HOME}/.bicameral/hook-errors.log"
+[ -s "${HOME}/.bicameral/hook-errors.log" ] && echo "Bicameral post-commit hook failed; see ${HOME}/.bicameral/hook-errors.log" >&2
+exit 0
 """
 
 
@@ -450,6 +473,57 @@ def _install_git_post_commit_hook(repo_path: Path) -> bool:
         hook_path.write_text(existing.rstrip("\n") + "\n" + _GIT_POST_COMMIT_HOOK)
     else:
         hook_path.write_text(_GIT_POST_COMMIT_HOOK)
+
+    hook_path.chmod(0o755)
+    return True
+
+
+_GIT_PRE_PUSH_HOOK = """\
+#!/bin/sh
+# Bicameral MCP — pre-push hook (installed by bicameral-mcp setup --with-push-hook, #48)
+# Surfaces drift warnings before git push completes.
+# Skips when no .bicameral/ ledger configured. Non-blocking by default;
+# BICAMERAL_PUSH_HOOK_BLOCK=1 forces hard-block on drift.
+[ -d .bicameral ] || exit 0
+bicameral-mcp branch-scan
+status=$?
+if [ "$status" = "0" ]; then exit 0; fi
+if [ -t 0 ]; then
+    printf "Push anyway? [y/N] " >&2
+    read -r answer </dev/tty
+    case "$answer" in
+        [yY]|[yY][eE][sS]) exit 0 ;;
+        *) exit 1 ;;
+    esac
+fi
+exit "$status"
+"""
+
+
+def _install_git_pre_push_hook(repo_path: Path) -> bool:
+    """Install a git pre-push hook that calls bicameral-mcp branch-scan (#48).
+
+    Opt-in via ``bicameral-mcp setup --with-push-hook``. Idempotent — if
+    a hook already exists and already contains a bicameral call, leaves it
+    untouched. If an existing hook lacks a bicameral call, appends one
+    rather than overwriting.
+
+    Returns True if anything was written.
+    """
+    git_root = _find_git_root(repo_path)
+    if git_root is None:
+        return False
+
+    hook_path = git_root / ".git" / "hooks" / "pre-push"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if hook_path.exists():
+        existing = hook_path.read_text()
+        if "bicameral" in existing:
+            return False  # already present
+        hook_path.write_text(existing.rstrip("\n") + "\n" + _GIT_PRE_PUSH_HOOK)
+    else:
+        hook_path.write_text(_GIT_PRE_PUSH_HOOK)
 
     hook_path.chmod(0o755)
     return True
@@ -489,7 +563,9 @@ def _select_collaboration_mode() -> str:
     result = questionary.select(
         "Collaboration mode:",
         choices=[
-            questionary.Choice("Team  — decisions shared via git (append-only event files)", value="team"),
+            questionary.Choice(
+                "Team  — decisions shared via git (append-only event files)", value="team"
+            ),
             questionary.Choice("Solo  — decisions stored locally", value="solo"),
         ],
         default="team",
@@ -521,36 +597,49 @@ def _select_guided_mode() -> bool:
 
 
 def _select_telemetry() -> bool:
-    """Prompt user for anonymous telemetry consent.
+    """Prompt user for anonymous telemetry consent and persist the choice.
 
-    Shows the exact event schema before asking. Defaults to Yes (opt-in).
+    Shows the exact event schema before asking. On any answer (including
+    non-interactive auto-yes), writes ``~/.bicameral/consent.json`` via
+    consent.write_consent() so the in-server first-boot notice does not
+    fire on next start.
+
+    Hard-fails (raises) if the consent marker cannot be written — a "no"
+    answer must never silently leave telemetry on.
     """
     import questionary
+
+    from consent import write_consent
 
     print()
     print("  Anonymous telemetry — exact payload that would be sent:")
     print()
-    print('    {"tool": "bicameral.ingest", "version": "0.5.3",')
-    print('     "duration_ms": 412, "errored": false,')
-    print('     "diagnostic": {"grounded_count": 3, "ungrounded_count": 1}}')
+    print('    {"skill": "bicameral-ingest", "session_id": "<uuid>", "version": "0.5.3",')
+    print('     "duration_ms": 4120, "errored": false,')
+    print('     "diagnostic": {"decisions_ingested": 3}}')
     print()
     print("    No code. No decision text. No file paths. No personal data.")
     print("    Change anytime: BICAMERAL_TELEMETRY=0")
     print()
 
     if not _is_interactive():
+        write_consent(telemetry=True, via="wizard")
         return True
 
     result = questionary.select(
         "Enable anonymous telemetry?",
         choices=[
-            questionary.Choice("Yes  — share anonymous usage stats to improve Bicameral", value=True),
+            questionary.Choice(
+                "Yes  — share anonymous usage stats to improve Bicameral", value=True
+            ),
             questionary.Choice("No   — keep telemetry off", value=False),
         ],
         default=True,
     ).ask()
 
-    return result if result is not None else True
+    choice = result if result is not None else True
+    write_consent(telemetry=choice, via="wizard")
+    return choice
 
 
 def _write_collaboration_config(
@@ -648,8 +737,18 @@ def _ensure_gitignore(
         print(f"  Updated {repo_path}/.gitignore — .bicameral/ fully ignored (history in parent)")
 
 
-def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> int:
-    """Run the interactive setup wizard."""
+def run_setup(
+    repo_hint: str | None = None,
+    history_hint: str | None = None,
+    *,
+    with_push_hook: bool = False,
+) -> int:
+    """Run the interactive setup wizard.
+
+    ``with_push_hook`` (#48): when True, additionally install a
+    ``.git/hooks/pre-push`` that surfaces drift warnings via
+    ``bicameral-mcp branch-scan`` before push completes. Idempotent.
+    """
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Setup                   │")
@@ -673,7 +772,7 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     # Step 3: Runner check
     command, _ = _detect_runner()
     if command not in ("bicameral-mcp",):
-        print(f"\n  Note: bicameral-mcp binary not found on PATH.")
+        print("\n  Note: bicameral-mcp binary not found on PATH.")
         print(f"  Using '{command} -m bicameral_mcp' as runner.")
         print("  Install for a cleaner setup: pip install bicameral-mcp")
 
@@ -691,7 +790,9 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     # Step 5: Install MCP config for each agent
     print()
     for agent_key in agents:
-        _install_for_agent(agent_key, repo_path, data_path=data_path, mode=collab_mode, telemetry=telemetry)
+        _install_for_agent(
+            agent_key, repo_path, data_path=data_path, mode=collab_mode, telemetry=telemetry
+        )
 
     # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
@@ -699,14 +800,25 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
         if num_skills:
             print(f"  Claude Code: installed {num_skills} slash commands")
         if _install_claude_hooks(repo_path):
-            print("  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end")
+            print(
+                "  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end"
+            )
 
     # Step 7: Git post-commit hook (Guided mode only)
     if guided:
         if _install_git_post_commit_hook(repo_path):
-            print("  Git: installed post-commit hook → bicameral-mcp link_commit HEAD after every commit")
+            print(
+                "  Git: installed post-commit hook → bicameral-mcp link_commit HEAD after every commit"
+            )
         else:
             print("  Git: post-commit hook already present — skipped")
+
+    # Step 7b: Git pre-push hook (#48 — opt-in via --with-push-hook flag)
+    if with_push_hook:
+        if _install_git_pre_push_hook(repo_path):
+            print("  Git: installed pre-push hook → bicameral-mcp branch-scan before every push")
+        else:
+            print("  Git: pre-push hook already present — skipped")
 
     # Summary
     agent_names = ", ".join(AGENTS[a]["name"] for a in agents)
@@ -730,4 +842,245 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     print('    "Check this file for drifted decisions"')
     print()
 
+    return 0
+
+
+def run_config_wizard() -> int:
+    """Interactive CLI wizard for editing bicameral config.yaml.
+
+    Reads the current config, prompts for each setting via questionary,
+    writes updated config.yaml, and reinstalls skills/hooks so changes
+    take effect immediately.
+    """
+    import subprocess
+    import sys
+
+    try:
+        import yaml
+    except ImportError:
+        import json as yaml  # fallback: won't write yaml but will read
+
+    print()
+    print("  ┌─────────────────────────────────────────┐")
+    print("  │  Bicameral MCP — Config                  │")
+    print("  └─────────────────────────────────────────┘")
+    print()
+
+    repo_path = _detect_repo()
+    config_path = repo_path / ".bicameral" / "config.yaml"
+
+    # Read current values
+    if config_path.exists():
+        try:
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            cfg = {}
+    else:
+        cfg = {}
+
+    cur_mode = cfg.get("mode", "team")
+    cur_guided = cfg.get("guided", True)
+    cur_telemetry = cfg.get("telemetry", True)
+
+    print(f"  Current config ({config_path}):")
+    print(f"    mode:      {cur_mode}")
+    print(f"    guided:    {cur_guided}")
+    print(f"    telemetry: {cur_telemetry}")
+    print()
+
+    new_mode = _select_collaboration_mode_with_default(cur_mode)
+    new_guided = _select_guided_mode_with_default(cur_guided)
+    new_telemetry = _select_telemetry_with_default(cur_telemetry)
+
+    # Write updated config
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        "# Bicameral configuration\n"
+        f"mode: {new_mode}\n"
+        f"guided: {'true' if new_guided else 'false'}\n"
+        f"telemetry: {'true' if new_telemetry else 'false'}\n",
+        encoding="utf-8",
+    )
+
+    # Reinstall skills and hooks via subprocess (avoids stale sys.modules)
+    script = (
+        "from setup_wizard import _install_skills, _install_claude_hooks"
+        + (", _install_git_post_commit_hook" if new_guided else "")
+        + "; from pathlib import Path; "
+        f"rp = Path(r'{repo_path}'); "
+        "n = _install_skills(rp); _install_claude_hooks(rp); "
+        + ("_install_git_post_commit_hook(rp); " if new_guided else "")
+        + "print(n)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    skills_n = int(result.stdout.strip() or "0") if result.returncode == 0 else 0
+
+    print()
+    print("  Config updated:")
+    _print_change("mode", cur_mode, new_mode)
+    _print_change("guided", cur_guided, new_guided)
+    _print_change("telemetry", cur_telemetry, new_telemetry)
+    print(f"  Skills reinstalled: {skills_n}")
+    print(f"  Git post-commit hook: {'installed' if new_guided else 'not installed (Normal mode)'}")
+    print()
+    return 0
+
+
+def _print_change(label: str, old, new) -> None:
+    if old == new:
+        print(f"    {label}: {new}  (unchanged)")
+    else:
+        print(f"    {label}: {old} → {new}")
+
+
+def _select_collaboration_mode_with_default(current: str) -> str:
+    import questionary
+
+    if not _is_interactive():
+        return current
+    choices = [
+        questionary.Choice(
+            "Team  — decisions shared via git (append-only event files)", value="team"
+        ),
+        questionary.Choice("Solo  — decisions stored locally", value="solo"),
+    ]
+    result = questionary.select(
+        "Collaboration mode:",
+        choices=choices,
+        default=next((c for c in choices if c.value == current), choices[0]),
+    ).ask()
+    return result if result is not None else current
+
+
+def _select_guided_mode_with_default(current: bool) -> bool:
+    import questionary
+
+    if not _is_interactive():
+        return current
+    choices = [
+        questionary.Choice("Guided  — blocking hints + git post-commit hook", value=True),
+        questionary.Choice("Normal  — advisory hints only", value=False),
+    ]
+    result = questionary.select(
+        "Interaction intensity:",
+        choices=choices,
+        default=next((c for c in choices if c.value == current), choices[0]),
+    ).ask()
+    return result if result is not None else current
+
+
+def _select_telemetry_with_default(current: bool) -> bool:
+    import questionary
+
+    if not _is_interactive():
+        return current
+    choices = [
+        questionary.Choice("Yes  — share anonymous usage stats to improve Bicameral", value=True),
+        questionary.Choice("No   — keep telemetry off", value=False),
+    ]
+    result = questionary.select(
+        "Anonymous telemetry:",
+        choices=choices,
+        default=next((c for c in choices if c.value == current), choices[0]),
+    ).ask()
+    return result if result is not None else current
+
+
+def run_reset_wizard() -> int:
+    """Interactive CLI wizard for bicameral.reset.
+
+    Asks the user which wipe mode they want, shows a dry-run summary,
+    then asks for explicit confirmation before wiping.
+    """
+    import asyncio
+
+    import questionary
+
+    print()
+    print("  ┌─────────────────────────────────────────┐")
+    print("  │  Bicameral MCP — Reset                   │")
+    print("  └─────────────────────────────────────────┘")
+    print()
+
+    # Step 1: choose mode
+    wipe_mode = questionary.select(
+        "What do you want to reset?",
+        choices=[
+            questionary.Choice(
+                "Ledger only  — wipe materialized DB rows, keep config and event files (safe default)",
+                value="ledger",
+            ),
+            questionary.Choice(
+                "Full reset   — delete the entire .bicameral/ directory including config and event history (nuclear)",
+                value="full",
+            ),
+        ],
+    ).ask()
+
+    if wipe_mode is None:
+        print("  Cancelled.")
+        return 0
+
+    # Step 2: dry-run
+    import os
+
+    from context import BicameralContext
+    from handlers.reset import handle_reset
+
+    repo_path = os.environ.get("REPO_PATH", ".")
+    os.environ["REPO_PATH"] = repo_path
+    ctx = BicameralContext.from_env()
+
+    print()
+    print("  Running dry-run…")
+    dry = asyncio.run(handle_reset(ctx, confirm=False, wipe_mode=wipe_mode))
+
+    print()
+    print(f"  Wipe mode    : {dry.wipe_mode}")
+    print(f"  Cursors      : {dry.cursors_before} source_cursor row(s) would be wiped")
+    if dry.wipe_mode == "full" and dry.bicameral_dir:
+        print(f"  Directory    : {dry.bicameral_dir}")
+        print()
+        print("  ⚠️  WARNING: this will delete the entire .bicameral/ directory,")
+        print("     including config.yaml and all team event history. There is no undo.")
+
+    if dry.replay_plan:
+        print()
+        print("  Replay plan (re-ingest these after reset):")
+        for entry in dry.replay_plan:
+            print(f"    {entry.source_type}  {entry.source_scope}  →  {entry.last_source_ref}")
+    else:
+        print("  Replay plan  : empty — nothing to re-ingest")
+
+    # Step 3: confirm
+    print()
+    confirm_label = "yes, full reset" if wipe_mode == "full" else "yes, reset"
+    confirmed = questionary.confirm(
+        f"Proceed? (type '{confirm_label}' to confirm)",
+        default=False,
+    ).ask()
+
+    if not confirmed:
+        print()
+        print("  Cancelled — nothing was wiped.")
+        return 0
+
+    # Step 4: wipe
+    print()
+    print("  Wiping…")
+    result = asyncio.run(handle_reset(ctx, confirm=True, wipe_mode=wipe_mode))
+
+    if result.wiped:
+        print(f"  Done. {result.cursors_before} cursor(s) wiped.")
+        if result.replay_plan:
+            print("  Re-ingest the sources listed above to restore the ledger.")
+    else:
+        print("  Wipe did not complete — check the error above.")
+
+    print()
     return 0

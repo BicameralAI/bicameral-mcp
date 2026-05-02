@@ -1,0 +1,39 @@
+name: Apply merged-to-dev label
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [closed]
+
+jobs:
+  label:
+    name: Label closed-by-PR issues
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    permissions:
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Apply merged-to-dev label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            // GitHub close keywords: close, closes, closed, fix, fixes, fixed,
+            // resolve, resolves, resolved (case-insensitive).
+            const body = pr.body || "";
+            const matches = [...body.matchAll(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)/gi)];
+            const issues = [...new Set(matches.map(m => parseInt(m[1])))];
+            for (const num of issues) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: num,
+                  labels: ["merged-to-dev"]
+                });
+                console.log(`Labeled #${num}`);
+              } catch (e) {
+                console.log(`Could not label #${num}: ${e.message}`);
+              }
+            }

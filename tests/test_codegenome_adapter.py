@@ -22,7 +22,6 @@ from codegenome.deterministic_adapter import (
     DeterministicCodeGenomeAdapter,
 )
 
-
 # ── Phase 1: ABC + dataclasses ──────────────────────────────────────────────
 
 
@@ -181,3 +180,75 @@ def test_compute_identity_invalid_range_returns_none_content_hash():
         identity = adapter.compute_identity("a.py", 5, 1)
     assert identity.content_hash is None
     assert identity.address.startswith("cg:")
+
+
+# ── Phase 3 (#60): compute_identity_with_neighbors ──────────────────────────
+
+
+class _StubLocator:
+    """Minimal code_locator stub returning fixed neighbor addresses."""
+
+    def __init__(self, neighbor_addresses):
+        self._neighbor_addresses = tuple(neighbor_addresses)
+
+    def neighbors_for(self, file_path, start_line, end_line):
+        return self._neighbor_addresses
+
+
+def test_compute_identity_with_neighbors_populates_field():
+    """When code_locator supplies neighbors, identity carries them as a tuple."""
+    adapter = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
+    locator = _StubLocator(["cg:foo", "cg:bar"])
+    with _stub_git_content("def f(): pass\n"):
+        identity = adapter.compute_identity_with_neighbors(
+            "src/foo.py",
+            1,
+            1,
+            code_locator=locator,
+        )
+    assert identity.neighbors_at_bind == ("cg:bar", "cg:foo")  # sorted
+
+
+def test_compute_identity_with_neighbors_falls_back_to_empty_tuple_on_none_locator():
+    """No locator → no neighbors; field is empty tuple, not None."""
+    adapter = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
+    with _stub_git_content("def f(): pass\n"):
+        identity = adapter.compute_identity_with_neighbors(
+            "src/foo.py",
+            1,
+            1,
+            code_locator=None,
+        )
+    assert identity.neighbors_at_bind == ()
+
+
+def test_compute_identity_with_neighbors_locator_returning_empty_yields_empty_tuple():
+    adapter = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
+    locator = _StubLocator([])
+    with _stub_git_content("body"):
+        identity = adapter.compute_identity_with_neighbors(
+            "src/foo.py",
+            1,
+            5,
+            code_locator=locator,
+        )
+    assert identity.neighbors_at_bind == ()
+
+
+def test_compute_identity_signature_unchanged_for_existing_callers():
+    """Existing compute_identity contract must not change (Phase 1+2 callers)."""
+    adapter = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
+    with _stub_git_content("body"):
+        identity = adapter.compute_identity("a.py", 1, 5)
+    assert identity.neighbors_at_bind is None  # never set by the v1 path
+
+
+def test_compute_identity_with_neighbors_sorted_for_stable_jaccard():
+    """Neighbor list must be sorted so equal sets compare equal regardless of input order."""
+    adapter = DeterministicCodeGenomeAdapter(repo_path="/tmp/r")
+    a = _StubLocator(["cg:a", "cg:b", "cg:c"])
+    b = _StubLocator(["cg:c", "cg:b", "cg:a"])
+    with _stub_git_content("body"):
+        ia = adapter.compute_identity_with_neighbors("x.py", 1, 5, code_locator=a)
+        ib = adapter.compute_identity_with_neighbors("x.py", 1, 5, code_locator=b)
+    assert ia.neighbors_at_bind == ib.neighbors_at_bind

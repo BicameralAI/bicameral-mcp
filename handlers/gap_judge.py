@@ -28,7 +28,7 @@ standalone via ``bicameral.judge_gaps(topic)``.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from contracts import (
     DecisionMatch,
@@ -291,7 +291,7 @@ async def handle_judge_gaps(
 
     return GapJudgmentPayload(
         topic=topic,
-        as_of=datetime.now(timezone.utc).isoformat(),
+        as_of=datetime.now(UTC).isoformat(),
         decisions=context_decisions,
         phrasing_gaps=phrasing_gaps,
         rubric=_build_rubric(),

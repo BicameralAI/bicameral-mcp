@@ -6,8 +6,6 @@ and adapted to produce SymbolRecord objects for the SQLite store.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 from .sqlite_store import SymbolRecord
 
 # ── Language mappings ────────────────────────────────────────────────
@@ -39,14 +37,16 @@ SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "bu
 _USE_LEGACY = False
 
 try:
-    from tree_sitter_languages import get_language as _legacy_get_language, get_parser as _legacy_get_parser
+    from tree_sitter_languages import get_language as _legacy_get_language
+    from tree_sitter_languages import get_parser as _legacy_get_parser
+
     _USE_LEGACY = True
 except Exception:
     _legacy_get_language = None
     _legacy_get_parser = None
 
 # Individual language packages for the modern API
-_LANG_MODULES: Dict[str, object] = {}
+_LANG_MODULES: dict[str, object] = {}
 
 if not _USE_LEGACY:
     try:
@@ -66,8 +66,8 @@ if not _USE_LEGACY:
 
 # ── Parser caching ───────────────────────────────────────────────────
 
-PARSER_CACHE: Dict[str, object] = {}
-LANGUAGE_CACHE: Dict[str, object] = {}
+PARSER_CACHE: dict[str, object] = {}
+LANGUAGE_CACHE: dict[str, object] = {}
 
 
 def _get_language_obj(resolved: str):
@@ -84,6 +84,7 @@ def _get_language_obj(resolved: str):
 
     if pkg_name not in _LANG_MODULES:
         import importlib
+
         mod = importlib.import_module(pkg_name)
         _LANG_MODULES[pkg_name] = mod
 
@@ -109,11 +110,12 @@ def _get_parser(language_id: str):
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
+
 def _node_text(code: bytes, node) -> str:
-    return code[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return code[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
-def _get_name_from_node(node, code: bytes) -> Optional[str]:
+def _get_name_from_node(node, code: bytes) -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
         return None
@@ -148,10 +150,11 @@ def _make_record(
 
 # ── Python ───────────────────────────────────────────────────────────
 
-def _extract_python_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
-    records: List[SymbolRecord] = []
 
-    def walk(node, class_stack: List[str]):
+def _extract_python_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    records: list[SymbolRecord] = []
+
+    def walk(node, class_stack: list[str]):
         if node.type == "class_definition":
             name = _get_name_from_node(node, code)
             if not name:
@@ -187,14 +190,15 @@ def _extract_python_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]
 
 # ── JavaScript / TypeScript / JSX / TSX ──────────────────────────────
 
-def _extract_js_ts_defs(tree, code: bytes, rel_path: str, language_id: str) -> List[SymbolRecord]:
-    records: List[SymbolRecord] = []
+
+def _extract_js_ts_defs(tree, code: bytes, rel_path: str, language_id: str) -> list[SymbolRecord]:
+    records: list[SymbolRecord] = []
 
     class_types = {"class_declaration"}
     if language_id in ("typescript", "tsx"):
         class_types.update({"interface_declaration", "type_alias_declaration", "enum_declaration"})
 
-    def walk(node, class_stack: List[str]):
+    def walk(node, class_stack: list[str]):
         if node.type in class_types:
             name = _get_name_from_node(node, code)
             if not name:
@@ -250,11 +254,12 @@ def _extract_js_ts_defs(tree, code: bytes, rel_path: str, language_id: str) -> L
 
 # ── Java ─────────────────────────────────────────────────────────────
 
-def _extract_java_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
-    records: List[SymbolRecord] = []
+
+def _extract_java_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    records: list[SymbolRecord] = []
     class_types = {"class_declaration", "interface_declaration", "enum_declaration"}
 
-    def walk(node, class_stack: List[str]):
+    def walk(node, class_stack: list[str]):
         if node.type in class_types:
             name = _get_name_from_node(node, code)
             if not name:
@@ -288,10 +293,11 @@ def _extract_java_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
 
 # ── Go ───────────────────────────────────────────────────────────────
 
-def _extract_go_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
-    records: List[SymbolRecord] = []
 
-    def walk(node, class_stack: List[str]):
+def _extract_go_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    records: list[SymbolRecord] = []
+
+    def walk(node, class_stack: list[str]):
         if node.type == "type_spec":
             type_node = node.child_by_field_name("type")
             if type_node is not None and type_node.type in ("struct_type", "interface_type"):
@@ -326,11 +332,12 @@ def _extract_go_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
 
 # ── Rust ─────────────────────────────────────────────────────────────
 
-def _extract_rust_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
-    records: List[SymbolRecord] = []
+
+def _extract_rust_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    records: list[SymbolRecord] = []
     class_types = {"struct_item", "enum_item", "trait_item"}
 
-    def walk(node, class_stack: List[str]):
+    def walk(node, class_stack: list[str]):
         if node.type in class_types:
             name = _get_name_from_node(node, code)
             if not name:
@@ -356,11 +363,17 @@ def _extract_rust_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
 
 # ── C# ───────────────────────────────────────────────────────────────
 
-def _extract_csharp_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
-    records: List[SymbolRecord] = []
-    class_types = {"class_declaration", "interface_declaration", "struct_declaration", "enum_declaration"}
 
-    def walk(node, class_stack: List[str]):
+def _extract_csharp_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    records: list[SymbolRecord] = []
+    class_types = {
+        "class_declaration",
+        "interface_declaration",
+        "struct_declaration",
+        "enum_declaration",
+    }
+
+    def walk(node, class_stack: list[str]):
         if node.type in class_types:
             name = _get_name_from_node(node, code)
             if not name:
@@ -394,7 +407,8 @@ def _extract_csharp_defs(tree, code: bytes, rel_path: str) -> List[SymbolRecord]
 
 # ── Dispatch ─────────────────────────────────────────────────────────
 
-def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> List[SymbolRecord]:
+
+def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
     if language_id == "python":
         return _extract_python_defs(tree, code, rel_path)
     if language_id in ("javascript", "jsx", "typescript", "tsx"):
@@ -411,6 +425,7 @@ def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> 
 
 
 # ── Public API ───────────────────────────────────────────────────────
+
 
 def extract_symbols_from_content(
     content: str, language_id: str, rel_path: str
@@ -453,7 +468,7 @@ def extract_symbols(file_path: str, repo_root: str) -> list[SymbolRecord]:
 
     rel_path = Path(file_path).relative_to(repo_root).as_posix()
 
-    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+    with open(file_path, encoding="utf-8", errors="replace") as f:
         source = f.read()
 
     return extract_symbols_from_content(source, language_id, rel_path)

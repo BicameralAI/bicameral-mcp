@@ -10,6 +10,20 @@ Check for a new `bicameral-mcp` release and apply it.
 **This skill is about upgrading the installed binary.** It has nothing to do
 with git commits, ledger sync, or compliance checks — those are `/bicameral:sync`.
 
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-update", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user asked to update to latest version'>")
+```
+
+**At skill end**:
+```
+bicameral.skill_end(skill_name="bicameral-update", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored>")
+```
+
 ## Step 1 — Check for a new version
 
 ```

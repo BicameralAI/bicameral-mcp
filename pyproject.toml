@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.10.8"
+version = "0.13.3"
 description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -47,12 +47,87 @@ cocoindex = [
 test = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
+  "tiktoken>=0.7.0,<1.0.0",
+  "ruff>=0.5.0",
+  "mypy>=1.10.0",
 ]
 
 [project.scripts]
 bicameral-mcp = "server:cli_main"
+bicameral-mcp-classify = "cli.classify:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-exclude = ["tests", "visual-plan", "mocks", "test-results"]
+exclude = [
+  "tests",
+  "visual-plan",
+  "mocks",
+  "test-results",
+  "docs/demos/**/*.mp4",
+]
 artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [
+  "test-results",
+  "visual-plan",
+  "mocks",
+  ".agent",
+  ".claude",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]  # pyflakes + pycodestyle + isort + bugbear + pyupgrade
+ignore = ["E501"]  # line-length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+# Test files often reference module-internal symbols imported via patching,
+# use intentional unused-locals for clarity, and use assert-style equality.
+# Day-one CI keeps tests/ lenient; tighten in follow-up cleanup PRs.
+"tests/**" = ["F401", "F811", "F821", "F841", "E712", "B017", "B904", "E402", "E731"]
+"scripts/**" = ["F401", "F841", "E402", "E731"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true  # project depends on pydantic, mcp, surrealdb — many unstubbed
+warn_return_any = false
+strict_optional = true
+disable_error_code = ["import-untyped"]  # missing third-party stubs (e.g. PyYAML) — chip away in follow-ups
+exclude = [
+  "test-results/",
+  "visual-plan/",
+  "mocks/",
+  ".agent/",
+  ".claude/",
+  "build/",
+  "dist/",
+  # Tests/fixtures aren't part of the production type surface; tighten in follow-ups.
+  "^tests/",
+  "^scripts/",
+]
+
+# Day-one mypy: noisy modules suppressed wholesale to keep CI green.
+# Each entry below is a follow-up cleanup target. Track in a separate type-cleanup
+# project — do NOT remove entries here without first fixing the underlying errors.
+[[tool.mypy.overrides]]
+module = [
+  "server",
+  "setup_wizard",
+  "code_locator.indexing.cocoindex_pipeline",
+  "code_locator.indexing.symbol_extractor",
+  "adapters.code_locator",
+  "ledger.adapter",
+  "ledger.status",
+  "ledger.queries",
+  "ledger.schema",
+  "codegenome.continuity",
+  "codegenome.continuity_service",
+  "handlers.ratify",
+  "handlers.search_decisions",
+  "handlers.resolve_compliance",
+  "handlers.preflight",
+  "handlers.detect_drift",
+]
+ignore_errors = true

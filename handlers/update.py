@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from typing import Optional
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def _save_cache(data: dict) -> None:
         pass
 
 
-def _fetch_recommended_version() -> Optional[str]:
+def _fetch_recommended_version() -> str | None:
     """Fetch RECOMMENDED_VERSION from GitHub with a 1-hour cache."""
     cache = _load_cache()
     now = time.time()
@@ -84,7 +84,7 @@ def get_update_notice(current_version: str) -> dict | None:
         "action_required": (
             f"Ask the user: 'bicameral-mcp v{recommended} is available "
             f"(you are on v{current_version}) — upgrade now? (yes/no)'. "
-            "If yes, call bicameral.update {\"action\": \"apply\"}."
+            'If yes, call bicameral.update {"action": "apply"}.'
         ),
     }
 
@@ -134,12 +134,12 @@ def _apply_pending_migration(repo_path: str) -> dict:
       replay_plan: list[dict]     (only when migrated=True)
       error: str                  (only on failure)
     """
-    import tempfile, os
+    import os
+    import tempfile
+
     tmp = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(_MIGRATION_SCRIPT)
             tmp = f.name
         result = subprocess.run(
@@ -167,6 +167,7 @@ def _read_guided_from_config(repo_path: str) -> bool:
     """Return the guided: flag from .bicameral/config.yaml, defaulting to False."""
     try:
         import re
+
         config_path = Path(repo_path) / ".bicameral" / "config.yaml"
         if not config_path.exists():
             return False
@@ -191,7 +192,7 @@ def _reinstall_skills(repo_path: str) -> int:
             f"rp = Path(r'{repo_path}'); "
             f"n = _install_skills(rp); "
             f"_install_claude_hooks(rp); "
-            + (f"_install_git_post_commit_hook(rp); " if guided else "")
+            + ("_install_git_post_commit_hook(rp); " if guided else "")
             + "print(n)"
         )
         result = subprocess.run(
@@ -209,8 +210,34 @@ def _reinstall_skills(repo_path: str) -> int:
         return 0
 
 
-async def handle_update(action: str, current_version: str, repo_path: str = "") -> dict:
-    """Handle bicameral.update tool calls."""
+async def handle_update(
+    action: str,
+    current_version: str,
+    repo_path: str = "",
+    *,
+    preflight_id: str | None = None,
+) -> dict:
+    """Handle bicameral.update tool calls.
+
+    The keyword-only ``preflight_id`` is plumbed onto every return dict for
+    parity with the pydantic-model handlers (#65). This is intentionally a
+    smaller blast radius than refactoring update.py to a pydantic response.
+    """
+    # Best-effort engagement telemetry — emit once at entry.
+    try:
+        from preflight_telemetry import telemetry_enabled, write_engagement
+
+        if telemetry_enabled():
+            write_engagement(
+                session_id="unknown",  # update.py is not session-scoped
+                tool="bicameral.update",
+                decision_id=None,
+                preflight_id=preflight_id,
+                file_paths=None,
+            )
+    except Exception:
+        pass
+
     if action == "check":
         recommended = _fetch_recommended_version()
         if not recommended:
@@ -218,35 +245,52 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                 "status": "unknown",
                 "current_version": current_version,
                 "message": "Could not reach version endpoint.",
+                "preflight_id": preflight_id,
             }
         if _parse_version(recommended) <= _parse_version(current_version):
             return {
                 "status": "up_to_date",
                 "current_version": current_version,
                 "recommended_version": recommended,
+                "preflight_id": preflight_id,
             }
         return {
             "status": "update_available",
             "current_version": current_version,
             "recommended_version": recommended,
+            "preflight_id": preflight_id,
         }
 
     if action == "apply":
         recommended = _fetch_recommended_version()
         if not recommended:
-            return {"status": "error", "message": "Could not determine recommended version."}
+            return {
+                "status": "error",
+                "message": "Could not determine recommended version.",
+                "preflight_id": preflight_id,
+            }
 
         if _parse_version(recommended) <= _parse_version(current_version):
             return {
                 "status": "already_up_to_date",
                 "current_version": current_version,
                 "recommended_version": recommended,
+                "preflight_id": preflight_id,
             }
 
         target = f"bicameral-mcp=={recommended}"
         try:
+            # Prefer pipx (the standard install path) — it manages its own venv
+            # and handles externally-managed-environment restrictions on macOS.
+            # Fall back to pip for venv/dev installs.
+            import shutil
+
+            if shutil.which("pipx"):
+                cmd = ["pipx", "install", target, "--force"]
+            else:
+                cmd = [sys.executable, "-m", "pip", "install", target, "--quiet"]
             result = subprocess.run(
-                [sys.executable, "-m", "pip", "install", target, "--quiet"],
+                cmd,
                 capture_output=True,
                 text=True,
                 timeout=120,
@@ -262,7 +306,9 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                 )
 
                 # Auto-apply any pending destructive migration using the new binary.
-                migration_result = _apply_pending_migration(repo_path) if repo_path else {"migrated": False}
+                migration_result = (
+                    _apply_pending_migration(repo_path) if repo_path else {"migrated": False}
+                )
                 if migration_result.get("migrated"):
                     cursors_wiped = migration_result.get("cursors_wiped", 0)
                     replay_plan = migration_result.get("replay_plan", [])
@@ -283,6 +329,7 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                             f"Upgraded to v{recommended}.{skills_note}{replay_note}"
                             f" Restart the MCP server to use the new version."
                         ),
+                        "preflight_id": preflight_id,
                     }
 
                 migration_error = migration_result.get("error")
@@ -302,15 +349,29 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                         f"Upgraded to v{recommended}.{skills_note} "
                         f"Restart the MCP server to use the new version.{migration_warning}"
                     ),
+                    "preflight_id": preflight_id,
                 }
             else:
                 return {
                     "status": "error",
                     "message": f"pip install failed: {result.stderr.strip()}",
+                    "preflight_id": preflight_id,
                 }
         except subprocess.TimeoutExpired:
-            return {"status": "error", "message": "pip install timed out after 120s."}
+            return {
+                "status": "error",
+                "message": "pip install timed out after 120s.",
+                "preflight_id": preflight_id,
+            }
         except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+            return {
+                "status": "error",
+                "message": str(exc),
+                "preflight_id": preflight_id,
+            }
 
-    return {"status": "error", "message": f"Unknown action '{action}'. Use 'check' or 'apply'."}
+    return {
+        "status": "error",
+        "message": f"Unknown action '{action}'. Use 'check' or 'apply'.",
+        "preflight_id": preflight_id,
+    }

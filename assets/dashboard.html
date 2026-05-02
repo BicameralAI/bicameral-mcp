@@ -255,6 +255,7 @@ body {
 .lvl-l1 { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
 .lvl-l2 { background: transparent; border-color: var(--border-dark); color: var(--text-dim); }
 .lvl-l3 { background: transparent; border-color: var(--border); color: var(--text-light); }
+.lvl-unclassified { background: rgba(249, 115, 22, 0.15); border-color: rgb(249, 115, 22); color: rgb(249, 115, 22); }
 .depth-spacer { flex-shrink: 0; display: inline-block; }
 
 /* ── EXPANDED BODY ─────────────────────────────────────────── */
@@ -354,6 +355,16 @@ body {
     <input type="checkbox" id="show-rejected" onchange="applyToggle()">
     show rejected
   </label>
+  <label class="topbar-toggle">
+    level:
+    <select id="lvl-filter" onchange="applyLevelFilter(this.value)">
+      <option value="all">All levels</option>
+      <option value="L1">L1 only</option>
+      <option value="L2">L2 only</option>
+      <option value="L3">L3 only</option>
+      <option value="unclassified">Unclassified only</option>
+    </select>
+  </label>
   <span id="tref" class="topbar-ref"></span>
 </header>
 
@@ -441,7 +452,12 @@ function renderStateCell(d) {
     ungrounded: { cls: 'fs-ungrounded', text: '○ tracked'   },
   };
   const c = conf[d.status] || conf.ungrounded;
-  const tip = d.status === 'drifted' && d.drift_evidence ? ` data-tip="${esc(d.drift_evidence)}"` : '';
+  let tip = '';
+  if (d.status === 'drifted' && d.drift_evidence) {
+    tip = ` data-tip="${esc(d.drift_evidence)}"`;
+  } else if (d.status === 'pending') {
+    tip = ' data-tip="Pending compliance — run /bicameral-sync in your Claude Code session to resolve."';
+  }
   const branchBadge = d.ephemeral
     ? `<span class="branch-badge" title="Status from feature branch — not yet verified on main">⎇</span>`
     : '';
@@ -546,11 +562,14 @@ function renderDec(d, idx, depth) {
   const superseded = d.signoff_state === 'superseded';
   const rejected = isRejected(d);
   const level    = d.decision_level || (depth === 0 ? null : depth === 1 ? 'L2' : 'L3');
-  const lvlBadge = level ? `<span class="lvl-badge lvl-${level.toLowerCase()}">${level}</span>` : '';
+  const lvlClass = level ? `lvl-${level.toLowerCase()}` : 'lvl-unclassified';
+  const lvlLabel = level || 'Unclassified';
+  const lvlBadge = `<span class="lvl-badge ${lvlClass}">${lvlLabel}</span>`;
+  const dataLevel = level || 'unclassified';
   const spacer   = depth > 0 ? `<span class="depth-spacer" style="width:${depth * 18}px"></span>` : '';
   const body     = renderDetailSources(d) + renderCodeChips(d);
   return `
-<div class="dec ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" id="d${idx}" onclick="toggleDec(this)">
+<div class="dec decision-row ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" data-level="${dataLevel}" id="d${idx}" onclick="toggleDec(this)">
   <div class="dec-hdr">
     <div class="d-text-col">
       ${spacer}${lvlBadge}<span class="d-text">${esc(d.summary)}</span>
@@ -702,6 +721,14 @@ function applyToggle() {
   });
   document.querySelectorAll('.dec.is-rejected').forEach(el => {
     el.style.display = showRejected ? '' : 'none';
+  });
+}
+
+// ── level filter (#76) ────────────────────────────────────────
+function applyLevelFilter(value) {
+  document.querySelectorAll('.decision-row').forEach(row => {
+    const level = row.dataset.level || 'unclassified';
+    row.style.display = (value === 'all' || value === level) ? '' : 'none';
   });
 }
 

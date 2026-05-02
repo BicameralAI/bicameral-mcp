@@ -33,6 +33,7 @@ def _ctx():
 
 # ── Adapter availability ──────────────────────────────────────────────
 
+
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_real_ledger_adapter_instantiates(monkeypatch, surreal_url):
@@ -44,6 +45,7 @@ async def test_real_ledger_adapter_instantiates(monkeypatch, surreal_url):
 
 
 # ── Ingestion idempotency ─────────────────────────────────────────────
+
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
@@ -87,6 +89,7 @@ async def test_ingest_is_idempotent(monkeypatch, surreal_url, minimal_payload):
 
 # ── BM25 search ───────────────────────────────────────────────────────
 
+
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_bm25_search_finds_ingested_intent(monkeypatch, surreal_url):
@@ -99,24 +102,47 @@ async def test_bm25_search_finds_ingested_intent(monkeypatch, surreal_url):
         await ledger.connect()
 
     desc = "exponential backoff retry on webhook failure"
-    await ledger.ingest_payload({
-        "query": desc, "repo": "test-repo", "commit_hash": "bm25test",
-        "analyzed_at": "2026-03-27T12:00:00Z",
-        "mappings": [{
-            "span": {"span_id": "bm25-0", "source_type": "transcript", "text": desc, "speaker": "", "source_ref": ""},
-            "intent": desc, "symbols": ["WebhookDispatcher.send"],
-            "code_regions": [{"file_path": "webhooks/dispatcher.py", "symbol": "WebhookDispatcher.send",
-                              "type": "function", "start_line": 134, "end_line": 180, "purpose": "dispatch"}],
-            "dependency_edges": [],
-        }],
-    })
+    await ledger.ingest_payload(
+        {
+            "query": desc,
+            "repo": "test-repo",
+            "commit_hash": "bm25test",
+            "analyzed_at": "2026-03-27T12:00:00Z",
+            "mappings": [
+                {
+                    "span": {
+                        "span_id": "bm25-0",
+                        "source_type": "transcript",
+                        "text": desc,
+                        "speaker": "",
+                        "source_ref": "",
+                    },
+                    "intent": desc,
+                    "symbols": ["WebhookDispatcher.send"],
+                    "code_regions": [
+                        {
+                            "file_path": "webhooks/dispatcher.py",
+                            "symbol": "WebhookDispatcher.send",
+                            "type": "function",
+                            "start_line": 134,
+                            "end_line": 180,
+                            "purpose": "dispatch",
+                        }
+                    ],
+                    "dependency_edges": [],
+                }
+            ],
+        }
+    )
 
-    results = await ledger.search_by_query("retry webhook backoff", max_results=10, min_confidence=0.1)
+    results = await ledger.search_by_query(
+        "retry webhook backoff", max_results=10, min_confidence=0.1
+    )
     assert len(results) > 0, "BM25 returned no results for recently ingested intent"
     descs = [r["description"] for r in results]
-    assert any("webhook" in d.lower() or "retry" in d.lower() or "backoff" in d.lower() for d in descs), (
-        f"Relevant intent not surfaced by BM25. Got: {descs}"
-    )
+    assert any(
+        "webhook" in d.lower() or "retry" in d.lower() or "backoff" in d.lower() for d in descs
+    ), f"Relevant intent not surfaced by BM25. Got: {descs}"
 
 
 @pytest.mark.phase2
@@ -136,6 +162,7 @@ async def test_bm25_min_confidence_filters_results(monkeypatch, surreal_url):
 
 # ── Reverse traversal: file → decisions ──────────────────────────────
 
+
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_file_reverse_traversal_finds_decision(monkeypatch, surreal_url):
@@ -149,17 +176,38 @@ async def test_file_reverse_traversal_finds_decision(monkeypatch, surreal_url):
 
     file_path = "payments/processor.py"
     desc = "optimistic locking for cart updates"
-    await ledger.ingest_payload({
-        "query": desc, "repo": "test-repo", "commit_hash": "reversetest",
-        "analyzed_at": "2026-03-27T12:00:00Z",
-        "mappings": [{
-            "span": {"span_id": "rev-0", "source_type": "transcript", "text": desc, "speaker": "", "source_ref": ""},
-            "intent": desc, "symbols": ["CartService.updateItem"],
-            "code_regions": [{"file_path": file_path, "symbol": "CartService.updateItem",
-                              "type": "function", "start_line": 87, "end_line": 120, "purpose": "cart update"}],
-            "dependency_edges": [],
-        }],
-    })
+    await ledger.ingest_payload(
+        {
+            "query": desc,
+            "repo": "test-repo",
+            "commit_hash": "reversetest",
+            "analyzed_at": "2026-03-27T12:00:00Z",
+            "mappings": [
+                {
+                    "span": {
+                        "span_id": "rev-0",
+                        "source_type": "transcript",
+                        "text": desc,
+                        "speaker": "",
+                        "source_ref": "",
+                    },
+                    "intent": desc,
+                    "symbols": ["CartService.updateItem"],
+                    "code_regions": [
+                        {
+                            "file_path": file_path,
+                            "symbol": "CartService.updateItem",
+                            "type": "function",
+                            "start_line": 87,
+                            "end_line": 120,
+                            "purpose": "cart update",
+                        }
+                    ],
+                    "dependency_edges": [],
+                }
+            ],
+        }
+    )
 
     decisions = await ledger.get_decisions_for_file(file_path)
     assert len(decisions) > 0, f"No decisions found for {file_path!r} via reverse traversal"
@@ -181,6 +229,7 @@ async def test_unknown_file_returns_empty(monkeypatch, surreal_url):
 
 
 # ── link_commit idempotency ───────────────────────────────────────────
+
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
@@ -223,6 +272,7 @@ async def test_link_commit_updates_sync_cursor(monkeypatch, surreal_url):
 
 # ── decision_status via real graph ────────────────────────────────────
 
+
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_decision_status_reflects_ingested_data(monkeypatch, surreal_url, minimal_payload):
@@ -262,26 +312,40 @@ async def test_ungrounded_intent_has_correct_status(monkeypatch, surreal_url):
         await ledger.connect()
 
     desc = "zzqx qqzzyy nonsensetoken glarbflumph deliberate-gibberish wlrdpfnz"
-    await ledger.ingest_payload({
-        "query": desc, "repo": "test-repo", "commit_hash": "unground01",
-        "analyzed_at": "2026-03-27T12:00:00Z",
-        "mappings": [{
-            "span": {"span_id": "ug-0", "source_type": "transcript", "text": desc, "speaker": "", "source_ref": ""},
-            "intent": desc, "symbols": [], "code_regions": [], "dependency_edges": [],
-        }],
-    })
+    await ledger.ingest_payload(
+        {
+            "query": desc,
+            "repo": "test-repo",
+            "commit_hash": "unground01",
+            "analyzed_at": "2026-03-27T12:00:00Z",
+            "mappings": [
+                {
+                    "span": {
+                        "span_id": "ug-0",
+                        "source_type": "transcript",
+                        "text": desc,
+                        "speaker": "",
+                        "source_ref": "",
+                    },
+                    "intent": desc,
+                    "symbols": [],
+                    "code_regions": [],
+                    "dependency_edges": [],
+                }
+            ],
+        }
+    )
 
     # Query the ledger directly — handle_decision_status auto-syncs via
     # link_commit which triggers _reground_ungrounded, potentially changing
     # the status before we can assert on it.
     ungrounded = await ledger.get_all_decisions(filter="ungrounded")
     descs = [d.get("description", "") for d in ungrounded]
-    assert any(desc in d for d in descs), (
-        f"Expected {desc!r} in ungrounded filter. Got: {descs}"
-    )
+    assert any(desc in d for d in descs), f"Expected {desc!r} in ungrounded filter. Got: {descs}"
 
 
 # ── detect_drift with real reverse traversal ──────────────────────────
+
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
@@ -296,17 +360,38 @@ async def test_detect_drift_returns_decisions_for_ingested_file(monkeypatch, sur
 
     file_path = "services/checkout.py"
     desc = "rate limit checkout endpoint"
-    await ledger.ingest_payload({
-        "query": desc, "repo": "test-repo", "commit_hash": "drift001",
-        "analyzed_at": "2026-03-27T12:00:00Z",
-        "mappings": [{
-            "span": {"span_id": "d-0", "source_type": "transcript", "text": desc, "speaker": "", "source_ref": "mtg-001"},
-            "intent": desc, "symbols": ["CheckoutService.process"],
-            "code_regions": [{"file_path": file_path, "symbol": "CheckoutService.process",
-                              "type": "function", "start_line": 45, "end_line": 90, "purpose": "checkout"}],
-            "dependency_edges": [],
-        }],
-    })
+    await ledger.ingest_payload(
+        {
+            "query": desc,
+            "repo": "test-repo",
+            "commit_hash": "drift001",
+            "analyzed_at": "2026-03-27T12:00:00Z",
+            "mappings": [
+                {
+                    "span": {
+                        "span_id": "d-0",
+                        "source_type": "transcript",
+                        "text": desc,
+                        "speaker": "",
+                        "source_ref": "mtg-001",
+                    },
+                    "intent": desc,
+                    "symbols": ["CheckoutService.process"],
+                    "code_regions": [
+                        {
+                            "file_path": file_path,
+                            "symbol": "CheckoutService.process",
+                            "type": "function",
+                            "start_line": 45,
+                            "end_line": 90,
+                            "purpose": "checkout",
+                        }
+                    ],
+                    "dependency_edges": [],
+                }
+            ],
+        }
+    )
 
     ctx = _ctx()
     result = await handle_detect_drift(ctx, file_path)
@@ -326,7 +411,9 @@ async def test_source_cursor_upserts_after_ingest(monkeypatch, surreal_url, mini
     from handlers.ingest import handle_ingest
 
     ctx = _ctx()
-    result = await handle_ingest(ctx, minimal_payload, source_scope="slack:C123", cursor="1743210021.123")
+    result = await handle_ingest(
+        ctx, minimal_payload, source_scope="slack:C123", cursor="1743210021.123"
+    )
 
     assert result.source_cursor is not None
     assert result.source_cursor.repo == "test-repo"
@@ -338,6 +425,7 @@ async def test_source_cursor_upserts_after_ingest(monkeypatch, surreal_url, mini
 
 # ── M1 decision-relevance instrumentation ────────────────────────────
 
+
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_ingest_stats_populates_grounded_fields(
@@ -346,6 +434,7 @@ async def test_ingest_stats_populates_grounded_fields(
     """handle_ingest must populate stats.grounded + stats.grounded_pct and
     emit a [ingest] complete log line. This is the M1 instrumentation gate."""
     import logging
+
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", surreal_url)
 

@@ -17,7 +17,7 @@ import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 # Process-level cache: survives across call_tool invocations within the same
 # server process. Avoids re-running link_commit when HEAD hasn't moved.
 _LAST_SYNCED_SHA: str | None = None
-
 
 
 # ── V1 A2-light: per-repo write barrier ─────────────────────────────────
@@ -95,10 +94,23 @@ class BarrierTiming:
     Handlers read it after the ``async with`` block to attach the number
     to their ``SyncMetrics`` response field.
     """
+
     __slots__ = ("held_ms",)
 
     def __init__(self) -> None:
         self.held_ms: float | None = None
+
+
+def invalidate_process_cache() -> None:
+    """Reset the process-level HEAD cache so the next ``ensure_ledger_synced``
+    call runs a full sync even if HEAD hasn't moved.
+
+    Called from ``invalidate_sync_cache`` (link_commit.py) after any mutation
+    (ingest, update, reset) so that newly-added pending decisions are surfaced
+    on the next automatic sync rather than being silently skipped.
+    """
+    global _LAST_SYNCED_SHA
+    _LAST_SYNCED_SHA = None
 
 
 def _reset_repo_locks_for_tests() -> None:
@@ -117,7 +129,7 @@ _STALE_PROPOSAL_DAYS = 14
 _BANNER_MAX_ITEMS = 10
 
 
-async def get_session_start_banner(ctx) -> "SessionStartBanner | None":
+async def get_session_start_banner(ctx) -> SessionStartBanner | None:
     """Return open-decision summary for session start, or None if nothing actionable.
 
     Fires exactly once per session (keyed on ctx._sync_state["session_started"]).
@@ -138,17 +150,14 @@ async def get_session_start_banner(ctx) -> "SessionStartBanner | None":
     except Exception:
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     drifted_rows = [r for r in rows if r.get("status") == "drifted"]
-    proposal_rows = [
-        r for r in rows
-        if (r.get("signoff") or {}).get("state") == "proposed"
-    ]
+    proposal_rows = [r for r in rows if (r.get("signoff") or {}).get("state") == "proposed"]
     real_ungrounded_rows = [
-        r for r in rows
-        if r.get("status") == "ungrounded"
-        and (r.get("signoff") or {}).get("state") != "proposed"
+        r
+        for r in rows
+        if r.get("status") == "ungrounded" and (r.get("signoff") or {}).get("state") != "proposed"
     ]
 
     stale_proposals = []
@@ -179,13 +188,15 @@ async def get_session_start_banner(ctx) -> "SessionStartBanner | None":
     items = []
     for r in visible:
         signoff = r.get("signoff") or {}
-        items.append({
-            "decision_id": r.get("decision_id", r.get("id", "")),
-            "description": r.get("description", ""),
-            "status": r.get("status", ""),
-            "signoff_state": signoff.get("state"),
-            "source_ref": r.get("source_ref", ""),
-        })
+        items.append(
+            {
+                "decision_id": r.get("decision_id", r.get("id", "")),
+                "description": r.get("description", ""),
+                "status": r.get("status", ""),
+                "signoff_state": signoff.get("state"),
+                "source_ref": r.get("source_ref", ""),
+            }
+        )
 
     parts = []
     if drifted_count:
@@ -210,7 +221,7 @@ async def get_session_start_banner(ctx) -> "SessionStartBanner | None":
     )
 
 
-async def ensure_ledger_synced(ctx) -> "LinkCommitResponse | None":
+async def ensure_ledger_synced(ctx) -> LinkCommitResponse | None:
     """Sync ledger to HEAD if it has moved since the last sync in this process.
 
     Returns the LinkCommitResponse when a new commit was processed — callers
@@ -220,7 +231,8 @@ async def ensure_ledger_synced(ctx) -> "LinkCommitResponse | None":
     global _LAST_SYNCED_SHA
 
     try:
-        from handlers.link_commit import handle_link_commit, _read_current_head_sha
+        from handlers.link_commit import _read_current_head_sha, handle_link_commit
+
         live_head = _read_current_head_sha(getattr(ctx, "repo_path", "") or ".")
         if live_head and live_head != _LAST_SYNCED_SHA:
             result = await handle_link_commit(ctx, "HEAD")

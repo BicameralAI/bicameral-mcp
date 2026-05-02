@@ -10,7 +10,12 @@ env:
 jobs:
   mcp-tests:
     name: MCP Regression Suite
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     # Needed so ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }} / ANTHROPIC_API_KEY
     # (environment secrets scoped to `ci-test`) is injected into the M1
     # extraction step. The env is gate-free so this does not block
@@ -19,6 +24,7 @@ jobs:
     env:
       SURREAL_URL: 'memory://'
       REPO_PATH: ${{ github.workspace }}
+      BICAMERAL_SKIP_CONSENT_NOTICE: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -46,7 +52,10 @@ jobs:
       # ── Clone OSS repos for eval ground truth ────────────────────────
       # Only medusa is needed — saleor/vendure were used by eval_code_locator.py
       # which was removed in v0.6.4 when search_code was nuked.
+      # Ubuntu-only: bash function syntax + medusa corpus consumed by
+      # the Linux-only M1 adversarial eval and E2E report below.
       - name: Clone eval repos (shallow, pinned commits)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           clone_at_commit() {
             local repo_url=$1 dest=$2 commit=$3
@@ -79,6 +88,7 @@ jobs:
       # "secret is not set" from "secret is set to empty string" from
       # "secret is set correctly" without ever exposing the key.
       - name: M1 secret visibility probe
+        if: matrix.os == 'ubuntu-latest'
         run: |
           set +e
           if [ -n "${ANTHROPIC_API_KEY}" ]; then
@@ -108,6 +118,7 @@ jobs:
       # as a red "M1 adversarial" step in the job without failing the
       # whole build, so the rest of the regression suite still reports.
       - name: M1 adversarial corpus eval (warn-only)
+        if: matrix.os == 'ubuntu-latest'
         continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -119,8 +130,12 @@ jobs:
           -o test-results/m1-adversarial.json
 
       # ── Generate rich E2E report from artifacts ────────────────────
+      # Ubuntu-only: the script consumes the medusa adversarial corpus
+      # (cloned only on Ubuntu above) plus the Phase 3 E2E artifacts
+      # the report builds. Windows runs the unit + integration suite
+      # for cross-platform coverage but skips the corpus-driven E2E.
       - name: Generate E2E report
-        if: always()
+        if: always() && matrix.os == 'ubuntu-latest'
         run: python tests/generate_e2e_report.py
 
       # ── Generate step summary from JUnit XML ───────────────────────
@@ -136,6 +151,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mcp-test-results
+          name: mcp-test-results-${{ matrix.os }}
           path: test-results/
           retention-days: 30

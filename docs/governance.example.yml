@@ -1,0 +1,111 @@
+# Bicameral governance config — canonical example.
+#
+# Copy to .bicameral/governance.yml at the repo root and tune to your
+# project. Bicameral's deterministic escalation engine reads this file
+# at startup; missing keys fall back to the baked-in `transparency_first`
+# defaults, malformed YAML falls back to defaults with a stderr warning,
+# and `allow_blocking` is locked at False (pydantic refuses any other
+# value — Bicameral never blocks work).
+#
+# Phases 1-3 of #108-#112 ship with this example; later phases (HITL
+# bypass flow + architecture docs) reference it verbatim.
+
+version: 1
+mode: transparency_first
+
+# Locked at False at the type level. Listed here for documentation
+# only — pydantic raises ValidationError if you set this to True.
+allow_blocking: false
+
+# When multiple findings collide on (decision_id, region_id), the
+# strongest semantic_status wins (consolidate() in finding_factories).
+strongest_result_wins: true
+
+# Maximum native action the engine will ever choose. The action ladder
+# is: ignore < context < warn < escalate < notify_supervisor <
+# system_wide_warning. Anything stronger than this ceiling is clamped.
+max_native_action: system_wide_warning
+
+# Components that should always be treated as protected_component=true
+# regardless of per-decision metadata. Free-form glob/path strings that
+# downstream consumers can match against decision binding regions.
+protected_components: []
+
+# Per-decision-class policies. Class keys must be one of the eight
+# values in GovernanceMetadata.decision_class:
+#   product_behavior | architecture | security | compliance |
+#   data_contract | operational_reliability |
+#   implementation_preference | experimental
+decision_classes:
+  security:
+    default_action: escalate
+    supervisor_notification_allowed: true
+    system_wide_warning_allowed: true
+    escalation_thresholds:
+      drift_confidence: 0.7
+      binding_confidence: 0.7
+    supervisor_thresholds:
+      drift_confidence: 0.85
+      binding_confidence: 0.85
+
+  compliance:
+    default_action: escalate
+    supervisor_notification_allowed: true
+    system_wide_warning_allowed: false
+    escalation_thresholds:
+      drift_confidence: 0.7
+      binding_confidence: 0.7
+    supervisor_thresholds:
+      drift_confidence: 0.85
+      binding_confidence: 0.85
+
+  architecture:
+    default_action: warn
+    supervisor_notification_allowed: false
+    system_wide_warning_allowed: false
+    escalation_thresholds:
+      drift_confidence: 0.7
+      binding_confidence: 0.7
+
+  product_behavior:
+    default_action: warn
+    supervisor_notification_allowed: false
+    system_wide_warning_allowed: false
+    escalation_thresholds:
+      drift_confidence: 0.7
+      binding_confidence: 0.7
+
+  data_contract:
+    default_action: escalate
+    supervisor_notification_allowed: true
+    escalation_thresholds:
+      drift_confidence: 0.7
+      binding_confidence: 0.7
+    supervisor_thresholds:
+      drift_confidence: 0.85
+      binding_confidence: 0.85
+
+  operational_reliability:
+    default_action: warn
+    supervisor_notification_allowed: false
+
+  implementation_preference:
+    default_action: context
+    supervisor_notification_allowed: false
+
+  experimental:
+    default_action: context
+    supervisor_notification_allowed: false
+
+# Conditions the engine evaluates before allowing a finding to escalate
+# all the way to supervisor_notification. Each must be true for the
+# matched_conditions ladder to clear. Names are stable; future versions
+# may add to this list (unknown names are reported as missing for the
+# audit trail).
+required_conditions_for_supervisor_notification:
+  - decision_status_is_ratified
+  - decision_is_active
+  - protected_decision_class
+  - no_superseding_decision
+  - drift_confidence_above_threshold
+  - binding_confidence_above_threshold

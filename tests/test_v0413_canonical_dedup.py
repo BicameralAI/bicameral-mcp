@@ -30,7 +30,6 @@ from ledger.canonical import (
     canonicalize_text,
 )
 
-
 # ── Source ref canonicalization ─────────────────────────────────────
 
 
@@ -57,7 +56,8 @@ def test_slack_three_variants_collapse():
 
 def test_notion_strips_title_prefix():
     out = canonicalize_source_ref(
-        "notion", "Page-Title-abc123def456abc123def456abc123ef45",
+        "notion",
+        "Page-Title-abc123def456abc123def456abc123ef45",
     )
     # 32-char hex extracted from the end
     assert out.startswith("notion:")
@@ -237,7 +237,8 @@ async def test_upsert_intent_collapses_whitespace_variant(monkeypatch, surreal_u
 
     decisions = await ledger.get_all_decisions(filter="all")
     matching = [
-        d for d in decisions
+        d
+        for d in decisions
         if "redis" in d["description"].lower() and "session" in d["description"].lower()
     ]
     assert len(matching) == 1, (

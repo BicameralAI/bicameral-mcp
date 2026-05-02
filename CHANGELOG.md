@@ -3,6 +3,463 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.18.0 -- event vocabulary extension: ratify + supersede (#97)
+
+Extends the existing Phase 1 JSONL emitter with two new event types so the shipped vocabulary matches the v0 architecture description. Team-mode replay now restores ratify and supersede outcomes alongside the pre-existing ingest/bind/link_commit events.
+
+### Added
+
+- `events/team_adapter.py` -- `apply_ratify` and `apply_supersede` wrappers; emit `decision_ratified.completed` / `decision_superseded.completed` with `canonical_id` so cross-author replay can resolve to peer-local rows.
+- `events/materializer.py` -- replay cases for the two new event types; warns + skips on unresolved canonical_id (out-of-order cross-author replay).
+- `ledger/adapter.py` -- idempotent `apply_ratify(decision_id, signoff)` and `apply_supersede(new_id, old_id, ...)` adapter methods.
+- `ledger/queries.py` -- `get_canonical_id` and `find_decision_by_canonical_id` helpers.
+- `tests/test_team_event_replay.py` -- round-trip coverage for ratify, supersede (with edge replay), and an ingest regression guard.
+
+### Changed
+
+- `handlers/ratify.py` -- routes the actual write through `ledger.apply_ratify` instead of the inline UPDATE + project + update_status sequence. Pre-write idempotency check unchanged.
+- `handlers/resolve_collision.py` -- routes the supersede branch through `ledger.apply_supersede`. Frozen-signoff merge moves into the adapter so it's reachable from replay.
+
+### Closes
+
+Partial close of #97 -- event vocabulary wedge. CHANGEFEED extension to `code_subject` / `subject_identity` / `binds_to` / `code_region` and the SHA256 chain remain open.
+
+## v0.17.2 -- governance architecture documentation (#111)
+
+New `docs/semantic-drift-governance.md` describing the shipped governance surface (Phases 1-4 from the #108-#112 plan): contracts, engine, config, HITL bypass flow, MCP tools, and the non-blocking absolute. Includes two Mermaid diagrams (lifecycle and inference-vs-determinism) and explicit cross-references to existing docs.
+
+### Closes
+#111
+
+## v0.17.1 -- preflight HITL bypass flow (#112)
+
+Wires the deterministic engine into the preflight HITL surface. Unresolved signoff states (proposed, ai_surfaced, needs_context, collision_pending, context_pending) trigger AskUserQuestion prompts with mandatory bypass option. Bypass writes a `preflight_prompt_bypassed` event via `preflight_telemetry.py` (V4 idempotent within 1-hour recency window) without mutating decision state. The engine reads recent bypass events and drops one tier of escalation for recently-bypassed decisions.
+
+### Added
+
+- `governance/contracts.py` -- `HITLPrompt`, `HITLPromptOption` (mandatory bypass last)
+- `contracts.py` -- `hitl_prompts: list[HITLPrompt] = []` on `PreflightResponse`; `RecordBypassResponse`
+- `preflight_telemetry.py` -- `write_bypass_event` (V4 idempotent), `recent_bypass_seconds` (F3 bounded tail-read, ≤1000 lines)
+- `bicameral.record_bypass` MCP tool (returns `{recorded, deduped, reason}`)
+- `handlers/preflight.py` -- HITL trigger logic + JSONL-driven recency wired into `engine.evaluate`
+- `handlers/record_bypass.py` -- new MCP write handler
+- `skills/bicameral-preflight/SKILL.md` -- step 5.4 documents trigger conditions, mandatory-last bypass, and the tier-drop semantics
+
+### Closes
+
+#112
+
+## v0.17.0 -- governance contracts + escalation engine (#108-#110, Phases 1-3 of #108-#112 plan)
+
+Adds `governance/` package with the deterministic escalation policy engine, decision/risk/escalation metadata contracts, and the consolidated `GovernanceFinding` wrapper. Engine is non-blocking by design (`config.allow_blocking: Literal[False]` locks the type). Phase 4 (HITL bypass flow) and Phase 5 (docs) ship in follow-up PRs.
+
+### Added
+- `governance/contracts.py` -- GovernanceMetadata, GovernanceFinding, GovernancePolicyResult; `derive_governance_metadata` with L1/L2/L3 default mapping
+- `governance/finding_factories.py` -- builders + `consolidate()` per (decision_id, region_id)
+- `governance/engine.py` -- pure deterministic evaluator decomposed into `_check_required_conditions`, `_apply_class_defaults`, `_apply_bypass_downgrade`, `_apply_max_native_ceiling`
+- `governance/config.py` -- `.bicameral/governance.yml` parser with locked `allow_blocking: Literal[False]`; fail-soft on malformed YAML
+- `bicameral.evaluate_governance` MCP tool (read-only)
+- `governance_finding` field on PreflightResponse
+- `decision.governance` schema field (v14 -> v15 migration)
+- `docs/governance.example.yml` canonical config example
+
+### Closes
+
+#109, #110 (Phases 1-2 fully)
+
+### Refs
+
+#108 (engine landed; Phase 4 HITL bypass flow ships separately for #112)
+
+## [Unreleased]
+
+### Fixed
+
+- **Post-commit hook now actually syncs the ledger (#124).** The
+  `bicameral-mcp setup` (Guided mode) post-commit hook called
+  `bicameral-mcp link_commit HEAD`, which was never a registered CLI
+  subcommand — every commit since the hook was introduced silently
+  failed via `>/dev/null 2>&1 || true` and the user never saw the
+  argparse error. This release adds the missing `link_commit`
+  subcommand (with a `--quiet` flag for hook scripts), replaces the
+  silent-failure suppression with stderr-loud reporting captured to
+  `${HOME}/.bicameral/hook-errors.log` (still exits 0 so commits never
+  block), and adds a smoke test that walks every command referenced
+  in installed hook scripts and asserts each is registered. **Existing
+  Guided-mode installs start working automatically; no reinstall
+  required.**
+
+### Added
+
+- **`bicameral-mcp branch-scan` CLI + opt-in pre-push git hook (#48).**
+  New console subcommand prints a terminal summary of drifted decisions
+  for HEAD; calls `link_commit` under the hood. Installed as a git
+  pre-push hook via `bicameral-mcp setup --with-push-hook`. Surfaces
+  drift warnings before `git push` completes, with a `Push anyway? [y/N]`
+  prompt when attached to a TTY. Non-blocking by default;
+  `BICAMERAL_PUSH_HOOK_BLOCK=1` forces hard-block on drift. Idempotent
+  install. Path C: skips silently when no `~/.bicameral/ledger.db`
+  exists. New module `cli/branch_scan.py`; new
+  `_install_git_pre_push_hook` in `setup_wizard.py`; new `--with-push-hook`
+  flag in `bicameral-mcp setup`. Issue #48.
+
+### Removed
+
+- **Sticky PR-comment drift-report GitHub Action (#49 / PR #113).**
+  Reverted before reaching a numbered release. The action was
+  installed under `.github/workflows/` of `bicameral-mcp` itself,
+  which conflated dogfooding with delivery: the feature is meant to
+  ship to *customer* repos, not police our own CI. Removed the
+  workflow, the `cli/drift_report.py` renderer, the
+  `.github/scripts/post_drift_comment.py` poster, and their tests.
+  A future re-introduction will package the same artifacts as a
+  template under a non-CI path so users opt in by copying it.
+
+## v0.16.0 -- decision_level classifier + MCP primitives (#77 + Phase 5+6 of #76 in sibling PR)
+
+Adds a heuristic decision-level classifier, a single-row write helper for
+`decision.decision_level`, two MCP primitives that expose classification to
+agents, and a bulk-classify CLI for offline backfill. The companion #76
+dashboard work (amber unclassified badge, filter dropdown, inline edit POST
+endpoint) ships in a sibling PR against the same `dev` branch.
+
+### Added
+
+- **New module: `classify/heuristic.py`** -- pure-function port of the L1/L2/L3
+  rules documented at `skills/bicameral-ingest/SKILL.md` lines 178-217. Single
+  public entrypoint `classify(description, source="") -> (level, rationale)`.
+  Deterministic, no IO, no LLM, no network. Regression-tested against the
+  7 fixtures at `tests/fixtures/ingest_level_classification/` (7/7 pass).
+- **New helper: `ledger.queries.update_decision_level(client, decision_id,
+  level)`** -- single-row write helper, sibling of `update_decision_status`.
+  Idempotent. Includes defensive `_DECISION_ID_RE` shape validation
+  (`^decision:[A-Za-z0-9_]+$`) before SurrealQL interpolation
+  (audit S1 defense-in-depth) and a `_VALID_LEVELS` membership check.
+  Raises `DecisionNotFound` when the row does not exist.
+- **New MCP primitives** (two tools, NOT a bulk wrapper):
+  - `bicameral.list_unclassified_decisions(decision_ids?)` -- read-only.
+    Returns `proposals[]` with `proposed_level`, `rationale`, and
+    `confidence` ("low" when the heuristic defaulted with no signal).
+  - `bicameral.set_decision_level(decision_id, level, rationale?)` --
+    single-row write, idempotent. Errors come back structured
+    (`{ok: false, error: ...}`) rather than raised, so agents recover
+    per-row without aborting the loop.
+- **New contracts**: `UnclassifiedProposal`,
+  `ListUnclassifiedDecisionsResponse`, `SetDecisionLevelResponse`.
+- **New CLI: `bicameral-mcp-classify`** (entrypoint at `cli.classify:main`).
+  Default is dry-run (prints a proposal table); `--apply` writes the
+  proposed levels via the same `update_decision_level` helper. Progress
+  output every 100 rows for large batches. Reuses the heuristic and the
+  ledger helper -- one write path, three callers (CLI, MCP tool, future
+  dashboard endpoint).
+
+### Closes
+
+#77
+
+## v0.16.1 -- Dashboard decision_level surfacing (#76 part 1)
+
+Read-side UI for `decision_level`. The pre-existing L1/L2/L3 badges
+(shipped in #71 / CodeGenome Phase 1+2) are preserved; this PR adds the
+missing amber **Unclassified** state for rows where `decision_level` is
+NULL plus a top-of-page filter dropdown so reviewers can scope the
+ledger view to a single level (or to the unclassified backlog).
+
+### Added
+
+- `.lvl-unclassified` CSS class in `assets/dashboard.html` -- amber
+  (`rgb(249, 115, 22)`) badge that pairs visually with the existing
+  L1/L2/L3 family.
+- Rendering branch in `renderDec` for null `decision_level`: emits a
+  `lvl-unclassified` badge labeled `Unclassified` and stamps the row
+  with `data-level="unclassified"`.
+- Each rendered decision row now carries
+  `data-level="L1"|"L2"|"L3"|"unclassified"` and the
+  `decision-row` class so client-side filters can target it.
+- `<select id="lvl-filter">` in the topbar with five options
+  (All / L1 / L2 / L3 / Unclassified) wired to a new
+  `applyLevelFilter(value)` JS helper that toggles row visibility via
+  `style.display`.
+- `tests/test_dashboard_unclassified_rendering.py` -- six HTML-pattern
+  assertions covering the CSS rule, the render branch, the dropdown
+  markup, and the filter function. The dashboard render path is inline
+  JS in the HTML template, so the tests assert against the
+  source-of-truth template rather than booting a DOM.
+
+### Deferred to part 2
+
+- Inline-edit POST endpoint (Phase 6 of the plan). It calls
+  `ledger.queries.update_decision_level`, which lands in the sibling
+  classifier PR (#77). Part 2 ships once that helper is on `dev`.
+
+### Closes
+
+Refs #76 (part 1 of 2)
+
+## v0.15.0 — Preflight telemetry capture loop (pieces 1–4) — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+First slice of the failure-mode triage workflow from #65. Adds a local-only,
+**default-off** capture loop that records bicameral.preflight events plus
+downstream tool engagement, attributable per-call via a new ``preflight_id``.
+The data is for self-triage of false fires / silent misses; it never leaves
+the user's machine and is not part of the existing PostHog relay path.
+
+### Added
+
+- **New module: `preflight_telemetry.py`** (top-level, sibling of
+  `telemetry.py` — they are independent capture systems). Provides:
+  - `_get_or_create_salt()` — per-install salt at `~/.bicameral/salt`,
+    `os.urandom(32)`, mode `0o600` on POSIX. Race-safe init: `os.O_EXCL`
+    create with a `FileExistsError` fallback that reads the winner's
+    bytes (audit MF1 inline fix).
+  - `hash_topic(topic)` and `hash_file_paths(paths)` — salted SHA-256
+    truncated to 16 hex chars (~64 bits). `hash_file_paths` is
+    order-independent so `["a.py","b.py"]` and `["b.py","a.py"]` collide
+    by design.
+  - `new_preflight_id()` — fresh UUIDv4.
+  - `write_preflight_event(...)` — JSONL append at
+    `~/.bicameral/preflight_events.jsonl`, mode `0o600`.
+  - `write_engagement(...)` — JSONL append at
+    `~/.bicameral/engagements.jsonl`, mode `0o600`. Falls back to
+    subset-match attribution against recent preflight events when no
+    explicit `preflight_id` is supplied.
+  - `_maybe_rotate(path)` — rotates at 50 MB or 30 days, keeps the most
+    recent 5 rotations. Uses `os.replace` (atomic on Windows + POSIX).
+- **`preflight_id` plumb-through** — new optional `str | None` field on
+  `PreflightResponse`, `LinkCommitResponse`, `BindResponse`, and
+  `RatifyResponse`. The `update.py` handler returns dicts and now adds a
+  `preflight_id` key to every return shape (audit S3 — 11 sites). Each
+  affected handler (`handle_link_commit`, `handle_bind`, `handle_ratify`,
+  `handle_update`) gains a keyword-only `preflight_id: str | None = None`
+  parameter.
+- **MCP tool inputSchema** — `preflight_id` (optional string) added to
+  `bicameral.preflight`, `bicameral.link_commit`, `bicameral.bind`,
+  `bicameral.update`, `bicameral.ratify`. Existing skills that don't pass
+  it keep working unchanged.
+- **Tests** — `tests/test_preflight_telemetry.py` (19 cases covering
+  salt, hash, writers, rotation, race-loser MF1) and
+  `tests/test_preflight_id_plumbing.py` (9 cases covering the response
+  field on each affected handler).
+
+### Privacy stance
+
+- **Opt-in.** Default is OFF. Set `BICAMERAL_PREFLIGHT_TELEMETRY=1` to
+  capture; unsetting it makes every writer a no-op.
+- **Hashed by default.** Topic and file_paths are stored as 16-char
+  salted SHA-256 prefixes. Set `BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1` to
+  additionally store plaintext — separate, explicit opt-in.
+- **`surfaced_ids` are written raw.** They are opaque ledger
+  `decision_id` strings, already non-PII. Hashing them would defeat the
+  triage join with `failure_review.jsonl` (the only useful join).
+  Documented as an invariant in the module docstring.
+- **Local-only.** All files live under `~/.bicameral/`, mode `0o600`.
+  Data never leaves the machine; this is a separate path from the
+  PostHog relay in `telemetry.py`.
+- **Bounded retention.** 50 MB rolling cap per file; 30-day mtime
+  ceiling; keep last 5 rotations.
+
+### Out of scope (deferred to follow-up plans)
+
+- **Piece 5 — SessionEnd reconciliation skill** (#65-pt2). Reads the
+  JSONL files, classifies entries as `suspected_miss` /
+  `suspected_false_fire` / `normal`, writes `failure_review.jsonl`.
+- **Piece 6 — Triage CLI + redaction** (#65-pt3). `bicameral-mcp triage`
+  CLI for labeling failure rows; promotion to
+  `tests/eval/real_dataset.jsonl` requires explicit redaction.
+
+### Closes
+
+#65 (pieces 1–4 only — pieces 5–6 tracked separately)
+
+## v0.14.0 — Local-only telemetry counters + usage summary + first-boot consent — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Privacy-first observability foundation. Adds a local-only counter sink
+that runs alongside (not replacing) the existing network relay, a new
+`bicameral.usage_summary` MCP tool that aggregates ledger and counter
+state into actionable percentages, and a non-blocking first-boot notice
+so users upgrading to this binary see the telemetry policy before any
+data flows.
+
+### Added
+
+- **`local_counters.py`** (#39) — append-only JSONL sink at
+  `~/.bicameral/counters.jsonl`. Records only `{tool_name, delta=1, ts}`
+  per call. Mode `0o600` on POSIX; thread-safe; no network egress.
+  Always-on regardless of network telemetry consent — counters are
+  local introspection, distinct from the relay. Kill-switch:
+  `BICAMERAL_LOCAL_COUNTERS=0`. API: `increment(tool_name)` and
+  `read_counters() -> dict[str, int]`.
+- **`consent.py`** (#39) — owns `~/.bicameral/consent.json`,
+  `telemetry_allowed()` predicate, and `notify_if_first_run()`. Marker
+  shape: `{telemetry, policy_version, acknowledged_at, acknowledged_via}`
+  with `acknowledged_via` distinguishing `"wizard"` (explicit choice)
+  from `"first_boot_notice"` (passive ack). `POLICY_VERSION` constant
+  re-fires the notice for everyone once when telemetry policy changes.
+- **`bicameral.usage_summary`** MCP tool (#42) — aggregate readout over
+  the last N days (default 7). Returns ingest/bind call counts (from
+  the local counters file), decision counts by status (from ledger),
+  reflected/drift percentages, cosmetic-drift percentage (from
+  compliance_check verdicts), and error rate. Privacy-preserving:
+  aggregate counts and floats only.
+- **First-boot consent notice** — non-blocking, fires once per
+  `policy_version` via stderr (always) and MCP `notifications/message`
+  (when an active session is available). Server keeps running; if
+  marker write fails, notice is logged at debug and the server
+  continues. Test escape hatch: `BICAMERAL_SKIP_CONSENT_NOTICE=1`.
+
+### Changed
+
+- **`telemetry.send_event` now uses `consent.telemetry_allowed()`** as
+  the single gating predicate. Behavior preserved for users without a
+  marker (default-on); newly opted-out users (marker says `disabled`
+  via the wizard) suppress the relay even when env var is unset.
+- **`telemetry.send_event` always increments the local counter** before
+  the relay path — never raises, wrapped in try/except. Counter
+  failure cannot affect the caller; relay path runs independently.
+- **`setup_wizard._select_telemetry`** now calls
+  `consent.write_consent(via="wizard")` after the user's choice. Hard
+  fails (raises `OSError`) if the marker cannot be written — guarantees
+  a "no" answer never silently leaves telemetry on.
+- **`server.serve_stdio`** calls `consent.notify_if_first_run()` once
+  during startup. Wrapped in try/except — startup is never blocked by
+  notice machinery.
+
+### CI
+
+- `BICAMERAL_SKIP_CONSENT_NOTICE: "1"` added to the test job env in
+  `.github/workflows/test-mcp-regression.yml` so test runs do not emit
+  notices into job logs.
+- `tests/conftest.py` adds a session-scoped autouse fixture that
+  reroutes `~/.bicameral/` to a per-session tmp dir and sets the skip
+  env var. Stdlib only — no third-party fixture plugin.
+
+### Closes
+
+#39, #42.
+
+## v0.13.0 — CodeGenome Phase 4 (#61) — semantic drift evaluation in `resolve_compliance` (M3) — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Final PR in the three-phase CodeGenome rollout (issues #59 / #60 /
+#61). Adds a deterministic cosmetic-vs-semantic classifier that
+auto-resolves drifted regions whose change is structurally cosmetic
+(docstrings, comments, import re-order, whitespace, signature- and
+neighbor-equivalent edits) BEFORE the caller LLM is asked for a
+verdict. Cuts noise on the M3 metric. Default behavior is
+**unchanged** unless callers opt in via `BICAMERAL_CODEGENOME_ENHANCE_DRIFT`.
+
+### Added
+
+- **Drift classifier** (`codegenome/drift_classifier.py`,
+  `codegenome/drift_service.py`) — issue-mandated weighted scoring
+  (signature 0.30, neighbors 0.25, diff_lines 0.30, no_new_calls
+  0.15). Verdict: ≥0.80 cosmetic (auto-resolve), ≤0.30 semantic, else
+  uncertain (caller LLM still decides, with a structured hint).
+- **Multi-language line categorizers** (`codegenome/_line_categorizers/`)
+  — Python, JavaScript, TypeScript, Go, Rust, Java, C#. Per-language
+  rules for docstring / comment / import / signature recognition.
+- **Call-site extractor** (`code_locator/indexing/call_site_extractor.py`)
+  — sibling of `symbol_extractor`; extracts `set[str]` of called
+  callable names per language for the `no_new_calls` signal.
+- **Schema v14** — `compliance_check` table redefined with
+  `CHANGEFEED 30d INCLUDE ORIGINAL`; new `semantic_status` field
+  (option<string>, ASSERT enum
+  `['semantically_preserved', 'semantic_change']`); new
+  `evidence_refs` field (array<string>). Additive migration
+  (`_migrate_v13_to_v14`).
+- **`PendingComplianceCheck.pre_classification`** — typed
+  `PreClassificationHint | None` field. Populated when the
+  classifier scored the change in the uncertain band; carries
+  `verdict`, `confidence`, per-signal contributions, and
+  `evidence_refs`. Advisory hint for the caller LLM.
+- **`ComplianceVerdict.semantic_status` + `.evidence_refs`** —
+  optional fields on caller verdicts. Persisted to
+  `compliance_check.semantic_status` and
+  `compliance_check.evidence_refs` for the audit trail.
+- **`ResolveComplianceAccepted.semantic_status`** — echoes the
+  caller's claim through the response.
+- **`LinkCommitResponse.auto_resolved_count`** — number of regions
+  the classifier auto-resolved as cosmetic in this commit's sweep.
+
+### Changed
+
+- `_run_drift_classification_pass` runs after `_run_continuity_pass`
+  in `handlers/link_commit.py`, sharing the same
+  `cg_config.enhance_drift` flag (one feature, one toggle).
+- `handlers/resolve_compliance.py` accepts and persists the new
+  optional verdict fields.
+- `skills/bicameral-sync/SKILL.md` documents the
+  `auto_resolved_count`, `pre_classification` hint, and the
+  optional `semantic_status` + `evidence_refs` on caller verdicts.
+
+### Schema compatibility
+
+- v13 → v14 (additive); rolling upgrade safe.
+- v14 = "0.13.0" placeholder; release-eng pins final value at PR merge.
+
+### M3 benchmark
+
+`tests/test_m3_benchmark.py` runs a 30-case corpus (Python 12 + JS 3
++ TS 3 + Go 3 + Rust 3 + Java 3 + C# 3) through the classifier.
+False-positive rate (semantic mis-classified as cosmetic) on the
+corpus: **0%** (target: < 5%).
+
+---
+
+## v0.12.0 — CodeGenome Phase 3 (#60) — continuity evaluation in `link_commit` — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
+
+Second PR in the three-phase CodeGenome rollout (issues #59 / #60 / #61).
+Adds the per-region continuity matcher: when a drifted region's identity
+moved or was renamed, the bind is auto-redirected to the new location
+before the caller LLM is asked for a verdict. Default behavior is
+**unchanged** unless callers opt in via the new `BICAMERAL_CODEGENOME_ENHANCE_DRIFT`
+flag.
+
+### Added
+
+- **Continuity matcher** (`codegenome/continuity.py`,
+  `codegenome/continuity_service.py`) — deterministic 4-signal scoring
+  (signature_hash, neighbors Jaccard, name match, kind) with
+  per-region resolution and 7-step ledger write sequence
+  (compute_identity → upsert_code_region → upsert_subject_identity
+  → write_subject_version → relate_has_version → write_identity_supersedes
+  → update_binds_to_region).
+- **Schema v12** — new `subject_version` table; `identity_supersedes`
+  edge; `subject_identity.neighbors_at_bind` field. Additive migration
+  (`_migrate_v11_to_v12`).
+- **`LinkCommitResponse.continuity_resolutions`** — additive optional
+  field; populated when `enhance_drift` is enabled.
+- **9 new ledger queries** + adapter wrappers:
+  `relate_has_version`, `write_subject_version`, `write_identity_supersedes`,
+  `update_binds_to_region`, `create_code_region`, `get_region_metadata`,
+  expanded `link_decision_to_subject` (now carries `region_id`),
+  `find_subject_identities_for_decision`.
+- **PR #73 review hardening** (CodeRabbit + Devin):
+  - Fixed silent `AttributeError` in `_resolve_symbol_id_for_span`
+    (`sqlite_db_path` typo) that made neighbor signal permanently zero
+    in production.
+  - Reused `self._db` handle in neighbor lookup (no per-call
+    SQLite open/leak).
+  - Wrapped `update_binds_to_region` DELETE+RELATE in BEGIN/COMMIT
+    transaction.
+  - Added partial-bind rollback on edge-write failure in
+    `_persist_subject_and_identity`.
+  - `link_decision_to_subject` now carries originating `region_id` on
+    the `about` edge so multi-region decisions don't flatten subjects.
+  - Replaced the `upsert_code_region` adapter wrapper with a
+    `create_code_region`-backed implementation so continuity redirects
+    always target a distinct new region id (no in-place clobber).
+  - `DriftContext` now seeded with the bound region's actual span +
+    identity_type via `get_region_metadata` (was hardcoded to
+    `"unknown"`/`0,0`, dropping 20% of the continuity score).
+  - Pydantic `confidence: float` constrained to `[0.0, 1.0]` via
+    `Field(ge=0.0, le=1.0)`.
+
+### Schema compatibility
+
+- v11 → v12 (additive); rolling upgrade safe.
+
+---
+
 ## v0.11.0 — CodeGenome Phase 1+2 (#59) — adapter boundary + identity records — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Foundation PR for the three-phase CodeGenome rollout (issues #59 / #60 / #61).

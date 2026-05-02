@@ -20,6 +20,7 @@ This is the empirical recall measurement for the catalog's skill-layer
 miss/false-fire rows (M1-M4, FF1, FF3 in the catalog). A failure here is
 real signal: the LLM did not recover the failure mode the row models.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,7 +40,6 @@ from _skill_judge import (  # noqa: E402  (sibling module)
     fixture_exists,
     judge_relevance,
 )
-
 
 DATASET = Path(__file__).parent / "preflight_skill_dataset.jsonl"
 

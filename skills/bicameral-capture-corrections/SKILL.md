@@ -21,6 +21,46 @@ Two modes:
 
 ---
 
+## Telemetry
+
+> **Guard**: Only call `skill_begin` and `skill_end` if telemetry is enabled. Telemetry is enabled by default; disabled by setting `BICAMERAL_TELEMETRY=0` (or `false`/`off`/`no`). If disabled, skip both calls and omit all `diagnostic` tracking.
+
+**At skill start** (before any tool calls):
+```
+bicameral.skill_begin(skill_name="bicameral-capture-corrections", session_id=<uuid4>,
+  rationale="<one-liner: why triggered — e.g. 'SessionEnd hook — scanning full transcript' or 'in-session scan via preflight'>")
+```
+
+**At skill end** (after all work is complete):
+```
+bicameral.skill_end(skill_name="bicameral-capture-corrections", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored>",
+  diagnostic={
+    g11_corrections_turns_scanned: N,
+    g11_corrections_prefilter_retained: N,
+    g11_corrections_classified_ask: N,
+    g11_corrections_classified_mechanical: N,
+    g11_corrections_classified_not: N,
+    g11_corrections_dedup_removed: N,
+    g11_user_overrode: N,   # ask corrections user declined — labeled precision signal
+  })
+```
+
+Pass `invocation_mode` as a top-level string kwarg (not inside `diagnostic`):
+- `invocation_mode="auto_ingest"` — fired by SessionEnd hook with `--auto-ingest`
+- `invocation_mode="manual"` — invoked directly by the user
+
+`error_class` values (pass only when `errored=true`): `ledger_empty`, `user_abort`, `other`.
+
+**In-session mode** (invoked by preflight step 3.5): emit the same `skill_end` call
+but populate only the fields available in the shorter scan scope:
+`g11_corrections_turns_scanned`, `g11_corrections_prefilter_retained`,
+`g11_corrections_classified_ask`, `g11_corrections_classified_mechanical`,
+`g11_corrections_classified_not`, `g11_corrections_dedup_removed`.
+Set `g11_user_overrode` to `0` (no batch confirmation in in-session mode).
+
+---
+
 ## Canonical scan-and-classify rubric
 
 <!-- This section is the authoritative source. bicameral-preflight/SKILL.md
@@ -89,7 +129,7 @@ re-examine the same turns repeatedly).
 user messages.
 
 **2. Mechanical corrections:**
-Auto-ingest silently via `bicameral.ingest(source="conversation", decisions=[...])`.
+Auto-ingest silently via `bicameral.ingest(source="agent_session", decisions=[...])`.
 No user question asked.
 
 **3. Ask corrections:**
@@ -129,37 +169,28 @@ in this session — don't re-ask about the same correction twice.
 **5. If no new uningested ask-corrections:**
 Exit silently. No output. The empty path is always silent.
 
-**6. If ≤ 5 new ask-corrections:**
-Present as a numbered list, ask for batch confirmation:
+**6. Surface corrections via `AskUserQuestion`.**
+Regardless of count, batch into groups of ≤ 4. For each batch call:
 
+```python
+AskUserQuestion({
+  question: "Bicameral found N uningested decision(s) from this session — ingest any? (batch M of K)",
+  multiSelect: True,
+  options: [
+    { label: "<one-liner paraphrase of correction>" },
+    ...  # one entry per correction in this batch
+  ]
+})
 ```
-Bicameral found N uningested decision(s) from this session:
 
-  1  <one-liner paraphrase of correction>
-  2  <one-liner paraphrase of correction>
-  ...
+No pre-selections — user opts in to each correction. Loop through all batches before proceeding to step 8. Collect all selected corrections across batches.
 
-Ingest all? [Y/n or pick: 1 3]  ›
-```
-
-**7. If > 5 new ask-corrections:**
-Show first 5, note the total:
-
-```
-Bicameral found N uningested decision(s). Showing 5:
-
-  1  <one-liner>
-  ...
-  5  <one-liner>
-  (+N more — run /bicameral:capture-corrections to review)
-
-Ingest all 5? [Y/n or pick: 1 3 5]  ›
-```
+`g11_user_overrode` = total corrections offered but NOT selected across all batches (offered − accepted).
 
 **8. For each confirmed decision, call:**
 ```
 bicameral.ingest(
-  source="conversation",
+  source="agent_session",
   decisions=[{
     "description": "<correction stated as a decision>",
     "source_ref": "session-correction-<YYYY-MM-DD>",

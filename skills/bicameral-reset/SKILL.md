@@ -1,93 +1,108 @@
 ---
 name: bicameral-reset
-description: Emergency trust recovery for a polluted or stale ledger. Fires when the user says "my ledger looks wrong", "nuke the ledger", "start over", "this is polluted", or otherwise loses trust in the current state. DRY RUN BY DEFAULT — always confirms with the user before the destructive call.
+description: Emergency trust recovery for a polluted or stale ledger. Fires when the user says "my ledger looks wrong", "nuke the ledger", "start over", "this is polluted", or otherwise loses trust in the current state. DRY RUN BY DEFAULT — always confirms with the user before the destructive call. Two modes: ledger (default, wipes DB rows only) and full (deletes entire .bicameral/ directory).
 ---
 
 # Bicameral Reset
 
-The fail-safe valve. When the user sees a clearly wrong anchor, a polluted drift report, or a ledger that doesn't match reality, they need a one-command path to recover trust. `bicameral.reset` wipes every row scoped to the current repo and returns a replay plan listing the `source_cursor` rows that existed before the wipe, so the user (or Claude) can re-run the original `bicameral_ingest` calls from scratch.
+The fail-safe valve. When the ledger gets polluted — bad ingest, stale groundings, or a session that went off the rails — `bicameral.reset` gives you a one-command recovery path.
+
+## Two modes
+
+| Mode | What's deleted | When to use |
+|------|----------------|-------------|
+| `wipe_mode="ledger"` (default) | Materialized SurrealDB rows only. Config, event files, and team history are preserved. Server stays live. | Bug recovery, bad ingest, polluted groundings. The safe default. |
+| `wipe_mode="full"` | The entire `.bicameral/` directory — ledger, `config.yaml`, team event JSONL files, everything. | Nuclear restart: switching repos, credential rotation, complete distrust of all prior decisions. |
 
 ## When to fire
 
 - User says *"my ledger looks polluted"*, *"this is wrong, start over"*, *"nuke the ledger"*, *"wipe it and retry"*
-- User complains about a clearly-wrong anchor and asks how to fix it
 - After a failed bulk ingest or a transcript that produced garbage groundings
 - When re-ingesting produces worse results than the first ingest (sign of cache poisoning)
 
+**Ask the user which mode they want** before running the dry run. If they say "start over completely" or "wipe everything including config" → `full`. Otherwise default to `ledger`.
+
 ## When NOT to fire
 
-- **Never fire automatically.** The user must explicitly ask for a reset.
-- Individual bad decisions should be removed via `bicameral_forget` (coming in a later release), NOT a full wipe.
-- If only one ingest looks bad, suggest re-running THAT ingest against the current ledger rather than wiping everything.
-- Drift reports that look wrong are usually a symptom of stale baselines — run `/bicameral:sync` first (full link_commit + compliance check) and only escalate to `bicameral.reset` if that doesn't help.
+- **Never fire automatically.** Reset is always user-initiated.
+- Drift reports that look wrong → run `/bicameral:sync` first, escalate to reset only if that doesn't help.
+- If only one ingest looks bad, suggest re-running that ingest rather than wiping everything.
 
-## The two-call pattern
+## The two-call pattern (always)
 
-`bicameral.reset` is ALWAYS called twice:
+1. **Dry run:** `bicameral.reset(wipe_mode=<mode>)` — returns the plan without touching state.
+2. **Confirm:** `bicameral.reset(wipe_mode=<mode>, confirm=True)` — only after explicit user yes.
 
-1. **Dry run (no flags needed):** `bicameral.reset()` — returns the wipe plan (`cursors_before`, `replay_plan`, `next_action`) without touching any data.
-2. **Confirm:** `bicameral.reset(confirm=True)` — only AFTER the user has seen the dry-run summary and explicitly said yes.
-
-Never skip the dry run. Never call `confirm=True` without reading the dry-run response aloud to the user and waiting for confirmation.
+Never skip the dry run. Never pass `confirm=True` without reading the dry-run summary to the user.
 
 ## How to present the dry-run response
 
-Show the user, verbatim:
+Show the user:
+- `wipe_mode` — which mode will be used
+- `bicameral_dir` — the directory that will be deleted (full mode only, **always show this**)
 - `cursors_before` — how many source_cursor rows would be wiped
 - `replay_plan` — the source_type / source_scope / last_source_ref triples
-- `next_action` — the suggested next command
 
-Then ask: *"Confirm by replying 'yes, reset' and I'll run it with `confirm=True`."* Wait for the literal confirmation.
+For **full mode**, read the warning verbatim to the user:
+
+> "This will delete the entire `.bicameral/` directory at `<bicameral_dir>`, including your config.yaml and all team event history. There is no undo. Confirm by replying 'yes, full reset'."
+
+For **ledger mode**, the standard confirmation is sufficient:
+
+> "Confirm by replying 'yes, reset' and I'll run it."
+
+Wait for explicit confirmation before calling with `confirm=True`.
 
 ## How to present the wipe response
 
 After a successful `confirm=True` call:
-- Confirm the wipe happened: `wiped: true`, `cursors_before: N`
-- Show the replay plan again so the user knows what to re-ingest
-- Walk the user through re-running each `bicameral_ingest` call, one source at a time
+- Confirm: `wiped: true`, `wipe_mode`, `cursors_before: N`
+- For full mode, confirm the directory was deleted: `bicameral_dir`
+- Show the replay plan and walk the user through re-ingesting each source
 
-If `wiped=false` and there's a `replay_errors` entry, the wipe failed before persisting. No data was destroyed. Surface the error and stop.
+If `wiped=false` with a `replay_errors` entry, the wipe failed before persisting — no data was destroyed. Surface the error and stop.
 
-## Example
+## Example — ledger mode (default)
 
-**User:** *"My ledger is showing this decision grounded to the wrong file — like totally wrong. I don't trust anything in here. Can we nuke it and start over?"*
+**User:** *"My ledger is showing totally wrong groundings. Can we wipe it and start over?"*
 
-**Claude:** *"That's what `bicameral.reset` is for. Let me check what we'd be wiping first."*
+**Claude:** *"That's `bicameral.reset`. Let me check what we'd be wiping first."*
 
-→ Calls `bicameral.reset()` (dry run)
+→ `bicameral.reset()` (dry run, wipe_mode="ledger")
 
-**Response:**
-```
-wiped: false
-cursors_before: 12
-replay_plan: [
-  {source_type: slack, source_scope: beta-tech, last_source_ref: 1776113809.330439},
-  {source_type: slack, source_scope: beta-strategy, last_source_ref: 1776107915.567609},
-  {source_type: notion, source_scope: default, last_source_ref: prd-calendar-v2},
-  ... (9 more)
-]
-next_action: Dry run only. Would wipe 12 source_cursor row(s) ...
-```
+**Claude to user:** *"I'd be wiping 12 recorded sources from the DB. Config and event history are preserved. Confirm by replying 'yes, reset'."*
 
-**Claude to user:** *"I'd be wiping 12 recorded sources: 2 Slack channels, 1 Notion page, and 9 others from the last week. After the wipe, I can walk you through re-ingesting each one to rebuild a clean ledger. Confirm by replying 'yes, reset' and I'll run it."*
+→ `bicameral.reset(confirm=True)` on user yes.
 
-**User:** *"Yes, reset."*
+## Example — full mode
 
-→ Calls `bicameral.reset(confirm=True)`
+**User:** *"Something is really wrong. Nuke everything — config, events, all of it."*
 
-**Response:**
-```
-wiped: true
-cursors_before: 12
-replay_plan: [... same as before ...]
-next_action: Ledger wiped for repo ... Re-run the original bicameral_ingest calls for each entry in replay_plan to repopulate.
-```
+**Claude:** *"That's `wipe_mode='full'`. Let me show you exactly what would be deleted."*
 
-**Claude to user:** *"Wiped. Here's the replay plan — we have 12 sources to re-ingest. Want to start with the most recent Slack channel (beta-tech), or do you have a different priority?"*
+→ `bicameral.reset(wipe_mode="full")` (dry run)
+
+**Claude to user:** *"This will delete the entire `.bicameral/` directory at `/Users/you/repo/.bicameral`, including your config.yaml and all team event history. There is no undo. Confirm by replying 'yes, full reset'."*
+
+→ `bicameral.reset(wipe_mode="full", confirm=True)` on explicit user yes.
 
 ## Safety rules
 
-1. **NEVER call `confirm=True` without an explicit user yes.** Even if the user said "nuke it" earlier in the conversation, the dry-run and confirmation flow still runs.
+1. **NEVER call `confirm=True` without an explicit user yes.** Even if they said "nuke it" earlier.
 2. **Never auto-fire.** Reset is always user-initiated.
-3. **Scoped by repo.** The wipe only touches rows for the current repo. Other repos sharing the same ledger instance are unaffected — reassure the user of this if they're working on multiple projects.
-4. **Replay is a handoff.** Bicameral does NOT store raw source documents. "Replay plan" means the caller still needs the original transcripts to re-ingest them.
+3. **Full mode: always show `bicameral_dir` from the dry-run response** before asking for confirmation.
+4. **Replay is a handoff.** Bicameral does not store raw source documents — the replay plan gives you the source refs, but you need the original transcripts to re-ingest.
+
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-reset", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user said ledger looks wrong start over'>")
+```
+
+**At skill end** (after confirm or after user cancels at dry-run):
+```
+bicameral.skill_end(skill_name="bicameral-reset", session_id=<stored_id>,
+  errored=<bool>, error_class="user_abort" if user cancelled else None)
+```

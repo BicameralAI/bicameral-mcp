@@ -80,12 +80,12 @@ The v0.10.x skill flow sends the entire ledger payload on every preflight (no BM
 
 | # | Metric | Measurement | Status |
 |---|---|---|---|
-| **C1** | `bicameral.history()` payload tokens | At N = 10, 100, 1000 feature groups (synthetic ledger) | baseline TBD |
-| **C2** | `bicameral.preflight()` response size | Region-anchored hits + HITL state | baseline TBD |
-| **C3** | Handler latency p50 / p95 | `bicameral.preflight` only (excludes skill LLM step) | baseline TBD |
+| **C1** | `bicameral.history()` payload tokens | At N = 10, 100, 1000 feature groups (synthetic ledger dict, JSON-serialized) | ✅ baselined (`tests/eval/cost_baseline.jsonl`) |
+| **C2** | `bicameral.preflight()` response size | Real `memory://` SurrealDB seeded with N synthetic features at N = 10, 100, 1000 | ✅ baselined |
+| **C3** | Handler latency p50 / p95 | Real `memory://` SurrealDB seeded with N synthetic features at N = 10, 100, 1000 — measures handler logic + SurrealDB query time + serialization (excludes skill LLM step) | ✅ baselined |
 | **C4** | End-to-end skill cycle | history + reasoning + preflight | baseline TBD (LLM-in-the-loop, phase 2) |
 
-Regression rule of thumb: warn if any future change increases C1 or C3 by > 20% without an explicit override label on the PR.
+Asymmetric ±20% regression rule with absolute noise floors (10 tokens / 0.5ms): a PR that increases any C1/C2/C3 metric beyond floor + threshold fails the advisory phase 3 step. Improvements never alert. Re-record with `BICAMERAL_EVAL_RECORD_BASELINE=1` and commit `tests/eval/cost_baseline.jsonl` when the new value is intentional.
 
 ---
 
@@ -112,10 +112,11 @@ Synthetic data tests what we *think* will fail; telemetry, once built, will surf
 Tick as work lands. Items are independent capabilities — order is suggestive, not enforced.
 
 **Cost / latency baseline (§C — phase 1):**
-- [ ] Token-counting harness for `bicameral.history()` payloads — synthetic ledgers at N=10, 100, 1000
-- [ ] Latency benchmark for `bicameral.preflight()` handler — p50, p95 on representative inputs
-- [ ] Baselines committed to `tests/eval/cost_baseline.jsonl`
-- [ ] Regression gate: warn if a PR increases C1 or C3 by > 20% without an explicit override label
+- [x] Token-counting harness for `bicameral.history()` payloads — synthetic ledgers at N=10, 100, 1000 (`tests/eval/_synthetic_ledger.py` + `_token_count.py`, tiktoken cl100k_base)
+- [x] Real-ledger seeder (`tests/eval/_seed_ledger.py`) — translates synthetic dict through `adapter.ingest_payload` so C2 + C3 measure against a real `memory://` SurrealDB
+- [x] Response-size and latency benchmark for `bicameral.preflight()` — real ledger seeded at each N; p50/p95 measured on real SurrealDB query path
+- [x] Baselines committed to `tests/eval/cost_baseline.jsonl` (C1/C2 platform-agnostic via `recorded_on=any` since tokens/bytes are deterministic; C3 per-platform on Darwin — Linux skip-when-missing, record on first run with `BICAMERAL_EVAL_RECORD_BASELINE=1` and commit)
+- [x] Regression gate: asymmetric ±20% rule with noise floors (10 tokens / 0.5ms); advisory CI step in `.github/workflows/preflight-eval.yml` phase 3
 
 **Handler-layer coverage (M5, M6, M7):**
 - [ ] Eval rows for M5 (no `file_paths` → no region surface; HITL still global)

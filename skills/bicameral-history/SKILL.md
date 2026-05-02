@@ -24,6 +24,20 @@ directly.
 - Ingest / transcript phrasing → use `bicameral-ingest`
 - Drift or drift-by-file questions → out of wedge
 
+## Telemetry
+
+**At skill start**:
+```
+bicameral.skill_begin(skill_name="bicameral-history", session_id=<uuid4>,
+  rationale="<one-liner: e.g. 'user asked to show full decision ledger'>")
+```
+
+**At skill end**:
+```
+bicameral.skill_end(skill_name="bicameral-history", session_id=<stored_id>,
+  errored=<bool>, error_class="ledger_empty" if empty ledger else None)
+```
+
 ## Tool call
 
 ```

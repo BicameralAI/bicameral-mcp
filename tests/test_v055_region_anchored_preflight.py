@@ -10,26 +10,47 @@ negatives on drift/grounding", pinned to some_module.py. The preflight topic is
 description, so ledger keyword search returns nothing. The caller passes
 file_paths=["some_module.py"]; the region-anchored arm looks up the pinned
 decision and surfaces it.
+
+Status (issue #69): the helpers ``_merge_decision_matches`` and
+``_region_anchored_preflight`` were removed in commit 12f25eb
+("v0.10.0 — hierarchical dashboard, history-based preflight, per-section
+ingest"). The preflight refactor dropped BM25 topic search entirely;
+preflight now reads ``bicameral.history()`` and uses LLM reasoning to
+identify relevant feature groups. The contracts these tests exercised
+no longer exist.
+
+The file is kept for git archaeology (the scenarios documented here
+informed the redesign) but is skipped at collection time so it doesn't
+break ``pytest`` runs. If/when an equivalent retrieval contract is
+introduced, port the relevant test bodies to exercise the new public
+API instead.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
-from contracts import (
+pytest.skip(
+    "Tests cover preflight contracts removed in 12f25eb (v0.10.0 — "
+    "BM25 topic search dropped; preflight now reads history()). "
+    "Kept for archaeology; rewrite against the new API if needed. "
+    "See issue #69.",
+    allow_module_level=True,
+)
+
+# Imports below intentionally retained but unreachable — they document the
+# original test file's surface area for future port-forward work.
+from types import SimpleNamespace  # noqa: E402, F401
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402, F401
+
+from contracts import (  # noqa: E402, F401
     DecisionMatch,
     LinkCommitResponse,
     SearchDecisionsResponse,
 )
-from handlers.preflight import (
-    _merge_decision_matches,
-    _region_anchored_preflight,
+from handlers.preflight import (  # noqa: E402, F401
     handle_preflight,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -82,12 +103,14 @@ def _make_ctx(
     queried.
     """
     ledger = MagicMock()
-    ledger.ingest_commit = AsyncMock(return_value={
-        "commit_hash": "abc123",
-        "new_decisions_linked": 0,
-        "drift_detected": [],
-        "symbols_indexed": 0,
-    })
+    ledger.ingest_commit = AsyncMock(
+        return_value={
+            "commit_hash": "abc123",
+            "new_decisions_linked": 0,
+            "drift_detected": [],
+            "symbols_indexed": 0,
+        }
+    )
     ledger.get_decisions_for_files = AsyncMock(return_value=region_decisions or [])
     ledger.search_by_query = AsyncMock(return_value=[])
 
@@ -221,9 +244,17 @@ async def test_preflight_fires_on_region_hit_no_keyword():
     )
 
     with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
+        patch(
+            "handlers.link_commit.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.search_decisions.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)
+        ),
     ):
         resp = await handle_preflight(
             ctx,
@@ -248,9 +279,17 @@ async def test_preflight_region_in_sources_chained():
     )
 
     with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
+        patch(
+            "handlers.link_commit.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.search_decisions.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)
+        ),
     ):
         resp = await handle_preflight(
             ctx,
@@ -287,9 +326,17 @@ async def test_preflight_topic_only_no_file_paths_still_works():
     )
 
     with (
-        patch("handlers.link_commit.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.search_decisions.handle_link_commit", new=AsyncMock(return_value=_make_link_commit_response())),
-        patch("handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)),
+        patch(
+            "handlers.link_commit.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.search_decisions.handle_link_commit",
+            new=AsyncMock(return_value=_make_link_commit_response()),
+        ),
+        patch(
+            "handlers.preflight.handle_search_decisions", new=AsyncMock(return_value=search_resp)
+        ),
     ):
         resp = await handle_preflight(ctx, topic="drifted stripe webhook handler")
 

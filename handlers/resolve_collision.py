@@ -21,14 +21,13 @@ project_decision_status (the double-entry authority) after each action.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from contracts import ResolveCollisionResponse
 from ledger.queries import (
     decision_exists,
     project_decision_status,
     relate_context_for,
-    relate_supersedes,
     update_decision_status,
 )
 
@@ -40,7 +39,7 @@ async def handle_resolve_collision(
     # Collision mode params
     new_id: str | None = None,
     old_id: str | None = None,
-    action: str | None = None,       # 'supersede' | 'keep_both'
+    action: str | None = None,  # 'supersede' | 'keep_both'
     # Context-for mode params
     span_id: str | None = None,
     decision_id: str | None = None,
@@ -55,14 +54,16 @@ async def handle_resolve_collision(
     client = inner._client
 
     _session_id = getattr(ctx, "session_id", None) or ""
-    _now_iso = datetime.now(timezone.utc).isoformat()
+    _now_iso = datetime.now(UTC).isoformat()
 
     # ── Collision mode ────────────────────────────────────────────────────
     if action is not None:
         if not new_id or not old_id:
             raise ValueError("collision mode requires new_id and old_id")
         if action not in ("supersede", "keep_both", "link_parent"):
-            raise ValueError(f"action must be 'supersede', 'keep_both', or 'link_parent', got {action!r}")
+            raise ValueError(
+                f"action must be 'supersede', 'keep_both', or 'link_parent', got {action!r}"
+            )
 
         if not await decision_exists(client, new_id):
             raise ValueError(f"No decision row for new_id={new_id}")
@@ -71,39 +72,22 @@ async def handle_resolve_collision(
             if not await decision_exists(client, old_id):
                 raise ValueError(f"No decision row for old_id={old_id}")
 
-            # Write supersedes edge (idempotent)
-            await relate_supersedes(
-                client, new_id, old_id,
-                confidence=1.0,
-                reason=f"human-confirmed supersession via resolve_collision session={_session_id}",
+            # Routes through TeamWriteAdapter when in team mode so the
+            # supersession is emitted as a decision_superseded.completed
+            # event. The adapter handles edge creation + frozen-signoff
+            # merge so the old decision's prior ratification record is
+            # preserved (drift sweeps skip signoff.state='superseded').
+            result = await ledger.apply_supersede(
+                new_id=new_id,
+                old_id=old_id,
+                signer=_session_id,
+                signoff_note="",
+                superseded_at=_now_iso,
+                session_id=_session_id,
             )
+            old_status = result.get("old_status", "superseded")
 
-            # Mark old decision as superseded in signoff (not status).
-            # Supersession is a human editorial decision, not a code-compliance observation.
-            # The old decision's status field retains its last code-compliance value
-            # and is frozen — drift sweeps skip decisions where signoff.state='superseded'.
-            # Merge with existing signoff so a prior ratification record is preserved.
-            _existing_rows = await client.query(
-                f"SELECT signoff FROM {old_id} LIMIT 1"
-            )
-            _old_signoff: dict = {}
-            if _existing_rows and isinstance(_existing_rows[0], dict):
-                _old_signoff = _existing_rows[0].get("signoff") or {}
-            await client.execute(
-                f"UPDATE {old_id} SET signoff = $s",
-                {"s": {
-                    **_old_signoff,
-                    "state": "superseded",
-                    "superseded_by": new_id,
-                    "superseded_at": _now_iso,
-                    "session_id": _session_id,
-                }},
-            )
-            old_status = "superseded"
-
-            logger.info(
-                "[resolve_collision] supersede: %s supersedes %s", new_id, old_id
-            )
+            logger.info("[resolve_collision] supersede: %s supersedes %s", new_id, old_id)
 
         elif action == "link_parent":
             # Cross-level parent-child link: write parent_decision_id on the child (new_id).
@@ -132,9 +116,7 @@ async def handle_resolve_collision(
 
         else:  # keep_both
             old_status = ""
-            logger.info(
-                "[resolve_collision] keep_both: %s and %s both remain", new_id, old_id
-            )
+            logger.info("[resolve_collision] keep_both: %s and %s both remain", new_id, old_id)
 
         # Clear collision_pending on new decision so it enters normal flow
         _proposed_signoff = {
@@ -166,7 +148,9 @@ async def handle_resolve_collision(
 
         state = "confirmed" if confirmed else "rejected"
         await relate_context_for(
-            client, span_id, decision_id,
+            client,
+            span_id,
+            decision_id,
             state=state,
             relevance_score=0.0,
             reason=f"human-{state} via resolve_collision session={_session_id}",
@@ -174,7 +158,9 @@ async def handle_resolve_collision(
 
         logger.info(
             "[resolve_collision] context_for: span=%s decision=%s state=%s",
-            span_id, decision_id, state,
+            span_id,
+            decision_id,
+            state,
         )
 
         return ResolveCollisionResponse(

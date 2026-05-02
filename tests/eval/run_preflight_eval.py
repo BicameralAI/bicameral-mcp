@@ -13,6 +13,7 @@ scenario from `docs/preflight-failure-scenarios.md`. This runner:
 Skill-layer scenarios (M1–M4, FF1, FF3 in the catalog) are deferred to
 phase 2 (LLM-in-the-loop) and are not included here.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +25,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 
 DATASET = Path(__file__).parent / "preflight_dataset.jsonl"
 CATALOG = Path(__file__).parent.parent.parent / "docs" / "preflight-failure-scenarios.md"
@@ -107,6 +107,7 @@ def _apply_setup(monkeypatch, setup: dict, ctx: SimpleNamespace) -> None:
     )
 
     import ledger.queries as lq
+
     monkeypatch.setattr(
         lq,
         "get_collision_pending_decisions",
@@ -124,8 +125,10 @@ def _isolate_handler_environment(monkeypatch, tmp_path):
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     import handlers.sync_middleware as sm
+
     monkeypatch.setattr(sm, "ensure_ledger_synced", AsyncMock(return_value=None))
     import handlers.preflight as pf
+
     monkeypatch.setattr(pf, "_should_show_product_stage", lambda: False)
 
 

@@ -8,7 +8,8 @@ All read operations pass through directly.
 from __future__ import annotations
 
 import logging
-from pathlib import Path
+
+from ledger.queries import get_canonical_id
 
 from .materializer import EventMaterializer
 from .writer import EventFileWriter
@@ -120,13 +121,16 @@ class TeamWriteAdapter:
     ) -> dict:
         """Emit bind event, then delegate to inner adapter."""
         await self._ensure_ready()
-        self._writer.write("bind_decision.completed", {
-            "decision_id": decision_id,
-            "file_path": file_path,
-            "symbol_name": symbol_name,
-            "start_line": start_line,
-            "end_line": end_line,
-        })
+        self._writer.write(
+            "bind_decision.completed",
+            {
+                "decision_id": decision_id,
+                "file_path": file_path,
+                "symbol_name": symbol_name,
+                "start_line": start_line,
+                "end_line": end_line,
+            },
+        )
         return await self._inner.bind_decision(
             decision_id=decision_id,
             file_path=file_path,
@@ -137,6 +141,76 @@ class TeamWriteAdapter:
             ref=ref,
             purpose=purpose,
         )
+
+    async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
+        """Emit decision_ratified event, then delegate to inner adapter.
+
+        The event payload carries ``canonical_id`` so cross-author replay
+        can resolve to the peer's local decision row.
+        """
+        await self._ensure_ready()
+        canonical_id = await get_canonical_id(self._inner._client, decision_id)
+        self._writer.write(
+            "decision_ratified.completed",
+            {
+                "canonical_id": canonical_id,
+                "decision_id": decision_id,
+                "signoff": signoff,
+            },
+        )
+        return await self._inner.apply_ratify(decision_id, signoff)
+
+    async def apply_supersede(
+        self,
+        new_id: str,
+        old_id: str,
+        signer: str = "",
+        signoff_note: str = "",
+        superseded_at: str = "",
+        session_id: str = "",
+    ) -> dict:
+        """Emit decision_superseded event, then delegate to inner adapter.
+
+        The event payload carries canonical_ids for both decisions so
+        cross-author replay can resolve to the peer's local rows.
+        """
+        await self._ensure_ready()
+        new_canonical = await get_canonical_id(self._inner._client, new_id)
+        old_canonical = await get_canonical_id(self._inner._client, old_id)
+        self._writer.write(
+            "decision_superseded.completed",
+            {
+                "new_canonical_id": new_canonical,
+                "old_canonical_id": old_canonical,
+                "new_id": new_id,
+                "old_id": old_id,
+                "signer": signer,
+                "signoff_note": signoff_note,
+                "superseded_at": superseded_at,
+                "session_id": session_id,
+            },
+        )
+        return await self._inner.apply_supersede(
+            new_id=new_id,
+            old_id=old_id,
+            signer=signer,
+            signoff_note=signoff_note,
+            superseded_at=superseded_at,
+            session_id=session_id,
+        )
+
+    async def wipe_all_rows(self, repo: str) -> None:
+        """Wipe the DB then reset the event watermark.
+
+        The event files themselves (.bicameral/events/{email}.jsonl) are the
+        source of truth and are NOT deleted. Resetting the watermark causes
+        the next connect() to re-materialize from all peer events, giving a
+        clean DB that reflects current peer state.
+        """
+        await self._ensure_ready()
+        await self._inner.wipe_all_rows(repo)
+        self._materializer._watermark_path.write_text("{}", encoding="utf-8")
+        logger.info("[team_reset] DB wiped and watermark reset for repo=%s", repo)
 
     def __getattr__(self, name: str):
         """Passthrough to inner adapter for any method not explicitly overridden."""

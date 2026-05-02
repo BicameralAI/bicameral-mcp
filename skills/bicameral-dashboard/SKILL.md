@@ -39,3 +39,4 @@ Do NOT fire on preflight, ingest, drift, or search prompts — those have dedica
 - Port is saved to `~/.bicameral/dashboard.port` for reference.
 - The HTML page auto-reconnects if the SSE stream is interrupted (e.g., sleep/wake).
 - To replace the placeholder UI with the full Svelte bundle, run `make dashboard` from the repo root after `pilot/demo2` is built.
+- Decision rows with `status === 'pending'` carry a tooltip nudging the user to run `/bicameral-sync` in their Claude Code session. The dashboard does not trigger compliance resolution itself — it surfaces the pending state and points at the skill that resolves it.

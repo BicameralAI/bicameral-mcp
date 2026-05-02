@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-13 tools:
+15 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -11,6 +11,8 @@
   bicameral.ratify            — product sign-off on a decision (double-entry ledger)
   bicameral.history           — read-only ledger dump grouped by feature area
   bicameral.dashboard         — launch live decision dashboard with SSE push updates
+  bicameral.list_unclassified_decisions — list decisions whose decision_level is NULL with proposals (#77)
+  bicameral.set_decision_level — set decision_level (L1/L2/L3) on a single decision (#77)
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   get_neighbors               — 1-hop structural graph traversal around a symbol
   extract_symbols             — tree-sitter symbol extraction from a source file
@@ -28,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from argparse import ArgumentParser
+from typing import Any
 
 import mcp.server.stdio
 from mcp.server import Server
@@ -36,21 +39,29 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
-from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
+from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
+from handlers.evaluate_governance import handle_evaluate_governance
 from handlers.gap_judge import handle_judge_gaps
+from handlers.history import handle_history
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
+from handlers.list_unclassified_decisions import handle_list_unclassified_decisions
 from handlers.preflight import handle_preflight
-from handlers.reset import handle_reset
 from handlers.ratify import handle_ratify
+from handlers.record_bypass import handle_record_bypass
+from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
-from handlers.history import handle_history
+from handlers.set_decision_level import handle_set_decision_level
 from handlers.update import get_update_notice, handle_update
-from dashboard.server import get_dashboard_server
+from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
+
+# In-process map of session_id → {t0, rationale} for skill timing.
+# Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
+_skill_sessions: dict[str, dict] = {}
 
 
 def _resolve_server_version() -> str:
@@ -67,14 +78,13 @@ def _resolve_server_version() -> str:
     for candidate in (here, here.parent):
         toml = candidate / "pyproject.toml"
         if toml.exists():
-            m = re.search(
-                r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE
-            )
+            m = re.search(r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE)
             if m:
                 return m.group(1)
 
     try:
         from importlib.metadata import version as _pkg_version
+
         return _pkg_version("bicameral-mcp")
     except Exception:
         return "0.1.0"
@@ -94,6 +104,14 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.resolve_collision",
     "bicameral.history",
     "bicameral.dashboard",
+    "bicameral.skill_begin",
+    "bicameral.skill_end",
+    "bicameral.feedback",
+    "bicameral.usage_summary",
+    "bicameral.list_unclassified_decisions",
+    "bicameral.set_decision_level",
+    "bicameral.evaluate_governance",
+    "bicameral.record_bypass",
     "validate_symbols",
     "get_neighbors",
     "extract_symbols",
@@ -124,6 +142,15 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "default": "HEAD",
                         "description": "Git commit hash or ref to sync (default: HEAD)",
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call. "
+                            "When supplied, the local preflight-telemetry capture loop "
+                            "(#65, opt-in via BICAMERAL_PREFLIGHT_TELEMETRY=1) attributes "
+                            "this engagement to that preflight."
+                        ),
                     },
                 },
             },
@@ -186,15 +213,39 @@ async def list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "decision_id": {"type": "string", "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)"},
-                                "file_path": {"type": "string", "description": "Repo-relative path to the file"},
-                                "symbol_name": {"type": "string", "description": "Function/class/method name"},
-                                "start_line": {"type": "integer", "description": "1-indexed start line (optional — omit to auto-resolve automatically)"},
-                                "end_line": {"type": "integer", "description": "1-indexed end line (optional)"},
-                                "purpose": {"type": "string", "description": "Optional one-line description for display"},
+                                "decision_id": {
+                                    "type": "string",
+                                    "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)",
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Repo-relative path to the file",
+                                },
+                                "symbol_name": {
+                                    "type": "string",
+                                    "description": "Function/class/method name",
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": "1-indexed start line (optional — omit to auto-resolve automatically)",
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": "1-indexed end line (optional)",
+                                },
+                                "purpose": {
+                                    "type": "string",
+                                    "description": "Optional one-line description for display",
+                                },
                             },
                             "required": ["decision_id", "file_path", "symbol_name"],
                         },
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
                     },
                 },
                 "required": ["bindings"],
@@ -215,6 +266,12 @@ async def list_tools() -> list[Tool]:
                         "enum": ["check", "apply"],
                         "description": "'check' to see if an update is available, 'apply' to install it",
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
+                    },
                 },
                 "required": ["action"],
             },
@@ -222,12 +279,15 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="bicameral.reset",
             description=(
-                "Fail-safe valve for a polluted ledger. Wipes every row scoped to the current repo "
-                "and returns a replay plan listing the source_cursors that existed before the wipe, "
-                "so the caller can re-run the original bicameral_ingest calls. "
+                "Fail-safe valve for a polluted or stale ledger. Returns a replay plan and, "
+                "if confirmed, wipes state according to wipe_mode. "
+                "wipe_mode='ledger' (default): wipes only the materialized decision ledger — "
+                "config and event files are preserved. Safe for bug recovery; server stays live. "
+                "wipe_mode='full': deletes the entire .bicameral/ directory (ledger + config.yaml "
+                "+ team event files). Nuclear restart. Always show the dry-run warning to the user "
+                "before confirming full mode. "
                 "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
-                "Pass confirm=true to actually wipe. Scoped by repo, so multi-repo ledger "
-                "instances stay isolated. "
+                "Pass confirm=true to actually wipe. "
                 "Slash alias: /bicameral:reset"
             ),
             inputSchema={
@@ -242,6 +302,18 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "default": True,
                         "description": "When true, include the replay plan alongside the wipe summary",
+                    },
+                    "wipe_mode": {
+                        "type": "string",
+                        "enum": ["ledger", "full"],
+                        "default": "ledger",
+                        "description": (
+                            "'ledger' (default): wipe materialized DB rows only — config and event "
+                            "files are preserved, server stays live. Use for bug/pollution recovery. "
+                            "'full': delete the entire .bicameral/ directory. Nuclear option — "
+                            "removes config, team event history, and all data. Always confirm "
+                            "with the user after showing the dry-run warning."
+                        ),
                     },
                 },
             },
@@ -290,6 +362,14 @@ async def list_tools() -> list[Tool]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "Optional list of teammates the user mentioned — used by the chained brief call",
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Reserved for future symmetry; bicameral.preflight currently "
+                            "generates the preflight_id itself when telemetry is enabled "
+                            "(#65)."
+                        ),
                     },
                 },
                 "required": ["topic"],
@@ -450,6 +530,12 @@ async def list_tools() -> list[Tool]:
                         "default": "",
                         "description": "Optional rationale or context for the sign-off (for audit)",
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
+                    },
                 },
                 "required": ["decision_id", "signer"],
             },
@@ -556,6 +642,257 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        # ── Skill telemetry bookends ──────────────────────────────────
+        Tool(
+            name="bicameral.skill_begin",
+            description=(
+                "Mark the start of a skill invocation for telemetry. Call this as the very "
+                "first step of any bicameral skill. Returns the session_id to pass to "
+                "bicameral.skill_end when the skill completes. No ledger writes — purely "
+                "a timing bookmark. Skill authors: pass a freshly generated UUID as session_id."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The skill being invoked (e.g. 'bicameral-ingest')",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "Caller-generated UUID that correlates this begin with the matching skill_end",
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "One-liner for why this skill was triggered (e.g. 'user pasted transcript and said track this'). Used for quality feedback analysis.",
+                    },
+                },
+                "required": ["skill_name", "session_id"],
+            },
+        ),
+        Tool(
+            name="bicameral.skill_end",
+            description=(
+                "Mark the end of a skill invocation and emit the skill-level telemetry event. "
+                "Call this as the very last step of any bicameral skill, passing the same "
+                "session_id returned by bicameral.skill_begin. Returns duration_ms for the "
+                "full skill wall-clock time. No ledger writes."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The skill being completed (must match skill_begin)",
+                    },
+                    "session_id": {
+                        "type": "string",
+                        "description": "The session_id from the matching bicameral.skill_begin call",
+                    },
+                    "errored": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "True if the skill exited due to an error or user-abort",
+                    },
+                    "error_class": {
+                        "type": "string",
+                        "enum": [
+                            "symbol_not_found",
+                            "collision_unresolved",
+                            "drift_mislabeled",
+                            "low_confidence_verdict",
+                            "ledger_empty",
+                            "grounding_failed",
+                            "user_abort",
+                            "other",
+                        ],
+                        "description": "Structured failure category when errored=true. Maps to desync catalog entries for prioritization.",
+                    },
+                    "diagnostic": {
+                        "type": "object",
+                        "description": (
+                            "Skill-level metrics. Field names are strictly validated server-side — "
+                            "unknown fields are dropped and echoed back in diagnostic_warning. "
+                            "bicameral-ingest fields: decisions_ingested, g2_candidates_evaluated, "
+                            "g2_dropped_hard_exclude, g2_dropped_l3, g2_dropped_gate1, g2_dropped_gate2, "
+                            "g2_dropped_implied, g2_parked_context_pending, g2_proposed_count, "
+                            "g2_l1_count, g2_l2_count, g2_user_overrode, g3_decisions_grounded, "
+                            "g3_decisions_ungrounded, g6_compliance_checks_received, g6_verdicts_compliant, "
+                            "g6_verdicts_drifted, g6_verdicts_not_relevant, g6_verdicts_cosmetic_autopass. "
+                            "bicameral-preflight fields: g9_history_features_count, g9_features_in_scope, "
+                            "g9_decisions_in_scope, g9_preflight_fired, g10_findings_drift_total, "
+                            "g10_findings_drift_cosmetic_autopass, g10_findings_drift_ask, "
+                            "g10_questions_surfaced, g10_user_overrode, g11_corrections_turns_scanned, "
+                            "g11_corrections_prefilter_retained, g11_corrections_classified_ask, "
+                            "g11_corrections_classified_mechanical, g11_corrections_classified_not, "
+                            "g11_corrections_dedup_removed, g11_user_overrode."
+                        ),
+                    },
+                },
+                "required": ["skill_name", "session_id"],
+            },
+        ),
+        Tool(
+            name="bicameral.feedback",
+            description=(
+                "Call this when the skill gets stuck or encounters an unexpected failure. "
+                "Records structured feedback that maps directly onto the desync scenario catalog: "
+                "what you were trying to do, what you attempted, and where you got blocked. "
+                "This feeds into the quality feedback loop — use it to report any failure that "
+                "doesn't fit neatly into an error_class. Do NOT call with vague feedback like "
+                "'it felt slow' or 'it didn't work' — the value is in the specific blocked step."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "skill": {
+                        "type": "string",
+                        "description": "The skill that encountered the issue (e.g. 'bicameral-preflight')",
+                    },
+                    "trying_to": {
+                        "type": "string",
+                        "description": "What the skill was trying to accomplish at the point of failure",
+                    },
+                    "attempted": {
+                        "type": "string",
+                        "description": "What steps were taken before hitting the block",
+                    },
+                    "stuck_on": {
+                        "type": "string",
+                        "description": "The specific obstacle — maps to a desync scenario catalog row",
+                    },
+                },
+                "required": ["skill", "trying_to", "attempted", "stuck_on"],
+            },
+        ),
+        Tool(
+            name="bicameral.usage_summary",
+            description=(
+                "Aggregate operational readout — counts and percentages over the last N days. "
+                "Returns ingest_calls, bind_calls_total, decision counts by status, "
+                "reflected/drift/cosmetic_drift percentages, and error_rate. "
+                "Privacy-preserving: aggregates only, no event rows, no user content. "
+                "Read-only over the local ledger plus the local-only counters file."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Window size in days (default 7). Pass 0 for tool-call counts only.",
+                        "default": 7,
+                    },
+                },
+            },
+        ),
+        # ── decision_level classification primitives (#77) ───────────
+        Tool(
+            name="bicameral.list_unclassified_decisions",
+            description=(
+                "List decisions whose decision_level is NULL, with a "
+                "heuristic-proposed level (L1/L2/L3) and a rationale per row. "
+                "Read-only. Use this to discover what needs classification "
+                "before calling bicameral.set_decision_level per row."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Restrict to these decision_ids; empty/omitted means all unclassified."
+                        ),
+                    },
+                },
+            },
+        ),
+        Tool(
+            name="bicameral.set_decision_level",
+            description=(
+                "Set decision_level (L1/L2/L3) on a single decision. "
+                "Idempotent. Use this after reviewing proposals from "
+                "bicameral.list_unclassified_decisions, or directly when "
+                "you already know the right level."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {"type": "string"},
+                    "level": {
+                        "type": "string",
+                        "enum": ["L1", "L2", "L3"],
+                    },
+                    "rationale": {
+                        "type": "string",
+                        "description": "Optional one-line audit note.",
+                    },
+                },
+                "required": ["decision_id", "level"],
+            },
+        ),
+        # ── Governance evaluation (#108-#110) ────────────────────────
+        Tool(
+            name="bicameral.evaluate_governance",
+            description=(
+                "Evaluate the deterministic escalation policy for a "
+                "single (decision, region) pair. Returns the policy "
+                "result without side effects. Use this to ask 'if "
+                "drift were detected here, what would Bicameral do?' "
+                "Read-only; engine is non-blocking by design."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision record id (e.g. 'decision:abc123').",
+                    },
+                    "region_id": {
+                        "type": "string",
+                        "description": "Optional code_region record id; omit for decision-level evaluation.",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Origin label for the synthetic finding (informational).",
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
+        # ── Governance HITL bypass (#112) ───────────────────────────
+        Tool(
+            name="bicameral.record_bypass",
+            description=(
+                "Record that the user bypassed a preflight HITL prompt. "
+                "Bypass does NOT mutate decision state -- it preserves "
+                "the unresolved status while recording that the user "
+                "chose to continue. Idempotent within a 1-hour recency "
+                "window (returns deduped=true on a within-window repeat). "
+                "The governance engine reads recent bypass events at "
+                "preflight call time and drops one tier of escalation."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "Decision record id whose HITL prompt the user bypassed.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "default": "user_bypassed",
+                        "description": "Free-form reason label for the audit trail.",
+                    },
+                    "state_preserved": {
+                        "type": "string",
+                        "default": "proposed",
+                        "description": "The decision's signoff_state at bypass time (recorded for audit).",
+                    },
+                },
+                "required": ["decision_id"],
+            },
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -619,12 +956,108 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     import json
     import time
 
-    from telemetry import record_event
-
     ctx = BicameralContext.from_env()
-    _t0 = time.monotonic()
-    _errored = False
-    _diagnostic: dict | None = None
+
+    # ── Skill telemetry bookends (no ledger, no sync) ─────────────────
+    if name == "bicameral.skill_begin":
+        session_id = arguments["session_id"]
+        _skill_sessions[session_id] = {
+            "t0": time.monotonic(),
+            "rationale": arguments.get("rationale", ""),
+        }
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "session_id": session_id,
+                        "skill": arguments["skill_name"],
+                        "status": "started",
+                    }
+                ),
+            )
+        ]
+
+    if name == "bicameral.skill_end":
+        from pydantic import ValidationError
+
+        from contracts import SKILL_DIAGNOSTIC_MODELS
+        from telemetry import record_skill_event
+
+        session_id = arguments["session_id"]
+        skill_name = arguments["skill_name"]
+        errored = arguments.get("errored", False)
+        error_class = arguments.get("error_class")
+        raw_diagnostic = arguments.get("diagnostic") or {}
+        session_data = _skill_sessions.pop(session_id, None)
+        t0 = session_data["t0"] if session_data else None
+        rationale = session_data.get("rationale") if session_data else None
+        duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
+
+        # Validate diagnostic against the per-skill Pydantic model.
+        # On unknown fields: record the clean validated dict to PostHog and
+        # echo unknown field names back so the LLM can correct them.
+        diagnostic_model = SKILL_DIAGNOSTIC_MODELS.get(skill_name)
+        unknown_fields: list[str] = []
+        if diagnostic_model and raw_diagnostic:
+            try:
+                validated = diagnostic_model.model_validate(raw_diagnostic)
+                diagnostic = validated.model_dump()
+            except ValidationError as exc:
+                unknown_fields = [
+                    e["loc"][0] for e in exc.errors() if e["type"] == "extra_forbidden" and e["loc"]
+                ]
+                # Strip unknowns and validate the remaining known fields.
+                known_raw = {k: v for k, v in raw_diagnostic.items() if k not in unknown_fields}
+                try:
+                    validated = diagnostic_model.model_validate(known_raw)
+                    diagnostic = validated.model_dump()
+                except ValidationError:
+                    diagnostic = known_raw
+        else:
+            diagnostic = raw_diagnostic or None
+
+        record_skill_event(
+            skill_name,
+            session_id,
+            duration_ms,
+            errored,
+            SERVER_VERSION,
+            diagnostic=diagnostic,
+            error_class=error_class,
+            rationale=rationale,
+        )
+        response: dict = {
+            "session_id": session_id,
+            "skill": skill_name,
+            "duration_ms": duration_ms,
+            "status": "recorded",
+        }
+        if unknown_fields:
+            response["diagnostic_warning"] = (
+                f"Unknown diagnostic field(s) were dropped and not recorded: "
+                f"{unknown_fields}. Use the exact field names from the skill spec."
+            )
+        return [TextContent(type="text", text=json.dumps(response))]
+
+    if name == "bicameral.feedback":
+        from telemetry import send_event
+
+        send_event(
+            SERVER_VERSION,
+            event_type="agent_feedback",
+            skill=arguments.get("skill", ""),
+            trying_to=arguments.get("trying_to", ""),
+            attempted=arguments.get("attempted", ""),
+            stuck_on=arguments.get("stuck_on", ""),
+        )
+        return [TextContent(type="text", text=json.dumps({"recorded": True}))]
+
+    if name == "bicameral.usage_summary":
+        from handlers.usage_summary import handle_usage_summary
+
+        data = await handle_usage_summary(ctx, days=int(arguments.get("days", 7)))
+        return [TextContent(type="text", text=json.dumps(data, indent=2))]
 
     # Auto-sync HEAD on every tool call except link_commit (which syncs itself).
     # Returns the LinkCommitResponse when a new commit was just processed so we
@@ -632,6 +1065,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     _sync_result = None
     if name not in ("bicameral.link_commit", "link_commit", "bicameral.update", "update"):
         from handlers.sync_middleware import ensure_ledger_synced
+
         _sync_result = await ensure_ledger_synced(ctx)
 
     try:
@@ -639,6 +1073,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await handle_link_commit(
                 ctx,
                 commit_hash=arguments.get("commit_hash", "HEAD"),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.ingest", "ingest"):
             result = await handle_ingest(
@@ -652,6 +1087,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 action=arguments["action"],
                 current_version=SERVER_VERSION,
                 repo_path=str(ctx.repo_path),
+                preflight_id=arguments.get("preflight_id"),
             )
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         elif name in ("bicameral.reset", "reset"):
@@ -659,6 +1095,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 ctx,
                 confirm=arguments.get("confirm", False),
                 replay=arguments.get("replay", True),
+                wipe_mode=arguments.get("wipe_mode", "ledger"),
             )
         elif name in ("bicameral.preflight", "preflight"):
             result = await handle_preflight(
@@ -676,10 +1113,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # Honest empty path — handler returns None when no matches.
             # Emit an empty envelope the agent can detect and skip on.
             if result is None:
-                return [TextContent(
-                    type="text",
-                    text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
-                )]
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
+                    )
+                ]
         elif name in ("bicameral.resolve_compliance", "resolve_compliance"):
             result = await handle_resolve_compliance(
                 ctx,
@@ -688,7 +1127,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 commit_hash=arguments.get("commit_hash"),
                 flow_id=arguments.get("flow_id"),
             )
-            _diagnostic = {"verdict_count": len(arguments.get("verdicts", []))}
         elif name in ("bicameral.ratify", "ratify"):
             result = await handle_ratify(
                 ctx,
@@ -696,6 +1134,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 signer=arguments["signer"],
                 note=arguments.get("note", ""),
                 action=arguments.get("action", "ratify"),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.resolve_collision", "resolve_collision"):
             result = await handle_resolve_collision(
@@ -711,6 +1150,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await handle_bind(
                 ctx,
                 bindings=arguments.get("bindings", []),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.history", "history"):
             result = await handle_history(
@@ -734,8 +1174,38 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if update_notice:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        elif name in (
+            "bicameral.list_unclassified_decisions",
+            "list_unclassified_decisions",
+        ):
+            result = await handle_list_unclassified_decisions(
+                ctx,
+                decision_ids=arguments.get("decision_ids") or None,
+            )
+        elif name in ("bicameral.set_decision_level", "set_decision_level"):
+            result = await handle_set_decision_level(
+                ctx,
+                decision_id=arguments["decision_id"],
+                level=arguments["level"],
+                rationale=arguments.get("rationale"),
+            )
+        elif name in ("bicameral.evaluate_governance", "evaluate_governance"):
+            result = await handle_evaluate_governance(
+                ctx,
+                decision_id=arguments["decision_id"],
+                region_id=arguments.get("region_id"),
+                source=arguments.get("source", "manual"),
+            )
+        elif name in ("bicameral.record_bypass", "record_bypass"):
+            result = await handle_record_bypass(
+                ctx,
+                decision_id=arguments["decision_id"],
+                reason=arguments.get("reason", "user_bypassed"),
+                state_preserved=arguments.get("state_preserved", "proposed"),
+            )
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse
+
             srv = get_dashboard_server()
             if not srv.running:
                 await srv.start(ctx_factory=BicameralContext.from_env)
@@ -779,11 +1249,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if created > 0:
                 grounded = stats.get("grounded", 0)
                 ungrounded = stats.get("ungrounded", 0)
-                _diagnostic = {
-                    "grounded_count": grounded,
-                    "ungrounded_count": ungrounded,
-                    "decisions_created": created,
-                }
                 payload["_guidance"] = (
                     f"Ingest complete: {created} decision(s) extracted "
                     f"({grounded} grounded to code, {ungrounded} ungrounded). "
@@ -812,22 +1277,17 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
     except (DestructiveMigrationRequired, SchemaVersionTooNew) as exc:
-        _errored = True
         action = (
             "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
             if isinstance(exc, DestructiveMigrationRequired)
             else "upgrade your binary: pipx upgrade bicameral-mcp"
         )
-        return [TextContent(
-            type="text",
-            text=json.dumps({"error": str(exc), "action": action}, indent=2),
-        )]
-    except Exception:
-        _errored = True
-        raise
-    finally:
-        _duration_ms = int((time.monotonic() - _t0) * 1000)
-        record_event(name, _duration_ms, _errored, SERVER_VERSION, _diagnostic)
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": str(exc), "action": action}, indent=2),
+            )
+        ]
 
 
 async def run_smoke_test() -> dict[str, object]:
@@ -870,6 +1330,16 @@ async def serve_stdio() -> None:
     dashboard_srv = get_dashboard_server()
     await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
 
+    # First-boot telemetry consent notice (non-blocking, fires once per
+    # policy_version). Stderr-only here; MCP-channel surfacing happens
+    # below once the session is live.
+    try:
+        from consent import notify_if_first_run
+
+        notify_if_first_run()
+    except Exception:
+        pass
+
     async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
         await server.run(
             read_stream,
@@ -886,50 +1356,81 @@ async def serve_stdio() -> None:
 
 
 def cli_main(argv: list[str] | None = None) -> int:
+    """Entry point — orchestrates parser build, registration, parsing, dispatch.
+
+    Decomposed from a 92-LOC monolith (#124) into _register_subparsers
+    (subparser wiring) + _dispatch (command routing). Each piece stays
+    well under the 40-LOC razor cap; new subcommands add a single line
+    to each helper.
+    """
     parser = ArgumentParser(description="Bicameral MCP server")
     subparsers = parser.add_subparsers(dest="command")
-
-    # setup subcommand
-    setup_parser = subparsers.add_parser(
-        "setup",
-        help="interactive setup — configure MCP client to use this server",
-    )
-    setup_parser.add_argument(
-        "repo_path",
-        nargs="?",
-        default=None,
-        help="path to the repo to analyze (auto-detected if omitted)",
-    )
-    setup_parser.add_argument(
-        "--history-path",
-        default=None,
-        metavar="PATH",
-        help="separate directory for .bicameral/ history storage (default: same as repo)",
-    )
-
-    parser.add_argument(
-        "--smoke-test",
-        action="store_true",
-        help="validate package wiring and print the registered MCP tools, then exit",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {SERVER_VERSION}",
-    )
+    _register_subparsers(parser, subparsers)
     args = parser.parse_args(argv)
+    return _dispatch(args)
 
+
+def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
+    """Wire all subparser definitions + top-level flags onto parser."""
+    subparsers.add_parser("config", help="interactive config editor")
+    subparsers.add_parser("reset", help="interactive ledger reset — wipes state with confirmation")
+    setup = subparsers.add_parser("setup", help="interactive setup — configure MCP client")
+    setup.add_argument("repo_path", nargs="?", default=None, help="repo path (auto-detected)")
+    setup.add_argument(
+        "--history-path", default=None, metavar="PATH", help="separate .bicameral/ dir"
+    )
+    setup.add_argument(
+        "--with-push-hook", action="store_true", help="also install pre-push drift hook (#48)"
+    )
+    subparsers.add_parser("branch-scan", help="surface bicameral drift for HEAD (pre-push hook)")
+    link = subparsers.add_parser(
+        "link_commit",
+        help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
+    )
+    link.add_argument(
+        "commit_hash", nargs="?", default="HEAD", help="commit hash to link (default: HEAD)"
+    )
+    link.add_argument(
+        "--quiet", action="store_true", help="suppress JSON output (still exits 0 on success)"
+    )
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {SERVER_VERSION}")
+
+
+def _dispatch(args: Any) -> int:
+    """Route parsed args to the appropriate handler. Returns exit code."""
+    if args.command == "config":
+        from setup_wizard import run_config_wizard
+
+        return run_config_wizard()
+    if args.command == "reset":
+        from setup_wizard import run_reset_wizard
+
+        return run_reset_wizard()
     if args.command == "setup":
         from setup_wizard import run_setup
-        return run_setup(args.repo_path, args.history_path)
 
+        return run_setup(
+            args.repo_path,
+            args.history_path,
+            with_push_hook=args.with_push_hook,
+        )
+    if args.command == "branch-scan":
+        from cli.branch_scan import main as branch_scan_main
+
+        return branch_scan_main([])
+    if args.command == "link_commit":
+        from cli.link_commit_cli import main as link_commit_main
+
+        return link_commit_main(args.commit_hash, quiet=args.quiet)
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
         for tool_name in result["tool_names"]:
             print(tool_name)
         return 0
-
     asyncio.run(serve_stdio())
     return 0
 

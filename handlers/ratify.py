@@ -10,13 +10,15 @@ that returns the existing signoff with was_new=False.
 No unratify. Rescinding ratification or rejection requires writing a new
 decision that supersedes the previous one — clean audit trail, no rollback.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from contracts import RatifyResponse
-from ledger.queries import decision_exists, project_decision_status, update_decision_status
+from ledger.queries import decision_exists, project_decision_status
+from preflight_telemetry import telemetry_enabled, write_engagement
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,8 @@ async def handle_ratify(
     signer: str,
     note: str = "",
     action: str = "ratify",
+    *,
+    preflight_id: str | None = None,
 ) -> RatifyResponse:
     """Set signoff on a decision.
 
@@ -58,18 +62,31 @@ async def handle_ratify(
     )
     existing_signoff = (rows[0].get("signoff") if rows else None) or None
 
-    if existing_signoff and isinstance(existing_signoff, dict) and existing_signoff.get("state") == target_state:
+    if (
+        existing_signoff
+        and isinstance(existing_signoff, dict)
+        and existing_signoff.get("state") == target_state
+    ):
         projected = await project_decision_status(client, decision_id)
+        if telemetry_enabled():
+            write_engagement(
+                session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
+                tool="bicameral.ratify",
+                decision_id=decision_id,
+                preflight_id=preflight_id,
+                file_paths=None,
+            )
         return RatifyResponse(
             decision_id=decision_id,
             was_new=False,
             signoff=existing_signoff,
             projected_status=projected,
+            preflight_id=preflight_id,
         )
 
     head_ref = getattr(ctx, "authoritative_sha", "") or ""
     session_id = getattr(ctx, "session_id", None) or ""
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     if action == "ratify":
         signoff = {
@@ -90,22 +107,31 @@ async def handle_ratify(
             "note": note,
         }
 
-    await client.query(
-        f"UPDATE {decision_id} SET signoff = $signoff",
-        {"signoff": signoff},
-    )
-
-    projected = await project_decision_status(client, decision_id)
-    await update_decision_status(client, decision_id, projected)
+    # Routes through TeamWriteAdapter when in team mode so the signoff
+    # change is emitted as a decision_ratified.completed event.
+    projected = await ledger.apply_ratify(decision_id, signoff)
 
     logger.info(
         "[ratify] decision=%s action=%s signer=%s projected_status=%s",
-        decision_id, action, signer, projected,
+        decision_id,
+        action,
+        signer,
+        projected,
     )
+
+    if telemetry_enabled():
+        write_engagement(
+            session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
+            tool="bicameral.ratify",
+            decision_id=decision_id,
+            preflight_id=preflight_id,
+            file_paths=None,
+        )
 
     return RatifyResponse(
         decision_id=decision_id,
         was_new=True,
         signoff=signoff,
         projected_status=projected,
+        preflight_id=preflight_id,
     )

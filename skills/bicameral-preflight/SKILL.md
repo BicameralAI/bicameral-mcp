@@ -75,6 +75,45 @@ Claude Code skill discovery can read it, while the Python module is
 the canonical source for the hook. Both must be edited together to
 evolve the trigger surface; future configurability will deduplicate.
 
+## Telemetry
+
+> **Guard**: Only call `skill_begin` and `skill_end` if telemetry is enabled. Telemetry is enabled by default; disabled by setting `BICAMERAL_TELEMETRY=0` (or `false`/`off`/`no`). If disabled, skip both calls and omit all `diagnostic` tracking.
+
+**At skill start** (before any tool calls):
+```
+bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
+  rationale="<one-liner: why triggered — e.g. 'user said implement Stripe webhook handler'>")
+```
+
+**At skill end**:
+
+> ⚠ **USE THESE EXACT FIELD NAMES.** The dashboard queries on `g9_*` / `g10_*` / `g11_*` prefixes. Substituting natural-language names silently drops the event from every dashboard panel. Copy the names below verbatim.
+
+```
+bicameral.skill_end(skill_name="bicameral-preflight", session_id=<stored_id>,
+  errored=<bool>, error_class="<if errored>",
+  diagnostic={
+    g9_history_features_count: N,
+    g9_features_in_scope: N,
+    g9_decisions_in_scope: N,
+    g9_preflight_fired: <bool>,
+
+    g10_findings_drift_total: N,
+    g10_findings_drift_cosmetic_autopass: N,
+    g10_findings_drift_ask: N,
+    g10_questions_surfaced: N,
+    g10_user_overrode: N,
+
+    g11_corrections_turns_scanned: N,
+    g11_corrections_prefilter_retained: N,
+    g11_corrections_classified_ask: N,
+    g11_corrections_classified_mechanical: N,
+    g11_corrections_classified_not: N,
+    g11_corrections_dedup_removed: N,
+    g11_user_overrode: 0,  # always 0 in preflight (in-session mode, no batch confirmation)
+  })
+```
+
 ## Steps
 
 ### 1. Read the full decision ledger
@@ -259,6 +298,82 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.
+
+### 5.4 Surface HITL clarification prompts (#112)
+
+If `response.hitl_prompts` is non-empty, the server has detected one
+or more decisions with an unresolved `signoff_state`. Each prompt
+already carries the question, the trigger label, and a closed option
+list. Render them via `AskUserQuestion`.
+
+**Trigger conditions** — a prompt is emitted whenever a surfaced
+decision's `signoff_state` is one of:
+
+- `proposed` — decision exists but no one has ratified it yet.
+- `ai_surfaced` — auto-extracted by an LLM, awaiting human review.
+- `needs_context` — decision text is unclear; asks for more.
+- `collision_pending` — two decisions appear to conflict.
+- `context_pending` — awaiting a span to ground it.
+
+Bypass is **mandatory and last** in every option list — assert
+`prompt.options[-1].kind == "bypass"` before rendering. Trust contract:
+Bicameral does NOT block work, the bypass option is always reachable.
+
+```python
+for prompt in response.hitl_prompts:
+    assert prompt.options[-1].kind == "bypass"
+    answer = AskUserQuestion({
+        "question": prompt.question,
+        "multiSelect": False,
+        "options": [
+            {"label": opt.label, "description": opt.kind}
+            for opt in prompt.options
+        ],
+    })
+    if answer.kind == "bypass":
+        bicameral.record_bypass(decision_id=prompt.decision_id)
+```
+
+**Bypass semantics**:
+
+- Bypass does NOT mutate decision state. The unresolved
+  `signoff_state` persists for future preflight surfaces.
+- Calling `bicameral.record_bypass(decision_id)` writes a
+  `preflight_prompt_bypassed` event to the local JSONL log
+  (`~/.bicameral/preflight_events.jsonl`). Idempotent within a 1-hour
+  recency window — repeat calls inside the window return
+  `deduped=true` without re-writing (V4 spam-bypass guard prevents
+  indefinite escalation suppression).
+- The governance engine reads recent bypass events and drops one
+  escalation tier (e.g. `escalate` → `warn`, `warn` → `context`) when
+  the same decision is resurfaced inside the recency window. This
+  acknowledges that the user has SEEN the unresolved state without
+  permanently silencing the finding.
+- Telemetry must be enabled (`BICAMERAL_PREFLIGHT_TELEMETRY=1`) for
+  bypass writes to persist; otherwise `record_bypass` returns
+  `recorded=false, deduped=false, reason="telemetry_disabled"` and the
+  engine sees no recency.
+
+### 5.5 Confirm finding relevance (ground truth for calibration)
+
+> **Guard**: Only run this step if guided mode is enabled (`guided: true` in `.bicameral/config.yaml`). In normal mode, skip and set `g10_user_overrode = 0`.
+
+After rendering the surfaced block, if any ask-findings were surfaced, call `AskUserQuestion` to let the user dismiss findings that are not relevant to the current task. Batch into groups of ≤ 4 findings per call; loop through batches if there are more than 4 total.
+
+```python
+AskUserQuestion({
+  question: "Any of these finding(s) not relevant to your current task?",
+  multiSelect: True,
+  options: [
+    { label: "<one-line summary>", description: "<category: drift | divergence | open_question | uningested>" },
+    ...  # one entry per ask-finding
+  ]
+})
+```
+
+- User selects items → those are dismissed. `g10_user_overrode` += count of dismissed findings.
+- User selects nothing → all findings treated as relevant. `g10_user_overrode = 0`.
+- `g10_questions_surfaced` = total ask-findings shown across all batches.
 
 After the surfaced block, **continue with the user's original request**.
 A one-line forward narration helps:
