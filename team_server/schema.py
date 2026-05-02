@@ -19,7 +19,7 @@ from ledger.client import LedgerClient
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _BASE_STMTS: tuple[str, ...] = (
     # workspace — one row per Slack workspace.
@@ -48,6 +48,7 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE FIELD content_hash           ON extraction_cache TYPE string",
     "DEFINE FIELD canonical_extraction   ON extraction_cache FLEXIBLE TYPE object DEFAULT {}",
     "DEFINE FIELD model_version          ON extraction_cache TYPE string",
+    "DEFINE FIELD classifier_version     ON extraction_cache TYPE option<string> DEFAULT 'legacy-pre-v3'",
     "DEFINE FIELD created_at             ON extraction_cache TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_extraction_cache_key ON extraction_cache FIELDS source_type, source_ref UNIQUE",
 
@@ -113,8 +114,30 @@ async def _migrate_v1_to_v2(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v2_to_v3(client: LedgerClient) -> None:
+    """Add classifier_version column with default for new rows; backfill
+    existing rows so SELECT returns a defined value, not the SurrealDB
+    NONE marker that would compare unequal to any real version string."""
+    try:
+        await client.query(
+            "DEFINE FIELD classifier_version ON extraction_cache "
+            "TYPE option<string> DEFAULT 'legacy-pre-v3'"
+        )
+    except Exception as exc:  # noqa: BLE001
+        if "already exists" not in str(exc).lower():
+            raise
+    # Unconditional backfill — idempotent: rows that already carry a
+    # classifier_version get the same value re-set; rows that pre-date
+    # the field (NONE per option<string>) get the literal default.
+    await client.query(
+        "UPDATE extraction_cache SET classifier_version = 'legacy-pre-v3' "
+        "WHERE classifier_version IS NONE"
+    )
+
+
 _MIGRATIONS: dict[int, Callable[[LedgerClient], Awaitable[None]]] = {
     2: _migrate_v1_to_v2,
+    3: _migrate_v2_to_v3,
 }
 
 

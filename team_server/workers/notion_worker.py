@@ -1,10 +1,8 @@
-"""Notion ingest worker - polls allowlist-via-share databases, runs
+"""Notion ingest worker — polls allowlist-via-share databases, runs
 canonical extraction, writes a peer-authored team_event per change.
 
-Idempotent: same (db_id, page_id) with unchanged content yields no new
-event. Per-database watermark is advanced monotonically as rows are
-ingested; partial failures stop watermark advancement at the last
-successfully-ingested row so the next poll resumes correctly.
+v3 cache contract: classifier_version="legacy-pre-v3" until pipeline
+integration (Phase 4) supplies the real heuristic version.
 """
 
 from __future__ import annotations
@@ -27,9 +25,6 @@ logger = logging.getLogger(__name__)
 
 Extractor = Callable[[str], Awaitable[dict]]
 SOURCE_TYPE = "notion_database_row"
-# write_team_event wraps this as f"team-server@{workspace_id}.bicameral";
-# we use the literal "notion" so the resulting author_email is
-# "team-server@notion.bicameral" (single bot per source).
 PEER_WORKSPACE_ID = "notion"
 
 
@@ -44,7 +39,7 @@ async def poll_once(
 
 
 async def _poll_database(
-    db_client: LedgerClient, token: str, db_id: str, extractor: Extractor
+    db_client: LedgerClient, token: str, db_id: str, extractor: Extractor,
 ) -> None:
     watermark = await _load_watermark(db_client, db_id)
     last_advanced = watermark
@@ -76,6 +71,7 @@ async def _ingest_row(
         source_type=SOURCE_TYPE,
         source_ref=source_ref,
         content_hash=content_hash,
+        classifier_version="legacy-pre-v3",
         compute_fn=lambda: extractor(text),
         model_version=INTERIM_MODEL_VERSION,
     )

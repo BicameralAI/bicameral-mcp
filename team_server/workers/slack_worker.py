@@ -2,8 +2,10 @@
 extraction (upsert-keyed by source_ref), writes a peer-authored
 team_event per change.
 
-Idempotent: same Slack message ts with unchanged content yields no new
-team_event row (the upsert returns changed=False on cache hit).
+v3 cache contract: upsert_canonical_extraction now requires
+classifier_version as a second-axis cache identity. Workers pass
+"legacy-pre-v3" until pipeline integration (Phase 4) supplies the
+real heuristic classifier_version.
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ async def _ingest_message(
         source_type="slack",
         source_ref=source_ref,
         content_hash=content_hash,
+        classifier_version="legacy-pre-v3",
         compute_fn=lambda: extractor(text),
         model_version=INTERIM_MODEL_VERSION,
     )

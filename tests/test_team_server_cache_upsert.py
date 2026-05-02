@@ -35,6 +35,7 @@ async def test_upsert_returns_extraction_and_changed_true_on_first_write():
             source_type="slack",
             source_ref="C1/1.0",
             content_hash="h1",
+            classifier_version="legacy-pre-v3",
             compute_fn=stub,
             model_version="interim-claude-v1",
         )
@@ -61,10 +62,14 @@ async def test_upsert_returns_changed_false_on_same_hash():
             return {"decisions": ["v1"]}
 
         await upsert_canonical_extraction(
-            client, "slack", "C1/2.0", "h2", stub, "interim-claude-v1"
+            client, source_type="slack", source_ref="C1/2.0",
+            content_hash="h2", classifier_version="legacy-pre-v3",
+            compute_fn=stub, model_version="interim-claude-v1",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, "slack", "C1/2.0", "h2", stub, "interim-claude-v1"
+            client, source_type="slack", source_ref="C1/2.0",
+            content_hash="h2", classifier_version="legacy-pre-v3",
+            compute_fn=stub, model_version="interim-claude-v1",
         )
         assert changed is False
         assert extraction == {"decisions": ["v1"]}
@@ -91,10 +96,14 @@ async def test_upsert_replaces_extraction_on_hash_change():
             return {"decisions": ["v2"]}
 
         await upsert_canonical_extraction(
-            client, "slack", "C1/3.0", "ha", stub_v1, "interim-claude-v1"
+            client, source_type="slack", source_ref="C1/3.0",
+            content_hash="ha", classifier_version="legacy-pre-v3",
+            compute_fn=stub_v1, model_version="interim-claude-v1",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, "slack", "C1/3.0", "hb", stub_v2, "interim-claude-v1"
+            client, source_type="slack", source_ref="C1/3.0",
+            content_hash="hb", classifier_version="legacy-pre-v3",
+            compute_fn=stub_v2, model_version="interim-claude-v1",
         )
         assert changed is True
         assert extraction == {"decisions": ["v2"]}
