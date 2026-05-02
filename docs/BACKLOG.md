@@ -4,9 +4,12 @@
 
 ### Security Blockers
 <!-- Format: - [ ] [S#] Description -->
-- [ ] [S1] No `SECURITY.md` in repo root — gold-standard incomplete.
+- [x] [S1] No `SECURITY.md` in repo root — gold-standard incomplete.
       Recommended next step: `/qor-repo-scaffold` for SECURITY.md +
-      vulnerability disclosure channel.
+      vulnerability disclosure channel. **(Resolved 2026-05-01 —
+      `SECURITY.md` authored at repo root with supported versions,
+      private vulnerability reporting, threat model, response SLA, and
+      safe-harbor sections; shadow-003 flipped addressed.)**
 
 ### Development Blockers
 <!-- Format: - [ ] [D#] Description -->

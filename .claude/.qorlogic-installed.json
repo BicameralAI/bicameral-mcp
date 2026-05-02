@@ -1,0 +1,236 @@
+{
+  "files": [
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\agent-architect.md",
+      "sha256": "afc6c8b146d65b52280aa4e77a6384f105de93ca22abf19db880c72ab4117239"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\build-doctor.md",
+      "sha256": "83e89d47916ed6b19b1477fae4df340e040f516770046fb91b9981206ea8cf64"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\documentation-scribe.md",
+      "sha256": "62f410a300cf22b3b7f3c5340e303f3d40dbe087f8c09fc09e06a2c0b4e2989b"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\learning-capture.md",
+      "sha256": "a2b3367fce94cdec68ea830baecf67d5a92cd9df622a77b61705ead3053de245"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\project-planner.md",
+      "sha256": "c94045b58785afee36b6030c758809e0e5406bd883eaf0c16ba42ac7fab90730"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-fixer.md",
+      "sha256": "86256eaba9c153d9512c187aa4b71c27e4f182becd34d48c8bc520493d62a4bb"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-governor.md",
+      "sha256": "d196b8d1c29fe92224f3315db566e252d1aceb92eb19dc7b936f29a452a9206d"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-judge.md",
+      "sha256": "af9915ab3580b7fbb1fa34436940a6058554fbc3b8ad332c9638493c926cb9ef"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-specialist.md",
+      "sha256": "79de4279661ee5a0c54358f96f4a4895455af2a390e6964f0cc7077d458a3e6b"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-strategist.md",
+      "sha256": "6fa306bd484be6a57fae3c8d43f0c613794ddf21d0a04bb29d806106ff5b882c"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-technical-writer.md",
+      "sha256": "bc3e697ba6c084bafc8588b3d7c6804606ec4a63143b578ba05102902c23aaa2"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\qor-ux-evaluator.md",
+      "sha256": "e7f32dcd64f4ab7b41330bbb143491f5cc65dfab1ac7562ef000e659de39a82b"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\agents\\system-architect.md",
+      "sha256": "b9a9e03c0ed8bc8fecee3b46edc88d03646e754d0f1b9d5e7e68672bb8f56564"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\log-decision.md",
+      "sha256": "34a9169d48dd06771f9fa8ffc622154ae5b2ff5059be7e33de2cbe35a2544e7d"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-ab-run\\references\\ab-subagent-prompt.md",
+      "sha256": "ff94f83fa11ed2110c0f47b3ce7c09cd69cb521541ca8190c1f4e67f7d528254"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-ab-run\\SKILL.md",
+      "sha256": "aa7b1632ff3daa1ab38f3add95a0b8c1e607ef1c851f3ef3cb12d686d78c4271"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-audit\\references\\adversarial-mode.md",
+      "sha256": "d6d16798bac2b2a91c7e424b46c2227a28c3559d45cc77b5d37f151f6bb14e48"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-audit\\references\\qor-audit-templates.md",
+      "sha256": "3938c68b89a09d6424e7ddcf49d7ebab96bb3d1a4f282d0ccb3cb178ba17f4b6"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-audit\\SKILL.md",
+      "sha256": "1f8231c7ca41e3b3872a83a4ddb34585f6909aa06db31b6598b988ac9eed654c"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-bootstrap\\references\\qor-bootstrap-templates.md",
+      "sha256": "d4e9770aa207600f0d27c6c6fc3cf13c3b14ec6e7af4e333e3a5501eb3d409bd"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-bootstrap\\SKILL.md",
+      "sha256": "4a237f6edc8388d5102c27cb9509461f0dac703c16f8370d83b9c4a311235915"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-debug\\SKILL.md",
+      "sha256": "8994857b50f843a3dc800c2cec7f2f62c6ff03b958eecb1e6dfd920adbeb1296"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-deep-audit\\SKILL.md",
+      "sha256": "52cc39eb9efc026c93dc4074308c30361564668a0e8e8f83cc95f3b24452850a"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-deep-audit-recon\\SKILL.md",
+      "sha256": "23164582f3b7d2f4d6f6b96c85794edf724f377f8e2143ec2b52583ba71922cf"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-deep-audit-remediate\\SKILL.md",
+      "sha256": "307546facb63d0321b64cb1427a403fd0f1f4abeea801a136b83ff72fd1bcc25"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-docs-technical-writing\\SKILL.md",
+      "sha256": "75b7e84c68c9296d772927ae2a66bb95aa9692f9dc10f48f082c143f930f28e4"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-document\\SKILL.md",
+      "sha256": "47614eebf44af1c896e40c1e92041540154f17fa9a6b351b849ef2122b724925"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-governance-compliance\\SKILL.md",
+      "sha256": "2945c12b9a93da86fdf8880f1a353a41f94b1fc4fbbadd3295f9c48b3be73648"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-help\\SKILL.md",
+      "sha256": "7c57eaa95b531199e4e400f680550df7656099e18cb54b0aa4dfb0f68be3ebd5"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-implement\\references\\qor-implement-patterns.md",
+      "sha256": "af8fce89689bddc51b06e4598b2abb12151fc2c1a175f61b2d78af6aa97b79de"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-implement\\SKILL.md",
+      "sha256": "25a6d551cc8725333b692c41491f71c0ca5c139d38a9a3ccfb249cf8db3d42f6"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-meta-log-decision\\SKILL.md",
+      "sha256": "db7911cc65a86f75648acd6fd8eab6f6442b8c2883fc3f5a73b480ac3b19763c"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-meta-track-shadow\\SKILL.md",
+      "sha256": "8fbd70e0af24d1ca9a1b51ac6b5d90cffa704e109572fc9a9e579070e05ef937"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-onboard-codebase\\SKILL.md",
+      "sha256": "df7d96678f9dbdd8ea81ecc62c53897367f9061bb83262bffa437f71d4af85c6"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-organize\\references\\qor-organize-templates.md",
+      "sha256": "5206b51bd1cc4fac85b20247c0aaf702d9ed2c032546eb96d9a66ae51a111316"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-organize\\SKILL.md",
+      "sha256": "a139c4f406123fa156a3564d277f1b40e21bc5ae6cdaa045fa31d8fdac42aeda"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-plan\\references\\step-extensions.md",
+      "sha256": "ddeadc120119ae0f52d9474218731ef70a01fa7c57da7d235ba1f43fc6597718"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-plan\\SKILL.md",
+      "sha256": "cc4f6ea3a30814c76fbfa615ed1e8ef2807ad9f426df69c95eaf3459660afbc0"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-process-review-cycle\\SKILL.md",
+      "sha256": "50191d480708889910b1bd34e442c891a250d94b85412b84ed55760ef8de1980"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-refactor\\references\\qor-refactor-examples.md",
+      "sha256": "f8f9d8ee4b190f78b4c9ab56bbd883107ce275b7c58ba4fe94bc284cab5a8fc6"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-refactor\\SKILL.md",
+      "sha256": "72c1bfdc4e7a14fa102effc15c9e69f9ce4bc15f2a603bb7740bbc7d1f8928d2"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-remediate\\SKILL.md",
+      "sha256": "ad2c88c67a0c6e96cedecd545af1904463e0edb9c9517594f1e8637d47bedfd8"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-audit\\SKILL.md",
+      "sha256": "a7eae62926c4c022efff7ae1e9072f2b7228377effc3ead1748ced80dfc2fc95"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-release\\SKILL.md",
+      "sha256": "177ad36488b47cdc11175def195e4812c49bea610b17e10ad5d604b7bf180636"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-scaffold\\references\\CODE_OF_CONDUCT.md",
+      "sha256": "ee007361306395887e28792a0e2c277268106c501c522fcd646f8e62fd545664"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-scaffold\\references\\CONTRIBUTING.md",
+      "sha256": "c105e3580908eecf9ba654eea1ee1233f25820296aa0dab45e2cb39577beb128"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-scaffold\\references\\GOVERNANCE.md",
+      "sha256": "1df892ce2aded980d624654f975c2e65f83bda98d7e2e4e7dc85e6a23779976d"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-scaffold\\references\\SECURITY.md",
+      "sha256": "55dd4cbd89b83dd03f9cfe5a6c9ec757d5fc8eaeb51cf43de22146c03515195a"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-repo-scaffold\\SKILL.md",
+      "sha256": "0ae4a53a6652a824445d7ba4af765e1d083fdb4d75508fefc8713de812524171"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-research\\SKILL.md",
+      "sha256": "eed426d56bee5b6158bf217d8e8159605191dbe916a63dafc3a6ce2e551b76dc"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-shadow-process\\SKILL.md",
+      "sha256": "3c07094a88111d3ba06112947e38ec3bd342f1203f4bfce8aaf2816a0c76cc8f"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-status\\SKILL.md",
+      "sha256": "3c3e0e29d0d28c0f56d2be3fd71acdbc225a10352cda41235ea8e0a70a601cc2"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-substantiate\\references\\qor-substantiate-templates.md",
+      "sha256": "a3bfeac88ed14c143306cb7a579b26c3a161e13231842c05220d064d0fe97ba5"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-substantiate\\SKILL.md",
+      "sha256": "bf937a5d59189ac4b2e828b80b694cd99757cf33c633de2f740da0a6d3a5af21"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-tone\\SKILL.md",
+      "sha256": "f33fb46fdddd4287084fee72191e785c0a6bb75b58abb5aac88bd7c7c5d37d0e"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-validate\\references\\qor-validate-reports.md",
+      "sha256": "6a8b43092f39b49dde38b09a6ea67009264f4d0f42a87c2df7d84317c97f7f5c"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\qor-validate\\SKILL.md",
+      "sha256": "2fbe6b14ef35ff7be061790258ded3a0e9f955ecf9c16a83f2e772003d0d82d7"
+    },
+    {
+      "path": "G:\\MythologIQ\\bicameral-mcp\\.claude\\worktrees\\peaceful-bell-12b5e8\\.claude\\skills\\track-shadow-genome.md",
+      "sha256": "47ad2c9b2e3260b0eb8613f7d147f802efa558d9ccf756b4e39c6047c69ece34"
+    }
+  ]
+}

@@ -25,3 +25,6 @@ test-results/
 .qor/
 .cursor/
 .windsurf/
+# qor:seed -- do not edit between markers
+.qor/session/
+# qor:seed/end
