@@ -40,6 +40,8 @@ def create_app() -> FastAPI:
         return {"status": "ok", "schema_version": SCHEMA_VERSION}
 
     from team_server.auth.router import router as auth_router
+    from team_server.api.events import router as events_router
     app.include_router(auth_router)
+    app.include_router(events_router)
 
     return app
