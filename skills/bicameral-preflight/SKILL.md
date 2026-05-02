@@ -59,6 +59,22 @@ If uncertain whether the user will write code, **fire anyway** — the
 handler is gated on actionable signal and will stay silent if nothing
 relevant is found. The cost of a false fire is one silent no-op.
 
+### Hook reinforcement
+
+The trigger described above is reinforced by a `UserPromptSubmit` hook
+configured in [`.claude/settings.json`](../../.claude/settings.json).
+The hook reads the user prompt, runs a deterministic regex over the
+canonical verb list at
+[`scripts/hooks/preflight_intent.py`](../../scripts/hooks/preflight_intent.py),
+and — on match — injects a `<system-reminder>` block elevating
+`bicameral.preflight` above the agent's default tool-selection priority.
+
+For v0 the verb list is duplicated by intent: the SKILL.md
+`description` field above embeds the list as a string literal so
+Claude Code skill discovery can read it, while the Python module is
+the canonical source for the hook. Both must be edited together to
+evolve the trigger surface; future configurability will deduplicate.
+
 ## Telemetry
 
 > **Guard**: Only call `skill_begin` and `skill_end` if telemetry is enabled. Telemetry is enabled by default; disabled by setting `BICAMERAL_TELEMETRY=0` (or `false`/`off`/`no`). If disabled, skip both calls and omit all `diagnostic` tracking.
