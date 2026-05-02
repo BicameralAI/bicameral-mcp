@@ -9,13 +9,40 @@ from __future__ import annotations
 
 import re
 
-IMPLEMENTATION_VERBS: frozenset[str] = frozenset({
-    "add", "build", "create", "implement", "modify", "refactor",
-    "update", "fix", "change", "write", "edit", "move", "rename",
-    "remove", "delete", "extract", "convert", "integrate", "deploy",
-    "ship", "configure", "connect", "extend", "migrate", "wire",
-    "hook up", "set up", "complete", "finish", "continue",
-})
+IMPLEMENTATION_VERBS: frozenset[str] = frozenset(
+    {
+        "add",
+        "build",
+        "create",
+        "implement",
+        "modify",
+        "refactor",
+        "update",
+        "fix",
+        "change",
+        "write",
+        "edit",
+        "move",
+        "rename",
+        "remove",
+        "delete",
+        "extract",
+        "convert",
+        "integrate",
+        "deploy",
+        "ship",
+        "configure",
+        "connect",
+        "extend",
+        "migrate",
+        "wire",
+        "hook up",
+        "set up",
+        "complete",
+        "finish",
+        "continue",
+    }
+)
 
 INDIRECT_INTENT_PHRASES: tuple[str, ...] = (
     "how should i implement",
