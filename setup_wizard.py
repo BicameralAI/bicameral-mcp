@@ -376,18 +376,30 @@ _BICAMERAL_POST_COMMIT_COMMAND = (
     'for _ in [1] if any(op in c for op in ops)]"'
 )
 
+# UserPromptSubmit hook: deterministic regex over a verb list elevates
+# bicameral.preflight above the agent's default tool-selection priority
+# whenever a prompt indicates code-implementation intent. Console script
+# is exposed via pyproject.toml [project.scripts] so it resolves on PATH
+# regardless of cwd. Closes #146 for end-user installs (the dogfood path
+# in the bicameral repo's own .claude/settings.json invokes the source
+# file directly via python3).
+_BICAMERAL_PREFLIGHT_REMINDER_COMMAND = "bicameral-mcp-preflight-reminder"
+
 
 def _install_claude_hooks(repo_path: Path) -> bool:
     """Merge bicameral hooks into the project-level .claude/settings.json.
 
-    Installs two hooks:
+    Installs three hooks:
     - PostToolUse/Bash: reminds the agent to call link_commit immediately
       after git write-ops (commit / merge / pull / rebase --continue).
     - SessionEnd: runs bicameral-capture-corrections to catch uningested
       mid-session corrections (only fires when .bicameral/ exists).
+    - UserPromptSubmit: deterministic verb-list classifier injects a
+      <system-reminder> elevating bicameral.preflight above the agent's
+      default tool-selection priority on code-implementation prompts.
 
     Idempotent — safe to call on every setup run. Returns True if any new
-    entry was written, False if both were already present.
+    entry was written, False if all three were already present.
     """
     settings_path = repo_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -427,6 +439,23 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     new_se_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}]}
     if non_bic_se != session_end or new_se_entry not in session_end:
         hooks["SessionEnd"] = non_bic_se + [new_se_entry]
+        wrote_anything = True
+
+    # ── UserPromptSubmit — preflight auto-fire reinforcement ─────────
+    user_prompt_submit: list = hooks.setdefault("UserPromptSubmit", [])
+    non_bic_ups = [
+        e
+        for e in user_prompt_submit
+        if not any(
+            "bicameral" in h.get("command", "") or "preflight_reminder" in h.get("command", "")
+            for h in e.get("hooks", [])
+        )
+    ]
+    new_ups_entry = {
+        "hooks": [{"type": "command", "command": _BICAMERAL_PREFLIGHT_REMINDER_COMMAND}]
+    }
+    if non_bic_ups != user_prompt_submit or new_ups_entry not in user_prompt_submit:
+        hooks["UserPromptSubmit"] = non_bic_ups + [new_ups_entry]
         wrote_anything = True
 
     if wrote_anything:
