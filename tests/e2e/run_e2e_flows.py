@@ -1099,10 +1099,17 @@ FLOW_PLAN: list[FlowSpec] = [
         category="agentic_layer",
         session_group="dev_session",
         advisory=(
-            "Same skill-layer gap as Flow 2a: preflight auto-fires but the "
-            "agent doesn't walk Step 3.5 to invoke capture-corrections, so "
-            "the in-session correction isn't ingested. Tracked as P0 — see "
-            "BicameralAI/bicameral-mcp#154."
+            "Flow 4 captures an emerging constraint via correction markers "
+            '("wait", "shouldn\'t") — no collision-detection involved. NOT '
+            "the same gap as #154 (which is Flow 2a / contradiction-with-"
+            "prior-decision specific). The substrate fixes in this PR "
+            "(.bicameral/ bootstrap + --mcp-config passthrough) close real "
+            "drift, but path-X-(b) still won't fire end-to-end because the "
+            "canonical SessionEnd hook command can't pass the parent "
+            "transcript to the spawned subprocess AND --auto-ingest is the "
+            "wrong shape for background capture. Both tracked as P1 — see "
+            "BicameralAI/bicameral-mcp#156 for the design pivot to "
+            "next-session surfacing via a transcript queue."
         ),
     ),
     FlowSpec(
