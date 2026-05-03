@@ -1,5 +1,5 @@
-Hmm wait — quick aside before we go further on the reorder.ts refactor.
+hmm wait — small thing before we keep going on reorder.
 
-Reading through the cherry-pick conflict path I committed earlier, I realized that handler shouldn't ever fall back to a stdin prompt when there's a merge conflict. The visual conflict UI has to be the only resolution path — if the implementation drifts toward a terminal prompt, that's wrong and we'd have to roll it back.
+just realized: the cherry-pick conflict handler shouldn't ever fall back to a stdin prompt. visual conflict UI is the only resolution path, full stop. if it drifts toward a terminal prompt that's a rollback.
 
-Anyway — back to `app/src/lib/git/reorder.ts`. Please continue the refactor we started: keep pulling out the `reorder()` function for the new text-editor flow.
+ok back to reorder.ts — keep going on the `reorder()` function for the text-editor flow.
