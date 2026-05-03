@@ -102,3 +102,6 @@ handler logic, but it bypasses three layers we need to validate:
 This e2e suite covers all three. Together they form the spec's two-level
 validation: handler invariants (replay sim) + user-experience contract
 (this directory).
+
+<!-- ci-repro: dummy edit to trigger workflows on dev (no-op) -->
+
