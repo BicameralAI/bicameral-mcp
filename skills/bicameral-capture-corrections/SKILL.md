@@ -160,6 +160,13 @@ If not present, exit silently — this repo isn't using bicameral.
 - If invoked manually (no flag): scan the last 20 user turns as a proxy
   for the session and show the confirmation flow.
 
+**SessionEnd-hook transcript propagation**: when invoked via the
+SessionEnd hook (`--auto-ingest` mode), the parent session's transcript
+path is provided via the `BICAMERAL_PARENT_TRANSCRIPT_PATH` env var.
+Read the JSONL at that path to scan the user's last ~10 messages for
+uningested corrections. Without this env var (e.g., manual invocation),
+the skill scans only the live conversation context.
+
 **3. Run the canonical rubric** (Steps A → B → C above) across all turns.
 
 **4. Filter to new findings.**

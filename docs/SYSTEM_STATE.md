@@ -411,3 +411,294 @@ Zero structural. Implementation matches Entry #24 audit blueprint 1:1.
   collision detection lives caller-side via `bicameral-context-sentry`
   skill and surfaces via `bicameral.preflight.unresolved_collisions`.
   Spec-text correction is a `/qor-document`-phase external `gh` action.
+
+---
+
+# System State — Priority C v0 team-server (2026-05-02, sealed `6f4f8f8f`)
+
+**Generated**: 2026-05-02
+**HEAD**: branch `claude/priority-c-selective-ingest` off `upstream/dev`
+**Tracked PR**: not yet opened (operator decision at Step 9.6)
+**Predecessor seal**: `efd0304b` (Entry #26, #135-triage)
+**Implementation seal**: `211ffb9e` (Entry #27)
+**Substantiation seal**: `6f4f8f8f` (Entry #28 — this seal)
+
+## Priority C v0 — self-managing team-server, Slack-first
+
+Implements `plan-priority-c-team-server-slack-v0.md` Phases 1–4. Phase 5 (CocoIndex #136) deferred to follow-up plan per slip-independence design and operator's "if we can manage it" feasibility caveat.
+
+### Files added (30)
+
+**Production — `team_server/` package**:
+- `__init__.py`, `app.py` (47 LOC), `db.py` (41), `schema.py` (80), `config.py` (40), `requirements.txt`
+- `auth/`: `__init__.py`, `encryption.py`, `slack_oauth.py` (58), `router.py` (73)
+- `extraction/`: `__init__.py`, `canonical_cache.py` (45), `llm_extractor.py`
+- `sync/`: `__init__.py`, `peer_writer.py` (42)
+- `workers/`: `__init__.py`, `slack_worker.py` (100)
+- `api/`: `__init__.py`, `events.py`
+
+**Production — `events/` extension**:
+- `events/team_server_pull.py` (57 LOC) — failure-isolated `EventMaterializer` extension
+
+**Deployment**:
+- `deploy/team-server.docker-compose.yml`
+- `deploy/Dockerfile.team-server`
+
+**Tests** (8 files / 25 functionality tests):
+- `tests/test_team_server_app.py` (5), `tests/test_team_server_deploy.py` (1)
+- `tests/test_team_server_slack_oauth.py` (5), `tests/test_team_server_channel_allowlist.py` (2)
+- `tests/test_team_server_canonical_cache.py` (3), `tests/test_team_server_slack_worker.py` (3)
+- `tests/test_team_server_events_api.py` (3), `tests/test_materializer_team_server_pull.py` (3)
+
+### Test state
+
+- Priority C v0: **25 / 25 PASS** in 5.99s
+- Existing dev suite (743 tests): collects unaffected
+- Razor: largest production file 100 LOC; all functions ≤ 25 LOC; depth ≤ 2; no nested ternaries
+
+### Schema additions (team-server's own DB; separate from per-repo bicameral ledger)
+
+`SCHEMA_VERSION = 1` in `team_server/schema.py` (independent of `ledger/schema.py`'s SCHEMA_VERSION). Tables:
+- `workspace` — one row per Slack workspace (id, name, slack_team_id, oauth_token_encrypted, created_at)
+- `channel_allowlist` — workspace × channel allow-list
+- `extraction_cache` — `FLEXIBLE TYPE object` for `canonical_extraction` (per #72 lesson + audit Advisory #3); keyed UNIQUE on `(source_type, source_ref, content_hash)`
+- `team_event` — append-only event log; `FLEXIBLE TYPE object` for `payload`; sequence ordered
+
+### Architectural properties achieved
+
+- **Self-managing**: schema migrates on startup via `ensure_schema()` (idempotent); restart is no-op; no human ops surface
+- **Failure-isolated**: `events/team_server_pull.py` swallows transport errors; per-dev preflight does not cascade on team-server outage
+- **Multi-dev convergence**: same Slack message → same canonical extraction across devs via `(source_type, source_ref, content_hash)` cache key
+- **Local-first per CONCEPT.md literal-keyword parsing**: server-side component is self-managing (compatible) not vendor-managed (forbidden)
+- **Section 4 razor**: all functions ≤ 25 lines, all files ≤ 100 lines
+
+### Audit advisory disposition
+
+- Advisory #1 (term home cross-reference) — fixed in plan before implementation
+- Advisory #2 (`app.py` size monitoring) — proactively factored OAuth + events routes into per-package routers; `app.py` ends at 47 lines
+- Advisory #3 (FLEXIBLE TYPE object) — applied to `extraction_cache.canonical_extraction` and `team_event.payload` at schema definition time
+
+### Phase 5 deferred state
+
+CocoIndex (#136) integration deferred. `extraction_cache.model_version` carries `interim-claude-v1` tombstone so Phase 5 can identify+rebuild interim entries when it lands.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+- Step 2.5 — Version bump: no `pyproject.toml` Target Version in plan; downstream project uses different release cadence
+- Step 4.7 — Doc integrity (Phase 28 wiring): targets qor-logic's `docs/Planning/plan-qor-phase{NN}*.md` convention not present in this repo
+- Step 6.5 — Doc currency / badge currency: targets qor-logic's `docs/architecture.md`/`docs/lifecycle.md` system docs not present
+- Step 7.4 — SSDF tag emission: targets qor-logic's own SESSION SEAL convention
+- Step 7.5/7.6 — Version bump + CHANGELOG stamp: no `## [Unreleased]` block convention in this repo's CHANGELOG
+- Step 7.7 — Post-seal verification: targets qor-logic's plan-path globbing
+- Step 7.8 — Gate-chain completeness (Phase 52+): grandfathered for entries < 52
+- Step 8.5 — Dist recompile: qor-logic-internal variant compile
+- Step 9.5.5 — Annotated seal-tag: no version bump → no tag
+
+---
+
+## Priority C v1 — Notion ingest + cache contract migration (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-notion-v1.md`](../plan-priority-c-team-server-notion-v1.md). Three-round audit cycle (VETO → VETO → PASS); 64/64 team-server tests passing.
+
+### Files added (13)
+
+```
+team_server/workers/runner.py             — worker_loop lifecycle helper (29 LOC)
+team_server/workers/slack_runner.py       — workspace iteration + per-WS fan-out (67 LOC)
+team_server/workers/notion_worker.py      — Notion polling + watermark (123 LOC)
+team_server/workers/notion_runner.py      — Notion task wrapper (23 LOC)
+team_server/auth/notion_client.py         — internal-integration auth + API (110 LOC)
+team_server/extraction/notion_serializer.py — deterministic row serialization (64 LOC)
+
+tests/test_team_server_cache_upsert.py        — 4 tests
+tests/test_team_server_schema_migration.py    — 4 tests
+tests/test_team_server_worker_lifecycle.py    — 7 tests
+tests/test_team_server_notion_client.py       — 7 tests
+tests/test_team_server_notion_serializer.py   — 3 tests
+tests/test_team_server_notion_worker.py       — 9 tests
+tests/test_team_server_notion_lifecycle.py    — 4 tests
+```
+
+### Files modified (7)
+
+```
+team_server/schema.py                      — schema v1→v2 + schema_version table + callable migration dispatch
+team_server/extraction/canonical_cache.py  — get_or_compute() → upsert_canonical_extraction() -> tuple[dict, bool]
+team_server/workers/slack_worker.py        — adapted to new tuple-return contract; _cache_row_exists deleted
+team_server/app.py                         — lifespan registers worker tasks via worker_loop helper
+team_server/config.py                      — DEFAULT_CONFIG_PATH constant with env-var fallback
+
+tests/test_team_server_slack_worker.py     — adapted; new no-event-on-unchanged + event-on-changed pair
+tests/test_team_server_canonical_cache.py  — rewritten under v2 upsert contract
+```
+
+### Test state
+
+- 64/64 team-server tests passing (full suite)
+- 695/703 non-team-server regression: 8 pre-existing failures in unrelated tests (`test_alpha_flow`, `test_bind`, `test_ephemeral_authoritative`, `test_v0417_jargon_hygiene`); none touch files modified in this implementation
+- Razor: largest production file 139 LOC (schema.py); all functions ≤ 25 LOC; depth ≤ 3; no nested ternaries
+
+### Schema state (team-server v2)
+
+`SCHEMA_VERSION = 2` in `team_server/schema.py`. Tables (additions in **bold**):
+- `workspace` — one row per Slack workspace
+- `channel_allowlist` — workspace × channel allow-list
+- `extraction_cache` — UNIQUE keyed on `(source_type, source_ref)` ONLY (was `(source_type, source_ref, content_hash)` in v1); `content_hash` becomes a tracked column; UPSERT semantics
+- `team_event` — append-only event log; payload now includes `notion_database_row` source_type
+- **`source_watermark`** — generic per-source / per-resource watermark; used by Notion polling
+- **`schema_version`** — single-row table holding the current `SCHEMA_VERSION` after migrations apply (DELETE-then-CREATE preserves single-row invariant)
+
+### Architectural properties achieved (v1 additions)
+
+- **Cache contract uniformity**: both Slack and Notion use the same `upsert_canonical_extraction` contract; cache holds latest snapshot (bounded growth), `team_event` log preserves history
+- **Worker-task lifecycle pattern**: `worker_loop` is the single source of truth for the asyncio.create_task / cancel-on-shutdown pattern; Slack and Notion both delegate
+- **Slack worker no longer dormant**: v0 plan claimed an active Slack ingest worker but v0 code shipped a function with no production caller. Phase 0.5 closes this gap by wiring `slack_runner.run_slack_iteration` into `lifespan` via `worker_loop`. The encryption round-trip is verified end-to-end by `test_slack_runner_decrypts_workspace_token_with_loaded_key`.
+- **Notion ingest of database rows**: deterministic serialization (title + sorted properties + body), per-database watermark, peer-author identity (`team-server@notion.bicameral`), per-database failure isolation
+- **Internal-integration auth**: no OAuth router for Notion; allow-list derived from `databases.list` (operator's act of sharing a database with the integration is the signal)
+
+### Audit cycle outcomes
+
+- Round 1 VETO (4 findings, missing/undeclared symbols) — closed in amendment round 2
+- Round 2 VETO (1 finding, wrong-call-shape for `decrypt_token`) — closed in amendment round 3 with explicit encrypt-side precedent mirror + round-trip test
+- Round 3 PASS (2 non-blocking advisories) — both addressed during implementation
+
+### Implementation deviations from plan (logged)
+
+1. `PEER_AUTHOR_EMAIL` renamed `PEER_WORKSPACE_ID = "notion"` — `write_team_event` wraps as `team-server@<workspace_id>.bicameral`, so passing the literal email would have double-wrapped to `team-server@team-server@notion.bicameral.bicameral`.
+2. `slack_sdk` import made lazy in `slack_runner.py` (inside `run_slack_iteration`) — declared in `team_server/requirements.txt` but not always installed in dev venvs; lazy import lets the team_server package be importable in tests for unrelated code paths. Production runtime path unaffected.
+
+### qor-logic-internal steps skipped (downstream-project rationale, same as v0 entry)
+
+Same set as v0 (Steps 2.5, 4.7, 6.5, 7.4–7.8, 8.5, 9.5.5) — this repo does not author qor-logic phase plans nor maintain the system-tier doc set / dist-compile pipeline that those wirings expect. The fundamental S.H.I.E.L.D. checks (PASS verdict prerequisite, Reality vs Promise, Section 4 Razor, Merkle seal calculation, ledger entry) all run.
+
+---
+
+## Priority C v1.1 — Real heuristic+LLM extractor (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-real-extractor-v1.md`](../plan-priority-c-team-server-real-extractor-v1.md). First-round PASS audit; 102/102 team-server tests passing.
+
+### Files added (10)
+
+```
+team_server/extraction/heuristic_classifier.py — deterministic Stage 1 classifier (105 LOC)
+team_server/extraction/pipeline.py             — Stage 1 → Stage 2 wiring (59 LOC)
+team_server/extraction/corpus_learner.py       — option-c feedback loop (114 LOC)
+
+tests/test_team_server_classifier_version.py        — 5 tests
+tests/test_team_server_heuristic_classifier.py      — 9 tests
+tests/test_team_server_rules.py                     — 5 tests
+tests/test_team_server_llm_extractor.py             — 7 tests
+tests/test_team_server_pipeline.py                  — 5 tests
+tests/test_team_server_corpus_learner.py            — 5 tests
+tests/test_team_server_corpus_learner_lifecycle.py  — 2 tests
+```
+
+### Files modified (9)
+
+```
+team_server/schema.py                       — SCHEMA_VERSION 2→4; classifier_version field; learned_heuristic_terms table
+team_server/extraction/canonical_cache.py   — upsert second-axis (content_hash + classifier_version) cache identity
+team_server/extraction/llm_extractor.py     — full rewrite: Anthropic SDK call, _one_attempt helper, fail-loud + fail-soft + retry-on-429
+team_server/config.py                       — HeuristicGlobalRules / SlackHeuristics / NotionHeuristics; resolve_rules_for_{slack,notion}; CorpusLearnerConfig
+team_server/workers/slack_worker.py         — pipeline-routed with thread/reaction context; legacy fallback when config=None
+team_server/workers/notion_worker.py        — pipeline-routed with last_edited_by/edit_count context; legacy fallback when config=None
+team_server/app.py                          — config loaded from DEFAULT_CONFIG_PATH; corpus learner registered when enabled
+
+tests/test_team_server_cache_upsert.py     — adapted to classifier_version= keyword-only argument
+tests/test_team_server_canonical_cache.py  — adapted to classifier_version= keyword-only argument
+```
+
+### Test state
+
+- 102/102 team-server tests passing (full suite, up from 64 at v1.0)
+- 38 net-new functionality tests across Phases 0–5
+- Razor: max file 180 LOC (notion_worker); max function ~30 (extract via _one_attempt helper); depth ≤3; zero nested ternaries
+
+### Schema state (team-server v4)
+
+`SCHEMA_VERSION = 4`. New tables (additions in **bold**):
+- `extraction_cache` — gains `classifier_version` field (default `'legacy-pre-v3'`); cache hit requires both content_hash AND classifier_version match
+- **`learned_heuristic_terms`** — corpus learner output; UNIQUE (source_type, term)
+- All v1.0 tables retained: `workspace`, `channel_allowlist`, `team_event`, `source_watermark`, `schema_version`
+
+### Architectural properties achieved (v1.1)
+
+- **Heuristic-first determinism**: Stage 1 classifier is pure-function over (message, context, rules); zero API calls on chatter
+- **LLM-only-when-needed**: Stage 2 (Anthropic Haiku 4.5 default) runs only on heuristic-positive messages; cache locks results so each unique input costs once
+- **Rule-version-driven cache invalidation**: classifier_version is a SHA256 of the rule set; operator config edits → automatic cache invalidation on next poll
+- **All four "dynamic" angles wired**: per-workspace YAML (a) / per-channel/db override (b) / corpus-learned terms (c) / context-aware boosters (d)
+- **Anti-goal alignment**: heuristic Stage 1 grows the deterministic core; LLM call is scoped narrowly outside the deterministic core (network calls permitted there per CONCEPT.md literal-keyword parsing)
+- **Auditability**: every positive classification stores `matched_triggers` array (which keyword/reaction/thread-position fired)
+
+### Audit advisories addressed during implementation
+
+1. `extract()` split into `_one_attempt(client, model, prompt) -> (status, payload)` helper; main `extract` body is ~14 lines (well under Razor)
+2. `TeamServerRules` resolved as `TeamServerConfig` (single rename in implementation, not a new type)
+3. Corpus learner reads from `team_event` rows (per OQ-1) whose `payload.extraction.decisions` is non-empty; does NOT query a `decision` table that doesn't exist on the team-server's ledger
+
+### Implementation deviations from plan (logged)
+
+1. `team_server/workers/{slack_worker,notion_worker}.py` keep a backwards-compat path: when `config=None`, fall back to the legacy `extractor(text)` callable. Preserves v1.0 worker tests + provides a clean cutover path. When `config` is provided, the pipeline runs.
+2. Anthropic SDK imported lazily inside `extract()` (matches the slack_sdk lazy-import pattern from v1.0 Phase 0.5) so the package imports cleanly when `anthropic` is in `requirements.txt` but not installed in dev venv.
+
+---
+
+## Priority C v0 release-blockers — channel allowlist + materializer bridge (2026-05-03)
+
+Plan: [`plan-priority-c-team-server-v0-release-blockers.md`](../plan-priority-c-team-server-v0-release-blockers.md). Three-round audit cycle (VETO → VETO → PASS); 123/123 team-server + materializer tests passing. Closes [#160](https://github.com/BicameralAI/bicameral-mcp/issues/160) and [#161](https://github.com/BicameralAI/bicameral-mcp/issues/161).
+
+### Files added (6)
+
+```
+team_server/auth/allowlist_sync.py  — startup-time YAML→DB reconcile (73 LOC)
+events/team_server_consumer.py      — periodic pull→bridge→ingest_payload task (100 LOC)
+events/team_server_bridge.py        — team-server payload → IngestPayload (56 LOC)
+
+tests/test_team_server_allowlist_sync.py     — 5 tests
+tests/test_team_server_allowlist_lifespan.py — 2 tests
+tests/test_team_server_consumer.py            — 7 tests (incl. no-echo invariant)
+```
+
+### Files modified (4)
+
+```
+team_server/app.py                       — lifespan calls sync_channel_allowlist after schema; config loaded once for both sync + corpus learner
+events/materializer.py                   — dispatch case for event_type='ingest' AND 'ingest.completed' with team-server-shaped payload bridges to IngestPayload
+server.py                                 — serve_stdio spawns the periodic team-server consumer task; cancels on shutdown
+tests/test_materializer_team_server_pull.py  — 6 new bridge functionality tests + legacy regression coverage
+```
+
+### Test state
+
+- 123/123 team-server + materializer tests passing
+- Test counts by phase: Phase 1 sync 5 / Phase 1 lifespan 2 / Phase 1.5 consumer 7 / Phase 2 bridge 6 = 20 net-new
+- Razor: max file 167 LOC (events/materializer.py); max function ~25; nesting ≤3; zero nested ternaries
+
+### Architectural properties achieved (closing v0 release blockers)
+
+- **End-to-end ingest pipeline functional**: Slack OAuth → workspace row → YAML allowlist sync → channel_allowlist populated → Slack worker polls allowlisted channels → heuristic+LLM extraction → team_event row → /events HTTP → per-dev consumer pulls → bridges to IngestPayload → inner_adapter.ingest_payload → per-dev local ledger
+- **No-echo invariant** (audit-round-2 Finding A): consumer's `start_team_server_consumer_if_configured` unwraps `TeamWriteAdapter._inner` so consumer-driven ingest does NOT emit synthetic `'ingest.completed'` events into per-dev JSONL files. Verified by `test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl` constructing a real TeamWriteAdapter with a recording writer
+- **SurrealQL strict-type handling**: `record<workspace>` field on `channel_allowlist.workspace_id` requires `type::thing()` coercion; allowlist_sync uses the same pattern as the v1.0 schema migration
+- **Materializer dispatch is shape-discriminating**: `is_team_server_payload` predicate distinguishes team-server payloads (have `extraction` key) from legacy CodeLocatorPayload (have `repo`/`commit_hash` but no `extraction`); legacy `'ingest.completed'` path preserved unchanged
+
+### Audit cycle outcomes (3-round VETO → VETO → PASS)
+
+- Round 1 VETO: `infrastructure-mismatch` (pull_team_server_events had zero production callers; bridge would be dead code) → closed by Phase 1.5 (consumer + serve_stdio integration)
+- Round 2 VETO: `specification-drift` (sketch passed wrapped TeamWriteAdapter; would echo events O(N²) cross-dev) → closed by inline unwrap + dedicated no-echo test
+- Round 3 PASS: 0 findings; all 6 SHADOW_GENOME #7 heuristics held
+
+### SHADOW_GENOME #7 heuristic catalog grew 4 → 6 across this branch
+
+1. Existence (Entry #7)
+2. Signature (Entry #7)
+3. Type-boundary (Entry #7)
+4. Helper-symmetry (Entry #7)
+5. **Upstream-consumer** (Entry #37 — added by v0-blockers round-1 VETO)
+6. **Wrapper-side-effect** (Entry #38 — added by v0-blockers round-2 VETO)
+
+The catalog is the productive deposit beyond the code: each heuristic is reusable for future audits.
+
+### Implementation deviation from plan (logged)
+
+1. SurrealQL `record<workspace>` strict type required `type::thing()` coercion in allowlist_sync.py — not anticipated in plan but matches the v1.0 migration's existing pattern at `team_server/schema.py:106-110`. Caught at first test run; fix took two minutes.
+2. Lifespan integration test originally tried pre-seeding workspace via `TeamServerDB.from_env()` then re-opening for the app — `memory://` doesn't persist across connect/close. Test rewritten to mock `sync_channel_allowlist` and assert it was invoked at startup with the correct config. Test directly exercises the lifespan→sync wiring via interception, not via DB observation.

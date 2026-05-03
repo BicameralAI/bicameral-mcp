@@ -382,6 +382,65 @@ A one-line forward narration helps:
 > from idempotency.ts. I'll flag the event.id deduplication question
 > for you to answer before I commit."
 
+### 5.6 Capture refinements when the user's prompt contradicts a surfaced decision
+
+When at least one decision was surfaced in Step 5 AND the user's
+current prompt is restating or replacing that decision (signals:
+"instead of", "actually we're switching to", "no more X", "I know the
+roadmap said X but...", direct mention of a different approach for a
+file the surfaced decision anchors), THEN before any code work:
+
+1. **Ingest the refinement**:
+
+```
+bicameral.ingest(payload={
+  "query": "<feature topic preflight scoped to>",
+  "source": "agent_session",
+  "title": "preflight-refinement-<topic>",
+  "date": "<today ISO date>",
+  "decisions": [{
+    "description": "<user's stated new direction as a decision statement>",
+    "source_excerpt": "<verbatim quote of the user's contradicting phrase>",
+    "feature_group": "<same feature_group as the surfaced decision>"
+  }]
+})
+```
+
+2. **Wire the refinement to the seeded decision**:
+
+```
+bicameral.resolve_collision(
+  new_id="<decision_id returned by step 1's ingest>",
+  old_id="<id of the surfaced decision being contradicted>",
+  action="supersede"
+)
+```
+
+This is **mechanical** — the user has already stated the refinement
+explicitly. Do NOT ask the user to confirm. The new decision enters
+the ledger as `proposed`; the PM sees both the original and the
+refinement in their next inbox review and ratifies or rejects the
+supersession.
+
+**Role mapping (`new_id` vs `old_id`)**: per
+`skills/bicameral-resolve-collision/SKILL.md` canonical pattern,
+`new_id` is the just-ingested refinement (what supersedes); `old_id`
+is the surfaced decision being contradicted (what gets superseded).
+The supersedes edge writes `new_id → supersedes → old_id`.
+
+**When NOT to fire**: if the user is asking a clarifying question, not
+stating a refinement (e.g., "does this implement drag-drop?"), Step
+5.6 does not apply — pass the question through to normal preflight
+rendering.
+
+**`action` default**: `"supersede"` covers the most common case (the
+refinement replaces the prior approach for the same scope). The
+canonical alternative values are `"keep_both"` (false-positive
+contradiction; both decisions valid) and `"link_parent"` (cross-level
+parent-child, not a same-level conflict). Per-prompt classification
+deferred — for v0, the contradicting-prompt case is unambiguously
+`"supersede"`.
+
 ### 6. Honor blocking hints (guided mode vs normal mode)
 
 The agent's `guided_mode` setting controls whether action hints are
@@ -435,8 +494,11 @@ bicameral.ingest(payload={
   "source": "agent_session",
   "title": "<short label for the decision, e.g. 'preflight-resolution-<topic>'>",
   "date": "<today ISO date>",
-  "decisions": [{ "description": "<the user's answer as a decision statement>" }]
-}, feature_group="<same feature group as the implementation task>")
+  "decisions": [{
+    "description": "<the user's answer as a decision statement>",
+    "feature_group": "<same feature group as the implementation task>"
+  }]
+})
 ```
 
 Use `source="agent_session"` — a source type distinct from transcript/slack/document
