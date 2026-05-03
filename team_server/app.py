@@ -16,6 +16,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from team_server.auth import notion_client as nc
+from team_server.auth.allowlist_sync import sync_channel_allowlist
 from team_server.config import DEFAULT_CONFIG_PATH, TeamServerConfig
 from team_server.db import TeamServerDB
 from team_server.extraction.corpus_learner import run_corpus_learner_iteration
@@ -51,6 +52,16 @@ async def lifespan(app: FastAPI):
     await ensure_schema(db.client)
     app.state.db = db
 
+    # Phase 1: channel allowlist sync from YAML — runs after schema +
+    # before worker registration so the slack runner sees populated
+    # rows on first poll.
+    config = _load_config_or_default()
+    app.state.team_server_config = config
+    try:
+        await sync_channel_allowlist(db.client, config)
+    except Exception:  # noqa: BLE001
+        logger.exception("[team-server] channel_allowlist sync failed; continuing")
+
     tasks: list[asyncio.Task] = []
 
     # Slack worker — always registered (no-op when workspace table empty)
@@ -73,8 +84,6 @@ async def lifespan(app: FastAPI):
         logger.info("[team-server] notion ingest disabled (no token)")
 
     # Corpus learner — opt-in via config.corpus_learner.enabled
-    config = _load_config_or_default()
-    app.state.team_server_config = config
     if config.corpus_learner.enabled:
         tasks.append(worker_loop(
             name="corpus-learner",
