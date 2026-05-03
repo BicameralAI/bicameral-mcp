@@ -9,7 +9,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from team_server.extraction.heuristic_classifier import (
-    ClassificationResult, TriggerRules, classify, derive_classifier_version,
+    ClassificationResult,
+    TriggerRules,
+    classify,
+    derive_classifier_version,
 )
 
 
@@ -33,7 +36,9 @@ def test_keyword_negative_overrides_positive():
         keyword_negatives=("haha just kidding",),
     )
     result = classify(
-        {"text": "we decided haha just kidding"}, {}, rules,
+        {"text": "we decided haha just kidding"},
+        {},
+        rules,
     )
     assert result.is_positive is False
     assert result.matched_triggers == ()
@@ -60,7 +65,9 @@ def test_reaction_boost_flips_negative_to_positive():
 def test_thread_position_booster_for_thread_tail():
     rules = TriggerRules(thread_tail_position_threshold=3)
     result = classify(
-        {"text": "ok"}, {"thread_position": 5}, rules,
+        {"text": "ok"},
+        {"thread_position": 5},
+        rules,
     )
     assert result.is_positive is True
     assert "thread-tail" in result.matched_triggers
@@ -84,6 +91,8 @@ def test_classifier_version_changes_when_rules_change():
 def test_unicode_and_emoji_in_text_does_not_crash():
     rules = TriggerRules(keywords=("decided",))
     result = classify(
-        {"text": "we déçidéd 🚀 to ship — résumé later"}, {}, rules,
+        {"text": "we déçidéd 🚀 to ship — résumé later"},
+        {},
+        rules,
     )
     assert isinstance(result, ClassificationResult)

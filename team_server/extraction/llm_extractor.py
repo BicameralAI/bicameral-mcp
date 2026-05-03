@@ -21,7 +21,6 @@ import asyncio
 import hashlib
 import json
 import os
-from typing import Optional
 
 INTERIM_MODEL_VERSION = "interim-claude-v1"
 
@@ -76,7 +75,8 @@ async def _one_attempt(client, model: str, prompt: str) -> tuple[str, object]:
 
     try:
         resp = await client.messages.create(
-            model=model, max_tokens=512,
+            model=model,
+            max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
     except APIStatusError as exc:
@@ -116,7 +116,7 @@ async def extract(text: str, matched_triggers: list[str]) -> dict:
         if status == "ok":
             return _success(payload, version, matched_triggers)
         if status == "retry" and attempt < 2:
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(2**attempt)
             continue
         last_error = str(payload) if payload else "rate-limit-exhausted"
         break

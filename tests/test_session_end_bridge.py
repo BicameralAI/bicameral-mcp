@@ -19,12 +19,14 @@ from events import session_end_bridge as bridge
 
 
 def test_bridge_extracts_transcript_path_from_stdin_and_propagates_via_env():
-    stdin_text = json.dumps({
-        "session_id": "abc",
-        "transcript_path": "/tmp/parent-transcript.jsonl",
-        "cwd": "/repo",
-        "hook_event_name": "SessionEnd",
-    })
+    stdin_text = json.dumps(
+        {
+            "session_id": "abc",
+            "transcript_path": "/tmp/parent-transcript.jsonl",
+            "cwd": "/repo",
+            "hook_event_name": "SessionEnd",
+        }
+    )
     env = bridge._compute_subprocess_env(stdin_text, {"PATH": "/usr/bin"})
     assert env["BICAMERAL_PARENT_TRANSCRIPT_PATH"] == "/tmp/parent-transcript.jsonl"
     assert env["BICAMERAL_SESSION_END_RUNNING"] == "1"
@@ -42,14 +44,18 @@ def test_bridge_skips_when_recursion_guard_set(tmp_path):
     assert bridge.should_run(str(tmp_path), env) is False
 
 
-def test_bridge_main_invokes_claude_subprocess_with_correct_env_when_stdin_valid(tmp_path, monkeypatch):
+def test_bridge_main_invokes_claude_subprocess_with_correct_env_when_stdin_valid(
+    tmp_path, monkeypatch
+):
     (tmp_path / ".bicameral").mkdir()
-    stdin_text = json.dumps({
-        "session_id": "s1",
-        "transcript_path": "/x.jsonl",
-        "cwd": str(tmp_path),
-        "hook_event_name": "SessionEnd",
-    })
+    stdin_text = json.dumps(
+        {
+            "session_id": "s1",
+            "transcript_path": "/x.jsonl",
+            "cwd": str(tmp_path),
+            "hook_event_name": "SessionEnd",
+        }
+    )
     monkeypatch.setattr("sys.stdin", io.StringIO(stdin_text))
     monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
     monkeypatch.setattr(os, "getcwd", lambda: str(tmp_path))
@@ -62,6 +68,7 @@ def test_bridge_main_invokes_claude_subprocess_with_correct_env_when_stdin_valid
 
         class _R:
             returncode = 0
+
         return _R()
 
     monkeypatch.setattr(bridge.subprocess, "run", _record)
@@ -106,10 +113,12 @@ def test_bridge_main_uses_cwd_from_stdin_payload_not_process_cwd(tmp_path, monke
     elsewhere.mkdir()
     # No .bicameral/ in elsewhere
 
-    stdin_text = json.dumps({
-        "transcript_path": "/x.jsonl",
-        "cwd": str(bicameral_repo),
-    })
+    stdin_text = json.dumps(
+        {
+            "transcript_path": "/x.jsonl",
+            "cwd": str(bicameral_repo),
+        }
+    )
     monkeypatch.setattr("sys.stdin", io.StringIO(stdin_text))
     monkeypatch.setattr("sys.stdin.isatty", lambda: False, raising=False)
     # Process cwd is the elsewhere dir (no .bicameral/)
@@ -117,7 +126,13 @@ def test_bridge_main_uses_cwd_from_stdin_payload_not_process_cwd(tmp_path, monke
     monkeypatch.setattr(os, "environ", {"PATH": "/p"})
 
     calls = []
-    monkeypatch.setattr(bridge.subprocess, "run", lambda *a, **kw: calls.append({"argv": a, "env": kw.get("env")}) or type("R", (), {"returncode": 0})())
+    monkeypatch.setattr(
+        bridge.subprocess,
+        "run",
+        lambda *a, **kw: (
+            calls.append({"argv": a, "env": kw.get("env")}) or type("R", (), {"returncode": 0})()
+        ),
+    )
 
     rc = bridge.main()
 
@@ -130,4 +145,5 @@ def test_bridge_main_uses_cwd_from_stdin_payload_not_process_cwd(tmp_path, monke
 def test_setup_wizard_session_end_command_invokes_bridge_module():
     """Guards the literal hook-command constant against drift."""
     import setup_wizard
+
     assert setup_wizard._BICAMERAL_SESSION_END_COMMAND == "python3 -m events.session_end_bridge"

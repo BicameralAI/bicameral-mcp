@@ -13,23 +13,27 @@ from __future__ import annotations
 import logging
 
 from ledger.client import LedgerClient
-
 from team_server.config import TeamServerConfig
 
 logger = logging.getLogger(__name__)
 
 
 async def sync_channel_allowlist(
-    client: LedgerClient, config: TeamServerConfig,
+    client: LedgerClient,
+    config: TeamServerConfig,
 ) -> None:
     for workspace_cfg in config.slack.workspaces:
         await _sync_one_workspace(
-            client, workspace_cfg.team_id, workspace_cfg.channels,
+            client,
+            workspace_cfg.team_id,
+            workspace_cfg.channels,
         )
 
 
 async def _sync_one_workspace(
-    client: LedgerClient, team_id: str, yaml_channels: list[str],
+    client: LedgerClient,
+    team_id: str,
+    yaml_channels: list[str],
 ) -> None:
     rows = await client.query(
         "SELECT id FROM workspace WHERE slack_team_id = $tid LIMIT 1",
@@ -37,8 +41,8 @@ async def _sync_one_workspace(
     )
     if not rows:
         logger.info(
-            "[allowlist-sync] no workspace row for team_id=%s; "
-            "skipping (OAuth not yet completed)", team_id,
+            "[allowlist-sync] no workspace row for team_id=%s; skipping (OAuth not yet completed)",
+            team_id,
         )
         return
     # workspace_id arrives as 'workspace:<rid>' from SELECT; split for type::thing()
@@ -69,5 +73,8 @@ async def _sync_one_workspace(
         )
     logger.info(
         "[allowlist-sync] team_id=%s: +%d -%d (now %d total)",
-        team_id, len(to_add), len(to_remove), len(desired),
+        team_id,
+        len(to_add),
+        len(to_remove),
+        len(desired),
     )

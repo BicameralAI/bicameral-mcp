@@ -8,16 +8,13 @@ thin wrapper over poll_once. Exists for symmetry with slack_runner
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from ledger.client import LedgerClient
-
 from team_server.workers import notion_worker
 
 Extractor = Callable[[str], Awaitable[dict]]
 
 
-async def run_notion_iteration(
-    db_client: LedgerClient, token: str, extractor: Extractor
-) -> None:
+async def run_notion_iteration(db_client: LedgerClient, token: str, extractor: Extractor) -> None:
     await notion_worker.poll_once(db_client, token, extractor)

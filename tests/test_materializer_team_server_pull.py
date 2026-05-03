@@ -79,7 +79,9 @@ async def test_materializer_persists_team_server_watermark_separately(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_materializer_handles_team_server_unavailable_gracefully(monkeypatch, tmp_path, caplog):
+async def test_materializer_handles_team_server_unavailable_gracefully(
+    monkeypatch, tmp_path, caplog
+):
     """Behavior: 503 from team-server does NOT raise; returns empty events;
     watermark unchanged. Failure-isolation contract per audit (research F3
     — outside the deterministic core)."""
@@ -164,15 +166,18 @@ async def test_materializer_dispatches_team_server_ingest_event(tmp_path):
 @pytest.mark.asyncio
 async def test_materializer_bridges_slack_extraction_to_ingest_payload(tmp_path):
     event = {
-        "sequence": 1, "author_email": "team-server@notion.bicameral",
+        "sequence": 1,
+        "author_email": "team-server@notion.bicameral",
         "event_type": "ingest",
         "payload": {
-            "source_type": "slack", "source_ref": "C1/2.0",
+            "source_type": "slack",
+            "source_ref": "C1/2.0",
             "content_hash": "h",
-            "extraction": {"decisions": [
-                {"summary": "use REST",
-                 "context_snippet": "we decided to use REST"},
-            ]},
+            "extraction": {
+                "decisions": [
+                    {"summary": "use REST", "context_snippet": "we decided to use REST"},
+                ]
+            },
         },
     }
     inner = await _materialize_one_event(tmp_path, event)
@@ -180,8 +185,7 @@ async def test_materializer_bridges_slack_extraction_to_ingest_payload(tmp_path)
         "source": "slack",
         "repo": "",
         "commit_hash": "",
-        "decisions": [{"description": "use REST",
-                       "source_excerpt": "we decided to use REST"}],
+        "decisions": [{"description": "use REST", "source_excerpt": "we decided to use REST"}],
         "title": "C1/2.0",
     }
 
@@ -191,15 +195,18 @@ async def test_materializer_bridges_notion_extraction_with_correct_source_type(t
     """notion_database_row source_type normalizes to 'notion' on the
     bridged IngestPayload."""
     event = {
-        "sequence": 1, "author_email": "team-server@notion.bicameral",
+        "sequence": 1,
+        "author_email": "team-server@notion.bicameral",
         "event_type": "ingest",
         "payload": {
             "source_type": "notion_database_row",
             "source_ref": "db1/page1",
             "content_hash": "h",
-            "extraction": {"decisions": [
-                {"summary": "approved", "context_snippet": "approved by lead"},
-            ]},
+            "extraction": {
+                "decisions": [
+                    {"summary": "approved", "context_snippet": "approved by lead"},
+                ]
+            },
         },
     }
     inner = await _materialize_one_event(tmp_path, event)
@@ -209,10 +216,12 @@ async def test_materializer_bridges_notion_extraction_with_correct_source_type(t
 @pytest.mark.asyncio
 async def test_materializer_skips_team_server_event_with_empty_decisions(tmp_path):
     event = {
-        "sequence": 1, "author_email": "team-server@notion.bicameral",
+        "sequence": 1,
+        "author_email": "team-server@notion.bicameral",
         "event_type": "ingest",
         "payload": {
-            "source_type": "slack", "source_ref": "C1/3.0",
+            "source_type": "slack",
+            "source_ref": "C1/3.0",
             "content_hash": "h",
             "extraction": {"decisions": []},
         },
@@ -228,12 +237,14 @@ async def test_materializer_still_handles_legacy_ingest_completed_event_type(tmp
     bridge's is_team_server_payload predicate returns False → original
     dispatch handles it."""
     event = {
-        "sequence": 1, "author_email": "dev@example.com",
+        "sequence": 1,
+        "author_email": "dev@example.com",
         "event_type": "ingest.completed",
         "payload": {
             # CodeLocatorPayload shape — has 'repo' and 'commit_hash'
             # but NO 'extraction' key (the team-server signature)
-            "repo": "/tmp/repo", "commit_hash": "abc",
+            "repo": "/tmp/repo",
+            "commit_hash": "abc",
             "decisions": [{"description": "X"}],
         },
     }
@@ -251,7 +262,8 @@ async def test_materializer_skips_team_server_event_with_malformed_payload(tmp_p
     in the meaningful sense). The materializer just no-ops with this
     shape. Functionality — exercises defensive shape-checking."""
     event = {
-        "sequence": 1, "author_email": "team-server@notion.bicameral",
+        "sequence": 1,
+        "author_email": "team-server@notion.bicameral",
         "event_type": "ingest",
         "payload": {
             "source_type": "slack",

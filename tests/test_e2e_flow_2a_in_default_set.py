@@ -27,12 +27,8 @@ def _load_runner_module():
     inspection)."""
     env = dict(os.environ)
     env.setdefault("DESKTOP_REPO_PATH", "/tmp/desktop-clone-stub")
-    with patch.dict(os.environ, env), patch.object(
-        shutil, "which", lambda _: "/usr/bin/stub"
-    ):
-        spec = importlib.util.spec_from_file_location(
-            "run_e2e_flows", _RUNNER_PATH
-        )
+    with patch.dict(os.environ, env), patch.object(shutil, "which", lambda _: "/usr/bin/stub"):
+        spec = importlib.util.spec_from_file_location("run_e2e_flows", _RUNNER_PATH)
         mod = importlib.util.module_from_spec(spec)
         sys.modules["run_e2e_flows"] = mod
         try:

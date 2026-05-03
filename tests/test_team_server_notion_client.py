@@ -54,16 +54,20 @@ async def test_list_databases_returns_only_databases_filter(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         captured["url"] = str(request.url)
         captured["body"] = json.loads(request.content.decode("utf-8"))
-        return httpx.Response(200, json={
-            "results": [
-                {"object": "database", "id": "db1", "title": [{"plain_text": "D1"}]},
-                {"object": "database", "id": "db2", "title": [{"plain_text": "D2"}]},
-            ]
-        })
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {"object": "database", "id": "db1", "title": [{"plain_text": "D1"}]},
+                    {"object": "database", "id": "db2", "title": [{"plain_text": "D2"}]},
+                ]
+            },
+        )
 
     real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        nc.httpx, "AsyncClient",
+        nc.httpx,
+        "AsyncClient",
         lambda *a, **kw: real_async_client(transport=_mk_transport(handler)),
     )
     out = await nc.list_databases("tok")
@@ -83,7 +87,8 @@ async def test_query_database_passes_last_edited_time_filter_when_watermark_give
 
     real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        nc.httpx, "AsyncClient",
+        nc.httpx,
+        "AsyncClient",
         lambda *a, **kw: real_async_client(transport=_mk_transport(handler)),
     )
     async for _ in nc.query_database("tok", "db1", "2026-05-02T00:00:00Z"):
@@ -108,20 +113,35 @@ async def test_fetch_page_blocks_paginates_until_has_more_false(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         state["page"] += 1
         if state["page"] == 1:
-            return httpx.Response(200, json={
-                "results": [{"id": "b1"}], "has_more": True, "next_cursor": "c1",
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "b1"}],
+                    "has_more": True,
+                    "next_cursor": "c1",
+                },
+            )
         if state["page"] == 2:
-            return httpx.Response(200, json={
-                "results": [{"id": "b2"}], "has_more": True, "next_cursor": "c2",
-            })
-        return httpx.Response(200, json={
-            "results": [{"id": "b3"}], "has_more": False,
-        })
+            return httpx.Response(
+                200,
+                json={
+                    "results": [{"id": "b2"}],
+                    "has_more": True,
+                    "next_cursor": "c2",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "results": [{"id": "b3"}],
+                "has_more": False,
+            },
+        )
 
     real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        nc.httpx, "AsyncClient",
+        nc.httpx,
+        "AsyncClient",
         lambda *a, **kw: real_async_client(transport=_mk_transport(handler)),
     )
     out = await nc.fetch_page_blocks("tok", "page1")
@@ -140,7 +160,8 @@ async def test_notion_version_header_is_pinned(monkeypatch):
 
     real_async_client = httpx.AsyncClient
     monkeypatch.setattr(
-        nc.httpx, "AsyncClient",
+        nc.httpx,
+        "AsyncClient",
         lambda *a, **kw: real_async_client(transport=_mk_transport(handler)),
     )
     await nc.list_databases("tok")

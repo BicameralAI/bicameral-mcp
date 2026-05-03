@@ -15,8 +15,9 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def env_setup(monkeypatch, tmp_path):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY",
-                       "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
     cfg = tmp_path / "config.yml"
     monkeypatch.setenv("BICAMERAL_CONFIG_PATH", str(cfg))
@@ -28,13 +29,10 @@ def env_setup(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_lifespan_starts_corpus_learner_when_enabled(env_setup, monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
-    env_setup.write_text(
-        "corpus_learner:\n"
-        "  enabled: true\n"
-        "  interval_seconds: 0\n"
-    )
+    env_setup.write_text("corpus_learner:\n  enabled: true\n  interval_seconds: 0\n")
 
     calls = {"n": 0}
 
@@ -57,12 +55,10 @@ async def test_lifespan_starts_corpus_learner_when_enabled(env_setup, monkeypatc
 @pytest.mark.asyncio
 async def test_lifespan_does_not_start_corpus_learner_when_disabled(env_setup):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
-    env_setup.write_text(
-        "corpus_learner:\n"
-        "  enabled: false\n"
-    )
+    env_setup.write_text("corpus_learner:\n  enabled: false\n")
 
     app = app_module.create_app()
     with TestClient(app) as _client:

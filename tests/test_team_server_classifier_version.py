@@ -34,14 +34,22 @@ async def test_upsert_returns_changed_true_when_classifier_version_differs():
             return {"decisions": ["v2"]}
 
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="A/1",
-            content_hash="h", classifier_version="cv-1",
-            compute_fn=stub_v1, model_version="m",
+            client,
+            source_type="slack",
+            source_ref="A/1",
+            content_hash="h",
+            classifier_version="cv-1",
+            compute_fn=stub_v1,
+            model_version="m",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="A/1",
-            content_hash="h", classifier_version="cv-2",
-            compute_fn=stub_v2, model_version="m",
+            client,
+            source_type="slack",
+            source_ref="A/1",
+            content_hash="h",
+            classifier_version="cv-2",
+            compute_fn=stub_v2,
+            model_version="m",
         )
         assert changed is True
         assert extraction == {"decisions": ["v2"]}
@@ -71,14 +79,22 @@ async def test_upsert_returns_changed_false_when_both_hash_and_version_match():
             return {"decisions": ["x"]}
 
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="B/1",
-            content_hash="h", classifier_version="cv-1",
-            compute_fn=stub, model_version="m",
+            client,
+            source_type="slack",
+            source_ref="B/1",
+            content_hash="h",
+            classifier_version="cv-1",
+            compute_fn=stub,
+            model_version="m",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="B/1",
-            content_hash="h", classifier_version="cv-1",
-            compute_fn=stub, model_version="m",
+            client,
+            source_type="slack",
+            source_ref="B/1",
+            content_hash="h",
+            classifier_version="cv-1",
+            compute_fn=stub,
+            model_version="m",
         )
         assert changed is False
         assert extraction == {"decisions": ["x"]}
@@ -105,14 +121,22 @@ async def test_upsert_returns_changed_true_when_content_hash_differs_classifier_
             return {"decisions": ["b"]}
 
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C/1",
-            content_hash="h-a", classifier_version="cv-1",
-            compute_fn=stub_a, model_version="m",
+            client,
+            source_type="slack",
+            source_ref="C/1",
+            content_hash="h-a",
+            classifier_version="cv-1",
+            compute_fn=stub_a,
+            model_version="m",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C/1",
-            content_hash="h-b", classifier_version="cv-1",
-            compute_fn=stub_b, model_version="m",
+            client,
+            source_type="slack",
+            source_ref="C/1",
+            content_hash="h-b",
+            classifier_version="cv-1",
+            compute_fn=stub_b,
+            model_version="m",
         )
         assert changed is True
         assert extraction == {"decisions": ["b"]}
@@ -165,15 +189,11 @@ async def test_v2_to_v3_migration_backfills_legacy_rows_with_default_classifier_
         await client.query("DEFINE FIELD source_ref ON extraction_cache TYPE string")
         await client.query("DEFINE FIELD content_hash ON extraction_cache TYPE string")
         await client.query(
-            "DEFINE FIELD canonical_extraction ON extraction_cache "
-            "FLEXIBLE TYPE object DEFAULT {}"
+            "DEFINE FIELD canonical_extraction ON extraction_cache FLEXIBLE TYPE object DEFAULT {}"
         )
+        await client.query("DEFINE FIELD model_version ON extraction_cache TYPE string")
         await client.query(
-            "DEFINE FIELD model_version ON extraction_cache TYPE string"
-        )
-        await client.query(
-            "DEFINE FIELD created_at ON extraction_cache "
-            "TYPE datetime DEFAULT time::now()"
+            "DEFINE FIELD created_at ON extraction_cache TYPE datetime DEFAULT time::now()"
         )
         await client.query(
             "CREATE extraction_cache CONTENT { source_type: 'slack', "

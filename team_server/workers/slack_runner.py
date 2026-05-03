@@ -15,7 +15,7 @@ encoding the string back to bytes before passing to decrypt_token.
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from ledger.client import LedgerClient
 from team_server.auth.encryption import decrypt_token, load_key_from_env
@@ -26,9 +26,7 @@ logger = logging.getLogger(__name__)
 Extractor = Callable[[str], Awaitable[dict]]
 
 
-async def run_slack_iteration(
-    db_client: LedgerClient, extractor: Extractor
-) -> None:
+async def run_slack_iteration(db_client: LedgerClient, extractor: Extractor) -> None:
     # slack_sdk imported lazily so the team_server package is importable
     # without slack_sdk installed (tests for unrelated code paths don't
     # need it). The runner is the only production caller; if slack_sdk

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from typing import Optional
 
 from ledger.client import LedgerClient
 
@@ -22,13 +21,11 @@ async def learn_corpus_terms(
     *,
     source_type: str = "slack",
     top_n: int = 50,
-    denylist: Optional[list[str]] = None,
+    denylist: list[str] | None = None,
 ) -> list[dict]:
     """Read team_event rows whose payload yielded decisions, extract
     top n-grams from the source content. Returns list of {term, support_count}."""
-    rows = await client.query(
-        "SELECT payload FROM team_event WHERE event_type = 'ingest'"
-    )
+    rows = await client.query("SELECT payload FROM team_event WHERE event_type = 'ingest'")
     counter: Counter = Counter()
     for row in rows or []:
         payload = row.get("payload") or {}
@@ -43,7 +40,7 @@ async def learn_corpus_terms(
             words = text.split()
             for n in range(NGRAM_MIN, NGRAM_MAX + 1):
                 for i in range(len(words) - n + 1):
-                    counter[" ".join(words[i:i + n])] += 1
+                    counter[" ".join(words[i : i + n])] += 1
     deny = {d.lower() for d in (denylist or [])}
     out: list[dict] = []
     for term, support in counter.most_common(top_n * 4):
@@ -56,14 +53,15 @@ async def learn_corpus_terms(
 
 
 async def persist_learned_terms(
-    client: LedgerClient, source_type: str, terms: list[dict],
+    client: LedgerClient,
+    source_type: str,
+    terms: list[dict],
 ) -> None:
     """UPSERT-shaped: existing rows for (source_type, term) get their
     support_count and learned_at updated; new terms inserted."""
     for entry in terms:
         existing = await client.query(
-            "SELECT id FROM learned_heuristic_terms "
-            "WHERE source_type = $st AND term = $t LIMIT 1",
+            "SELECT id FROM learned_heuristic_terms WHERE source_type = $st AND term = $t LIMIT 1",
             {"st": source_type, "t": entry["term"]},
         )
         if existing:
@@ -71,20 +69,19 @@ async def persist_learned_terms(
                 "UPDATE learned_heuristic_terms "
                 "SET support_count = $sc, learned_at = time::now() "
                 "WHERE source_type = $st AND term = $t",
-                {"st": source_type, "t": entry["term"],
-                 "sc": entry["support_count"]},
+                {"st": source_type, "t": entry["term"], "sc": entry["support_count"]},
             )
         else:
             await client.query(
                 "CREATE learned_heuristic_terms CONTENT { "
                 "source_type: $st, term: $t, support_count: $sc }",
-                {"st": source_type, "t": entry["term"],
-                 "sc": entry["support_count"]},
+                {"st": source_type, "t": entry["term"], "sc": entry["support_count"]},
             )
 
 
 async def load_learned_terms(
-    client: LedgerClient, source_type: str,
+    client: LedgerClient,
+    source_type: str,
 ) -> tuple[str, ...]:
     rows = await client.query(
         "SELECT term FROM learned_heuristic_terms "
@@ -95,7 +92,10 @@ async def load_learned_terms(
 
 
 async def run_corpus_learner_iteration(
-    client: LedgerClient, config, *, source_type: str = "slack",
+    client: LedgerClient,
+    config,
+    *,
+    source_type: str = "slack",
 ) -> None:
     """Single learner iteration. Pulls denylist from the matching
     heuristic-global rules; persists results."""
@@ -105,10 +105,14 @@ async def run_corpus_learner_iteration(
     elif source_type == "notion":
         deny = config.notion.heuristics.global_rules.learned_denylist
     terms = await learn_corpus_terms(
-        client, source_type=source_type,
-        top_n=config.corpus_learner.top_n, denylist=deny,
+        client,
+        source_type=source_type,
+        top_n=config.corpus_learner.top_n,
+        denylist=deny,
     )
     await persist_learned_terms(client, source_type, terms)
     logger.info(
-        "[corpus-learner] source=%s persisted %d terms", source_type, len(terms),
+        "[corpus-learner] source=%s persisted %d terms",
+        source_type,
+        len(terms),
     )

@@ -8,11 +8,13 @@ None when Stage 2 did not run (chatter or rules-disabled).
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable, Optional, Union
+from collections.abc import Awaitable, Callable
 
 from team_server.config import RulesDisabled
 from team_server.extraction.heuristic_classifier import (
-    TriggerRules, classify, derive_classifier_version,
+    TriggerRules,
+    classify,
+    derive_classifier_version,
 )
 
 LLMExtractFn = Callable[[str, list[str]], Awaitable[dict]]
@@ -23,8 +25,8 @@ async def extract_decision_pipeline(
     text: str,
     message: dict,
     context: dict,
-    rules_or_disabled: Union[TriggerRules, RulesDisabled],
-    llm_extract_fn: Optional[LLMExtractFn] = None,
+    rules_or_disabled: TriggerRules | RulesDisabled,
+    llm_extract_fn: LLMExtractFn | None = None,
 ) -> dict:
     if isinstance(rules_or_disabled, RulesDisabled):
         return {
@@ -47,6 +49,7 @@ async def extract_decision_pipeline(
         }
     if llm_extract_fn is None:
         from team_server.extraction.llm_extractor import extract as default_extract
+
         llm_extract_fn = default_extract
     llm_result = await llm_extract_fn(text, list(classification.matched_triggers))
     return {

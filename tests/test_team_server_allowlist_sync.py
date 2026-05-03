@@ -18,11 +18,16 @@ def memory_url(monkeypatch):
 
 def _build_config(team_id: str, channels: list[str]):
     from team_server.config import (
-        SlackConfig, TeamServerConfig, WorkspaceConfig,
+        SlackConfig,
+        TeamServerConfig,
+        WorkspaceConfig,
     )
-    return TeamServerConfig(slack=SlackConfig(
-        workspaces=[WorkspaceConfig(team_id=team_id, channels=channels)],
-    ))
+
+    return TeamServerConfig(
+        slack=SlackConfig(
+            workspaces=[WorkspaceConfig(team_id=team_id, channels=channels)],
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -36,14 +41,11 @@ async def test_sync_inserts_channels_for_workspace_in_yaml():
     try:
         await ensure_schema(client)
         rows = await client.query(
-            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T1', "
-            "oauth_token_encrypted: '' }"
+            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T1', oauth_token_encrypted: '' }"
         )
         config = _build_config("T1", ["C-A", "C-B"])
         await sync_channel_allowlist(client, config)
-        rows = await client.query(
-            "SELECT channel_id FROM channel_allowlist"
-        )
+        rows = await client.query("SELECT channel_id FROM channel_allowlist")
         channel_ids = {r["channel_id"] for r in rows}
         assert channel_ids == {"C-A", "C-B"}
     finally:
@@ -61,8 +63,7 @@ async def test_sync_is_idempotent():
     try:
         await ensure_schema(client)
         await client.query(
-            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T1', "
-            "oauth_token_encrypted: '' }"
+            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T1', oauth_token_encrypted: '' }"
         )
         config = _build_config("T1", ["C-A", "C-B"])
         await sync_channel_allowlist(client, config)
@@ -138,16 +139,13 @@ async def test_sync_removes_channels_not_in_yaml():
     try:
         await ensure_schema(client)
         await client.query(
-            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T1', "
-            "oauth_token_encrypted: '' }"
+            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T1', oauth_token_encrypted: '' }"
         )
         config_full = _build_config("T1", ["C-A", "C-B"])
         await sync_channel_allowlist(client, config_full)
         config_reduced = _build_config("T1", ["C-A"])
         await sync_channel_allowlist(client, config_reduced)
-        rows = await client.query(
-            "SELECT channel_id FROM channel_allowlist"
-        )
+        rows = await client.query("SELECT channel_id FROM channel_allowlist")
         channel_ids = {r["channel_id"] for r in rows}
         assert channel_ids == {"C-A"}
     finally:

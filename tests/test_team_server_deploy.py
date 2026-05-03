@@ -27,6 +27,7 @@ def test_docker_compose_yaml_validates():
     # (using ${VAR:?error} syntax) — fail-loud rather than ship a default.
     # Provide a dummy value here so `config` parses; deployment supplies real.
     import os
+
     env = {**os.environ, "BICAMERAL_TEAM_SERVER_SECRET_KEY": "dGVzdF9rZXk="}
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=env)
     assert result.returncode == 0, f"compose config failed: {result.stderr}"

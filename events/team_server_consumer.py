@@ -17,10 +17,10 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Optional
 
 from events.team_server_bridge import (
-    bridge_team_server_payload, is_team_server_payload,
+    bridge_team_server_payload,
+    is_team_server_payload,
 )
 from events.team_server_pull import pull_team_server_events
 
@@ -58,8 +58,10 @@ async def consume_team_server_events_once(
 
 
 def start_team_server_consumer_if_configured(
-    adapter, *, watermark_path: Optional[Path] = None,
-) -> Optional[asyncio.Task]:
+    adapter,
+    *,
+    watermark_path: Path | None = None,
+) -> asyncio.Task | None:
     """Spawn the consumer loop if BICAMERAL_TEAM_SERVER_URL is set.
     Returns the task (caller cancels on shutdown) or None when off.
 
@@ -78,7 +80,8 @@ def start_team_server_consumer_if_configured(
     interval = int(os.environ.get("BICAMERAL_TEAM_SERVER_PULL_INTERVAL_SECONDS", "60"))
     if watermark_path is None:
         data_path = os.environ.get(
-            "BICAMERAL_DATA_PATH", os.environ.get("REPO_PATH", "."),
+            "BICAMERAL_DATA_PATH",
+            os.environ.get("REPO_PATH", "."),
         )
         watermark_path = Path(data_path) / ".bicameral" / "local" / "team_server_watermark"
         watermark_path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,11 +90,14 @@ def start_team_server_consumer_if_configured(
         while True:
             try:
                 ingested = await consume_team_server_events_once(
-                    url, watermark_path, inner_adapter,
+                    url,
+                    watermark_path,
+                    inner_adapter,
                 )
                 if ingested:
                     logger.info(
-                        "[team-server-consumer] ingested %d events", ingested,
+                        "[team-server-consumer] ingested %d events",
+                        ingested,
                     )
             except Exception:  # noqa: BLE001
                 logger.exception("[team-server-consumer] iteration failed")

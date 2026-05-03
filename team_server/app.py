@@ -38,6 +38,7 @@ def _load_config_or_default() -> TeamServerConfig:
     if not DEFAULT_CONFIG_PATH.exists():
         return TeamServerConfig()
     from team_server.config import load_rules_from_config
+
     try:
         return load_rules_from_config(str(DEFAULT_CONFIG_PATH))
     except Exception:  # noqa: BLE001
@@ -65,37 +66,44 @@ async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
 
     # Slack worker — always registered (no-op when workspace table empty)
-    tasks.append(worker_loop(
-        name="slack",
-        interval_seconds=SLACK_POLL_INTERVAL_SECONDS,
-        work_fn=lambda: run_slack_iteration(db.client, _interim_extractor),
-    ))
+    tasks.append(
+        worker_loop(
+            name="slack",
+            interval_seconds=SLACK_POLL_INTERVAL_SECONDS,
+            work_fn=lambda: run_slack_iteration(db.client, _interim_extractor),
+        )
+    )
 
     # Notion worker — registered only when token resolves (opt-in)
     try:
         notion_token = nc.load_token(config_path=str(DEFAULT_CONFIG_PATH))
-        tasks.append(worker_loop(
-            name="notion",
-            interval_seconds=NOTION_POLL_INTERVAL_SECONDS,
-            work_fn=lambda: run_notion_iteration(db.client, notion_token, _interim_extractor),
-        ))
+        tasks.append(
+            worker_loop(
+                name="notion",
+                interval_seconds=NOTION_POLL_INTERVAL_SECONDS,
+                work_fn=lambda: run_notion_iteration(db.client, notion_token, _interim_extractor),
+            )
+        )
         logger.info("[team-server] notion worker registered")
     except nc.NotionAuthError:
         logger.info("[team-server] notion ingest disabled (no token)")
 
     # Corpus learner — opt-in via config.corpus_learner.enabled
     if config.corpus_learner.enabled:
-        tasks.append(worker_loop(
-            name="corpus-learner",
-            interval_seconds=config.corpus_learner.interval_seconds,
-            work_fn=lambda: run_corpus_learner_iteration(db.client, config),
-        ))
+        tasks.append(
+            worker_loop(
+                name="corpus-learner",
+                interval_seconds=config.corpus_learner.interval_seconds,
+                work_fn=lambda: run_corpus_learner_iteration(db.client, config),
+            )
+        )
         logger.info("[team-server] corpus learner registered")
 
     app.state.worker_tasks = tasks
     logger.info(
         "[team-server] started; schema_version=%s; %d worker(s)",
-        SCHEMA_VERSION, len(tasks),
+        SCHEMA_VERSION,
+        len(tasks),
     )
     try:
         yield
@@ -118,8 +126,9 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "ok", "schema_version": SCHEMA_VERSION}
 
-    from team_server.auth.router import router as auth_router
     from team_server.api.events import router as events_router
+    from team_server.auth.router import router as auth_router
+
     app.include_router(auth_router)
     app.include_router(events_router)
 

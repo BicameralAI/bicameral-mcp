@@ -9,7 +9,7 @@ NotionAuthError if neither is set. Notion-Version header is pinned to
 from __future__ import annotations
 
 import os
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 import httpx
 import yaml
@@ -22,7 +22,7 @@ class NotionAuthError(RuntimeError):
     """Raised when no Notion integration token can be resolved."""
 
 
-def load_token(config_path: Optional[str] = None) -> str:
+def load_token(config_path: str | None = None) -> str:
     env = os.environ.get("NOTION_TOKEN")
     if env:
         return env
@@ -60,9 +60,7 @@ async def list_databases(token: str) -> list[tuple[str, str]]:
     return out
 
 
-async def query_database(
-    token: str, db_id: str, watermark: Optional[str]
-) -> AsyncIterator[dict]:
+async def query_database(token: str, db_id: str, watermark: str | None) -> AsyncIterator[dict]:
     """Yield page rows from a database, filtered by last_edited_time > watermark."""
     body: dict = {
         "sorts": [{"timestamp": "last_edited_time", "direction": "ascending"}],
@@ -72,7 +70,7 @@ async def query_database(
             "timestamp": "last_edited_time",
             "last_edited_time": {"after": watermark},
         }
-    cursor: Optional[str] = None
+    cursor: str | None = None
     async with httpx.AsyncClient() as client:
         while True:
             req_body = {**body, **({"start_cursor": cursor} if cursor else {})}
@@ -93,7 +91,7 @@ async def query_database(
 async def fetch_page_blocks(token: str, page_id: str) -> list[dict]:
     """Return the flat list of top-level blocks for a page (paginated)."""
     out: list[dict] = []
-    cursor: Optional[str] = None
+    cursor: str | None = None
     async with httpx.AsyncClient() as client:
         while True:
             params = {"start_cursor": cursor} if cursor else {}

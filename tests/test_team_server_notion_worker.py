@@ -309,7 +309,8 @@ async def test_poll_once_skips_database_on_404_logs_and_continues(monkeypatch):
     async def fake_query_database(token, db_id, watermark):
         if db_id == "db_bad":
             raise httpx.HTTPStatusError(
-                "404", request=httpx.Request("POST", "https://x"),
+                "404",
+                request=httpx.Request("POST", "https://x"),
                 response=httpx.Response(404),
             )
         yield _row("p1", "T1")
@@ -355,17 +356,25 @@ async def test_content_hash_uses_serialized_row_not_raw_page_dict(monkeypatch):
     async def fake_query_database(token, db_id, watermark):
         # Same content, different dict insertion order on the 2nd call
         if state["order"] == "v1":
-            yield {"id": "p1", "last_edited_time": "2026-05-02T10:00:00Z",
-                   "properties": {
-                       "Name": {"type": "title", "title": [{"plain_text": "T"}]},
-                       "A": {"type": "select", "select": {"name": "1"}},
-                       "B": {"type": "select", "select": {"name": "2"}}}}
+            yield {
+                "id": "p1",
+                "last_edited_time": "2026-05-02T10:00:00Z",
+                "properties": {
+                    "Name": {"type": "title", "title": [{"plain_text": "T"}]},
+                    "A": {"type": "select", "select": {"name": "1"}},
+                    "B": {"type": "select", "select": {"name": "2"}},
+                },
+            }
         else:
-            yield {"id": "p1", "last_edited_time": "2026-05-02T10:00:00Z",
-                   "properties": {
-                       "B": {"type": "select", "select": {"name": "2"}},
-                       "A": {"type": "select", "select": {"name": "1"}},
-                       "Name": {"type": "title", "title": [{"plain_text": "T"}]}}}
+            yield {
+                "id": "p1",
+                "last_edited_time": "2026-05-02T10:00:00Z",
+                "properties": {
+                    "B": {"type": "select", "select": {"name": "2"}},
+                    "A": {"type": "select", "select": {"name": "1"}},
+                    "Name": {"type": "title", "title": [{"plain_text": "T"}]},
+                },
+            }
 
     async def fake_fetch_page_blocks(token, page_id):
         return []

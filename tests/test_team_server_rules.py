@@ -11,20 +11,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from team_server.config import (
-    RulesDisabled, TeamServerConfig,
+    RulesDisabled,
+    TeamServerConfig,
     load_rules_from_config,
-    resolve_rules_for_notion, resolve_rules_for_slack,
+    resolve_rules_for_notion,
+    resolve_rules_for_slack,
 )
 
 
 def test_load_rules_from_yaml_returns_typed_rules(tmp_path):
     cfg = tmp_path / "c.yml"
-    cfg.write_text(
-        "slack:\n"
-        "  heuristics:\n"
-        "    global:\n"
-        "      keywords: [decided, agreed]\n"
-    )
+    cfg.write_text("slack:\n  heuristics:\n    global:\n      keywords: [decided, agreed]\n")
     config = load_rules_from_config(str(cfg))
     assert config.slack.heuristics.global_rules.keywords == ["decided", "agreed"]
 
@@ -82,10 +79,7 @@ def test_resolve_rules_for_notion_database_merges_global_with_database_override(
 def test_invalid_yaml_keyword_negatives_pattern_raises_value_error(tmp_path):
     cfg = tmp_path / "c.yml"
     cfg.write_text(
-        "slack:\n"
-        "  heuristics:\n"
-        "    global:\n"
-        "      keyword_negatives: [123]\n"  # ints, not strings
+        "slack:\n  heuristics:\n    global:\n      keyword_negatives: [123]\n"  # ints, not strings
     )
     with pytest.raises(ValueError):
         load_rules_from_config(str(cfg))
