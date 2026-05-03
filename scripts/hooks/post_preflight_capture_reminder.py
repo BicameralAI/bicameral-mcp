@@ -6,14 +6,23 @@ the correction-capture loop (Step 5.6 of ``skills/bicameral-preflight``):
   1. ``bicameral.ingest(source="agent_session", ...)`` — capture the user's
      refinement.
   2. ``bicameral.resolve_collision(new_id=..., old_id=..., action=...)`` —
-     wire the refinement to the contradicted decision.
+     wire the refinement to the surfaced decision.
 
-The reminder is *conditional* — it tells the agent "IF your prompt
-contradicts a surfaced decision, do this." Preflight has no view of the
-user's prompt, so the hook over-fires on any non-empty surfaced block;
-the LLM is the gate. Mirrors the existing UserPromptSubmit reminder
-pattern in ``preflight_reminder.py`` (over-fires on any
-implementation-verb prompt; the skill is the gate).
+The reminder is *unconditional* — Step 5.6 capture is mechanical, not a
+judgment call. An earlier conditional shape ("IF your prompt contradicts
+a surfaced decision …") let the agent skip capture on borderline prompts
+(observed: agent acknowledged the surfaced decision in its text, then
+chose 'proceeding with the refactor' without calling ingest /
+resolve_collision). The PM resolves ambiguity in the inbox, not the
+agent — missed capture is irreversible context loss while a noisy
+ledger is reversible.
+
+Tradeoff: the hook now fires on every preflight that returns ≥1
+decision, so it spams a refinement-capture reminder even when the
+user's request is fully compatible with prior decisions. Tracked as a
+follow-up to make this less spammy (e.g. inspect the user prompt via a
+co-located UserPromptSubmit handoff, or compare topic similarity to
+surfaced decisions).
 
 Per Claude Code 2.x hook contract: read JSON ``{tool_name, tool_input,
 tool_response}`` from stdin. ``tool_response`` is either a JSON string or
@@ -59,34 +68,41 @@ def _format_reminder(decisions: list[dict]) -> str:
     )
     return (
         "<system-reminder>\n"
-        f"bicameral.preflight surfaced {len(decisions)} decision(s):\n"
+        f"bicameral.preflight surfaced {len(decisions)} prior decision(s):\n"
         f"{bullets}\n"
         "\n"
-        "If your current prompt CONTRADICTS any surfaced decision (signals: "
-        '"instead of", "actually we\'re switching to", "no more X", '
-        '"I know X said Y but..."), you MUST do this BEFORE any code edits, '
-        "per skills/bicameral-preflight Step 5.6:\n"
+        "BEFORE any code edits, you MUST capture the user's current request "
+        "as a refinement of the surfaced decision(s) by calling these two "
+        "tools mechanically — do NOT judge whether the request 'really' "
+        "contradicts what was surfaced; the PM resolves ambiguity in the "
+        "inbox, not the agent. Per skills/bicameral-preflight Step 5.6:\n"
         "\n"
         "  1. bicameral.ingest(payload={\n"
-        '       "query": "<contradicted decision\'s topic>",\n'
+        '       "query": "<surfaced decision\'s topic>",\n'
         '       "source": "agent_session",\n'
-        '       "title": "<short label>",\n'
+        '       "title": "<short label of user\'s direction>",\n'
         '       "date": "<today ISO date>",\n'
-        '       "decisions": [{"description": "<user\'s new direction>"}]\n'
-        '     }, feature_group="<same feature group as the contradicted decision>")\n'
+        '       "decisions": [{"description": "<user\'s direction, stated as a decision>"}]\n'
+        '     }, feature_group="<same feature group as the surfaced decision>")\n'
         "\n"
         "  2. bicameral.resolve_collision(\n"
         '       new_id="<just-ingested refinement id>",\n'
-        '       old_id="<contradicted decision_id from list above>",\n'
+        '       old_id="<surfaced decision_id from list above>",\n'
         '       action="supersede" | "keep_both" | "link_parent"\n'
         "     )\n"
         "\n"
-        "Pick action mechanically: supersede (full replace), keep_both "
-        "(added constraint), link_parent (child decision under L1 parent). "
-        "Do not ask the user — they already stated the refinement.\n"
+        "Pick action mechanically based on what the user said, not whether "
+        "you think it conflicts:\n"
+        "  - supersede   — user fully replaces the prior approach\n"
+        "                  (e.g. 'X is out, Y instead', 'switching from X to Y')\n"
+        "  - keep_both   — user adds, narrows, or scopes alongside the prior\n"
+        "                  (e.g. 'also need X for Y', 'only on this surface')\n"
+        "  - link_parent — user's direction is a child decision under a higher-\n"
+        "                  level surfaced parent (L1 parent → L2 child)\n"
         "\n"
-        "If your prompt is COMPATIBLE with the surfaced decisions, ignore "
-        "this and proceed normally.\n"
+        "Capture is cheap; missed capture is irreversible context loss. Even "
+        "if the user's request looks compatible, log the refinement so the "
+        "PM has the trace.\n"
         "</system-reminder>"
     )
 

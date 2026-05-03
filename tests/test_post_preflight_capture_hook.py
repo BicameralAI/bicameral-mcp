@@ -83,6 +83,29 @@ def test_emits_reminder_when_decisions_surfaced():
     assert "supersede" in ctx and "keep_both" in ctx and "link_parent" in ctx
 
 
+def test_reminder_is_unconditional_not_judgment_gated():
+    """The reminder must instruct mechanical capture, NOT condition on the
+    agent's own judgment of whether the prompt 'really' contradicts. An
+    earlier conditional phrasing let the agent skip capture on borderline
+    prompts even when preflight surfaced relevant decisions. Lock the
+    unconditional posture in so future edits don't quietly regress it.
+    """
+    stdin = _make_stdin(
+        fired=True,
+        decisions=[{"decision_id": "decision:abc", "description": "Some prior decision"}],
+    )
+    _, out, _ = _run_hook(stdin)
+    ctx = _hook_output(json.loads(out))["additionalContext"]
+    # Affirmative imperative present.
+    assert "BEFORE any code edits, you MUST capture" in ctx
+    assert "do NOT judge" in ctx
+    # Negative: must not gate on the agent's own contradiction judgment, and
+    # must not give an explicit escape hatch for "compatible" prompts.
+    assert "If your current prompt CONTRADICTS" not in ctx
+    assert "If your prompt is COMPATIBLE" not in ctx
+    assert "ignore this and proceed normally" not in ctx
+
+
 def _assert_silent(out: str) -> None:
     """No envelope written. Tolerate fully-empty stdout or `{}`."""
     if not out.strip():
