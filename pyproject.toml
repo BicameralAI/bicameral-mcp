@@ -56,6 +56,7 @@ test = [
 bicameral-mcp = "server:cli_main"
 bicameral-mcp-classify = "cli.classify:main"
 bicameral-mcp-preflight-reminder = "scripts.hooks.preflight_reminder:main"
+bicameral-mcp-post-commit-sync-reminder = "scripts.hooks.post_commit_sync_reminder:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
