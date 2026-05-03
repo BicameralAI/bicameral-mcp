@@ -1775,4 +1775,211 @@ Session is sealed.
 ---
 *Chain integrity: VALID (36 entries on this branch)*
 *Genesis: `29dfd085` → ... → Priority C v1 SEAL: `dcb61910` → Priority C v1.1 SEAL: `b3700366`*
+
+---
+
+### Entry #37: GATE TRIBUNAL (Priority C v0 release-blockers — issues #160 + #161)
+
+- **Date**: 2026-05-02
+- **Session**: `2026-05-02T2230-c4d1f8`
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-c-team-server-v0-release-blockers.md`
+- **Verdict**: **VETO**
+- **Risk Grade**: L2
+- **Findings**: 1 (`infrastructure-mismatch`)
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-02T2230-c4d1f8/audit.json`
+
+**Finding**: Phase 2 ("materializer payload bridge for team-server events") closes only the dispatch-recognition half of the materializer gap. The other half — pulling team-server events into the JSONL stream the materializer reads — is unwired in production. `pull_team_server_events` has zero production callers (verified via grep across all `*.py` excluding `tests/`). Adding a dispatch case for `event_type='ingest'` would be dead code unless a periodic pull task feeds events into `events/{author_email}.jsonl`.
+
+**Pattern recurrence**: SHADOW_GENOME #7 `PARALLEL_STRUCTURE_ASSUMED` — second instance. The Governor inherited the v1.0 Phase 4 plan's claim of "EventMaterializer extension" without verifying that the downstream consumer wiring was complete. The heuristic update: when planning to MUTATE a function whose intended downstream consumer is named explicitly, grep for production callers of THAT consumer too — not just the function being mutated.
+
+**Decision**: Plan-text per `qor/references/doctrine-audit-report-language.md`. Governor amends with a new phase (insert as Phase 2; old Phase 2 becomes Phase 3) that wires `pull_team_server_events` → `events/{author_email}.jsonl` append → existing materializer JSONL replay. Estimated remediation scope: one new phase, ~50-80 LOC + 3 functionality tests. Re-run `/qor-audit`.
+
+**v0 release deadline**: 2 days. Amendment cost is small; deadline preserved.
+
+**Previous chain hash**: `b3700366...` (Entry #36, Priority C v1.1 SEAL)
+
+---
+*Chain integrity: VALID (37 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority C v1.1 SEAL: `b3700366` → v0-release-blockers GATE round 1 (VETO): pending re-audit*
+
+---
+
+### Entry #38: GATE TRIBUNAL (v0 release-blockers, round 2)
+
+- **Date**: 2026-05-02
+- **Session**: `2026-05-02T2230-c4d1f8`
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-c-team-server-v0-release-blockers.md` (amendment round 2)
+- **Verdict**: **VETO**
+- **Risk Grade**: L2
+- **Findings**: 1 (`specification-drift`)
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-02T2230-c4d1f8/audit.json`
+
+**Resolved from round 1**: pull→dispatch wiring closed via new Phase 1.5 (`events/team_server_consumer.py` + serve_stdio integration). All round-1 cited symbols re-verified clean.
+
+**New finding (Finding A)**: Phase 1.5 §Changes sketch passes `get_ledger()` (TeamWriteAdapter wrapper) to the consumer but the function body doesn't unwrap to `._inner`. The plan's prose describes the unwrap as defensive; the code sketch contradicts the prose. `TeamWriteAdapter.ingest_payload` (`events/team_adapter.py:58-59`) emits `'ingest.completed'` via `self._writer.write` BEFORE delegating, so consumer-driven ingest would echo team-server events into per-dev JSONL files. Once those JSONL files git-push, every other dev replays the echoed event independently — O(N²) cross-dev replay amplification per team-server event for an N-dev team.
+
+**Pattern observation**: Round 1 fixed the symptom (dead bridge); round 2 found a sibling defect (echo amplification). SHADOW_GENOME #7 sixth heuristic suggested by this VETO: **wrapper-side-effect check** — when a plan invokes a method through a registry/factory accessor, grep the returned type's method body for side effects. The plan correctly cited the accessor (`get_ledger()`) but missed that the returned wrapper has side effects.
+
+**Pattern continuity**: round 1 = infrastructure-mismatch; round 2 = specification-drift. Different signatures; cycle-count escalator does not trigger.
+
+**Decision**: Plan-text per `qor/references/doctrine-audit-report-language.md`. Governor amends with the unwrap line in §Changes + adds a `test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl` functionality test that constructs a real TeamWriteAdapter and asserts the writer's `write` method is NOT called. Re-run `/qor-audit`.
+
+**v0 deadline**: 2 days. Amendment cost ~15 min for two sketch lines + one new test.
+
+**Previous chain hash**: Entry #37 (round 1 VETO)
+
+---
+*Chain integrity: VALID (38 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers GATE round 1 → round 2 (VETO): pending re-audit*
+
+---
+
+### Entry #39: GATE TRIBUNAL (v0 release-blockers, round 3 — PASS)
+
+- **Date**: 2026-05-02
+- **Session**: `2026-05-02T2230-c4d1f8`
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-c-team-server-v0-release-blockers.md` (amendment round 3)
+- **Verdict**: **PASS**
+- **Risk Grade**: L2
+- **Findings**: none
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-02T2230-c4d1f8/audit.json`
+
+**Round-3 amendments closed round-2 finding cleanly**:
+- `inner_adapter = getattr(adapter, "_inner", adapter)` placed inline in `start_team_server_consumer_if_configured` BEFORE the loop body
+- New test `test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl` exercises both invariants (inner adapter awaited; writer.write NOT called)
+- Parameter rename matches the post-unwrap contract
+- Verified `SurrealDBLedgerAdapter` has no `_inner` attribute, so `getattr(..., "_inner", adapter)` falls through correctly in solo mode
+
+**Session audit cycle complete**: round 1 VETO (`infrastructure-mismatch`) → round 2 VETO (`specification-drift`) → round 3 PASS. Two distinct VETO signatures; no cycle-count escalation triggered.
+
+**SHADOW_GENOME #7 heuristic catalog grew 4 → 6 across this session**:
+- Heuristic 5 (upstream-consumer) added at Entry #37
+- Heuristic 6 (wrapper-side-effect) added at Entry #38
+- Round 3 PASS confirmed both heuristics held under the round-3 amendment
+
+**Decision**: Implementation may proceed. Next phase per `qor/gates/chain.md` is `/qor-implement`.
+
+**v0 deadline**: still 2 days. Audit cycle (3 rounds + amendments) consumed ~30 min. Implementation budget remaining: ample.
+
+**Previous chain hash**: Entry #38 (round 2 VETO)
+
+---
+*Chain integrity: VALID (39 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers GATE round 3 (PASS): pending implement+seal*
+
+---
+
+### Entry #40: IMPLEMENTATION (v0 release-blockers — issues #160 + #161)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-02T2230-c4d1f8`
+- **Phase**: IMPLEMENT
+- **Skill**: `/qor-implement`
+- **Plan**: `plan-priority-c-team-server-v0-release-blockers.md` (amendment round 3)
+- **Audit predecessor**: Entry #39 (round-3 PASS, L2)
+- **Gate artifact**: `.qor/gates/2026-05-02T2230-c4d1f8/implement.json`
+- **Closes issues**: #160 (materializer event_type mismatch), #161 (channel_allowlist not populated)
+
+**Files created (6)**: `team_server/auth/allowlist_sync.py`, `events/team_server_consumer.py`, `events/team_server_bridge.py` + 3 functionality test files.
+
+**Files modified (4)**: `team_server/app.py` (lifespan calls sync), `events/materializer.py` (dispatch case for team-server `'ingest'`), `server.py` (consumer task spawned in serve_stdio), `tests/test_materializer_team_server_pull.py` (6 new bridge tests).
+
+**Test outcomes**:
+- Phase 1 channel_allowlist sync: 5/5 PASS
+- Phase 1 lifespan integration: 2/2 PASS
+- Phase 1.5 periodic consumer: 7/7 PASS (incl. `test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl` from audit-round-2 Finding A)
+- Phase 2 materializer bridge: 6/6 PASS (incl. legacy `ingest.completed` regression coverage)
+- **Team-server full suite: 123/123 PASS**
+
+**Section 4 Razor compliance**: max file 167 LOC (events/materializer.py); all functions <25 lines; nesting ≤3; zero nested ternaries.
+
+**Reality vs Promise alignment**:
+- Phase 1 (closes #161): channel_allowlist sync runs at lifespan startup; `record<workspace>` strict type handled via `type::thing()` coercion
+- Phase 1.5 (closes #160 first half): `pull_team_server_events` now has a production caller via the periodic task spawned in `serve_stdio`; defensive unwrap (`getattr(adapter, "_inner", adapter)`) bypasses the TeamWriteAdapter wrapper's `_writer.write` side effect — closes the round-2 echo-amplification finding
+- Phase 2 (closes #160 second half): materializer JSONL dispatch recognizes `event_type='ingest'` AND `'ingest.completed'` for team-server-shaped payloads; bridges to `IngestPayload` shape (`source='slack'|'notion'`, empty `repo`/`commit_hash`); legacy `ingest.completed` with non-team-server payload still routes to original dispatch unchanged
+
+**Audit findings closed**: round-1 `infrastructure-mismatch` (missing pull→dispatch wiring) + round-2 `specification-drift` (sketch contradicted prose; would echo events). Both addressed inline; round-3 PASS held.
+
+**Decision**: Reality matches Promise across all 3 phases. v0 release pipeline is end-to-end functional: Slack OAuth → workspace row → YAML allowlist sync → channel_allowlist populated → Slack worker polls allowlisted channels → extracts decisions via heuristic+LLM pipeline → emits team_event → /events HTTP serves → per-dev consumer pulls → bridges to IngestPayload → inner_adapter.ingest_payload → per-dev local ledger gets the decision row.
+
+**Previous chain hash**: Entry #39 (round-3 PASS audit)
+
+---
+*Chain integrity: VALID (40 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers IMPLEMENT: pending seal*
+
+---
+
+### Entry #41: SUBSTANTIATION (SESSION SEAL — v0 release-blockers)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-02T2230-c4d1f8`
+- **Phase**: SUBSTANTIATE
+- **Skill**: `/qor-substantiate`
+- **Plan**: `plan-priority-c-team-server-v0-release-blockers.md`
+- **Audit**: round 3 PASS, L2 risk grade
+- **Implement**: Entry #40
+- **Closes issues**: #160, #161
+
+**Reality vs Promise verification**:
+
+| Audit pass | Outcome |
+|---|---|
+| PASS verdict prerequisite | ✅ Round 3 PASS at Entry #39 |
+| Reality audit | ✅ All 11 source/test/plan files staged; no orphans |
+| Test audit | ✅ 123/123 team-server + materializer tests passing |
+| Presence-only seal gate | ✅ Every new test invokes the unit and asserts on observable output (incl. real-TeamWriteAdapter no-echo test) |
+| Section 4 Razor final check | ✅ Max file 167 LOC; max function ~25; nesting ≤3; zero nested ternaries |
+| SYSTEM_STATE.md sync | ✅ "Priority C v0 release-blockers — channel allowlist + materializer bridge (2026-05-03)" appended |
+
+**Files sealed**: 11 source/test/plan files. Tests: 20 net-new functionality tests across 3 phases.
+
+**Session content hash** (11 files, sorted-path concatenation):
+SHA256 = `14e387b1168289728799f2d808f8bc4af26c9b56bcf563d135e0f8354595580a`
+
+**Previous chain hash**: `b3700366...` (Entry #36, Priority C v1.1 SEAL)
+
+**Merkle seal**:
+SHA256(content_hash + previous_hash) = **`7cc405fc8d39f468d502da669982c88321ce3a84bb571d28e0b14be86ab56bdd`**
+
+**Decision**: Reality matches Promise. Both v0 release blockers closed. The end-to-end Slack ingest pipeline is now functional from OAuth to per-dev local ledger. The audit cycle (3 rounds) caught two real production bugs that would have shipped silently:
+- Round 1 caught dead-code state where `pull_team_server_events` had no production caller — would have left team-server events stranded in the team-server's SurrealDB with no per-dev consumption
+- Round 2 caught the echo-amplification bug where the consumer would have triggered `TeamWriteAdapter._writer.write` on every team-server event, causing O(N²) cross-dev replay storms once team JSONL files git-pushed
+
+The SHADOW_GENOME #7 heuristic catalog grew from 4 to 6 across this session. The two new heuristics (upstream-consumer at Entry #37; wrapper-side-effect at Entry #38) are durable detection patterns reusable in future audits.
+
+CocoIndex (#136) remains parked. Both v0-release-blocker issues (#160, #161) closed.
+
+Session is sealed. v0 release deadline (2 days) preserved with comfortable margin: total session cost ~90 minutes (3 audit rounds + amendments + implementation + substantiation).
+
+**qor-logic-internal steps skipped** (downstream-project rationale, same as Entries #28, #33, #36):
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | n/a | No target version in plan |
+| Step 4.6 | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 | not run | No staged secrets |
+| Step 4.6.6 | not run | qor-logic-internal procedural fidelity check |
+| Step 4.7 | not run | qor-logic phase-plan path convention |
+| Step 6.5 | not run | No system-tier docs (architecture.md/lifecycle.md) maintained here |
+| Step 7.4 | not run | qor-logic-internal SSDF tag emission |
+| Step 7.5/7.6 | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 | not run | qor-logic-internal seal-entry-check |
+| Step 7.8 | n/a | Phase ≤ 51 grandfathered; this session's gate dir at `.qor/gates/2026-05-02T2230-c4d1f8/` carries plan.json (round 3), audit.json (round 3), implement.json, substantiate.json |
+| Step 8 | (deferred) | `.agent/staging/AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 | n/a | qor-logic-internal dist-compile |
+| Step 9.5.5 | n/a | No version bump → no tag |
+
+---
+*Chain integrity: VALID (41 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority C v1.1 SEAL: `b3700366` → v0-release-blockers SEAL: `7cc405fc`*
 *Next required action: operator review and choose push/merge path (Step 9.6 menu).*

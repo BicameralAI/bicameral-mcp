@@ -474,3 +474,47 @@ For every code sketch with an external function call:
 
 Adding these to the round-3 amendment closes the documented residual.
 
+### Addendum to Entry #7 (2026-05-02T22:55:00Z) — second-instance heuristic refinement
+
+Entry #34 (v1.1 first-round PASS) gave evidence that the Entry #7 heuristic was durable. Entry #37 (v0-release-blockers VETO) gave evidence that the heuristic needs one more refinement.
+
+**Pattern observed in Entry #37**: The Governor planned to MUTATE `events/materializer.py` to add a dispatch case for team-server events. The plan correctly cited the materializer's existing dispatch loop, the `event_type='ingest'` event_type team-server emits, and the `IngestPayload` shape. All cited symbols verified clean. **But the Governor did not verify whether the materializer's input stream actually receives team-server events.** That verification — checking the *upstream* of the unit being mutated — exposed that `pull_team_server_events` has zero production callers; events are produced and pulled but never enter the JSONL stream the materializer reads.
+
+The Entry #7 detection heuristics covered:
+1. Existence check (does the cited symbol exist?)
+2. Signature check (does the call shape match?)
+3. Type-boundary check (do conversions across persistence cross correctly?)
+4. Helper-symmetry check (do encode/decode pairs mirror?)
+
+Entry #37 surfaces a fifth heuristic:
+
+5. **Upstream-consumer check**: When planning to MUTATE a unit whose intended downstream effect depends on an upstream producer, grep for production callers of the upstream producer. If zero, the mutation is dead code regardless of correctness. The Governor must surface this — either by adding a phase that wires the producer, or by acknowledging the dead-code state in plan boundaries.
+
+### Detection Heuristic (further extension)
+
+Before declaring "this MUTATE closes gap X":
+
+1. Apply heuristics 1-4 from Entry #7 addendum (existence, signature, type-boundary, helper-symmetry).
+2. **(NEW)** Identify the upstream producer that feeds the unit-under-mutation. Grep for production callers of THAT producer. If zero, the mutation does nothing in production — the plan must either wire the producer or declare the dead-code state explicitly.
+
+This refinement fits naturally into the Step 2 state-verification of `/qor-audit`. The heuristic-extension prompt: for every plan that says "this fixes the case where X feeds Y but Y rejects it," verify that X actually feeds Y in production.
+
+### Addendum to Entry #7 (2026-05-02T23:25:00Z) — sixth heuristic surfaced by Entry #38
+
+Entry #38 (v0-release-blockers round 2 VETO) introduced a sibling defect while closing the round-1 finding. Pattern: Governor's amendment correctly cited `get_ledger()` accessor and the `TeamWriteAdapter._inner` attribute, but the §Changes sketch passed the wrapper to the consumer without unwrapping. The wrapper's `ingest_payload` method has side effects (writes to JSONL via `_writer.write`); the sketch ignored those side effects.
+
+This adds a sixth heuristic to the catalog (heuristics 1-5 from prior addenda):
+
+6. **Wrapper-side-effect check**: When a plan invokes a method through a registry/factory accessor (`get_X()`, `_singleton_X`, etc.), grep the returned type's method body for side effects. If side effects are present, the plan must either (a) use the appropriate inner/raw accessor that bypasses them, or (b) acknowledge and handle them in the calling code. Mere correct citation of the accessor is insufficient when the returned object has implicit side-effect semantics.
+
+The full Entry #7 detection heuristic catalog now reads:
+
+1. **Existence check** (does the cited symbol exist?)
+2. **Signature check** (does the call shape match arity / kwargs / types?)
+3. **Type-boundary check** (do conversions across persistence boundaries cross correctly — bytes vs str, etc.?)
+4. **Helper-symmetry check** (do encode/decode pairs mirror at read-side and write-side?)
+5. **Upstream-consumer check** (when MUTATEing a unit whose downstream effect depends on an upstream producer, grep callers of the producer; zero callers = dead code)
+6. **Wrapper-side-effect check** (when invoking through a registry/factory, grep the returned type for side effects; bypass via inner accessor if present)
+
+The cumulative heuristic catalog represents the failure modes observed across 4 sessions (v1.0 round-1 through v0-blockers round-2) of this codebase's audit cycles. Each VETO that surfaced a new heuristic produced a durable gain — heuristics 1-4 prevented the v1.1 first-round PASS, heuristic 5 catalyzed Entry #37, heuristic 6 catalyzed Entry #38. Audit Step 2 should consult this catalog as a checklist when verifying plan-cited symbols against current code.
+

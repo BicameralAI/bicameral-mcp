@@ -640,3 +640,65 @@ tests/test_team_server_canonical_cache.py  — adapted to classifier_version= ke
 
 1. `team_server/workers/{slack_worker,notion_worker}.py` keep a backwards-compat path: when `config=None`, fall back to the legacy `extractor(text)` callable. Preserves v1.0 worker tests + provides a clean cutover path. When `config` is provided, the pipeline runs.
 2. Anthropic SDK imported lazily inside `extract()` (matches the slack_sdk lazy-import pattern from v1.0 Phase 0.5) so the package imports cleanly when `anthropic` is in `requirements.txt` but not installed in dev venv.
+
+---
+
+## Priority C v0 release-blockers — channel allowlist + materializer bridge (2026-05-03)
+
+Plan: [`plan-priority-c-team-server-v0-release-blockers.md`](../plan-priority-c-team-server-v0-release-blockers.md). Three-round audit cycle (VETO → VETO → PASS); 123/123 team-server + materializer tests passing. Closes [#160](https://github.com/BicameralAI/bicameral-mcp/issues/160) and [#161](https://github.com/BicameralAI/bicameral-mcp/issues/161).
+
+### Files added (6)
+
+```
+team_server/auth/allowlist_sync.py  — startup-time YAML→DB reconcile (73 LOC)
+events/team_server_consumer.py      — periodic pull→bridge→ingest_payload task (100 LOC)
+events/team_server_bridge.py        — team-server payload → IngestPayload (56 LOC)
+
+tests/test_team_server_allowlist_sync.py     — 5 tests
+tests/test_team_server_allowlist_lifespan.py — 2 tests
+tests/test_team_server_consumer.py            — 7 tests (incl. no-echo invariant)
+```
+
+### Files modified (4)
+
+```
+team_server/app.py                       — lifespan calls sync_channel_allowlist after schema; config loaded once for both sync + corpus learner
+events/materializer.py                   — dispatch case for event_type='ingest' AND 'ingest.completed' with team-server-shaped payload bridges to IngestPayload
+server.py                                 — serve_stdio spawns the periodic team-server consumer task; cancels on shutdown
+tests/test_materializer_team_server_pull.py  — 6 new bridge functionality tests + legacy regression coverage
+```
+
+### Test state
+
+- 123/123 team-server + materializer tests passing
+- Test counts by phase: Phase 1 sync 5 / Phase 1 lifespan 2 / Phase 1.5 consumer 7 / Phase 2 bridge 6 = 20 net-new
+- Razor: max file 167 LOC (events/materializer.py); max function ~25; nesting ≤3; zero nested ternaries
+
+### Architectural properties achieved (closing v0 release blockers)
+
+- **End-to-end ingest pipeline functional**: Slack OAuth → workspace row → YAML allowlist sync → channel_allowlist populated → Slack worker polls allowlisted channels → heuristic+LLM extraction → team_event row → /events HTTP → per-dev consumer pulls → bridges to IngestPayload → inner_adapter.ingest_payload → per-dev local ledger
+- **No-echo invariant** (audit-round-2 Finding A): consumer's `start_team_server_consumer_if_configured` unwraps `TeamWriteAdapter._inner` so consumer-driven ingest does NOT emit synthetic `'ingest.completed'` events into per-dev JSONL files. Verified by `test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl` constructing a real TeamWriteAdapter with a recording writer
+- **SurrealQL strict-type handling**: `record<workspace>` field on `channel_allowlist.workspace_id` requires `type::thing()` coercion; allowlist_sync uses the same pattern as the v1.0 schema migration
+- **Materializer dispatch is shape-discriminating**: `is_team_server_payload` predicate distinguishes team-server payloads (have `extraction` key) from legacy CodeLocatorPayload (have `repo`/`commit_hash` but no `extraction`); legacy `'ingest.completed'` path preserved unchanged
+
+### Audit cycle outcomes (3-round VETO → VETO → PASS)
+
+- Round 1 VETO: `infrastructure-mismatch` (pull_team_server_events had zero production callers; bridge would be dead code) → closed by Phase 1.5 (consumer + serve_stdio integration)
+- Round 2 VETO: `specification-drift` (sketch passed wrapped TeamWriteAdapter; would echo events O(N²) cross-dev) → closed by inline unwrap + dedicated no-echo test
+- Round 3 PASS: 0 findings; all 6 SHADOW_GENOME #7 heuristics held
+
+### SHADOW_GENOME #7 heuristic catalog grew 4 → 6 across this branch
+
+1. Existence (Entry #7)
+2. Signature (Entry #7)
+3. Type-boundary (Entry #7)
+4. Helper-symmetry (Entry #7)
+5. **Upstream-consumer** (Entry #37 — added by v0-blockers round-1 VETO)
+6. **Wrapper-side-effect** (Entry #38 — added by v0-blockers round-2 VETO)
+
+The catalog is the productive deposit beyond the code: each heuristic is reusable for future audits.
+
+### Implementation deviation from plan (logged)
+
+1. SurrealQL `record<workspace>` strict type required `type::thing()` coercion in allowlist_sync.py — not anticipated in plan but matches the v1.0 migration's existing pattern at `team_server/schema.py:106-110`. Caught at first test run; fix took two minutes.
+2. Lifespan integration test originally tried pre-seeding workspace via `TeamServerDB.from_env()` then re-opening for the app — `memory://` doesn't persist across connect/close. Test rewritten to mock `sync_channel_allowlist` and assert it was invoked at startup with the correct config. Test directly exercises the lifespan→sync wiring via interception, not via DB observation.
