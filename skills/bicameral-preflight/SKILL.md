@@ -382,6 +382,41 @@ A one-line forward narration helps:
 > from idempotency.ts. I'll flag the event.id deduplication question
 > for you to answer before I commit."
 
+### 5.6 Capture refinements when the user's prompt contradicts a surfaced decision
+
+If any decision rendered in the surfaced block describes an approach the user's current request **replaces** (signals: "instead of", "actually we're switching to", "no more X", "I know X said Y but…", "X is out — we're going with Z"), this is a contradiction. Before doing any code work:
+
+1. **Ingest the refinement** with `source=agent_session`, scoped to the same `feature_group` as the contradicted decision:
+
+```
+bicameral.ingest(payload={
+  "query": "<contradicted decision's topic>",
+  "source": "agent_session",
+  "title": "<short label, e.g. 'reorder-text-editor-refactor'>",
+  "date": "<today ISO date>",
+  "decisions": [{ "description": "<user's new direction, stated as a decision>" }]
+}, feature_group="<same feature group as the contradicted decision>")
+```
+
+2. **Wire it to the seeded decision** via `bicameral.resolve_collision`:
+
+```
+bicameral.resolve_collision(
+  new_id="<just-ingested refinement id>",
+  old_id="<surfaced contradicted decision id>",
+  action="supersede" | "keep_both" | "link_parent"
+)
+```
+
+Pick `action` mechanically:
+- `supersede` — user fully replaces the old direction ("drag-drop is out, text-editor instead"). Writes a RELATE edge; old decision's status becomes `superseded`.
+- `keep_both` — user adds a constraint or narrows the surface without invalidating the old ("also need X for accessibility" / "only on the conflict UI surface"). No edge; both remain.
+- `link_parent` — the user's direction is a child decision under a higher-level (e.g. L1) parent; the contradicted decision is the parent. Writes `parent_decision_id`, no supersede edge, no status change.
+
+Mechanical — the user already stated the refinement. Do not ask. PM ratifies in the inbox.
+
+Narrate one line: "Captured refinement: '<paraphrase>' — wired as <action> of <feature> roadmap entry."
+
 ### 6. Honor blocking hints (guided mode vs normal mode)
 
 The agent's `guided_mode` setting controls whether action hints are
