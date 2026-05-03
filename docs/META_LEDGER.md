@@ -1982,4 +1982,192 @@ Session is sealed. v0 release deadline (2 days) preserved with comfortable margi
 ---
 *Chain integrity: VALID (41 entries on this branch)*
 *Genesis: `29dfd085` → ... → Priority C v1.1 SEAL: `b3700366` → v0-release-blockers SEAL: `7cc405fc`*
-*Next required action: operator review and choose push/merge path (Step 9.6 menu).*
+
+---
+
+### Entry #42: GATE TRIBUNAL (Priority B v0 final blockers — issues #154 + #156 transcript fix)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-03T0045-d2a187`
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-b-v0-final-blockers.md`
+- **Verdict**: **VETO**
+- **Risk Grade**: L2
+- **Findings**: 1 (`infrastructure-mismatch`)
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-03T0045-d2a187/audit.json`
+
+**Finding (heuristic-2 Signature check)**: Phase 1 Step 5.6 sketch cites `bicameral.resolve_collision(seed_decision_id, refinement_decision_id, kind="supersedes")` and `bicameral.ingest(payload=..., feature_group=...)` — both incorrect. Real signatures (verified via grep): `resolve_collision(new_id, old_id, action="supersede"|"keep_both"|"link_parent")` per `handlers/resolve_collision.py:37-46`; ingest's `feature_group` lives only as `IngestDecision.feature_group` per-decision per `contracts.py:498` (MCP dispatch at `server.py:1078-1085` silently drops top-level kwarg).
+
+**Pattern**: Governor paraphrased issue body's product-taxonomy prose as if they were API parameters. Same recurrence as v1.0 round-2 VETO (decrypt_token signature paraphrase). The Grounding Protocol must treat issue bodies as untrusted source text — grep the handler signature, do not paraphrase.
+
+**Decision**: Plan-text per `qor/references/doctrine-audit-report-language.md`. Governor amends with three sketch corrections (`seed_decision_id` → `old_id`, `refinement_decision_id` → `new_id`, `kind="supersedes"` → `action="supersede"`) plus `feature_group` placement fix (move into `decisions[0]`). Re-run `/qor-audit`.
+
+**v0 deadline**: 2 days. Amendment cost ~10 min.
+
+**Previous chain hash**: `7cc405fc...` (Entry #41, v0-release-blockers SEAL)
+
+---
+*Chain integrity: VALID (42 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → Priority B v0-final-blockers GATE round 1 (VETO): pending re-audit*
+
+---
+
+### Entry #43: GATE TRIBUNAL (Priority B v0 final blockers, round 2)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-03T0045-d2a187`
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-b-v0-final-blockers.md` (amendment round 2)
+- **Verdict**: **VETO**
+- **Risk Grade**: L2
+- **Findings**: 1 (`specification-drift`)
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-03T0045-d2a187/audit.json`
+
+**Resolved from round 1**: §Changes Step 5.6 sketch correctly uses `action="supersede"` / `new_id` / `old_id` matching `handlers/resolve_collision.py:37-46`; `feature_group` moved into `decisions[0].feature_group` per `IngestDecision.feature_group` at `contracts.py:498`; existing Section 7 same-bug fix folded in; cwd-from-stdin pattern adopted in Phase 2 main(); new test `test_bridge_main_uses_cwd_from_stdin_payload_not_process_cwd` exercises the contract.
+
+**New finding (Finding A)**: §Changes block was fixed but two prose paragraphs that summarize the v0 design choice still cite the round-1 wrong API. §boundaries.limitations (line 20) says "agent emits `kind="supersedes"`" and lists "supersedes vs complements vs narrows_scope" as alternatives. §Open Questions item 1 (line 35) says "`kind` default for `resolve_collision` = `supersedes`" with the same three-option list. None of those are valid API names.
+
+**Pattern recurrence**: Same root cause as round 1 — Governor pasted issue-body product-taxonomy prose without grep-verifying against the actual API. Round 2 fixed the §Changes block but missed the prose elsewhere. Suggested 7th heuristic for SHADOW_GENOME #7: amendment-completeness check — when fixing a cited API per a prior VETO, grep the ENTIRE plan for residual references to the old surface.
+
+**Pattern continuity**: round 1 = `infrastructure-mismatch`; round 2 = `specification-drift`. Different signatures; cycle-count escalator does not trigger.
+
+**Decision**: Plan-text per `qor/references/doctrine-audit-report-language.md`. Governor amends with two prose-paragraph updates — boundaries.limitations and Open Questions item 1 both updated to match the §Changes block's `action="supersede"` / `keep_both` / `link_parent` API surface. Re-run `/qor-audit`.
+
+**v0 deadline**: 2 days. Amendment cost ~5 min for two prose paragraphs.
+
+**Previous chain hash**: Entry #42 (round 1 VETO)
+
+---
+*Chain integrity: VALID (43 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority B v0-final-blockers GATE round 1 → round 2 (VETO): pending re-audit*
+*Next required action: Governor amends per AUDIT_REPORT round-2 Remediation 1 (boundaries + Open Questions prose updates); re-runs `/qor-audit`.*
+
+---
+
+### Entry #44: GATE TRIBUNAL (Priority B v0 final blockers, round 3)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-03T0045-d2a187`
+- **Phase**: GATE
+- **Skill**: `/qor-audit`
+- **Target**: `plan-priority-b-v0-final-blockers.md` (amendment round 3)
+- **Verdict**: **PASS**
+- **Risk Grade**: L2
+- **Findings**: 0
+- **Report**: `.agent/staging/AUDIT_REPORT.md`
+- **Gate artifact**: `.qor/gates/2026-05-03T0045-d2a187/audit.json`
+- **Content hash**: `d3dd6f27`
+- **Chain hash**: `c4fc9944`
+
+**Resolved from round 2**: §boundaries.limitations (line 20) and §Open Questions item 1 (line 35) now both cite `action="supersede"` (singular, matches `handlers/resolve_collision.py:63` enum); canonical alternatives `keep_both` (false-positive contradiction) and `link_parent` (cross-level child-of-parent) listed; both prose paragraphs reference `skills/bicameral-resolve-collision/SKILL.md` as the source of truth. Whole-plan grep returns zero residual `kind=` / `complements` / `narrows_scope` hits. Verb-form `supersedes` survives only at lines 109 and 111 in correct **edge label** context per `skills/bicameral-resolve-collision/SKILL.md:52` ("writes `new_id → supersedes → old_id` edge").
+
+**All passes green**: Prompt Injection, Security L3, OWASP, Ghost UI (N/A), Section 4 Razor, Test Functionality (8 tests functionality-shaped; 1 explicitly skipped as Doctrine-correct presence-only), Dependency, Macro Architecture, Infrastructure Alignment, Specification-Drift (closed), Orphan Detection.
+
+**Pattern advisory (closure)**: Round-3 amendment explicitly applied the suggested 7th SHADOW_GENOME #7 heuristic — **amendment-completeness check** (round_3_amendments[3]: "Verified via grep: zero residual references to 'kind=' / 'complements' / 'narrows_scope' anywhere in plan"). Heuristic is now operationally validated. Three instances across sessions of the same root cause (Governor pasted issue-body product-taxonomy prose without grep-verifying API names). Recommend codifying #7 in next SHADOW_GENOME catalog round-up.
+
+**Cycle-count escalator**: did not trigger (rounds 1/2/3 had different signatures: infrastructure-mismatch / specification-drift / PASS).
+
+**Decision**: PASS unlocks `/qor-implement` per `qor/gates/delegation-table.md`.
+
+**v0 deadline**: 2 days. Phases 1+2 ship together as final v0 product-correctness closure.
+
+**Previous chain hash**: Entry #43 (round 2 VETO)
+
+---
+*Chain integrity: VALID (44 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority B v0-final-blockers GATE round 3 (PASS): `c4fc9944`*
+*Next required action: Specialist runs `/qor-implement` to translate Phase 1 + Phase 2 into source.*
+
+---
+
+### Entry #45: IMPLEMENTATION (Priority B v0 final blockers)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-03T0045-d2a187`
+- **Phase**: IMPLEMENT
+- **Skill**: `/qor-implement`
+- **Plan**: `plan-priority-b-v0-final-blockers.md` (audit round 3 PASS)
+- **Gate artifact**: `.qor/gates/2026-05-03T0045-d2a187/implement.json`
+- **Content hash**: `b34d48c8`
+- **Chain hash**: `ceb16cc9`
+
+**Files created**:
+- `events/session_end_bridge.py` (68 lines; SessionEnd transcript bridge)
+- `tests/test_session_end_bridge.py` (133 lines; 7 functionality tests)
+- `tests/test_e2e_flow_2a_in_default_set.py` (56 lines; Phase-1 e2e gate)
+
+**Files mutated**:
+- `setup_wizard.py:362` — `_BICAMERAL_SESSION_END_COMMAND` replaced with `"python3 -m events.session_end_bridge"` (single dispatch; .bicameral guard / recursion guard / stdin parse moved into Python module)
+- `skills/bicameral-preflight/SKILL.md` — inserted Step 5.6 (contradiction-driven refinement capture); fixed Section 7's bogus top-level `feature_group=` kwarg to `decisions[0].feature_group` (silently dropped since v0.x per `server.py:1078-1085`)
+- `skills/bicameral-capture-corrections/SKILL.md` — added SessionEnd-hook transcript propagation paragraph (`BICAMERAL_PARENT_TRANSCRIPT_PATH` env var)
+
+**Files deleted**:
+- `.claude/skills/bicameral-preflight/SKILL.md` — stale duplicate per CLAUDE.md canonical-source policy (`skills/` is canonical)
+
+**Test results**:
+- 8/8 plan-scope tests PASS (7 bridge functionality + 1 e2e gate)
+- 737/744 broader regression PASS (7 pre-existing Windows-encoding / SurrealDB-drift failures verified NOT touching any plan-scope files)
+- Smoke: `python -m events.session_end_bridge < /dev/null` exit=0 (module invokable via -m)
+
+**Section 4 Razor compliance**: `events/session_end_bridge.py` 68 lines (<=250); functions: `read_hook_stdin` ~5, `should_run` ~5, `_compute_subprocess_env` ~5, `main` ~14 (all <=40); max nesting depth 2 (<=3); zero nested ternaries.
+
+**Closes**: [#154](https://github.com/BicameralAI/bicameral-mcp/issues/154) (preflight Step 5.6 contradiction-driven refinement capture); partially closes [#156](https://github.com/BicameralAI/bicameral-mcp/issues/156) (transcript-passing half — design-pivot half deferred to v0.1 per plan boundaries).
+
+**Previous chain hash**: `c4fc9944` (Entry #44, round-3 audit PASS)
+
+---
+*Chain integrity: VALID (45 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority B v0-final-blockers IMPLEMENT: `ceb16cc9`*
+*Next required action: Judge runs `/qor-substantiate` to seal the session.*
+
+---
+
+### Entry #46: SESSION SEAL (Priority B v0 final blockers)
+
+- **Date**: 2026-05-03
+- **Session**: `2026-05-03T0045-d2a187`
+- **Phase**: SUBSTANTIATE
+- **Skill**: `/qor-substantiate`
+- **Plan**: `plan-priority-b-v0-final-blockers.md`
+- **Verdict**: **PASS**
+- **Gate artifact**: `.qor/gates/2026-05-03T0045-d2a187/substantiate.json`
+- **Session content hash**: `ad6885d6`
+- **Merkle seal**: `61e774e4`
+
+**Reality Audit**: 9 planned files, 9 present, 0 missing, 0 unplanned. Implementation matches plan §Affected Files exactly:
+
+- CREATE: `events/session_end_bridge.py` (68 lines, Razor PASS)
+- CREATE: `tests/test_session_end_bridge.py` (133 lines, 7 functionality tests)
+- CREATE: `tests/test_e2e_flow_2a_in_default_set.py` (56 lines, 1 functionality test)
+- MUTATE: `setup_wizard.py:361` (`_BICAMERAL_SESSION_END_COMMAND` → `python3 -m events.session_end_bridge`)
+- MUTATE: `skills/bicameral-preflight/SKILL.md` (Step 5.6 inserted between 5.5/6; Section 7 `feature_group` placement fixed)
+- MUTATE: `skills/bicameral-capture-corrections/SKILL.md` (`BICAMERAL_PARENT_TRANSCRIPT_PATH` propagation paragraph)
+- DELETE: `.claude/skills/bicameral-preflight/SKILL.md` (stale duplicate per CLAUDE.md canonical-source policy)
+- WRITE: `plan-priority-b-v0-final-blockers.md` + 3 gate artifacts under `.qor/gates/2026-05-03T0045-d2a187/`
+
+**Functional Verification**:
+- 8/8 plan-scope tests PASS
+- 737/744 broader regression PASS (7 pre-existing Windows-encoding/SurrealDB failures verified to NOT touch any plan-scope file: `bicameral-brief` SKILL.md `\xe2\x86\x90` cp1252 issue + 6 alpha_flow/bind/ephemeral SurrealDB drift tests)
+- Smoke: `python -m events.session_end_bridge < /dev/null` exits 0; module invokable
+
+**Presence-only seal gate**: PASS — every newly-added test invokes its unit under test (function call, module load, literal-constant read) and asserts against return value or observable side-effect. None pass on artifact existence alone. Acceptance question ("If the unit's behavior were silently broken but the artifact still existed, would this test fail?") answered YES for all 8 tests.
+
+**Section 4 Razor Final Check**: PASS — `events/session_end_bridge.py` 68 lines (≤250); functions: `read_hook_stdin` 5, `should_run` 5, `_compute_subprocess_env` 5, `main` 14 (all ≤40); max nesting depth 2 (≤3); zero nested ternaries; no `console.log`/`print()` in production code.
+
+**Version handling**: skipped per plan §boundaries.exclusions — "No CHANGELOG/version bump (operator's release cadence; same posture as prior sessions)". Plan-text decision; not a Doctrine bypass.
+
+**Closes**: [#154](https://github.com/BicameralAI/bicameral-mcp/issues/154) (preflight Step 5.6 contradiction-driven refinement capture).
+**Partially closes**: [#156](https://github.com/BicameralAI/bicameral-mcp/issues/156) (transcript-passing half — design-pivot half deferred to v0.1 per plan boundaries).
+
+**Cross-session pattern note**: Session `2026-05-03T0045-d2a187` consumed 3 audit rounds (rounds 1+2 VETOed for product-taxonomy paraphrase regression — same root cause as v1.0 round-2 VETO and v1.1 round-1 VETO). Round-3 amendment explicitly applied the proposed 7th SHADOW_GENOME #7 heuristic ("amendment-completeness check": grep entire plan after fixing one cited API location), and converged in one pass. Recommend codifying #7 in next SHADOW_GENOME catalog round-up.
+
+**Previous chain hash**: `ceb16cc9` (Entry #45, IMPLEMENTATION)
+
+---
+*Chain integrity: VALID (46 entries on this branch)*
+*Genesis: `29dfd085` → ... → Priority B v0-final-blockers SEAL: `61e774e4`*
+*Session sealed. v0 release-blocker work for Priority B (issues #154 + #156 transcript half) complete. Operator: stage + commit + push.*
