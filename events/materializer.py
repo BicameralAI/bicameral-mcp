@@ -86,6 +86,19 @@ class EventMaterializer:
                     except json.JSONDecodeError:
                         continue
                     etype, payload = event.get("event_type", ""), event.get("payload", {})
+                    # v0-release-blockers: team-server emits event_type='ingest'
+                    # with a payload shaped {source_type, source_ref, content_hash,
+                    # extraction}. Bridge to IngestPayload before dispatching.
+                    if etype in ("ingest", "ingest.completed"):
+                        from events.team_server_bridge import (
+                            bridge_team_server_payload, is_team_server_payload,
+                        )
+                        if is_team_server_payload(payload):
+                            bridged = bridge_team_server_payload(payload)
+                            if bridged.get("decisions"):
+                                await inner_adapter.ingest_payload(bridged)
+                                replayed += 1
+                            continue
                     if etype == "ingest.completed":
                         await inner_adapter.ingest_payload(payload)
                         replayed += 1
