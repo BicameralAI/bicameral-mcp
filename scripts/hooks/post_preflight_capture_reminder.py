@@ -17,11 +17,15 @@ implementation-verb prompt; the skill is the gate).
 
 Per Claude Code 2.x hook contract: read JSON ``{tool_name, tool_input,
 tool_response}`` from stdin. ``tool_response`` is either a JSON string or
-a dict — both are handled. Output is plain stdout text (the same shape
-the existing PostToolUse/Bash hook in ``setup_wizard.py`` uses); the CLI
-appends it to the tool result the agent sees on the next turn. Errors
-swallowed silently (exit 0, empty response) so a broken hook never
-blocks a user.
+a dict — both are handled. Output is the structured envelope
+``{"hookSpecificOutput": {"hookEventName": "PostToolUse",
+"additionalContext": "..."}}`` written to stdout; the CLI surfaces
+``additionalContext`` next to the tool result the model sees on the next
+turn. Plain stdout is silently dropped to the debug log for PostToolUse
+events (per https://code.claude.com/docs/en/hooks — only
+UserPromptSubmit / UserPromptExpansion / SessionStart treat raw stdout
+as agent-visible context). Errors swallowed silently (exit 0, empty
+response) so a broken hook never blocks a user.
 """
 
 from __future__ import annotations
@@ -102,7 +106,15 @@ def main() -> int:
     decisions = response.get("decisions") or []
     if not isinstance(decisions, list) or not decisions:
         return 0
-    sys.stdout.write(_format_reminder(decisions))
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "PostToolUse",
+                "additionalContext": _format_reminder(decisions),
+            }
+        },
+        sys.stdout,
+    )
     return 0
 
 
