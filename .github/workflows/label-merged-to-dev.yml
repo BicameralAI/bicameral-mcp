@@ -18,12 +18,27 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            // Workflow caveat: this job needs Settings -> Actions ->
+            // General -> Workflow permissions set to "Read and write
+            // permissions" at the repo level. The job-level
+            // `permissions: issues: write` block can only NARROW what
+            // the repo allows, never expand it. If the repo default
+            // is read-only, addLabels returns 403 "Resource not
+            // accessible by integration" regardless of the job-level
+            // grant.
+            //
+            // See: #115 (root cause + symptoms) and #104 (admin-side
+            // fix tracked alongside branch-protection setup).
+            //
+            // GitHub close keywords (case-insensitive): close, closes,
+            // closed, fix, fixes, fixed, resolve, resolves, resolved.
             const pr = context.payload.pull_request;
-            // GitHub close keywords: close, closes, closed, fix, fixes, fixed,
-            // resolve, resolves, resolved (case-insensitive).
             const body = pr.body || "";
-            const matches = [...body.matchAll(/(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)/gi)];
+            const closeRegex = /(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\s+#(\d+)/gi;
+            const matches = [...body.matchAll(closeRegex)];
             const issues = [...new Set(matches.map(m => parseInt(m[1])))];
+
+            const failed = [];
             for (const num of issues) {
               try {
                 await github.rest.issues.addLabels({
@@ -34,6 +49,22 @@ jobs:
                 });
                 console.log(`Labeled #${num}`);
               } catch (e) {
-                console.log(`Could not label #${num}: ${e.message}`);
+                console.log(`Failed to label #${num}: ${e.message}`);
+                failed.push({ num, message: e.message });
               }
+            }
+
+            if (failed.length > 0) {
+              const summary = failed
+                .map(f => `  - #${f.num}: ${f.message}`)
+                .join("\n");
+              throw new Error(
+                `merged-to-dev labeller could not label ${failed.length} ` +
+                `issue(s) referenced by PR #${pr.number}:\n${summary}\n\n` +
+                `Most likely cause: repo Settings -> Actions -> General -> ` +
+                `Workflow permissions is set to read-only. ` +
+                `Job-level "permissions: issues: write" cannot expand a ` +
+                `read-only repo default. See #104 (admin fix) and ` +
+                `#115 (root cause).`
+              );
             }
