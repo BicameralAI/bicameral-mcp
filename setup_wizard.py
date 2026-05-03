@@ -394,18 +394,19 @@ def _build_session_end_command(mcp_config_path: str | None = None) -> str:
 _BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
 
 # Fires after every Bash tool use. When the command is a git write-op
-# (commit / merge / pull / rebase --continue), prints a trigger line that
-# causes the agent to invoke /bicameral:sync — running the full
-# link_commit → compliance check flow so status is authoritative immediately.
-_BICAMERAL_POST_COMMIT_COMMAND = (
-    'python3 -c "'
-    "import json,sys; "
-    "d=json.load(sys.stdin); "
-    "c=d.get('tool_input',{}).get('command',''); "
-    "ops=('git commit','git merge ','git pull','git rebase --continue'); "
-    "[print('bicameral: new commit detected — run /bicameral:sync to resolve compliance and get authoritative reflected/drifted status') "
-    'for _ in [1] if any(op in c for op in ops)]"'
-)
+# (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
+# envelope whose additionalContext nudges the agent to invoke
+# /bicameral:sync — running the full link_commit → compliance check
+# flow so status is authoritative immediately.
+#
+# Was a plain-stdout python -c one-liner. Per Claude Code 2.x hook docs
+# (https://code.claude.com/docs/en/hooks), plain stdout from PostToolUse
+# is dropped to the debug log — only UserPromptSubmit / UserPromptExpansion
+# / SessionStart treat raw stdout as agent-visible context. Symptom: the
+# agent committed but never followed through with link_commit because
+# the reminder never reached the model. Console script writes the proper
+# envelope; source: scripts/hooks/post_commit_sync_reminder.py.
+_BICAMERAL_POST_COMMIT_COMMAND = "bicameral-mcp-post-commit-sync-reminder"
 
 # UserPromptSubmit hook: deterministic regex over a verb list elevates
 # bicameral.preflight above the agent's default tool-selection priority
