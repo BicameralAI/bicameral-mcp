@@ -1,16 +1,17 @@
 """Functionality tests for SessionEnd hook drift fix per
-plan-147-flow4-ledger-validation.md Phase 2.
+plan-147-flow4-ledger-validation.md Phase 2 + Priority B v0 final-blockers
+plan (transcript bridge).
 
 Verifies the canonical hook command shape lands in:
   - .claude/settings.json (the deployed hook)
   - setup_wizard._BICAMERAL_SESSION_END_COMMAND (the source of truth for
     fresh installs)
 
-The canonical command per skills/bicameral-capture-corrections/SKILL.md:207:
-
-  [ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && \
-    BICAMERAL_SESSION_END_RUNNING=1 \
-    claude -p '/bicameral:capture-corrections --auto-ingest' || true
+The canonical command is now ``python3 -m events.session_end_bridge``
+(post-Priority-B v0 final-blockers). The bridge module handles the
+.bicameral/ guard, BICAMERAL_SESSION_END_RUNNING recursion guard,
+--auto-ingest flag, and BICAMERAL_PARENT_TRANSCRIPT_PATH env-var
+propagation that closes the transcript-passing half of #156.
 """
 
 from __future__ import annotations
@@ -23,11 +24,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-CANONICAL_COMMAND = (
-    '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
-    "BICAMERAL_SESSION_END_RUNNING=1 "
-    "claude -p '/bicameral:capture-corrections --auto-ingest' || true"
-)
+CANONICAL_COMMAND = "python3 -m events.session_end_bridge"
 
 
 def _extract_session_end_command() -> str:
@@ -37,23 +34,18 @@ def _extract_session_end_command() -> str:
     return session_end[0]["hooks"][0]["command"]
 
 
-def test_settings_json_session_end_has_reentrancy_guard():
-    """Behavior: deployed SessionEnd hook short-circuits when env var is set."""
+def test_settings_json_session_end_invokes_bridge_module():
+    """Behavior: deployed SessionEnd hook dispatches to the canonical
+    bridge module (which encapsulates the .bicameral/ guard, recursion
+    guard, --auto-ingest, and transcript-path propagation)."""
     cmd = _extract_session_end_command()
-    assert '[ -z "$BICAMERAL_SESSION_END_RUNNING" ]' in cmd
-    assert "BICAMERAL_SESSION_END_RUNNING=1" in cmd
-
-
-def test_settings_json_session_end_passes_auto_ingest_flag():
-    """Behavior: deployed SessionEnd hook invokes capture-corrections in batch (auto-ingest) mode."""
-    cmd = _extract_session_end_command()
-    assert "--auto-ingest" in cmd
+    assert "events.session_end_bridge" in cmd
 
 
 def test_setup_wizard_renders_canonical_session_end_hook():
     """Behavior: setup_wizard's source-of-truth constant matches the
-    canonical command verbatim. Drift between this constant and the
-    SKILL.md prescription is the failure mode this test exists to catch."""
+    canonical bridge form. Drift between this constant and the bridge
+    module's contract is the failure mode this test exists to catch."""
     import setup_wizard
 
     assert setup_wizard._BICAMERAL_SESSION_END_COMMAND == CANONICAL_COMMAND
@@ -69,19 +61,17 @@ def test_build_session_end_command_no_args_matches_canonical():
 
 
 def test_build_session_end_command_with_mcp_config_inserts_flags():
-    """Behavior: passing ``mcp_config_path`` inserts ``--mcp-config <path>``
-    + ``--strict-mcp-config`` after the prompt, before the ``|| true``
-    fallback. This is the test-harness path: spawned subprocess writes
-    to the harness's test ledger instead of the user's default
-    (~/.bicameral/ledger.db)."""
+    """Behavior: passing ``mcp_config_path`` appends ``--mcp-config <path>``
+    + ``--strict-mcp-config`` to the bridge invocation. This is the
+    test-harness path: the bridge forwards these flags to the spawned
+    ``claude -p`` so its capture-corrections writes to the harness's
+    test ledger instead of the user's default (~/.bicameral/ledger.db)."""
     import setup_wizard
 
     cmd = setup_wizard._build_session_end_command(mcp_config_path="/tmp/x/mcp.json")
+    assert "events.session_end_bridge" in cmd
     assert "--mcp-config /tmp/x/mcp.json" in cmd
     assert "--strict-mcp-config" in cmd
-    # Re-entrancy guard and --auto-ingest preserved.
-    assert '[ -z "$BICAMERAL_SESSION_END_RUNNING" ]' in cmd
-    assert "--auto-ingest" in cmd
     # Path with shell metachar still safe (shlex.quote applied).
     cmd2 = setup_wizard._build_session_end_command(mcp_config_path="/tmp/with space/mcp.json")
     assert "'/tmp/with space/mcp.json'" in cmd2

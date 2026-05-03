@@ -359,7 +359,13 @@ def _install_for_agent(
 
 
 def _build_session_end_command(mcp_config_path: str | None = None) -> str:
-    """Build the SessionEnd hook command, optionally with `--mcp-config` flags.
+    """Build the SessionEnd hook command, optionally with ``--mcp-config`` flags.
+
+    Dispatches to the canonical bridge module ``events.session_end_bridge``
+    (closes the transcript-passing half of #156). The bridge handles the
+    ``.bicameral/`` directory guard, the ``BICAMERAL_SESSION_END_RUNNING``
+    recursion guard, the stdin-parse for ``transcript_path``, and the
+    spawn of ``claude -p '/bicameral:capture-corrections --auto-ingest'``.
 
     Production end-users have ``bicameral`` registered in their default
     Claude Code MCP config (via the setup wizard's `claude mcp add`), so
@@ -371,21 +377,13 @@ def _build_session_end_command(mcp_config_path: str | None = None) -> str:
     post-hoc validators use; otherwise capture-corrections lands its
     ``source=agent_session`` decisions in ``~/.bicameral/ledger.db``
     instead of the harness's test ledger.
-
-    The no-args call returns the canonical command prescribed by
-    ``skills/bicameral-capture-corrections/SKILL.md:207`` byte-exact —
-    that's what end-user installs ship.
     """
     import shlex
 
-    extra_flags = ""
+    cmd = "python3 -m events.session_end_bridge"
     if mcp_config_path:
-        extra_flags = f" --mcp-config {shlex.quote(str(mcp_config_path))} --strict-mcp-config"
-    return (
-        '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
-        "BICAMERAL_SESSION_END_RUNNING=1 "
-        f"claude -p '/bicameral:capture-corrections --auto-ingest'{extra_flags} || true"
-    )
+        cmd += f" --mcp-config {shlex.quote(str(mcp_config_path))} --strict-mcp-config"
+    return cmd
 
 
 # Canonical no-args form — what `_install_claude_hooks` writes to a fresh

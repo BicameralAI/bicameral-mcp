@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import json,sys,re; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command',''); ops=('git commit','git merge ','git pull','git rebase --continue'); [print('bicameral: git write-op detected — call bicameral.link_commit(commit_hash=\\'HEAD\\') now to sync the decision ledger') for _ in [1] if any(op in c for op in ops)]\""
+            "command": "python3 -c \"import json,sys,re; d=json.load(sys.stdin); c=d.get('tool_input',{}).get('command',''); ops=('git commit','git merge ','git pull','git rebase --continue'); [print('bicameral: git write-op detected \u2014 call bicameral.link_commit(commit_hash=\\'HEAD\\') now to sync the decision ledger') for _ in [1] if any(op in c for op in ops)]\""
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "[ -d .bicameral ] && [ -z \"$BICAMERAL_SESSION_END_RUNNING\" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral:capture-corrections --auto-ingest' || true"
+            "command": "python3 -m events.session_end_bridge"
           }
         ]
       }
