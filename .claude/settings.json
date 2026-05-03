@@ -9,6 +9,15 @@
             "command": "python3 scripts/hooks/post_commit_sync_reminder.py"
           }
         ]
+      },
+      {
+        "matcher": "mcp__bicameral__bicameral_preflight",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 scripts/hooks/post_preflight_capture_reminder.py"
+          }
+        ]
       }
     ],
     "SessionEnd": [
