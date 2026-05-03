@@ -43,6 +43,11 @@ MCP_CONFIG_TEMPLATE = E2E_ROOT / "bicameral.mcp.json"
 RESULTS_DIR = pathlib.Path(__file__).resolve().parents[2] / "test-results" / "e2e"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# Wall-clock cap for a single `claude -p` flow invocation. Was 300s; raised
+# to 480s after CI surfaced a Flow 2 timeout flake — the longest legitimate
+# Flow 2 dev run measured 289.7s, leaving only ~3% headroom on the old cap.
+CLAUDE_SESSION_TIMEOUT_S = 480
+
 # Persistent ledger shared across the 5 flow sessions in a single run, wiped
 # at the start of each run so flow-1 seeds → flow-2 refines → flow-3 reflects
 # → flow-4 captures → flow-5 ratifies, all against the same ledger state.
@@ -482,7 +487,7 @@ def run_claude_session(
         cwd=DESKTOP_REPO_PATH,
         capture_output=True,
         text=True,
-        timeout=300,
+        timeout=CLAUDE_SESSION_TIMEOUT_S,
     )
 
     transcript_path.write_text(proc.stdout, encoding="utf-8")
@@ -1162,7 +1167,7 @@ def main() -> int:
                     flow_id=spec.flow_id,
                     prompt_file=spec.prompt_file,
                     verdict="ERROR",
-                    body="claude CLI session timed out (>300s)",
+                    body=f"claude CLI session timed out (>{CLAUDE_SESSION_TIMEOUT_S}s)",
                     category=spec.category,
                     advisory=spec.advisory,
                 )
