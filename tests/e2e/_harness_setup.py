@@ -53,7 +53,7 @@ def materialize_settings_with_hooks(
     mcp_config_path: pathlib.Path,
     mcp_root: pathlib.Path,
 ) -> pathlib.Path:
-    """Write a project-style ``settings.json`` carrying the three hooks
+    """Write a project-style ``settings.json`` carrying the four hooks
     bicameral's setup-wizard installs in real projects. The PostToolUse and
     UserPromptSubmit commands are byte-exact strings imported from
     ``setup_wizard`` — single source of truth, no drift.
@@ -70,6 +70,10 @@ def materialize_settings_with_hooks(
     Hooks installed:
       - PostToolUse/Bash: bicameral-sync listens for "new commit detected"
         output to auto-fire ``link_commit``.
+      - PostToolUse/bicameral_preflight: collision-capture reminder fires
+        when preflight surfaces ≥1 decision, templating the Step 5.6
+        ingest(agent_session) + resolve_collision call so the agent
+        captures user refinements that contradict surfaced decisions.
       - SessionEnd: spawns a subprocess running
         ``/bicameral:capture-corrections --auto-ingest`` (with the test
         MCP config) to scan the just-ended session for uningested
@@ -81,8 +85,10 @@ def materialize_settings_with_hooks(
     if str(mcp_root) not in sys.path:
         sys.path.insert(0, str(mcp_root))
     from setup_wizard import (  # noqa: E402
+        _BICAMERAL_COLLISION_CAPTURE_REMINDER_COMMAND,
         _BICAMERAL_POST_COMMIT_COMMAND,
         _BICAMERAL_PREFLIGHT_REMINDER_COMMAND,
+        _BICAMERAL_PREFLIGHT_TOOL_NAME,
         _build_session_end_command,
     )
 
@@ -94,7 +100,16 @@ def materialize_settings_with_hooks(
                 {
                     "matcher": "Bash",
                     "hooks": [{"type": "command", "command": _BICAMERAL_POST_COMMIT_COMMAND}],
-                }
+                },
+                {
+                    "matcher": _BICAMERAL_PREFLIGHT_TOOL_NAME,
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": _BICAMERAL_COLLISION_CAPTURE_REMINDER_COMMAND,
+                        }
+                    ],
+                },
             ],
             "SessionEnd": [
                 {

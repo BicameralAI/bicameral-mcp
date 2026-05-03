@@ -362,6 +362,19 @@ Mechanical — the user already stated the refinement. Do not ask. PM ratifies i
 
 Narrate one line: "Captured refinement: '<paraphrase>' — wired as <action> of <feature> roadmap entry."
 
+#### Hook reinforcement
+
+A PostToolUse hook scoped to `mcp__bicameral__bicameral_preflight` injects a
+`<system-reminder>` after every preflight call that surfaces ≥1 decision. The
+reminder lists each surfaced `decision_id` + description and templates this
+step's two-call sequence with the IDs filled in. The reminder is conditional
+("IF your prompt contradicts a surfaced decision …") — preflight has no view
+of the user's prompt, so the hook over-fires; the LLM is the gate. Mirrors the
+UserPromptSubmit verb-classifier pattern that elevates `bicameral.preflight`
+above default tool selection. Source: `scripts/hooks/post_preflight_capture_reminder.py`;
+wired by `setup_wizard._install_claude_hooks` and the e2e harness's
+`materialize_settings_with_hooks`.
+
 ### 6. Honor blocking hints (guided mode vs normal mode)
 
 The agent's `guided_mode` setting controls whether action hints are
