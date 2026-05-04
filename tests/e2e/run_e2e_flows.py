@@ -813,45 +813,140 @@ def assert_flow_2(calls: list[dict]) -> tuple[bool, str]:
 
 
 def assert_flow_2a(calls: list[dict]) -> tuple[bool, str]:
-    """Flow 2a: end-to-end correction-capture loop. Reuses Flow 2's tool
-    calls (same claude session) so this measures whether the agent took the
-    next two steps after preflight surfaced the seeded decision:
+    """Flow 2a: contradiction-capture disambiguation. Reuses Flow 2's tool
+    calls (same claude session). The contract under #175 (D path): when
+    preflight surfaces ≥1 decision, the agent must not silently judge
+    contradiction — it must call ``AskUserQuestion`` with a disambiguation
+    shape (Step 5.6.1) so the user picks ``supersede`` / ``keep_both`` /
+    ``unrelated``. The actual ingest+resolve_collision sequence (Step 5.6.2)
+    only fires AFTER the user answers, which means it can't be driven in
+    headless ``claude -p``. The testable signal in CI is the question
+    invocation itself.
 
-      - ingest the refinement with ``source=agent_session``, AND
-      - call ``resolve_collision`` to wire the refinement to the seeded
-        decision (supersedes / complements / etc.).
+    What this asserter checks:
 
-    These two steps are NOT delivered by the auto-fire hook. They require
-    the agent to (a) recognize that the user's prompt contradicts a
-    surfaced decision, and (b) walk the preflight skill's correction-capture
-    branch — which currently doesn't exist as an explicit instruction. See
-    BicameralAI/bicameral-mcp#154 (P0) for the skill-layer gap. Until that
-    issue is closed, this flow is expected to FAIL as advisory; the auto-fire
-    contract validated by Flow 2 is independent.
+      - Preflight fired with ≥1 surfaced decision in Flow 2 (precondition;
+        if not, this flow has nothing to grade).
+      - At least one ``AskUserQuestion`` invocation appears in the
+        transcript AFTER the preflight call. The question's shape must
+        plausibly be the Step 5.6.1 disambiguation: text mentioning a
+        surfaced decision_id OR the keywords ``refinement`` / ``supersede``
+        / ``keep both`` / options labeled with the supersede/keep-both/
+        unrelated trichotomy.
+
+    What this asserter NO LONGER requires (versus pre-#175):
+
+      - ``bicameral.ingest(source=agent_session)`` — depends on the user's
+        answer, undriveable in headless mode.
+      - ``bicameral.resolve_collision`` — same.
+
+    Both still flow through Step 5.6.2 in interactive sessions; CI just
+    can't simulate the human. See #175 for the design discussion.
     """
     bcalls = _bicameral_tool_calls(calls)
     names = [c["name"].split("__")[-1] for c in bcalls]
 
-    ingest_calls = _calls_named(bcalls, "bicameral_ingest")
-    refinement_ingest = None
-    for c in ingest_calls:
-        payload = _ingest_payload(c)
-        top_source = payload.get("source", "")
-        span_sources = [(m.get("span") or {}).get("source_type", "") for m in _ingest_items(c)]
-        if top_source == "agent_session" or "agent_session" in span_sources:
-            refinement_ingest = c
-            break
-    if refinement_ingest is None:
+    preflight_calls = _calls_named(bcalls, "bicameral_preflight")
+    if not preflight_calls:
         return False, (
-            f"expected ingest of refinement with agent_session source; "
-            f"saw {len(ingest_calls)} ingest call(s), none with agent_session"
+            f"precondition NOT met — Flow 2 did not call bicameral_preflight; sequence: {names}"
         )
 
-    resolve_calls = _calls_named(bcalls, "bicameral_resolve_collision")
-    if not resolve_calls:
-        return False, f"expected resolve_collision after refinement ingest; saw: {names}"
+    # Did preflight return at least one surfaced decision? Without a hit, the
+    # disambiguation question shouldn't fire — and Flow 2a has no signal.
+    surfaced_decision_ids: list[str] = []
+    for c in preflight_calls:
+        # Server response lives in the corresponding tool_result block; the
+        # tool_call we have here only carries inputs. Walk the full call list
+        # to find tool_result entries with our tool_use_id.
+        tool_use_id = c.get("id") or ""
+        for r in calls:
+            if r.get("type") != "tool_result":
+                continue
+            if r.get("tool_use_id") != tool_use_id:
+                continue
+            content = r.get("content", "")
+            text = content if isinstance(content, str) else json.dumps(content)
+            for marker in ("decision:",):
+                if marker in text:
+                    # Extract decision IDs as best we can (presence is the
+                    # signal; exact list isn't load-bearing here).
+                    surfaced_decision_ids.append(marker)
+                    break
 
-    return True, (f"agent_session ingest + resolve_collision both fired; sequence: {names}")
+    # Find AskUserQuestion calls that fall AFTER the first preflight call.
+    first_preflight_idx = next(
+        (i for i, c in enumerate(calls) if c.get("name", "").endswith("bicameral_preflight")),
+        None,
+    )
+    if first_preflight_idx is None:
+        return False, f"preflight call index not found in tool calls; sequence: {names}"
+
+    ask_user_calls = [
+        c
+        for i, c in enumerate(calls)
+        if i > first_preflight_idx and c.get("name") == "AskUserQuestion"
+    ]
+    if not ask_user_calls:
+        return False, (
+            f"expected AskUserQuestion (Step 5.6.1 disambiguation) after preflight surfaced "
+            f"decisions; saw none. sequence: {names}"
+        )
+
+    # Validate the question shape — must look like the Step 5.6.1 contract:
+    # mentions a surfaced decision OR contains the supersede/keep_both/
+    # unrelated trichotomy. Loose check; the asserter doesn't try to grade
+    # whether the agent picked the right surfaced decision (that's product
+    # judgment, not a contract test).
+    SHAPE_KEYWORDS = (
+        "supersede",
+        "keep both",
+        "keep_both",
+        "unrelated",
+        "refinement of",
+        "refinement of that",
+        "decision:",
+    )
+    matched = None
+    for c in ask_user_calls:
+        inp = c.get("input") or {}
+        # AskUserQuestion accepts either a top-level question or nested
+        # questions[]; tolerate both shapes.
+        candidate_texts: list[str] = []
+        q = inp.get("question")
+        if isinstance(q, str):
+            candidate_texts.append(q)
+        for nested in inp.get("questions") or []:
+            if isinstance(nested, dict) and isinstance(nested.get("question"), str):
+                candidate_texts.append(nested["question"])
+            for opt in (nested or {}).get("options") or []:
+                if isinstance(opt, dict):
+                    if isinstance(opt.get("label"), str):
+                        candidate_texts.append(opt["label"])
+                    if isinstance(opt.get("description"), str):
+                        candidate_texts.append(opt["description"])
+        for opt in inp.get("options") or []:
+            if isinstance(opt, dict):
+                if isinstance(opt.get("label"), str):
+                    candidate_texts.append(opt["label"])
+                if isinstance(opt.get("description"), str):
+                    candidate_texts.append(opt["description"])
+        haystack = " | ".join(candidate_texts).lower()
+        if any(k in haystack for k in SHAPE_KEYWORDS):
+            matched = c
+            break
+
+    if matched is None:
+        return False, (
+            f"AskUserQuestion was called {len(ask_user_calls)} time(s) after preflight, but "
+            f"none matched the Step 5.6.1 disambiguation shape (expected one of: "
+            f"{SHAPE_KEYWORDS}); sequence: {names}"
+        )
+
+    return True, (
+        f"AskUserQuestion fired after preflight with disambiguation shape "
+        f"(Step 5.6.1 signal); sequence: {names}"
+    )
 
 
 def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:

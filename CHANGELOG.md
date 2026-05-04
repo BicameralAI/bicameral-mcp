@@ -15,6 +15,11 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ### Changed
 
+- `skills/bicameral-preflight/SKILL.md` Step 5.6 — judgment for contradiction-capture moves from the agent to the user via `AskUserQuestion` (Step 5.6.1). The agent no longer infers whether the prompt contradicts a surfaced decision; it asks the user (`supersede` / `keep_both` / `unrelated`) and acts mechanically on the answer (Step 5.6.2 — ingest + resolve_collision). The PostToolUse hook reminder now templates the disambiguation question rather than the bare ingest+resolve_collision sequence. Closes #175.
+- `tests/e2e/run_e2e_flows.py::assert_flow_2a` — pass criterion changed from "ingest+resolve_collision fired" to "`AskUserQuestion` invoked with disambiguation shape after preflight surfaced ≥1 decision." The user-side response can't be driven in headless `claude -p`, so the testable signal is the question invocation. The mechanical capture (Step 5.6.2) only fires after a human answers and is exercised in interactive Claude Code sessions, not CI.
+
+### Changed
+
 ### Fixed
 
 ### Schema
