@@ -12,7 +12,8 @@ Failure modes:
 - Non-text content blocks (ToolUseBlock etc.): fail-soft.
 
 Also exports INTERIM_MODEL_VERSION (carried for backwards compat with
-v1.0 cache rows that pre-date this real-extractor implementation).
+v1.0 cache rows that pre-date this real-extractor implementation; see
+team_server/db schema bumps for the cache shape evolution).
 """
 
 from __future__ import annotations
