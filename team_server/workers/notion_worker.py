@@ -15,15 +15,16 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Awaitable, Callable, Optional
+from collections.abc import Awaitable, Callable
 
 import httpx
 
 from ledger.client import LedgerClient
-
 from team_server.auth import notion_client as nc
 from team_server.config import (
-    RulesDisabled, TeamServerConfig, resolve_rules_for_notion,
+    RulesDisabled,
+    TeamServerConfig,
+    resolve_rules_for_notion,
 )
 from team_server.extraction.canonical_cache import upsert_canonical_extraction
 from team_server.extraction.heuristic_classifier import derive_classifier_version
@@ -45,14 +46,18 @@ async def poll_once(
     token: str,
     extractor: Extractor,
     *,
-    config: Optional[TeamServerConfig] = None,
-    llm_extract_fn: Optional[LLMExtractFn] = None,
+    config: TeamServerConfig | None = None,
+    llm_extract_fn: LLMExtractFn | None = None,
 ) -> None:
     databases = await nc.list_databases(token)
     for db_id, _title in databases:
         await _poll_database(
-            db_client, token, db_id, extractor,
-            config=config, llm_extract_fn=llm_extract_fn,
+            db_client,
+            token,
+            db_id,
+            extractor,
+            config=config,
+            llm_extract_fn=llm_extract_fn,
         )
 
 
@@ -62,16 +67,21 @@ async def _poll_database(
     db_id: str,
     extractor: Extractor,
     *,
-    config: Optional[TeamServerConfig],
-    llm_extract_fn: Optional[LLMExtractFn],
+    config: TeamServerConfig | None,
+    llm_extract_fn: LLMExtractFn | None,
 ) -> None:
     watermark = await _load_watermark(db_client, db_id)
     last_advanced = watermark
     try:
         async for row in nc.query_database(token, db_id, watermark):
             await _ingest_row(
-                db_client, token, db_id, row, extractor,
-                config=config, llm_extract_fn=llm_extract_fn,
+                db_client,
+                token,
+                db_id,
+                row,
+                extractor,
+                config=config,
+                llm_extract_fn=llm_extract_fn,
             )
             last_advanced = row.get("last_edited_time", last_advanced)
     except httpx.HTTPError as exc:
@@ -82,7 +92,8 @@ async def _poll_database(
 
 
 def _resolve_classifier_version(
-    config: Optional[TeamServerConfig], db_id: str,
+    config: TeamServerConfig | None,
+    db_id: str,
 ) -> tuple[str, object]:
     if config is None:
         return "legacy-pre-v3", None
@@ -108,8 +119,8 @@ async def _ingest_row(
     row: dict,
     extractor: Extractor,
     *,
-    config: Optional[TeamServerConfig],
-    llm_extract_fn: Optional[LLMExtractFn],
+    config: TeamServerConfig | None,
+    llm_extract_fn: LLMExtractFn | None,
 ) -> None:
     page_id = row["id"]
     blocks = await nc.fetch_page_blocks(token, page_id)
@@ -122,7 +133,9 @@ async def _ingest_row(
         if rules_or_disabled is None:
             return await extractor(text)
         return await extract_decision_pipeline(
-            text=text, message=row, context=_notion_context(row),
+            text=text,
+            message=row,
+            context=_notion_context(row),
             rules_or_disabled=rules_or_disabled,
             llm_extract_fn=llm_extract_fn,
         )

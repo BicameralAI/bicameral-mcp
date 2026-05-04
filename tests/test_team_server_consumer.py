@@ -22,7 +22,9 @@ def _team_server_event(seq: int, source_ref: str, decisions=None) -> dict:
             "source_ref": source_ref,
             "content_hash": "h",
             "extraction": {
-                "decisions": decisions if decisions is not None else [
+                "decisions": decisions
+                if decisions is not None
+                else [
                     {"summary": "use REST", "context_snippet": "we decided to use REST"},
                 ],
             },
@@ -115,9 +117,11 @@ async def test_consumer_advances_pull_watermark_via_returned_events(monkeypatch,
                 prior = 0
         seen_since.append(prior)
         if prior == 0:
-            events = [_team_server_event(1, "C/1"),
-                      _team_server_event(2, "C/2"),
-                      _team_server_event(3, "C/3")]
+            events = [
+                _team_server_event(1, "C/1"),
+                _team_server_event(2, "C/2"),
+                _team_server_event(3, "C/3"),
+            ]
             Path(watermark_path).parent.mkdir(parents=True, exist_ok=True)
             Path(watermark_path).write_text("3", encoding="utf-8")
             return events
@@ -127,10 +131,14 @@ async def test_consumer_advances_pull_watermark_via_returned_events(monkeypatch,
     adapter = _RecordingAdapter()
     wm = tmp_path / "wm"
     await team_server_consumer.consume_team_server_events_once(
-        "http://team:8765", wm, adapter,
+        "http://team:8765",
+        wm,
+        adapter,
     )
     await team_server_consumer.consume_team_server_events_once(
-        "http://team:8765", wm, adapter,
+        "http://team:8765",
+        wm,
+        adapter,
     )
     assert seen_since == [0, 3]
 
@@ -202,8 +210,11 @@ async def test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl(monkey
 
     # Construct a real TeamWriteAdapter with the recording writer
     from events.team_adapter import TeamWriteAdapter
+
     team_adapter = TeamWriteAdapter(
-        inner=inner, writer=writer, materializer=_StubMaterializer(),
+        inner=inner,
+        writer=writer,
+        materializer=_StubMaterializer(),
     )
 
     task = team_server_consumer.start_team_server_consumer_if_configured(team_adapter)

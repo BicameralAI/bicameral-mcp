@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import Awaitable, Callable, Iterable, Optional
+from collections.abc import Awaitable, Callable, Iterable
 
 from ledger.client import LedgerClient
-
 from team_server.config import (
-    RulesDisabled, TeamServerConfig, resolve_rules_for_slack,
+    RulesDisabled,
+    TeamServerConfig,
+    resolve_rules_for_slack,
 )
 from team_server.extraction.canonical_cache import upsert_canonical_extraction
 from team_server.extraction.heuristic_classifier import derive_classifier_version
@@ -58,8 +59,8 @@ async def poll_once(
     channels: Iterable[str],
     extractor: Extractor,
     *,
-    config: Optional[TeamServerConfig] = None,
-    llm_extract_fn: Optional[LLMExtractFn] = None,
+    config: TeamServerConfig | None = None,
+    llm_extract_fn: LLMExtractFn | None = None,
 ) -> None:
     """One polling pass over allowlisted channels."""
     for channel in channels:
@@ -70,13 +71,20 @@ async def poll_once(
         messages = history.get("messages", [])
         for position, message in enumerate(messages):
             await _ingest_message(
-                db_client, workspace_team_id, channel, message, extractor,
-                position=position, config=config, llm_extract_fn=llm_extract_fn,
+                db_client,
+                workspace_team_id,
+                channel,
+                message,
+                extractor,
+                position=position,
+                config=config,
+                llm_extract_fn=llm_extract_fn,
             )
 
 
 def _resolve_classifier_version(
-    config: Optional[TeamServerConfig], channel: str,
+    config: TeamServerConfig | None,
+    channel: str,
 ) -> tuple[str, object]:
     if config is None:
         return "legacy-pre-v3", None
@@ -94,8 +102,8 @@ async def _ingest_message(
     extractor: Extractor,
     *,
     position: int,
-    config: Optional[TeamServerConfig],
-    llm_extract_fn: Optional[LLMExtractFn],
+    config: TeamServerConfig | None,
+    llm_extract_fn: LLMExtractFn | None,
 ) -> None:
     text = message.get("text", "")
     ts = message.get("ts", "")
@@ -107,7 +115,8 @@ async def _ingest_message(
         if rules_or_disabled is None:
             return await extractor(text)
         return await extract_decision_pipeline(
-            text=text, message=message,
+            text=text,
+            message=message,
             context=_slack_context(message, position),
             rules_or_disabled=rules_or_disabled,
             llm_extract_fn=llm_extract_fn,

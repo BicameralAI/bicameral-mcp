@@ -14,15 +14,13 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def env_setup(monkeypatch, tmp_path):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY",
-                       "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
     cfg = tmp_path / "config.yml"
     cfg.write_text(
-        "slack:\n"
-        "  workspaces:\n"
-        "    - team_id: T-LIFESPAN\n"
-        "      channels: [C-LIFE-1, C-LIFE-2]\n"
+        "slack:\n  workspaces:\n    - team_id: T-LIFESPAN\n      channels: [C-LIFE-1, C-LIFE-2]\n"
     )
     monkeypatch.setenv("BICAMERAL_CONFIG_PATH", str(cfg))
     monkeypatch.setattr("team_server.config.DEFAULT_CONFIG_PATH", cfg)
@@ -37,16 +35,21 @@ async def test_lifespan_invokes_sync_channel_allowlist_with_loaded_config(env_se
     'T-LIFESPAN' and channels == ['C-LIFE-1', 'C-LIFE-2']).
     Functionality — exercises the lifespan→sync wiring."""
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
     captured = []
 
     async def stub_sync(client, config):
-        captured.append({
-            "ws_count": len(config.slack.workspaces),
-            "team_id": config.slack.workspaces[0].team_id if config.slack.workspaces else None,
-            "channels": list(config.slack.workspaces[0].channels) if config.slack.workspaces else [],
-        })
+        captured.append(
+            {
+                "ws_count": len(config.slack.workspaces),
+                "team_id": config.slack.workspaces[0].team_id if config.slack.workspaces else None,
+                "channels": list(config.slack.workspaces[0].channels)
+                if config.slack.workspaces
+                else [],
+            }
+        )
 
     monkeypatch.setattr(app_module, "sync_channel_allowlist", stub_sync)
 
@@ -64,6 +67,7 @@ async def test_lifespan_continues_when_sync_raises(env_setup, monkeypatch):
     lifespan logs and continues — DB stays connected, app.state.db is
     set, workers still register. Failure isolation invariant."""
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
     async def raising_sync(client, config):

@@ -25,7 +25,7 @@ class TeamServerDB:
     client: LedgerClient
 
     @classmethod
-    def from_env(cls) -> "TeamServerDB":
+    def from_env(cls) -> TeamServerDB:
         url = os.environ.get("BICAMERAL_TEAM_SERVER_SURREAL_URL", DEFAULT_URL)
         return cls(client=LedgerClient(url=url, ns=DEFAULT_NS, db=DEFAULT_DB))
 

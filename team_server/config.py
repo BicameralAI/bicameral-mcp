@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional, Union
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -32,7 +31,7 @@ class HeuristicGlobalRules(BaseModel):
     min_word_count: int = 0
     boost_reactions: list[str] = Field(default_factory=list)
     boost_threshold: int = 1
-    thread_tail_position_threshold: Optional[int] = None
+    thread_tail_position_threshold: int | None = None
     enabled: bool = True
     learned_denylist: list[str] = Field(default_factory=list)
 
@@ -40,23 +39,19 @@ class HeuristicGlobalRules(BaseModel):
 class HeuristicScopedOverride(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     keyword_negatives: list[str] = Field(default_factory=list)
-    min_word_count: Optional[int] = None
+    min_word_count: int | None = None
     enabled: bool = True
 
 
 class SlackHeuristics(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    global_rules: HeuristicGlobalRules = Field(
-        default_factory=HeuristicGlobalRules, alias="global"
-    )
+    global_rules: HeuristicGlobalRules = Field(default_factory=HeuristicGlobalRules, alias="global")
     channels: dict[str, HeuristicScopedOverride] = Field(default_factory=dict)
 
 
 class NotionHeuristics(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
-    global_rules: HeuristicGlobalRules = Field(
-        default_factory=HeuristicGlobalRules, alias="global"
-    )
+    global_rules: HeuristicGlobalRules = Field(default_factory=HeuristicGlobalRules, alias="global")
     databases: dict[str, HeuristicScopedOverride] = Field(default_factory=dict)
 
 
@@ -66,7 +61,7 @@ class SlackConfig(BaseModel):
 
 
 class NotionConfig(BaseModel):
-    token: Optional[str] = None
+    token: str | None = None
     heuristics: NotionHeuristics = Field(default_factory=NotionHeuristics)
 
 
@@ -90,31 +85,30 @@ def load_channel_allowlist(path: Path) -> TeamServerConfig:
     return load_rules_from_config(path)
 
 
-def load_rules_from_config(path: Union[str, Path]) -> TeamServerConfig:
+def load_rules_from_config(path: str | Path) -> TeamServerConfig:
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
     try:
         return TeamServerConfig(**raw)
     except ValidationError as exc:
         msg_parts = [
-            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
-            for err in exc.errors()
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in exc.errors()
         ]
-        raise ValueError(
-            f"team-server config invalid: {'; '.join(msg_parts)}"
-        ) from exc
+        raise ValueError(f"team-server config invalid: {'; '.join(msg_parts)}") from exc
 
 
 def _build_rules(
     base: HeuristicGlobalRules,
-    override: Optional[HeuristicScopedOverride],
+    override: HeuristicScopedOverride | None,
     learned: tuple[str, ...] = (),
 ) -> TriggerRules:
     return TriggerRules(
         keywords=tuple([*base.keywords, *(override.keywords if override else [])]),
-        keyword_negatives=tuple([
-            *base.keyword_negatives,
-            *(override.keyword_negatives if override else []),
-        ]),
+        keyword_negatives=tuple(
+            [
+                *base.keyword_negatives,
+                *(override.keyword_negatives if override else []),
+            ]
+        ),
         min_word_count=(
             override.min_word_count
             if override and override.min_word_count is not None
@@ -128,8 +122,10 @@ def _build_rules(
 
 
 def resolve_rules_for_slack(
-    config: TeamServerConfig, channel_id: str, learned: tuple[str, ...] = (),
-) -> Union[TriggerRules, RulesDisabled]:
+    config: TeamServerConfig,
+    channel_id: str,
+    learned: tuple[str, ...] = (),
+) -> TriggerRules | RulesDisabled:
     base = config.slack.heuristics.global_rules
     override = config.slack.heuristics.channels.get(channel_id)
     if not base.enabled or (override and not override.enabled):
@@ -138,8 +134,10 @@ def resolve_rules_for_slack(
 
 
 def resolve_rules_for_notion(
-    config: TeamServerConfig, db_id: str, learned: tuple[str, ...] = (),
-) -> Union[TriggerRules, RulesDisabled]:
+    config: TeamServerConfig,
+    db_id: str,
+    learned: tuple[str, ...] = (),
+) -> TriggerRules | RulesDisabled:
     base = config.notion.heuristics.global_rules
     override = config.notion.heuristics.databases.get(db_id)
     if not base.enabled or (override and not override.enabled):

@@ -18,7 +18,8 @@ def test_config_yaml_loads_channel_allowlist(tmp_path):
     from team_server.config import load_channel_allowlist
 
     cfg_path = tmp_path / "team-server-config.yml"
-    cfg_path.write_text(textwrap.dedent("""\
+    cfg_path.write_text(
+        textwrap.dedent("""\
         slack:
           workspaces:
             - team_id: T123
@@ -28,7 +29,8 @@ def test_config_yaml_loads_channel_allowlist(tmp_path):
             - team_id: T999
               channels:
                 - CABC
-    """))
+    """)
+    )
     config = load_channel_allowlist(cfg_path)
     workspaces = {w.team_id: w.channels for w in config.slack.workspaces}
     assert workspaces == {"T123": ["C001", "C002"], "T999": ["CABC"]}
@@ -40,12 +42,14 @@ def test_config_yaml_rejects_missing_workspace_id(tmp_path):
     from team_server.config import load_channel_allowlist
 
     cfg_path = tmp_path / "team-server-config.yml"
-    cfg_path.write_text(textwrap.dedent("""\
+    cfg_path.write_text(
+        textwrap.dedent("""\
         slack:
           workspaces:
             - channels:
                 - C001
-    """))
+    """)
+    )
     with pytest.raises(ValueError) as excinfo:
         load_channel_allowlist(cfg_path)
     assert "team_id" in str(excinfo.value).lower()

@@ -14,7 +14,9 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def memory_url(monkeypatch):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
 
 
 @pytest.mark.asyncio
@@ -78,18 +80,26 @@ async def test_cache_miss_invokes_compute_persists_and_returns_changed_true():
             return {"decisions": ["d1", "d2"]}
 
         first, first_changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C/T",
-            content_hash="h1", classifier_version="legacy-pre-v3",
-            compute_fn=compute_fn, model_version="interim-claude-v1",
+            client,
+            source_type="slack",
+            source_ref="C/T",
+            content_hash="h1",
+            classifier_version="legacy-pre-v3",
+            compute_fn=compute_fn,
+            model_version="interim-claude-v1",
         )
         assert compute_calls == [1]
         assert first_changed is True
         assert first == {"decisions": ["d1", "d2"]}
 
         second, second_changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C/T",
-            content_hash="h1", classifier_version="legacy-pre-v3",
-            compute_fn=compute_fn, model_version="interim-claude-v1",
+            client,
+            source_type="slack",
+            source_ref="C/T",
+            content_hash="h1",
+            classifier_version="legacy-pre-v3",
+            compute_fn=compute_fn,
+            model_version="interim-claude-v1",
         )
         assert compute_calls == [1]
         assert second_changed is False
@@ -119,19 +129,25 @@ async def test_content_hash_change_replaces_in_place_not_new_row():
             return {"decisions": [f"d{n[0]}"]}
 
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C/T",
-            content_hash="hash-A", classifier_version="legacy-pre-v3",
-            compute_fn=compute_fn, model_version="v1",
+            client,
+            source_type="slack",
+            source_ref="C/T",
+            content_hash="hash-A",
+            classifier_version="legacy-pre-v3",
+            compute_fn=compute_fn,
+            model_version="v1",
         )
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C/T",
-            content_hash="hash-B", classifier_version="legacy-pre-v3",
-            compute_fn=compute_fn, model_version="v1",
+            client,
+            source_type="slack",
+            source_ref="C/T",
+            content_hash="hash-B",
+            classifier_version="legacy-pre-v3",
+            compute_fn=compute_fn,
+            model_version="v1",
         )
 
-        rows = await client.query(
-            "SELECT * FROM extraction_cache WHERE source_ref = 'C/T'"
-        )
+        rows = await client.query("SELECT * FROM extraction_cache WHERE source_ref = 'C/T'")
         assert len(rows) == 1
         assert rows[0]["content_hash"] == "hash-B"
         assert rows[0]["canonical_extraction"] == {"decisions": ["d2"]}

@@ -13,7 +13,6 @@ bridge_team_server_payload) handle the recognition and shape mapping.
 
 from __future__ import annotations
 
-
 _TEAM_SERVER_SOURCE_NORMALIZATION = {
     "slack": "slack",
     "notion_database_row": "notion",
@@ -40,10 +39,12 @@ def bridge_team_server_payload(payload: dict) -> dict:
     decisions: list[dict] = []
     for d in raw_decisions:
         if isinstance(d, dict):
-            decisions.append({
-                "description": d.get("summary", ""),
-                "source_excerpt": d.get("context_snippet", ""),
-            })
+            decisions.append(
+                {
+                    "description": d.get("summary", ""),
+                    "source_excerpt": d.get("context_snippet", ""),
+                }
+            )
         elif isinstance(d, str):
             # interim-claude-v1 placeholder shape (paragraph-split strings)
             decisions.append({"description": d, "source_excerpt": d})

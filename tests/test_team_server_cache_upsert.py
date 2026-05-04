@@ -62,14 +62,22 @@ async def test_upsert_returns_changed_false_on_same_hash():
             return {"decisions": ["v1"]}
 
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C1/2.0",
-            content_hash="h2", classifier_version="legacy-pre-v3",
-            compute_fn=stub, model_version="interim-claude-v1",
+            client,
+            source_type="slack",
+            source_ref="C1/2.0",
+            content_hash="h2",
+            classifier_version="legacy-pre-v3",
+            compute_fn=stub,
+            model_version="interim-claude-v1",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C1/2.0",
-            content_hash="h2", classifier_version="legacy-pre-v3",
-            compute_fn=stub, model_version="interim-claude-v1",
+            client,
+            source_type="slack",
+            source_ref="C1/2.0",
+            content_hash="h2",
+            classifier_version="legacy-pre-v3",
+            compute_fn=stub,
+            model_version="interim-claude-v1",
         )
         assert changed is False
         assert extraction == {"decisions": ["v1"]}
@@ -96,14 +104,22 @@ async def test_upsert_replaces_extraction_on_hash_change():
             return {"decisions": ["v2"]}
 
         await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C1/3.0",
-            content_hash="ha", classifier_version="legacy-pre-v3",
-            compute_fn=stub_v1, model_version="interim-claude-v1",
+            client,
+            source_type="slack",
+            source_ref="C1/3.0",
+            content_hash="ha",
+            classifier_version="legacy-pre-v3",
+            compute_fn=stub_v1,
+            model_version="interim-claude-v1",
         )
         extraction, changed = await upsert_canonical_extraction(
-            client, source_type="slack", source_ref="C1/3.0",
-            content_hash="hb", classifier_version="legacy-pre-v3",
-            compute_fn=stub_v2, model_version="interim-claude-v1",
+            client,
+            source_type="slack",
+            source_ref="C1/3.0",
+            content_hash="hb",
+            classifier_version="legacy-pre-v3",
+            compute_fn=stub_v2,
+            model_version="interim-claude-v1",
         )
         assert changed is True
         assert extraction == {"decisions": ["v2"]}
@@ -125,8 +141,8 @@ async def test_upsert_replaces_extraction_on_hash_change():
 async def test_upsert_unique_index_is_source_type_and_ref_only():
     """Functionality: after migration, the unique index rejects a duplicate
     (source_type, source_ref) regardless of content_hash differences."""
-    from team_server.db import build_client
     from ledger.client import LedgerError
+    from team_server.db import build_client
     from team_server.schema import ensure_schema
 
     client = build_client()

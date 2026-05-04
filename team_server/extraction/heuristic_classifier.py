@@ -14,7 +14,6 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -31,22 +30,25 @@ class TriggerRules:
     min_word_count: int = 0
     boost_reactions: tuple[str, ...] = ()
     boost_threshold: int = 1
-    thread_tail_position_threshold: Optional[int] = None
+    thread_tail_position_threshold: int | None = None
     learned_keywords: tuple[str, ...] = ()
 
 
 def derive_classifier_version(rules: TriggerRules) -> str:
     """Stable hash of the rule set; changes invalidate cache downstream."""
-    payload = json.dumps({
-        "keywords": sorted(rules.keywords),
-        "keyword_negatives": sorted(rules.keyword_negatives),
-        "min_word_count": rules.min_word_count,
-        "boost_reactions": sorted(rules.boost_reactions),
-        "boost_threshold": rules.boost_threshold,
-        "thread_tail_position_threshold": rules.thread_tail_position_threshold,
-        "learned_keywords": sorted(rules.learned_keywords),
-        "engine": "heuristic-v1",
-    }, sort_keys=True).encode("utf-8")
+    payload = json.dumps(
+        {
+            "keywords": sorted(rules.keywords),
+            "keyword_negatives": sorted(rules.keyword_negatives),
+            "min_word_count": rules.min_word_count,
+            "boost_reactions": sorted(rules.boost_reactions),
+            "boost_threshold": rules.boost_threshold,
+            "thread_tail_position_threshold": rules.thread_tail_position_threshold,
+            "learned_keywords": sorted(rules.learned_keywords),
+            "engine": "heuristic-v1",
+        },
+        sort_keys=True,
+    ).encode("utf-8")
     return f"heuristic-v1+{hashlib.sha256(payload).hexdigest()[:12]}"
 
 
@@ -84,9 +86,7 @@ def classify(
         return ClassificationResult(False, (), cv)
 
     word_count = len(_WORD_RE.findall(text))
-    text_matches = _match_keywords(
-        text, (*rules.keywords, *rules.learned_keywords)
-    )
+    text_matches = _match_keywords(text, (*rules.keywords, *rules.learned_keywords))
     reaction_matches = _reaction_triggers(
         context.get("reactions") or [],
         set(rules.boost_reactions),

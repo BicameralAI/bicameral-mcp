@@ -26,9 +26,7 @@ async def write_team_event(
     so multi-instance scenarios degrade to last-write-wins per workspace
     (single-instance v0 deployment is the contract; multi-instance HA is
     a v1 concern per plan boundaries.non_goals)."""
-    rows = await client.query(
-        "SELECT sequence FROM team_event ORDER BY sequence DESC LIMIT 1"
-    )
+    rows = await client.query("SELECT sequence FROM team_event ORDER BY sequence DESC LIMIT 1")
     next_seq = (rows[0]["sequence"] + 1) if rows else 1
     await client.query(
         "CREATE team_event CONTENT { author_email: $ae, event_type: $et, "

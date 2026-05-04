@@ -40,6 +40,7 @@ class _StubClient:
 
 def _patch_anthropic(monkeypatch, client):
     import sys as _sys
+
     fake = type(_sys)("anthropic")
     fake.AsyncAnthropic = lambda **_kwargs: client
     fake.APIError = type("APIError", (Exception,), {})
@@ -80,6 +81,7 @@ async def test_extract_retries_on_429_then_succeeds(monkeypatch):
 
     class APIStatusError429(Exception):
         status_code = 429
+
     fake.APIStatusError = APIStatusError429
     # Re-import won't help; we'll override behavior via _one_attempt patching
     # at a higher level instead. Simpler: replace AsyncAnthropic with a client
@@ -91,6 +93,7 @@ async def test_extract_retries_on_429_then_succeeds(monkeypatch):
         @property
         def messages(self):
             return self
+
         async def create(self, **kw):
             state["calls"] += 1
             if state["calls"] == 1:
@@ -98,9 +101,7 @@ async def test_extract_retries_on_429_then_succeeds(monkeypatch):
             return _StubResponse('{"decisions": [{"summary": "ok"}]}')
 
     fake.AsyncAnthropic = lambda **_kw: _Flaky()
-    monkeypatch.setattr(
-        "asyncio.sleep", lambda *a, **kw: _noop_async()
-    )
+    monkeypatch.setattr("asyncio.sleep", lambda *a, **kw: _noop_async())
     result = await llm_extractor.extract("text", [])
     assert result["decisions"] == [{"summary": "ok"}]
     assert state["calls"] == 2
@@ -118,12 +119,14 @@ async def test_extract_fails_soft_on_500_returns_error_field(monkeypatch):
 
     class APIStatusError500(Exception):
         status_code = 500
+
     fake.APIStatusError = APIStatusError500
 
     class _Always500:
         @property
         def messages(self):
             return self
+
         async def create(self, **kw):
             raise APIStatusError500("internal error")
 

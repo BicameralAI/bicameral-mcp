@@ -15,7 +15,9 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture
 def memory_url(monkeypatch):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
     yield
 
 

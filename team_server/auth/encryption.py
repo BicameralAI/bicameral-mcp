@@ -25,7 +25,5 @@ def decrypt_token(ciphertext: bytes, key: bytes) -> str:
 def load_key_from_env() -> bytes:
     value = os.environ.get(ENV_KEY, "").strip()
     if not value:
-        raise RuntimeError(
-            f"{ENV_KEY} env var is required (Fernet urlsafe-base64 key)"
-        )
+        raise RuntimeError(f"{ENV_KEY} env var is required (Fernet urlsafe-base64 key)")
     return value.encode("utf-8")

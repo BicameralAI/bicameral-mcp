@@ -16,7 +16,9 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def memory_url(monkeypatch):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
     monkeypatch.setenv("SLACK_CLIENT_ID", "test_client_id")
     monkeypatch.setenv("SLACK_CLIENT_SECRET", "test_client_secret")
     yield
@@ -25,9 +27,9 @@ def memory_url(monkeypatch):
 def test_oauth_redirect_url_contains_required_params():
     """Behavior: build_authorize_url returns a Slack OAuth URL embedding
     client_id, redirect_uri, state, and the required scope set."""
-    from team_server.auth.slack_oauth import REQUIRED_SCOPES, build_authorize_url
-
     from urllib.parse import parse_qs, urlparse
+
+    from team_server.auth.slack_oauth import REQUIRED_SCOPES, build_authorize_url
 
     url = build_authorize_url(
         client_id="abc",
@@ -133,9 +135,7 @@ async def test_callback_persists_workspace_with_encrypted_token(monkeypatch):
     db = build_client()
     await db.connect()
     try:
-        rows = await db.query(
-            "SELECT * FROM workspace WHERE slack_team_id = 'T_PERSIST'"
-        )
+        rows = await db.query("SELECT * FROM workspace WHERE slack_team_id = 'T_PERSIST'")
         # Note: this is a fresh in-memory DB so it WON'T see the row from
         # the test client's lifespan. Instead, verify via the app's own DB:
         # we trust the route handler to store; this assertion is informational.

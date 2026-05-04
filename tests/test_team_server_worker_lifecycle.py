@@ -15,13 +15,15 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def env_setup(monkeypatch):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY",
-                       "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
 
 
 @pytest.mark.asyncio
 async def test_lifespan_starts_slack_worker_when_workspaces_exist(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
     from team_server.app import create_app
 
@@ -32,9 +34,7 @@ async def test_lifespan_starts_slack_worker_when_workspaces_exist(monkeypatch):
     async def stub_poll_once(**kwargs):
         calls["poll_once"] += 1
 
-    monkeypatch.setattr(
-        "team_server.workers.slack_runner.poll_once", stub_poll_once
-    )
+    monkeypatch.setattr("team_server.workers.slack_runner.poll_once", stub_poll_once)
 
     # Stub AsyncWebClient construction to avoid needing slack_sdk installed
     import team_server.workers.slack_runner as sr_mod
@@ -46,6 +46,7 @@ async def test_lifespan_starts_slack_worker_when_workspaces_exist(monkeypatch):
     async def fake_run_iteration(db_client, extractor):
         # Bypass slack_sdk import by re-implementing the runner logic
         from team_server.auth.encryption import decrypt_token, load_key_from_env
+
         key = load_key_from_env()
         workspaces = await db_client.query(
             "SELECT id, slack_team_id, oauth_token_encrypted FROM workspace"
@@ -68,6 +69,7 @@ async def test_lifespan_starts_slack_worker_when_workspaces_exist(monkeypatch):
     with TestClient(app) as _client:
         # Seed AFTER lifespan opened the DB
         from team_server.auth.encryption import encrypt_token, load_key_from_env
+
         key = load_key_from_env()
         encrypted = encrypt_token("xoxb-test", key).decode("utf-8")
         await app.state.db.client.query(
@@ -86,6 +88,7 @@ async def test_lifespan_starts_slack_worker_when_workspaces_exist(monkeypatch):
 @pytest.mark.asyncio
 async def test_lifespan_does_not_invoke_slack_poll_when_workspaces_empty(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
     from team_server.app import create_app
 
@@ -98,6 +101,7 @@ async def test_lifespan_does_not_invoke_slack_poll_when_workspaces_empty(monkeyp
 
     async def fake_run_iteration(db_client, extractor):
         from team_server.auth.encryption import load_key_from_env
+
         load_key_from_env()
         workspaces = await db_client.query(
             "SELECT id, slack_team_id, oauth_token_encrypted FROM workspace"
@@ -121,6 +125,7 @@ async def test_lifespan_does_not_invoke_slack_poll_when_workspaces_empty(monkeyp
 @pytest.mark.asyncio
 async def test_lifespan_cancels_slack_worker_task_on_shutdown(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
     from team_server.app import create_app
 
@@ -179,10 +184,12 @@ async def test_slack_worker_iterates_all_workspaces_per_poll(monkeypatch):
     captured = []
 
     async def stub_poll_once(**kwargs):
-        captured.append({
-            "team_id": kwargs["workspace_team_id"],
-            "client_token": getattr(kwargs["slack_client"], "token", None),
-        })
+        captured.append(
+            {
+                "team_id": kwargs["workspace_team_id"],
+                "client_token": getattr(kwargs["slack_client"], "token", None),
+            }
+        )
 
     monkeypatch.setattr(slack_runner, "poll_once", stub_poll_once)
 
@@ -191,6 +198,7 @@ async def test_slack_worker_iterates_all_workspaces_per_poll(monkeypatch):
             self.token = token
 
     import sys as _sys
+
     fake_module = type(_sys)("slack_sdk")
     fake_web = type(_sys)("slack_sdk.web")
     fake_async = type(_sys)("slack_sdk.web.async_client")
@@ -258,6 +266,7 @@ async def test_slack_worker_skips_workspace_on_decrypt_failure(monkeypatch):
             self.token = token
 
     import sys as _sys
+
     fake_module = type(_sys)("slack_sdk")
     fake_web = type(_sys)("slack_sdk.web")
     fake_async = type(_sys)("slack_sdk.web.async_client")
@@ -314,6 +323,7 @@ async def test_slack_runner_decrypts_workspace_token_with_loaded_key(monkeypatch
             self.token = token
 
     import sys as _sys
+
     fake_module = type(_sys)("slack_sdk")
     fake_web = type(_sys)("slack_sdk.web")
     fake_async = type(_sys)("slack_sdk.web.async_client")
@@ -331,8 +341,7 @@ async def test_slack_runner_decrypts_workspace_token_with_loaded_key(monkeypatch
         key = load_key_from_env()
         encrypted = encrypt_token("xoxb-test-token", key).decode("utf-8")
         await client.query(
-            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T', "
-            "oauth_token_encrypted: $e }",
+            "CREATE workspace CONTENT { name: 'W', slack_team_id: 'T', oauth_token_encrypted: $e }",
             {"e": encrypted},
         )
 

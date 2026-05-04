@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -26,4 +26,5 @@ def worker_loop(name: str, interval_seconds: int, work_fn: WorkFn) -> asyncio.Ta
             except Exception:  # noqa: BLE001
                 logger.exception("[team-server] worker=%s iteration failed", name)
             await asyncio.sleep(interval_seconds)
+
     return asyncio.create_task(_loop(), name=f"team-server-worker-{name}")

@@ -21,7 +21,7 @@ import asyncio
 import hashlib
 import json
 import os
-from typing import Optional
+from typing import Any
 
 INTERIM_MODEL_VERSION = "interim-claude-v1"
 
@@ -69,14 +69,15 @@ def _fail_soft(error: str, version: str, triggers: list[str]) -> dict:
     }
 
 
-async def _one_attempt(client, model: str, prompt: str) -> tuple[str, object]:
+async def _one_attempt(client, model: str, prompt: str) -> tuple[str, list[Any] | str | None]:
     """Returns ("ok", decisions_list) | ("retry", None) | ("error", str_message).
     'retry' means caller should sleep+retry (429 case). 'error' is terminal."""
     from anthropic import APIError, APIStatusError
 
     try:
         resp = await client.messages.create(
-            model=model, max_tokens=512,
+            model=model,
+            max_tokens=512,
             messages=[{"role": "user", "content": prompt}],
         )
     except APIStatusError as exc:
@@ -114,9 +115,12 @@ async def extract(text: str, matched_triggers: list[str]) -> dict:
     for attempt in range(3):
         status, payload = await _one_attempt(client, model, prompt)
         if status == "ok":
+            assert isinstance(payload, list), (
+                f"_one_attempt returned status='ok' with non-list payload: {type(payload).__name__}"
+            )
             return _success(payload, version, matched_triggers)
         if status == "retry" and attempt < 2:
-            await asyncio.sleep(2 ** attempt)
+            await asyncio.sleep(2**attempt)
             continue
         last_error = str(payload) if payload else "rate-limit-exhausted"
         break

@@ -13,7 +13,7 @@ migration version as data, not folklore.
 from __future__ import annotations
 
 import logging
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from ledger.client import LedgerClient
 
@@ -29,7 +29,6 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE FIELD oauth_token_encrypted ON workspace TYPE string",
     "DEFINE FIELD created_at            ON workspace TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_workspace_slack_team_id ON workspace FIELDS slack_team_id UNIQUE",
-
     # channel_allowlist — which Slack channels are ingested per workspace.
     "DEFINE TABLE channel_allowlist SCHEMAFULL",
     "DEFINE FIELD workspace_id ON channel_allowlist TYPE record<workspace>",
@@ -37,7 +36,6 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE FIELD channel_name ON channel_allowlist TYPE string DEFAULT ''",
     "DEFINE FIELD added_at     ON channel_allowlist TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_channel_allowlist_unique ON channel_allowlist FIELDS workspace_id, channel_id UNIQUE",
-
     # extraction_cache — canonical extraction per (source_type, source_ref).
     # v2: index keyed on (source_type, source_ref) only; content_hash is a
     # tracking column. The v1 (source_type, source_ref, content_hash)
@@ -51,7 +49,6 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE FIELD classifier_version     ON extraction_cache TYPE option<string> DEFAULT 'legacy-pre-v3'",
     "DEFINE FIELD created_at             ON extraction_cache TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_extraction_cache_key ON extraction_cache FIELDS source_type, source_ref UNIQUE",
-
     # team_event — append-only event log.
     "DEFINE TABLE team_event SCHEMAFULL",
     "DEFINE FIELD author_email ON team_event TYPE string",
@@ -60,7 +57,6 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE FIELD sequence     ON team_event TYPE int",
     "DEFINE FIELD created_at   ON team_event TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_team_event_sequence ON team_event FIELDS sequence",
-
     # source_watermark — generic per-source, per-resource watermark.
     # Used by polled sources (Notion v1; future sources reuse).
     "DEFINE TABLE source_watermark SCHEMAFULL",
@@ -69,14 +65,12 @@ _BASE_STMTS: tuple[str, ...] = (
     "DEFINE FIELD last_seen   ON source_watermark TYPE string DEFAULT ''",
     "DEFINE FIELD updated_at  ON source_watermark TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_source_watermark_key ON source_watermark FIELDS source_type, resource_id UNIQUE",
-
     # schema_version — single-row table holding the current SCHEMA_VERSION.
     # DELETE-then-CREATE keeps the table at one row regardless of how
     # many times ensure_schema runs. Versioning is data, not folklore.
     "DEFINE TABLE schema_version SCHEMAFULL",
     "DEFINE FIELD version    ON schema_version TYPE int",
     "DEFINE FIELD updated_at ON schema_version TYPE datetime DEFAULT time::now()",
-
     # learned_heuristic_terms — Phase 5 corpus learner output.
     # Per (source_type, term) UNIQUE; support_count is the n-gram
     # frequency in the source corpus at learn time.

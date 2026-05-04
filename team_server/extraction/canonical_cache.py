@@ -14,7 +14,7 @@ take effect without manual cache invalidation.
 
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from ledger.client import LedgerClient
 
@@ -43,9 +43,11 @@ async def upsert_canonical_extraction(
         "WHERE source_type = $st AND source_ref = $sr LIMIT 1",
         {"st": source_type, "sr": source_ref},
     )
-    if (rows
-            and rows[0]["content_hash"] == content_hash
-            and rows[0]["classifier_version"] == classifier_version):
+    if (
+        rows
+        and rows[0]["content_hash"] == content_hash
+        and rows[0]["classifier_version"] == classifier_version
+    ):
         return rows[0]["canonical_extraction"], False
     extraction = await compute_fn()
     if rows:
@@ -54,15 +56,27 @@ async def upsert_canonical_extraction(
             "classifier_version = $cv, canonical_extraction = $ext, "
             "model_version = $mv "
             "WHERE source_type = $st AND source_ref = $sr",
-            {"st": source_type, "sr": source_ref, "ch": content_hash,
-             "cv": classifier_version, "ext": extraction, "mv": model_version},
+            {
+                "st": source_type,
+                "sr": source_ref,
+                "ch": content_hash,
+                "cv": classifier_version,
+                "ext": extraction,
+                "mv": model_version,
+            },
         )
     else:
         await client.query(
             "CREATE extraction_cache CONTENT { source_type: $st, source_ref: $sr, "
             "content_hash: $ch, classifier_version: $cv, "
             "canonical_extraction: $ext, model_version: $mv }",
-            {"st": source_type, "sr": source_ref, "ch": content_hash,
-             "cv": classifier_version, "ext": extraction, "mv": model_version},
+            {
+                "st": source_type,
+                "sr": source_ref,
+                "ch": content_hash,
+                "cv": classifier_version,
+                "ext": extraction,
+                "mv": model_version,
+            },
         )
     return extraction, True

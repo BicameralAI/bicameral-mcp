@@ -15,8 +15,9 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def env_setup(monkeypatch, tmp_path):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY",
-                       "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
     # Default: point config to a non-existent path so notion is OFF unless test sets NOTION_TOKEN
     monkeypatch.setenv("BICAMERAL_CONFIG_PATH", str(tmp_path / "no_config.yml"))
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
@@ -25,6 +26,7 @@ def env_setup(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_app_starts_notion_worker_when_token_env_set(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
     monkeypatch.setenv("NOTION_TOKEN", "fake-token")
@@ -56,6 +58,7 @@ async def test_app_starts_notion_worker_when_token_env_set(monkeypatch):
 @pytest.mark.asyncio
 async def test_app_does_not_start_notion_worker_when_token_unset(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
     # Ensure no token resolution succeeds
@@ -71,6 +74,7 @@ async def test_app_does_not_start_notion_worker_when_token_unset(monkeypatch):
 @pytest.mark.asyncio
 async def test_notion_worker_task_is_cancelled_on_shutdown(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
     monkeypatch.setenv("NOTION_TOKEN", "fake-token")
@@ -95,6 +99,7 @@ async def test_notion_worker_task_is_cancelled_on_shutdown(monkeypatch):
 @pytest.mark.asyncio
 async def test_notion_worker_loop_continues_after_single_iteration_raises(monkeypatch):
     from fastapi.testclient import TestClient
+
     from team_server import app as app_module
 
     monkeypatch.setenv("NOTION_TOKEN", "fake-token")

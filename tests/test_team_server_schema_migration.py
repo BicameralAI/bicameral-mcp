@@ -23,8 +23,8 @@ async def test_v1_to_v2_migration_drops_old_index_and_defines_new():
     differing content_hash on the same key is what previously got
     created — now it conflicts.
     """
-    from team_server.db import build_client
     from ledger.client import LedgerError
+    from team_server.db import build_client
     from team_server.schema import ensure_schema
 
     client = build_client()
@@ -51,8 +51,8 @@ async def test_v1_to_v2_migration_drops_old_index_and_defines_new():
 async def test_v1_to_v2_migration_is_idempotent():
     """Behavior: second invocation of ensure_schema is safe and
     leaves the v2 uniqueness invariant intact."""
-    from team_server.db import build_client
     from ledger.client import LedgerError
+    from team_server.db import build_client
     from team_server.schema import ensure_schema
 
     client = build_client()

@@ -14,7 +14,9 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def memory_url(monkeypatch):
     monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SURREAL_URL", "memory://")
-    monkeypatch.setenv("BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA=")
+    monkeypatch.setenv(
+        "BICAMERAL_TEAM_SERVER_SECRET_KEY", "EYSr77qKo0UijHGnER5qYFBY5ZZePeWeE-ZMWYXyKKA="
+    )
 
 
 class _FakeSlackClient:
@@ -41,11 +43,13 @@ async def test_worker_polls_allowlisted_channels_only():
     await client.connect()
     try:
         await ensure_schema(client)
-        slack = _FakeSlackClient({
-            "C-ALLOW-1": [{"ts": "1.0", "text": "msg"}],
-            "C-ALLOW-2": [],
-            "C-DENY":     [{"ts": "2.0", "text": "should not be polled"}],
-        })
+        slack = _FakeSlackClient(
+            {
+                "C-ALLOW-1": [{"ts": "1.0", "text": "msg"}],
+                "C-ALLOW-2": [],
+                "C-DENY": [{"ts": "2.0", "text": "should not be polled"}],
+            }
+        )
 
         async def stub_extractor(text):
             return {"decisions": []}
@@ -76,13 +80,15 @@ async def test_worker_writes_team_event_for_each_message():
     await client.connect()
     try:
         await ensure_schema(client)
-        slack = _FakeSlackClient({
-            "C1": [
-                {"ts": "1.0", "text": "decision one"},
-                {"ts": "2.0", "text": "decision two"},
-                {"ts": "3.0", "text": "decision three"},
-            ],
-        })
+        slack = _FakeSlackClient(
+            {
+                "C1": [
+                    {"ts": "1.0", "text": "decision one"},
+                    {"ts": "2.0", "text": "decision two"},
+                    {"ts": "3.0", "text": "decision three"},
+                ],
+            }
+        )
 
         async def stub_extractor(text):
             return {"decisions": [text]}
@@ -115,9 +121,11 @@ async def test_worker_dedups_via_message_ts():
     await client.connect()
     try:
         await ensure_schema(client)
-        slack = _FakeSlackClient({
-            "C1": [{"ts": "100.0", "text": "same message"}],
-        })
+        slack = _FakeSlackClient(
+            {
+                "C1": [{"ts": "100.0", "text": "same message"}],
+            }
+        )
 
         async def stub_extractor(text):
             return {"decisions": [text]}
@@ -153,9 +161,11 @@ async def test_slack_worker_writes_team_event_only_on_changed_returns(monkeypatc
     await client.connect()
     try:
         await ensure_schema(client)
-        slack = _FakeSlackClient({
-            "C1": [{"ts": "1.0", "text": "msg"}],
-        })
+        slack = _FakeSlackClient(
+            {
+                "C1": [{"ts": "1.0", "text": "msg"}],
+            }
+        )
 
         async def stub_extractor(text):
             return {"decisions": [text]}
