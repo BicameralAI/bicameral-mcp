@@ -243,9 +243,9 @@ async def _region_anchored_preflight(
 
     Returns ``(matches, expanded)`` where ``expanded`` is True iff the graph
     expansion produced extra paths beyond the caller-supplied set, so the
-    caller can record ``"region_graph_expanded"`` in ``sources_chained``.
-    Direct-pin matches carry ``confidence=0.9``; matches surfaced only via
-    expanded paths carry ``confidence=0.7``.
+    caller can record ``"graph"`` in ``sources_chained``. Direct-pin matches
+    carry ``confidence=0.9``; matches surfaced only via expanded paths carry
+    ``confidence=0.7``.
     """
     if not file_paths:
         return [], False
@@ -429,7 +429,7 @@ async def handle_preflight(
             if region_matches:
                 sources_chained.append("region")
                 if used_graph_expansion:
-                    sources_chained.append("region_graph_expanded")
+                    sources_chained.append("graph")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 

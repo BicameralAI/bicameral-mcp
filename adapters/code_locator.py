@@ -91,35 +91,58 @@ class RealCodeLocatorAdapter:
         results = self._neighbors_tool.execute({"symbol_id": symbol_id})
         return [r.model_dump() for r in results]
 
+    # Hard cap on the number of caller-supplied seeds we expand. Mirrors the
+    # contract documented in #64: ≤10 input seeds × ≤max_neighbors_per_result
+    # neighbors per seed, so the worst-case response is still bounded even
+    # when the caller passes a large file_paths list. Tightens the cost
+    # envelope vs the per-config-only cap. Tunable via the PR's #64 lineage
+    # if telemetry shows we're losing recall.
+    _MAX_EXPANSION_SEEDS = 10
+
     def expand_file_paths_via_graph(
         self,
         file_paths: list[str],
         hops: int = 1,
     ) -> tuple[list[str], list[str]]:
-        """Expand caller-supplied file paths to include 1-hop graph neighbors.
+        """Expand caller-supplied file paths to include 1-hop *import* graph
+        neighbors.
 
-        For each input file, look up its indexed symbols, fetch each symbol's
-        ego-graph (1-hop callers/callees/imports/inherits), and collect the
-        file paths those neighbor symbols live in. The expanded set is the
-        union of inputs and neighbor files.
+        For each input file, look up its indexed symbols, fetch each
+        symbol's 1-hop ego graph filtered to **import edges only**, and
+        collect the file paths those neighbor symbols live in. The expanded
+        set is the union of inputs and neighbor files.
 
-        Returns ``(expanded, added)`` where ``expanded`` is the deduped union
-        (preserving caller order for inputs, then appending newly-discovered
-        neighbor files) and ``added`` is the list of file paths NOT in the
-        original input — the caller uses this to mark expanded matches with
-        lower confidence than direct pins.
+        **Why imports only** (per #64): import is a *file-level* structural
+        dependency edge ("module A's contract is referenced by module B"),
+        which matches the granularity of the region-anchored decision
+        lookup. ``invokes`` / ``inherits`` / ``contains`` are *symbol-level*
+        edges that broaden the expansion to "any file whose symbols are
+        used by my file's symbols," which over-fires for the recall
+        contract this method backs. If telemetry surfaces real-world
+        contradictions that imports-only misses, widen the filter then —
+        not preemptively.
 
-        Bounded by ``max_neighbors_per_result`` per symbol AND a global cap of
-        ``max_neighbors_per_result * len(file_paths)`` on the added set, so
-        passing a hub file (e.g. ``app-store.ts`` with hundreds of dependents)
-        cannot blow up the response. Falls back gracefully (returns input
-        unchanged + empty added list) on any exception or if the symbol index
-        is unavailable.
+        Returns ``(expanded, added)`` where ``expanded`` is the deduped
+        union (preserving caller order for inputs, then appending
+        newly-discovered neighbor files) and ``added`` is the list of file
+        paths NOT in the original input — the caller uses this to mark
+        expanded matches with lower confidence than direct pins.
 
-        Used by ``handlers/preflight.py::_region_anchored_preflight`` to lift
-        the strict ``WHERE file_path IN $fps`` recall ceiling so the
+        Bounds (mirrors #64's spec):
+          - At most ``_MAX_EXPANSION_SEEDS`` (=10) input seeds are walked.
+          - For each seed, at most ``max_neighbors_per_result`` symbols are
+            walked; for each symbol, at most ``max_neighbors_per_result``
+            neighbors are inspected.
+          - Global cap on the added set is the product so the worst-case
+            response is still bounded for hub seeds.
+        Falls back gracefully (returns input unchanged + empty added list)
+        on any exception or if the symbol index is unavailable.
+
+        Used by ``handlers/preflight.py::_region_anchored_preflight`` to
+        lift the strict ``WHERE file_path IN $fps`` recall ceiling so the
         contradiction-capture loop fires even when the caller picks a
-        structurally-near-but-not-exact file. See issue #173.
+        structurally-near-but-not-exact file. See issue #173 (and the
+        superseded #64 for the imports-only design rationale).
         """
         if not file_paths or hops < 1:
             return list(file_paths), []
@@ -129,17 +152,20 @@ class RealCodeLocatorAdapter:
             return list(file_paths), []
 
         per_symbol_cap = self._config.max_neighbors_per_result
-        # Cap total NEW paths added by expansion, scaled by input size so a
-        # caller passing more files isn't artificially throttled.
-        global_cap = max(per_symbol_cap, per_symbol_cap * len(file_paths))
+        # Cap total NEW paths added by expansion. With ≤10 seeds and
+        # ≤per_symbol_cap neighbors each, the worst case is bounded.
+        global_cap = max(per_symbol_cap, per_symbol_cap * self._MAX_EXPANSION_SEEDS)
+
+        # Cap the number of input seeds we expand from. Caller can still pass
+        # more file_paths to the underlying ledger lookup — we just don't
+        # blow up the graph walk.
+        seeds = [fp for fp in file_paths if fp][: self._MAX_EXPANSION_SEEDS]
 
         original_set = {fp for fp in file_paths if fp}
         added_paths: list[str] = []
         added_set: set[str] = set()
 
-        for fp in file_paths:
-            if not fp:
-                continue
+        for fp in seeds:
             try:
                 symbols = self._db.lookup_by_file(fp) or []
             except Exception:
@@ -155,6 +181,8 @@ class RealCodeLocatorAdapter:
                 for n in neighbors[:per_symbol_cap]:
                     if len(added_paths) >= global_cap:
                         break
+                    if (n.get("edge_type") or "") != "imports":
+                        continue
                     nfp = (n.get("file_path") or "").strip()
                     if not nfp or nfp in original_set or nfp in added_set:
                         continue

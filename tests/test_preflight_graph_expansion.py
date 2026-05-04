@@ -11,7 +11,7 @@ Two layers:
 2. **Handler integration** — ``_region_anchored_preflight`` in
    ``handlers/preflight.py`` calls the expander, surfaces decisions
    bound to expanded paths with ``confidence=0.7``, and tags
-   ``"region_graph_expanded"`` on ``sources_chained``. The structural
+   ``"graph"`` on ``sources_chained``. The structural
    distance scenario: a decision is bound to ``app/src/lib/git/reorder.ts``;
    the caller passes ``["app/src/ui/multi-commit-operation/reorder.tsx"]``
    (a graph neighbor); the decision still surfaces.
@@ -198,15 +198,46 @@ def test_expander_caps_hub_file_explosion(tmp_path):
             )
         )
     db.insert_symbols_batch(records)
-    # Hub invokes each of the 5 neighbors.
-    db.insert_edges_batch([(1, i + 2, "invokes") for i in range(5)])
+    # Hub imports each of the 5 neighbors. (Use ``imports`` not ``invokes``
+    # because the expander now filters to import edges only — see
+    # ``test_expander_filters_to_imports_only`` and #64.)
+    db.insert_edges_batch([(1, i + 2, "imports") for i in range(5)])
 
     adapter = _stub_adapter_with(db, max_neighbors=2)
     expanded, added = adapter.expand_file_paths_via_graph(["hub.ts"], hops=1)
-    # Per-symbol cap caps the per-symbol neighbor walk at 2, AND the global
-    # cap (max_neighbors * input_size = 2 * 1 = 2) caps total adds at 2.
+    # Per-symbol cap caps the per-symbol neighbor walk at 2, so even though 5
+    # neighbors exist, expansion adds at most 2.
     assert len(added) <= 2
+    assert len(added) > 0, "imports-edges hub should produce some expansion"
     assert "hub.ts" in expanded
+
+
+def test_expander_filters_to_imports_only(tmp_path):
+    """Per #64: only ``imports`` edges expand; ``invokes`` / ``inherits`` /
+    ``contains`` are symbol-level edges that over-broaden the file-level
+    expansion. A neighbor reachable only via a non-import edge must NOT
+    appear in the expanded set.
+    """
+    db = SymbolDB(str(tmp_path / "edge_filter.db"))
+    db.init_db()
+    db.insert_symbols_batch(
+        [
+            SymbolRecord("caller", "caller", "function", "caller.ts", 1, 5, "", ""),
+            SymbolRecord("import_target", "import_target", "function", "imp.ts", 1, 5, "", ""),
+            SymbolRecord("invoke_target", "invoke_target", "function", "inv.ts", 1, 5, "", ""),
+            SymbolRecord("inherit_target", "inherit_target", "class", "inh.ts", 1, 5, "", ""),
+        ]
+    )
+    db.insert_edges_batch(
+        [
+            (1, 2, "imports"),  # caller → imp.ts (should expand)
+            (1, 3, "invokes"),  # caller → inv.ts (should NOT expand)
+            (1, 4, "inherits"),  # caller → inh.ts (should NOT expand)
+        ]
+    )
+    adapter = _stub_adapter_with(db)
+    _, added = adapter.expand_file_paths_via_graph(["caller.ts"], hops=1)
+    assert added == ["imp.ts"], f"only imports-edged neighbors should expand; got: {added}"
 
 
 def test_expander_falls_back_when_uninitialized():
@@ -350,8 +381,8 @@ async def test_preflight_surfaces_via_graph_expansion(integration_env, monkeypat
     # the confidence lives on the underlying DecisionMatch via the region
     # lookup. The signal we can assert end-to-end is sources_chained.
     assert "region" in pf_resp.sources_chained
-    assert "region_graph_expanded" in pf_resp.sources_chained, (
-        f"expected 'region_graph_expanded' in sources_chained when graph "
+    assert "graph" in pf_resp.sources_chained, (
+        f"expected 'graph' in sources_chained when graph "
         f"expansion produced extra hits; got: {pf_resp.sources_chained}"
     )
 
@@ -360,7 +391,7 @@ async def test_preflight_surfaces_via_graph_expansion(integration_env, monkeypat
 async def test_preflight_does_not_tag_expanded_when_direct_pin_alone(integration_env, monkeypatch):
     """When caller passes the bound file directly, expansion may add neighbors
     but the decision is reached via a direct pin — `sources_chained` should
-    contain `region` but NOT `region_graph_expanded` (the existing decision
+    contain `region` but NOT `graph` (the existing decision
     is direct, not expanded).
     """
     import dataclasses
@@ -398,6 +429,6 @@ async def test_preflight_does_not_tag_expanded_when_direct_pin_alone(integration
     decision_ids = [d.decision_id for d in pf_resp.decisions]
     assert decision_id in decision_ids
     assert "region" in pf_resp.sources_chained
-    assert "region_graph_expanded" not in pf_resp.sources_chained, (
-        f"direct pin alone must not tag 'region_graph_expanded'; got: {pf_resp.sources_chained}"
+    assert "graph" not in pf_resp.sources_chained, (
+        f"direct pin alone must not tag 'graph'; got: {pf_resp.sources_chained}"
     )
