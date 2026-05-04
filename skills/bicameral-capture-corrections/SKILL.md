@@ -146,7 +146,7 @@ capture-corrections output.
 ## SessionEnd batch mode
 
 Fires via the `SessionEnd` hook in `.claude/settings.json`. Also invocable
-manually as `/bicameral:capture-corrections`.
+manually as `/bicameral-capture-corrections`.
 
 ### Steps
 
@@ -235,7 +235,7 @@ user's project `.claude/settings.json`. No manual configuration needed.
 
 Command written by the setup wizard:
 ```
-[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral:capture-corrections --auto-ingest' || true
+[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral-capture-corrections --auto-ingest' || true
 ```
 
 Two guards:

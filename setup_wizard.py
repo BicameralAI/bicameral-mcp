@@ -165,22 +165,30 @@ def _select_agents() -> list[str]:
     return selected
 
 
+class RunnerNotFoundError(RuntimeError):
+    """Raised when no viable runner for bicameral-mcp is on PATH.
+
+    There is no `bicameral_mcp` package — the entry point is `server:cli_main` —
+    so `python -m bicameral_mcp` is not a valid fallback.
+    """
+
+
 def _detect_runner() -> tuple[str, list[str]]:
     """Detect the best available runner for bicameral-mcp.
 
-    Preference order:
-      1. bicameral-mcp binary on PATH — uses the actual installed environment,
-         so local subpackages (dashboard/, etc.) and editable installs work.
-      2. python3 -m bicameral_mcp — fallback for source checkouts / venvs.
+    Only one runner is supported: the `bicameral-mcp` script installed by
+    `pip install bicameral-mcp` (or an editable install in a venv). pipx run
+    is intentionally NOT used: it downloads a fresh ephemeral copy from PyPI
+    on every server start, missing local-only modules and risking version skew.
 
-    pipx run is intentionally NOT used: it downloads a fresh ephemeral copy
-    from PyPI on every server start, which misses local-only modules and can
-    run a different version than what the user installed.
+    The previous `python -m bicameral_mcp` fallback was removed because there
+    is no `bicameral_mcp` package; the resulting MCP config was non-functional.
     """
     if shutil.which("bicameral-mcp"):
         return ("bicameral-mcp", [])
-    python = "python3" if shutil.which("python3") else "python"
-    return (python, ["-m", "bicameral_mcp"])
+    raise RunnerNotFoundError(
+        "No runner found for bicameral-mcp. Install with: pip install bicameral-mcp"
+    )
 
 
 def _build_config(
@@ -384,7 +392,7 @@ def _build_session_end_command(mcp_config_path: str | None = None) -> str:
     return (
         '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
         "BICAMERAL_SESSION_END_RUNNING=1 "
-        f"claude -p '/bicameral:capture-corrections --auto-ingest'{extra_flags} || true"
+        f"claude -p '/bicameral-capture-corrections --auto-ingest'{extra_flags} || true"
     )
 
 
@@ -396,7 +404,7 @@ _BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
 # Fires after every Bash tool use. When the command is a git write-op
 # (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
 # envelope whose additionalContext nudges the agent to invoke
-# /bicameral:sync — running the full link_commit → compliance check
+# /bicameral-sync — running the full link_commit → compliance check
 # flow so status is authoritative immediately.
 #
 # Was a plain-stdout python -c one-liner. Per Claude Code 2.x hook docs
@@ -630,6 +638,9 @@ def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
     skills_src = Path(__file__).parent / "skills"
     if not skills_src.exists():
+        print(f"  WARNING: skill source not found at {skills_src}")
+        print("  Skills were not installed. The wheel may have been built without skills/.")
+        print("  Re-install bicameral-mcp from a recent release, or report this bug.")
         return 0
 
     skills_dst = repo_path / ".claude" / "skills"
@@ -867,11 +878,11 @@ def run_setup(
     agents = _select_agents()
 
     # Step 3: Runner check
-    command, _ = _detect_runner()
-    if command not in ("bicameral-mcp",):
-        print("\n  Note: bicameral-mcp binary not found on PATH.")
-        print(f"  Using '{command} -m bicameral_mcp' as runner.")
-        print("  Install for a cleaner setup: pip install bicameral-mcp")
+    try:
+        _detect_runner()
+    except RunnerNotFoundError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
 
     # Step 4: Collaboration mode + guided intensity + telemetry + gitignore
     collab_mode = _select_collaboration_mode()
@@ -894,8 +905,7 @@ def run_setup(
     # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
         num_skills = _install_skills(repo_path)
-        if num_skills:
-            print(f"  Claude Code: installed {num_skills} slash commands")
+        print(f"  Claude Code: installed {num_skills} skill(s) at {repo_path}/.claude/skills/")
         if _install_claude_hooks(repo_path):
             print(
                 "  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end"
@@ -927,11 +937,11 @@ def run_setup(
 
     if "claude" in agents:
         print("  Claude Code slash commands:")
-        print("    /bicameral:ingest     — ingest a transcript, Slack thread, or PRD")
-        print("    /bicameral:preflight  — pre-flight: surface decisions before coding")
-        print("    /bicameral:history    — list all tracked decisions by feature area")
-        print("    /bicameral:dashboard  — open live decision dashboard in browser")
-        print("    /bicameral:reset      — nuke and replay the ledger (emergency)")
+        print("    /bicameral-ingest     — ingest a transcript, Slack thread, or PRD")
+        print("    /bicameral-preflight  — pre-flight: surface decisions before coding")
+        print("    /bicameral-history    — list all tracked decisions by feature area")
+        print("    /bicameral-dashboard  — open live decision dashboard in browser")
+        print("    /bicameral-reset      — nuke and replay the ledger (emergency)")
         print()
 
     print("  Or just ask naturally:")

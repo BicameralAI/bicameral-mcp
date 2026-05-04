@@ -133,7 +133,7 @@ async def list_tools() -> list[Tool]:
                 "Sync a commit into the decision ledger. Updates implemented_by/touches edges, "
                 "recomputes content hashes, re-evaluates drift for affected decisions. "
                 "Idempotent — calling twice for the same commit is a no-op. "
-                "Slash alias: /bicameral:link-commit"
+                "Slash alias: /bicameral-link-commit"
             ),
             inputSchema={
                 "type": "object",
@@ -169,7 +169,7 @@ async def list_tools() -> list[Tool]:
                 "At least one text field per decision must be non-empty or the decision is silently dropped. "
                 "The `query` field drives the post-ingest auto-brief and gap-judge chain — always pass it. "
                 "Auto-grounds decisions to code via semantic search over the symbol graph. Ensures the code index is fresh before grounding. "
-                "Slash alias: /bicameral:ingest"
+                "Slash alias: /bicameral-ingest"
             ),
             inputSchema={
                 "type": "object",
@@ -202,7 +202,7 @@ async def list_tools() -> list[Tool]:
                 "Pass start_line/end_line when you have exact lines (e.g. from a Read call) — "
                 "omit them to let the server resolve the exact line range automatically. Binding the same "
                 "(decision, region) pair twice is idempotent. "
-                "Slash alias: /bicameral:bind"
+                "Slash alias: /bicameral-bind"
             ),
             inputSchema={
                 "type": "object",
@@ -288,7 +288,7 @@ async def list_tools() -> list[Tool]:
                 "before confirming full mode. "
                 "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
                 "Pass confirm=true to actually wipe. "
-                "Slash alias: /bicameral:reset"
+                "Slash alias: /bicameral-reset"
             ),
             inputSchema={
                 "type": "object",
@@ -332,7 +332,7 @@ async def list_tools() -> list[Tool]:
                 "When fired=false, the agent MUST produce no output and proceed silently — "
                 "that's the trust contract. When fired=true, render the surfaced context with "
                 "a '(bicameral surfaced)' attribution before continuing with the implementation. "
-                "Slash alias: /bicameral:preflight"
+                "Slash alias: /bicameral-preflight"
             ),
             inputSchema={
                 "type": "object",
@@ -389,7 +389,7 @@ async def list_tools() -> list[Tool]:
                 "standalone. Rubric categories: missing_acceptance_criteria, "
                 "underdefined_edge_cases, infrastructure_gap, underspecified_integration, "
                 "missing_data_requirements. "
-                "Slash alias: /bicameral:judge_gaps"
+                "Slash alias: /bicameral-judge_gaps"
             ),
             inputSchema={
                 "type": "object",
@@ -427,7 +427,7 @@ async def list_tools() -> list[Tool]:
                 "decision/region IDs are returned as structured rejections (not "
                 "exceptions) so the caller can retry the accepted subset. The server "
                 "never calls an LLM — every semantic judgment lives in the caller's "
-                "session. Slash alias: /bicameral:resolve_compliance"
+                "session. Slash alias: /bicameral-resolve_compliance"
             ),
             inputSchema={
                 "type": "object",
@@ -506,7 +506,7 @@ async def list_tools() -> list[Tool]:
                 "as a negative signal; agents consult it to avoid implementing what the team rejected. "
                 "Both actions are idempotent (was_new=false if already in that state). "
                 "The signer field identifies the human or agent; the optional note captures the rationale. "
-                "Slash alias: /bicameral:ratify"
+                "Slash alias: /bicameral-ratify"
             ),
             inputSchema={
                 "type": "object",
@@ -554,7 +554,7 @@ async def list_tools() -> list[Tool]:
                 "Writes an input_span→context_for→decision edge (confirmed or rejected). "
                 "Context-pending decisions with ≥1 confirmed context_for edge become eligible "
                 "for bicameral.ratify. "
-                "Slash alias: /bicameral:resolve-collision"
+                "Slash alias: /bicameral-resolve-collision"
             ),
             inputSchema={
                 "type": "object",
@@ -597,7 +597,7 @@ async def list_tools() -> list[Tool]:
                 "Capped at 50 features; use feature_filter to drill in when truncated=True. "
                 "Does NOT fire on implementation, ingest, or drift-specific queries — use "
                 "bicameral.preflight or bicameral.ingest for those. "
-                "Slash alias: /bicameral:history"
+                "Slash alias: /bicameral-history"
             ),
             inputSchema={
                 "type": "object",
@@ -629,7 +629,7 @@ async def list_tools() -> list[Tool]:
                 "Subsequent calls return the existing URL immediately — the server "
                 "is a singleton and stays running for the session. "
                 "Fires on: 'open dashboard', 'show live history', 'launch dashboard'. "
-                "Slash alias: /bicameral:dashboard"
+                "Slash alias: /bicameral-dashboard"
             ),
             inputSchema={
                 "type": "object",

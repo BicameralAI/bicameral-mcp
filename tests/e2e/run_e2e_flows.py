@@ -1003,7 +1003,7 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
          dedup (Step C ran — the rubric processed the markers and just
          classified the constraint as ``ask`` instead of mechanical).
 
-    The SessionEnd hook spawns ``/bicameral:capture-corrections`` as a
+    The SessionEnd hook spawns ``/bicameral-capture-corrections`` as a
     SEPARATE subprocess; its tool calls are NOT visible in this stream-json.
     That out-of-band path is the realistic production behaviour and is
     validated by querying the ledger after the harness completes — not
