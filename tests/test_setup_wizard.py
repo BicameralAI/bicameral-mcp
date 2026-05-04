@@ -8,6 +8,7 @@ Covers the installer fixes from issue #177:
   `python -m bicameral_mcp` fallback)
 - run_setup output does not contain the stale `-m bicameral_mcp` runner-note text
 """
+
 from __future__ import annotations
 
 import sys
@@ -58,6 +59,7 @@ def test_install_skills_copies_all_skill_dirs(tmp_path):
 def test_detect_runner_uses_bicameral_mcp_script_when_present():
     def which(name):
         return "/usr/local/bin/bicameral-mcp" if name == "bicameral-mcp" else None
+
     with patch.object(setup_wizard.shutil, "which", side_effect=which):
         cmd, args = setup_wizard._detect_runner()
     assert cmd == "bicameral-mcp"

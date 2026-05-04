@@ -5,6 +5,7 @@ The bug was silent: pre-fix, the wheel built cleanly with zero skill members
 because `packages = ["."]` does not bundle a directory without `__init__.py`,
 and the `artifacts` directive proved insufficient on its own.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -39,7 +40,9 @@ def built_wheel(tmp_path_factory) -> Path:
     out_dir = tmp_path_factory.mktemp("wheel-out")
     subprocess.run(
         [sys.executable, "-m", "build", "--wheel", "--outdir", str(out_dir)],
-        cwd=str(REPO_ROOT), check=True, capture_output=True,
+        cwd=str(REPO_ROOT),
+        check=True,
+        capture_output=True,
     )
     wheels = list(out_dir.glob("bicameral_mcp-*.whl"))
     assert len(wheels) == 1, f"expected 1 wheel, got {wheels}"
