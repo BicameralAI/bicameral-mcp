@@ -70,6 +70,15 @@ def test_detect_runner_raises_when_no_runner_available():
             setup_wizard._detect_runner()
 
 
+def test_session_end_command_uses_hyphen_slash_command():
+    """Regression guard: the SessionEnd hook command must invoke
+    /bicameral-capture-corrections (folder-name match), not the broken
+    plugin-namespace form /bicameral:capture-corrections. See issue #177."""
+    cmd = setup_wizard._BICAMERAL_SESSION_END_COMMAND
+    assert "/bicameral-capture-corrections" in cmd
+    assert "/bicameral:capture-corrections" not in cmd
+
+
 def test_detect_runner_does_not_return_broken_module_fallback():
     """Regression guard for issue #177: the previous `python -m bicameral_mcp`
     fallback produced a non-functional MCP config because no `bicameral_mcp`

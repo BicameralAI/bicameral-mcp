@@ -75,7 +75,7 @@ def materialize_settings_with_hooks(
         ingest(agent_session) + resolve_collision call so the agent
         captures user refinements that contradict surfaced decisions.
       - SessionEnd: spawns a subprocess running
-        ``/bicameral:capture-corrections --auto-ingest`` (with the test
+        ``/bicameral-capture-corrections --auto-ingest`` (with the test
         MCP config) to scan the just-ended session for uningested
         mid-session corrections.
       - UserPromptSubmit: deterministic verb-list classifier injects a

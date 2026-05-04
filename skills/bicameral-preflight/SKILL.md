@@ -244,7 +244,7 @@ so you can see what your branch changes relative to main.
 ### 3.5 Scan recent user turns for uningested corrections
 
 Before classifying server-returned findings, invoke
-`/bicameral:capture-corrections` in **in-session mode**:
+`/bicameral-capture-corrections` in **in-session mode**:
 
 ```
 Skill("bicameral:capture-corrections", args="--mode in-session")

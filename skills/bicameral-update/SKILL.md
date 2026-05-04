@@ -1,6 +1,6 @@
 ---
 name: bicameral-update
-description: Check for and apply a new bicameral-mcp binary release. Upgrades the pip package, reinstalls skills and Claude hooks. NOTHING to do with git commits or ledger sync — those are handled by /bicameral:sync. Trigger on any user request containing "update", "upgrade", "new version", "latest version", or "install update".
+description: Check for and apply a new bicameral-mcp binary release. Upgrades the pip package, reinstalls skills and Claude hooks. NOTHING to do with git commits or ledger sync — those are handled by /bicameral-sync. Trigger on any user request containing "update", "upgrade", "new version", "latest version", or "install update".
 ---
 
 # Bicameral Update
@@ -8,7 +8,7 @@ description: Check for and apply a new bicameral-mcp binary release. Upgrades th
 Check for a new `bicameral-mcp` release and apply it.
 
 **This skill is about upgrading the installed binary.** It has nothing to do
-with git commits, ledger sync, or compliance checks — those are `/bicameral:sync`.
+with git commits, ledger sync, or compliance checks — those are `/bicameral-sync`.
 
 ## Telemetry
 

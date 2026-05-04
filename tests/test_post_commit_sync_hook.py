@@ -62,7 +62,7 @@ def test_emits_reminder_on_git_commit():
     inner = _hook_output(json.loads(out))
     ctx = inner["additionalContext"]
     assert "bicameral: new commit detected" in ctx
-    assert "/bicameral:sync" in ctx
+    assert "/bicameral-sync" in ctx
 
 
 def test_emits_reminder_on_git_merge():
