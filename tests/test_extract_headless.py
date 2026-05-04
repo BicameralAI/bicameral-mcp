@@ -8,6 +8,7 @@ Does not call the Anthropic API. Exercises:
 Network-dependent end-to-end tests live in CI only, gated on
 ANTHROPIC_API_KEY being present.
 """
+
 from __future__ import annotations
 
 import json
@@ -101,9 +102,7 @@ def test_cache_hit_returns_without_auth(monkeypatch):
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     try:
-        result = extract_from_current_skill(
-            transcript, source_ref="test", skill_md_path=skill_md
-        )
+        result = extract_from_current_skill(transcript, source_ref="test", skill_md_path=skill_md)
     finally:
         cache_file.unlink(missing_ok=True)
 

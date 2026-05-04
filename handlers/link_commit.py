@@ -109,6 +109,7 @@ def _build_verification_instruction(
         parts.append(_GROUNDING_INSTRUCTION_RELOCATION)
     return "".join(parts)
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -125,6 +126,7 @@ def _read_current_head_sha(repo_path: str) -> str:
     """
     try:
         import subprocess
+
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
             cwd=repo_path,
@@ -230,6 +232,7 @@ def invalidate_sync_cache(ctx) -> None:
         sync_state.pop("last_sync_response", None)
         sync_state.pop("pending_flow_id", None)
     from handlers.sync_middleware import invalidate_process_cache
+
     invalidate_process_cache()
 
 
@@ -252,7 +255,8 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
     try:
         if hasattr(ctx.ledger, "backfill_empty_hashes"):
             await ctx.ledger.backfill_empty_hashes(
-                ctx.repo_path, drift_analyzer=ctx.drift_analyzer,
+                ctx.repo_path,
+                drift_analyzer=ctx.drift_analyzer,
             )
     except Exception as exc:
         logger.warning("[link_commit] backfill failed: %s", exc)
@@ -281,9 +285,7 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
 
     has_action_items = bool(pending) or bool(pending_grounding_raw)
     verification_text = (
-        _build_verification_instruction(pending, pending_grounding_raw)
-        if has_action_items
-        else ""
+        _build_verification_instruction(pending, pending_grounding_raw) if has_action_items else ""
     )
 
     is_ephemeral = _is_ephemeral_commit(
@@ -318,6 +320,7 @@ async def handle_link_commit(ctx, commit_hash: str = "HEAD") -> LinkCommitRespon
 
     try:
         from dashboard.server import notify_dashboard
+
         await notify_dashboard(ctx)
     except Exception:
         pass

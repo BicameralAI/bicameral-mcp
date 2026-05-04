@@ -27,9 +27,10 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ def write_consent(telemetry: bool, *, via: str) -> None:
     record: dict[str, Any] = {
         "telemetry": "enabled" if telemetry else "disabled",
         "policy_version": POLICY_VERSION,
-        "acknowledged_at": datetime.now(timezone.utc).isoformat(),
+        "acknowledged_at": datetime.now(UTC).isoformat(),
         "acknowledged_via": via,
     }
     _CONSENT_FILE.parent.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,7 @@ Flags:
 The fixture is the single source of truth for corpus + oracle. Adding a new
 transcript = one entry in TRANSCRIPT_SOURCES. No runner changes.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -79,9 +80,7 @@ def _build_payload_from_fixture(source_ref: str) -> dict:
     }
 
 
-def _build_payload_from_skill_md(
-    transcript_text: str, source_ref: str
-) -> tuple[dict, list[dict]]:
+def _build_payload_from_skill_md(transcript_text: str, source_ref: str) -> tuple[dict, list[dict]]:
     """Call the headless extraction driver (Step 1 of the current SKILL.md)
     and shape the result as a natural-format ingest payload.
 
@@ -136,9 +135,7 @@ async def _ingest_one(
     if skill_variant == "none":
         payload = _build_payload_from_fixture(source_ref)
     elif skill_variant == "from-skill-md":
-        payload, extracted_decisions = _build_payload_from_skill_md(
-            transcript_text, source_ref
-        )
+        payload, extracted_decisions = _build_payload_from_skill_md(transcript_text, source_ref)
     else:
         raise ValueError(f"unknown skill-variant: {skill_variant!r}")
 
@@ -155,9 +152,7 @@ async def _ingest_one(
     # its input, so comparing it against itself would be tautological).
     if skill_variant == "from-skill-md":
         ground_truth = load_fixture(source_ref)
-        extraction_metrics = compute_extraction_metrics(
-            extracted_decisions, ground_truth
-        )
+        extraction_metrics = compute_extraction_metrics(extracted_decisions, ground_truth)
     else:
         extraction_metrics = {"skipped": True, "reason": "not applicable in this variant"}
 
@@ -306,11 +301,8 @@ async def run(args) -> tuple[dict, int]:
     # repo boundaries — precision/recall of the skill is a global property).
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from _extraction_metrics import aggregate_extraction_metrics  # type: ignore[import-not-found]
-    all_extraction_rows = [
-        t["extraction_metrics"]
-        for r in repo_reports
-        for t in r["transcripts"]
-    ]
+
+    all_extraction_rows = [t["extraction_metrics"] for r in repo_reports for t in r["transcripts"]]
     aggregate_extraction = aggregate_extraction_metrics(all_extraction_rows)
 
     combined = {
@@ -378,8 +370,7 @@ async def run(args) -> tuple[dict, int]:
         exit_code = 1
     if exit_code == 0 and args.min_grounded_pct is not None:
         print(
-            f"\n✅ PASS: grounded_pct {aggregate_pct:.3f} "
-            f"≥ threshold {args.min_grounded_pct:.3f}"
+            f"\n✅ PASS: grounded_pct {aggregate_pct:.3f} ≥ threshold {args.min_grounded_pct:.3f}"
         )
 
     return combined, exit_code

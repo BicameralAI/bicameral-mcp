@@ -11,7 +11,7 @@ decision-state metrics directly from the SurrealDB ledger.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from local_counters import read_counters
 
@@ -54,7 +54,7 @@ async def handle_usage_summary(ctx, days: int = 7) -> dict:
 
     try:
         ledger = ctx.ledger
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=period_days)).isoformat()
+        cutoff = (datetime.now(UTC) - timedelta(days=period_days)).isoformat()
         client = getattr(getattr(ledger, "_inner", ledger), "_client", None)
         if client is None:
             return base
@@ -89,9 +89,7 @@ async def handle_usage_summary(ctx, days: int = 7) -> dict:
                 f"WHERE checked_at > <datetime>'{cutoff}' "
                 "AND verdict IN ['drifted', 'cosmetic_autopass'] GROUP BY verdict"
             )
-            cc_counts = {
-                r.get("verdict"): int(r.get("n", 0)) for r in (cc_rows or [])
-            }
+            cc_counts = {r.get("verdict"): int(r.get("n", 0)) for r in (cc_rows or [])}
             cosmetic = cc_counts.get("cosmetic_autopass", 0)
             drift_total = cosmetic + cc_counts.get("drifted", 0)
             if drift_total > 0:

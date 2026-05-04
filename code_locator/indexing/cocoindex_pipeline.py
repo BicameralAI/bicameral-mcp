@@ -129,9 +129,7 @@ def _define_flow(
     def text_to_embedding(
         text: cocoindex.DataSlice[str],
     ) -> cocoindex.DataSlice[list[float]]:
-        return text.transform(
-            cocoindex.functions.SentenceTransformerEmbed(model=embedding_model)
-        )
+        return text.transform(cocoindex.functions.SentenceTransformerEmbed(model=embedding_model))
 
     @cocoindex.flow_def(name="CodeLocatorIndex")
     def code_locator_flow(
@@ -175,9 +173,7 @@ def _define_flow(
                 )
 
             # Path 2: Symbol extraction
-            file["symbols"] = file["content"].transform(
-                extract_file_symbols, file["filename"]
-            )
+            file["symbols"] = file["content"].transform(extract_file_symbols, file["filename"])
 
             with file["symbols"].row() as sym:
                 symbol_collector.collect(
@@ -292,8 +288,10 @@ def _count_cocoindex_table(table_name: str) -> int:
     Falls back to 0 if the table doesn't exist or connection fails.
     """
     import os
+
     try:
         import psycopg2
+
         url = os.environ.get("COCOINDEX_DATABASE_URL", "")
         if not url:
             return 0

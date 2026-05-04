@@ -55,7 +55,7 @@ def _detect_history_path(repo_path: Path, hint: str | None = None) -> Path:
         return repo_path
 
     raw = input(
-        f"\n  History storage path (default: same as repo — press Enter to skip):\n  > "
+        "\n  History storage path (default: same as repo — press Enter to skip):\n  > "
     ).strip()
     if not raw:
         return repo_path
@@ -127,6 +127,7 @@ def _detect_agents() -> list[str]:
 def _is_interactive() -> bool:
     """Check if stdin is a terminal (not piped)."""
     import sys
+
     return sys.stdin.isatty()
 
 
@@ -306,11 +307,17 @@ def _install_for_agent(
         config_json = json.dumps(config)
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
-            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(repo_path),
         )
         result = subprocess.run(
             ["claude", "mcp", "add-json", "bicameral", "--scope", "project", config_json],
-            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(repo_path),
         )
         if result.returncode == 0:
             print(f"  {agent['name']}: installed via CLI")
@@ -323,8 +330,15 @@ def _install_for_agent(
         for k, v in config["env"].items():
             env_args.extend(["--env", f"{k}={v}"])
         result = subprocess.run(
-            ["codex", "mcp", "add", "bicameral"] + env_args + ["--"] + [config["command"]] + config["args"],
-            capture_output=True, text=True, timeout=10, cwd=str(repo_path),
+            ["codex", "mcp", "add", "bicameral"]
+            + env_args
+            + ["--"]
+            + [config["command"]]
+            + config["args"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            cwd=str(repo_path),
         )
         if result.returncode == 0:
             print(f"  {agent['name']}: installed via CLI")
@@ -332,9 +346,13 @@ def _install_for_agent(
 
     # Fallback: write config file directly
     if agent.get("config_format") == "toml":
-        _write_toml_config(repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry)
+        _write_toml_config(
+            repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry
+        )
     else:
-        _write_json_config(repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry)
+        _write_json_config(
+            repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry
+        )
 
     print(f"  {agent['name']}: wrote {config_path}")
     return True
@@ -443,9 +461,7 @@ def _install_claude_hooks(repo_path: Path) -> bool:
 
     # ── PostToolUse / Bash — git write-op reminder ───────────────────
     post_tool_use: list = hooks.setdefault("PostToolUse", [])
-    bash_entry = next(
-        (e for e in post_tool_use if e.get("matcher") == "Bash"), None
-    )
+    bash_entry = next((e for e in post_tool_use if e.get("matcher") == "Bash"), None)
     if bash_entry is None:
         bash_entry = {"matcher": "Bash", "hooks": []}
         post_tool_use.append(bash_entry)
@@ -484,7 +500,8 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     session_end: list = hooks.setdefault("SessionEnd", [])
     # Remove any stale bicameral SessionEnd entries, then write current.
     non_bic_se = [
-        e for e in session_end
+        e
+        for e in session_end
         if not any("bicameral" in h.get("command", "") for h in e.get("hooks", []))
     ]
     new_se_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}]}
@@ -592,7 +609,9 @@ def _select_collaboration_mode() -> str:
     result = questionary.select(
         "Collaboration mode:",
         choices=[
-            questionary.Choice("Team  — decisions shared via git (append-only event files)", value="team"),
+            questionary.Choice(
+                "Team  — decisions shared via git (append-only event files)", value="team"
+            ),
             questionary.Choice("Solo  — decisions stored locally", value="solo"),
         ],
         default="team",
@@ -656,7 +675,9 @@ def _select_telemetry() -> bool:
     result = questionary.select(
         "Enable anonymous telemetry?",
         choices=[
-            questionary.Choice("Yes  — share anonymous usage stats to improve Bicameral", value=True),
+            questionary.Choice(
+                "Yes  — share anonymous usage stats to improve Bicameral", value=True
+            ),
             questionary.Choice("No   — keep telemetry off", value=False),
         ],
         default=True,
@@ -787,7 +808,7 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     # Step 3: Runner check
     command, _ = _detect_runner()
     if command not in ("bicameral-mcp",):
-        print(f"\n  Note: bicameral-mcp binary not found on PATH.")
+        print("\n  Note: bicameral-mcp binary not found on PATH.")
         print(f"  Using '{command} -m bicameral_mcp' as runner.")
         print("  Install for a cleaner setup: pip install bicameral-mcp")
 
@@ -805,7 +826,9 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     # Step 5: Install MCP config for each agent
     print()
     for agent_key in agents:
-        _install_for_agent(agent_key, repo_path, data_path=data_path, mode=collab_mode, telemetry=telemetry)
+        _install_for_agent(
+            agent_key, repo_path, data_path=data_path, mode=collab_mode, telemetry=telemetry
+        )
 
     # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
@@ -813,12 +836,16 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
         if num_skills:
             print(f"  Claude Code: installed {num_skills} slash commands")
         if _install_claude_hooks(repo_path):
-            print("  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end")
+            print(
+                "  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end"
+            )
 
     # Step 7: Git post-commit hook (Guided mode only)
     if guided:
         if _install_git_post_commit_hook(repo_path):
-            print("  Git: installed post-commit hook → bicameral-mcp link_commit HEAD after every commit")
+            print(
+                "  Git: installed post-commit hook → bicameral-mcp link_commit HEAD after every commit"
+            )
         else:
             print("  Git: post-commit hook already present — skipped")
 
@@ -856,6 +883,7 @@ def run_config_wizard() -> int:
     """
     import subprocess
     import sys
+
     try:
         import yaml
     except ImportError:
@@ -915,7 +943,9 @@ def run_config_wizard() -> int:
     )
     result = subprocess.run(
         [sys.executable, "-c", script],
-        capture_output=True, text=True, timeout=30,
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     skills_n = int(result.stdout.strip() or "0") if result.returncode == 0 else 0
 
@@ -939,10 +969,13 @@ def _print_change(label: str, old, new) -> None:
 
 def _select_collaboration_mode_with_default(current: str) -> str:
     import questionary
+
     if not _is_interactive():
         return current
     choices = [
-        questionary.Choice("Team  — decisions shared via git (append-only event files)", value="team"),
+        questionary.Choice(
+            "Team  — decisions shared via git (append-only event files)", value="team"
+        ),
         questionary.Choice("Solo  — decisions stored locally", value="solo"),
     ]
     result = questionary.select(
@@ -955,6 +988,7 @@ def _select_collaboration_mode_with_default(current: str) -> str:
 
 def _select_guided_mode_with_default(current: bool) -> bool:
     import questionary
+
     if not _is_interactive():
         return current
     choices = [
@@ -971,6 +1005,7 @@ def _select_guided_mode_with_default(current: bool) -> bool:
 
 def _select_telemetry_with_default(current: bool) -> bool:
     import questionary
+
     if not _is_interactive():
         return current
     choices = [
@@ -992,6 +1027,7 @@ def run_reset_wizard() -> int:
     then asks for explicit confirmation before wiping.
     """
     import asyncio
+
     import questionary
 
     print()
@@ -1021,6 +1057,7 @@ def run_reset_wizard() -> int:
 
     # Step 2: dry-run
     import os
+
     from context import BicameralContext
     from handlers.reset import handle_reset
 

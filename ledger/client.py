@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from surrealdb import AsyncSurreal, RecordID
+
 try:
     from surrealdb import SurrealError
 except ImportError:

@@ -34,6 +34,7 @@ def _read_collaboration_mode(repo_path: str) -> str:
         return "solo"
     try:
         import yaml
+
         config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         return config.get("mode", "solo")
     except Exception:
@@ -66,9 +67,9 @@ def get_ledger():
         mode = _read_collaboration_mode(repo_path)
 
         if mode == "team":
-            from events.writer import EventFileWriter, _get_git_email
             from events.materializer import EventMaterializer
             from events.team_adapter import TeamWriteAdapter
+            from events.writer import EventFileWriter, _get_git_email
 
             # BICAMERAL_DATA_PATH redirects all history (events + local state)
             # to a separate directory — typically a private parent repo when
@@ -103,4 +104,5 @@ def get_drift_analyzer():
     or CodeGenomeDriftAnalyzer when ready.
     """
     from ledger.drift import HashDriftAnalyzer
+
     return HashDriftAnalyzer()

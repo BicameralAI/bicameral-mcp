@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from rapidfuzz import fuzz
+
 from ..config import CodeLocatorConfig
 from ..indexing.sqlite_store import SymbolDB
 from ..models import ValidatedSymbol
-from rapidfuzz import fuzz
 
 # JSON Schema for tool parameter validation
 TOOL_SCHEMA = {

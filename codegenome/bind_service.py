@@ -40,14 +40,23 @@ def _check_hash_parity(
     logger.warning(
         "[codegenome] identity content_hash %s != region content_hash %s "
         "(decision_id=%s, %s:%d-%d) — writing identity anyway",
-        identity.content_hash, code_region_content_hash,
-        decision_id, file_path, start_line, end_line,
+        identity.content_hash,
+        code_region_content_hash,
+        decision_id,
+        file_path,
+        start_line,
+        end_line,
     )
 
 
 async def _persist_subject_and_identity(
-    *, ledger, identity: SubjectIdentity,
-    kind: str, canonical_name: str, decision_id: str, repo_ref: str,
+    *,
+    ledger,
+    identity: SubjectIdentity,
+    kind: str,
+    canonical_name: str,
+    decision_id: str,
+    repo_ref: str,
 ) -> bool:
     """Run the four ledger writes; return ``True`` on full success.
 
@@ -57,13 +66,16 @@ async def _persist_subject_and_identity(
     that as identity-not-written.
     """
     subject_id = await ledger.upsert_code_subject(
-        kind=kind, canonical_name=canonical_name,
-        current_confidence=identity.confidence, repo_ref=repo_ref,
+        kind=kind,
+        canonical_name=canonical_name,
+        current_confidence=identity.confidence,
+        repo_ref=repo_ref,
     )
     if not subject_id:
         logger.warning(
             "[codegenome] upsert_code_subject empty id for %s/%s",
-            kind, canonical_name,
+            kind,
+            canonical_name,
         )
         return False
 
@@ -107,8 +119,12 @@ async def write_codegenome_identity(
         repo_ref=repo_ref,
     )
     _check_hash_parity(
-        identity, code_region_content_hash,
-        decision_id, file_path, start_line, end_line,
+        identity,
+        code_region_content_hash,
+        decision_id,
+        file_path,
+        start_line,
+        end_line,
     )
     persisted = await _persist_subject_and_identity(
         ledger=ledger,

@@ -56,7 +56,11 @@ class DeterministicCodeGenomeAdapter(CodeGenomeAdapter):
         address = f"cg:{signature_hash}"
 
         content = get_git_content(
-            file_path, start_line, end_line, self.repo_path, ref=repo_ref,
+            file_path,
+            start_line,
+            end_line,
+            self.repo_path,
+            ref=repo_ref,
         )
         if content is None or start_line < 1 or end_line < start_line:
             content_hash: str | None = None

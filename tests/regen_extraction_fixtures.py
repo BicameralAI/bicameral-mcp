@@ -34,18 +34,18 @@ Cost (approximate, one-time bootstrap with Opus 4.6):
 After running, `git diff tests/fixtures/extraction/` should
 show the new/changed fixtures. Review, hand-edit if needed, commit.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fixtures.expected.decisions import TRANSCRIPT_SOURCES  # noqa: E402
 from _extract_headless import (  # noqa: E402  (sibling module)
     DEFAULT_MODEL,
     SKILL_MD_PATH,
@@ -53,6 +53,7 @@ from _extract_headless import (  # noqa: E402  (sibling module)
     _sha,
     extract_from_current_skill,
 )
+from fixtures.expected.decisions import TRANSCRIPT_SOURCES  # noqa: E402
 
 MCP_ROOT = Path(__file__).resolve().parents[1]
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "extraction"
@@ -104,7 +105,7 @@ def _regenerate_one(
         "transcript_path": src["transcript"],
         "repo_key": src["repo_key"],
         "generated_by": model,
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "skill_md_sha": _sha(skill_md)[:12],
         "decisions": extracted.get("decisions", []),
         "action_items": extracted.get("action_items", []),

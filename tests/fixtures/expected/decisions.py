@@ -20,7 +20,13 @@ MEDUSA_PAYMENT_TIMEOUT = [
     {
         "description": "Add 12-second timeout ceiling on payment provider authorize calls; return requires_more status on timeout",
         "source_ref": "medusa-payment-timeout",
-        "keywords": ["payment timeout", "authorize call", "12 second", "requires_more", "checkout timeout"],
+        "keywords": [
+            "payment timeout",
+            "authorize call",
+            "12 second",
+            "requires_more",
+            "checkout timeout",
+        ],
         "expected_symbols": [
             "PaymentProviderService",
         ],
@@ -31,7 +37,13 @@ MEDUSA_PAYMENT_TIMEOUT = [
     {
         "description": "Background sweeper job via JobSchedulerService: void payment sessions stuck in pending state for more than 5 minutes",
         "source_ref": "medusa-payment-timeout",
-        "keywords": ["sweeper job", "pending payment session", "void", "5 minutes", "job scheduler"],
+        "keywords": [
+            "sweeper job",
+            "pending payment session",
+            "void",
+            "5 minutes",
+            "job scheduler",
+        ],
         "expected_symbols": [
             "PaymentProviderService",
         ],
@@ -54,7 +66,13 @@ MEDUSA_PAYMENT_TIMEOUT = [
     {
         "description": "Guard against garbage responses from community payment providers — throw typed error if authorize returns undefined or malformed object",
         "source_ref": "medusa-payment-timeout",
-        "keywords": ["validate provider response", "community provider", "undefined response", "typed error", "authorize response"],
+        "keywords": [
+            "validate provider response",
+            "community provider",
+            "undefined response",
+            "typed error",
+            "authorize response",
+        ],
         "expected_symbols": [
             "PaymentProviderService",
         ],
@@ -69,7 +87,13 @@ MEDUSA_PLUGIN_MIGRATION = [
     {
         "description": "Migrate plugin service classes from TransactionBaseService to AbstractModuleService using @Module decorator",
         "source_ref": "medusa-plugin-migration",
-        "keywords": ["plugin migration", "AbstractModuleService", "@Module decorator", "TransactionBaseService", "v2 module"],
+        "keywords": [
+            "plugin migration",
+            "AbstractModuleService",
+            "@Module decorator",
+            "TransactionBaseService",
+            "v2 module",
+        ],
         "expected_symbols": [
             "AbstractModuleService",
         ],
@@ -80,7 +104,13 @@ MEDUSA_PLUGIN_MIGRATION = [
     {
         "description": "Convert plugin subscribers to createWorkflow/createStep pattern; subscribers directory no longer auto-registers in v2",
         "source_ref": "medusa-plugin-migration",
-        "keywords": ["subscribers", "createWorkflow", "createStep", "workflow migration", "event subscriber"],
+        "keywords": [
+            "subscribers",
+            "createWorkflow",
+            "createStep",
+            "workflow migration",
+            "event subscriber",
+        ],
         "expected_symbols": [
             "createWorkflow",
             "createStep",
@@ -92,7 +122,13 @@ MEDUSA_PLUGIN_MIGRATION = [
     {
         "description": "Service injection must go through Modules registry — no direct imports of core services from other modules",
         "source_ref": "medusa-plugin-migration",
-        "keywords": ["Modules registry", "service injection", "no direct imports", "awilix scoping", "module isolation"],
+        "keywords": [
+            "Modules registry",
+            "service injection",
+            "no direct imports",
+            "awilix scoping",
+            "module isolation",
+        ],
         "expected_symbols": [
             "Modules",
             "OrderService",
@@ -105,7 +141,13 @@ MEDUSA_PLUGIN_MIGRATION = [
     {
         "description": "Run v1 and v2 API routes in parallel for one release cycle using middlewares.ts pattern",
         "source_ref": "medusa-plugin-migration",
-        "keywords": ["backward compat", "v1 routes", "parallel routes", "middlewares.ts", "legacy API"],
+        "keywords": [
+            "backward compat",
+            "v1 routes",
+            "parallel routes",
+            "middlewares.ts",
+            "legacy API",
+        ],
         "expected_symbols": [
             "middlewares",
         ],
@@ -120,7 +162,13 @@ MEDUSA_WEBHOOKS = [
     {
         "description": "Create WebhookEndpoint model with fields: URL, HMAC secret, subscribed event types, per-merchant",
         "source_ref": "medusa-webhook-notifications",
-        "keywords": ["WebhookEndpoint", "merchant webhook", "webhook model", "HMAC secret", "event subscription"],
+        "keywords": [
+            "WebhookEndpoint",
+            "merchant webhook",
+            "webhook model",
+            "HMAC secret",
+            "event subscription",
+        ],
         "expected_symbols": [
             "AbstractNotificationProviderService",
         ],
@@ -131,7 +179,13 @@ MEDUSA_WEBHOOKS = [
     {
         "description": "Exponential backoff retry: 30s initial delay, max 4h, 6 retries then dead-letter queue to Redis Streams",
         "source_ref": "medusa-webhook-notifications",
-        "keywords": ["exponential backoff", "retry webhook", "dead letter queue", "6 retries", "Redis DLQ"],
+        "keywords": [
+            "exponential backoff",
+            "retry webhook",
+            "dead letter queue",
+            "6 retries",
+            "Redis DLQ",
+        ],
         "expected_symbols": [],
         "expected_file_patterns": ["webhook", "retry"],
         "prd_failure_mode": "CONSTRAINT_LOST",  # Retry policy is an explicit constraint
@@ -149,7 +203,12 @@ MEDUSA_WEBHOOKS = [
     {
         "description": "Include idempotency key (UUID per delivery attempt) in webhook payload so merchants can deduplicate",
         "source_ref": "medusa-webhook-notifications",
-        "keywords": ["idempotency key", "webhook deduplication", "UUID delivery", "delivery attempt"],
+        "keywords": [
+            "idempotency key",
+            "webhook deduplication",
+            "UUID delivery",
+            "delivery attempt",
+        ],
         "expected_symbols": [],
         "expected_file_patterns": ["webhook"],
         "prd_failure_mode": "CONSTRAINT_LOST",
@@ -163,7 +222,13 @@ SALEOR_CHECKOUT = [
     {
         "description": "Synchronous validation hooks in checkout pipeline that can reject operations — plugin raises ValidationError that propagates through GraphQL",
         "source_ref": "saleor-checkout-extensibility",
-        "keywords": ["checkout validation", "synchronous hooks", "ValidationError", "reject operation", "pre-validation"],
+        "keywords": [
+            "checkout validation",
+            "synchronous hooks",
+            "ValidationError",
+            "reject operation",
+            "pre-validation",
+        ],
         "expected_symbols": [
             "PluginsManager",
             "CheckoutError",
@@ -175,7 +240,13 @@ SALEOR_CHECKOUT = [
     {
         "description": "Circuit breaker: 3 consecutive validation endpoint timeouts — skip that plugin for subsequent checkouts; per-app per-event-type tracking in Redis sliding window",
         "source_ref": "saleor-checkout-extensibility",
-        "keywords": ["circuit breaker", "validation timeout", "3 consecutive failures", "skip plugin", "sliding window"],
+        "keywords": [
+            "circuit breaker",
+            "validation timeout",
+            "3 consecutive failures",
+            "skip plugin",
+            "sliding window",
+        ],
         "expected_symbols": [],
         "expected_file_patterns": ["checkout", "plugin", "circuit"],
         "prd_failure_mode": "CONSTRAINT_LOST",
@@ -185,7 +256,13 @@ SALEOR_CHECKOUT = [
     {
         "description": "Cache checkout validation results in Redis keyed by last_change timestamp with TTL; invalidate on line changes, address updates, or shipping method changes",
         "source_ref": "saleor-checkout-extensibility",
-        "keywords": ["cache validation", "last_change", "Redis TTL", "checkout cache", "validation cache"],
+        "keywords": [
+            "cache validation",
+            "last_change",
+            "Redis TTL",
+            "checkout cache",
+            "validation cache",
+        ],
         "expected_symbols": [
             "Checkout",
         ],
@@ -196,7 +273,12 @@ SALEOR_CHECKOUT = [
     {
         "description": "Plugins receive serialized checkout data, not raw querysets — security boundary to prevent third-party data access",
         "source_ref": "saleor-checkout-extensibility",
-        "keywords": ["plugin data access", "serialized data", "security boundary", "not raw queryset"],
+        "keywords": [
+            "plugin data access",
+            "serialized data",
+            "security boundary",
+            "not raw queryset",
+        ],
         "expected_symbols": [
             "PluginsManager",
         ],
@@ -212,7 +294,13 @@ SALEOR_PERMISSIONS = [
     {
         "description": "Channel-scoped JWT permissions: permission claim becomes dict mapping codename to list of channel slugs or ['*'] for global; existing flat format treated as all-channels for backward compat",
         "source_ref": "saleor-graphql-permissions",
-        "keywords": ["channel permissions", "JWT scoped", "channel slug", "permission_required", "backward compat"],
+        "keywords": [
+            "channel permissions",
+            "JWT scoped",
+            "channel slug",
+            "permission_required",
+            "backward compat",
+        ],
         "expected_symbols": [
             "check_permissions",
             "effective_permissions",
@@ -224,7 +312,11 @@ SALEOR_PERMISSIONS = [
     {
         "description": "Gate checkoutComplete mutation on channel permission before any side effects — order creation, payment processing, webhooks",
         "source_ref": "saleor-graphql-permissions",
-        "keywords": ["checkoutComplete permission", "gate before side effects", "early permission check"],
+        "keywords": [
+            "checkoutComplete permission",
+            "gate before side effects",
+            "early permission check",
+        ],
         "expected_symbols": [
             "checkoutComplete",
             "check_permissions",
@@ -237,7 +329,12 @@ SALEOR_PERMISSIONS = [
     {
         "description": "App model: add channel_access relationship so third-party apps only access channels they are installed for",
         "source_ref": "saleor-graphql-permissions",
-        "keywords": ["app channel access", "channel_access", "third-party app permission", "app installed channels"],
+        "keywords": [
+            "app channel access",
+            "channel_access",
+            "third-party app permission",
+            "app installed channels",
+        ],
         "expected_symbols": [
             "App",
         ],
@@ -252,7 +349,13 @@ SALEOR_ORDERS = [
     {
         "description": "Wrap decrease_stock and allocation cleanup in transaction.atomic — currently separate operations causing orphaned allocation records when decrease_stock succeeds but cleanup fails",
         "source_ref": "saleor-order-workflows",
-        "keywords": ["transaction.atomic", "decrease_stock", "allocation cleanup", "orphaned allocation", "stock transaction"],
+        "keywords": [
+            "transaction.atomic",
+            "decrease_stock",
+            "allocation cleanup",
+            "orphaned allocation",
+            "stock transaction",
+        ],
         "expected_symbols": [
             "decrease_stock",
             "orderFulfill",
@@ -264,7 +367,13 @@ SALEOR_ORDERS = [
     {
         "description": "Defer FULFILLMENT_CREATED webhook dispatch to Django on_commit hook — currently fires before stock operations complete causing stale data in downstream systems",
         "source_ref": "saleor-order-workflows",
-        "keywords": ["on_commit", "webhook timing", "FULFILLMENT_CREATED", "defer webhook", "after transaction"],
+        "keywords": [
+            "on_commit",
+            "webhook timing",
+            "FULFILLMENT_CREATED",
+            "defer webhook",
+            "after transaction",
+        ],
         "expected_symbols": [
             "fulfillment_created",
             "FULFILLMENT_CREATED",
@@ -277,7 +386,12 @@ SALEOR_ORDERS = [
     {
         "description": "Fix update_order_status: missing RETURNED status handling causes orders to stay FULFILLED even after all fulfillments are returned",
         "source_ref": "saleor-order-workflows",
-        "keywords": ["update_order_status", "RETURNED status", "fulfillment status sync", "order status bug"],
+        "keywords": [
+            "update_order_status",
+            "RETURNED status",
+            "fulfillment status sync",
+            "order status bug",
+        ],
         "expected_symbols": [
             "update_order_status",
         ],
@@ -288,7 +402,12 @@ SALEOR_ORDERS = [
     {
         "description": "Database constraint on Stock: quantity cannot go negative; decrease_stock can produce negative values in race condition",
         "source_ref": "saleor-order-workflows",
-        "keywords": ["stock constraint", "negative quantity", "race condition", "database constraint"],
+        "keywords": [
+            "stock constraint",
+            "negative quantity",
+            "race condition",
+            "database constraint",
+        ],
         "expected_symbols": [
             "Stock",
             "decrease_stock",
@@ -304,7 +423,13 @@ VENDURE_PRICING = [
     {
         "description": "Custom ProductVariantPriceUpdateStrategy: strip tax in source channel, convert currency using TaxRateService, reapply destination zone rate; iterate per currency per channel not per channel",
         "source_ref": "vendure-channel-pricing",
-        "keywords": ["ProductVariantPriceUpdateStrategy", "currency conversion", "tax stripping", "multi-channel pricing", "InjectableStrategy"],
+        "keywords": [
+            "ProductVariantPriceUpdateStrategy",
+            "currency conversion",
+            "tax stripping",
+            "multi-channel pricing",
+            "InjectableStrategy",
+        ],
         "expected_symbols": [
             "ProductVariantPriceUpdateStrategy",
             "TaxRateService",
@@ -345,7 +470,12 @@ VENDURE_CUSTOM_FIELDS = [
     {
         "description": "struct type custom field warning: stores as simple-json, no SQL-level querying or indexing on sub-fields — do not use struct if you need to filter on nested values",
         "source_ref": "vendure-custom-fields",
-        "keywords": ["struct custom field", "simple-json", "no SQL indexing", "nested field warning"],
+        "keywords": [
+            "struct custom field",
+            "simple-json",
+            "no SQL indexing",
+            "nested field warning",
+        ],
         "expected_symbols": [],
         "expected_file_patterns": ["custom", "shared-types"],
         "prd_failure_mode": "TRIBAL_KNOWLEDGE",
@@ -359,7 +489,13 @@ VENDURE_SEARCH = [
     {
         "description": "Enable bufferUpdates on DefaultSearchPlugin to deduplicate by entity ID during bulk imports; switch from SqlJobQueueStrategy to BullMQJobQueuePlugin",
         "source_ref": "vendure-search-reindexing",
-        "keywords": ["bufferUpdates", "BullMQJobQueuePlugin", "search reindex", "SqlJobQueueStrategy", "bulk import"],
+        "keywords": [
+            "bufferUpdates",
+            "BullMQJobQueuePlugin",
+            "search reindex",
+            "SqlJobQueueStrategy",
+            "bulk import",
+        ],
         "expected_symbols": [
             "DefaultSearchPlugin",
             "BullMQJobQueuePlugin",
@@ -372,7 +508,12 @@ VENDURE_SEARCH = [
     {
         "description": "Split workers using activeQueues option: dedicated search worker plus general worker so reindex does not block order confirmation emails",
         "source_ref": "vendure-search-reindexing",
-        "keywords": ["activeQueues", "split workers", "dedicated search worker", "worker isolation"],
+        "keywords": [
+            "activeQueues",
+            "split workers",
+            "dedicated search worker",
+            "worker isolation",
+        ],
         "expected_symbols": [],
         "expected_file_patterns": ["search", "worker", "config"],
         "prd_failure_mode": "CONSTRAINT_LOST",
@@ -381,7 +522,12 @@ VENDURE_SEARCH = [
     {
         "description": "Performance targets: reindex p95 search latency under 200ms (was 800ms during reindex), database CPU under 50% during full reindex",
         "source_ref": "vendure-search-reindexing",
-        "keywords": ["search latency 200ms", "database CPU reindex", "p95 latency", "reindex performance"],
+        "keywords": [
+            "search latency 200ms",
+            "database CPU reindex",
+            "p95 latency",
+            "reindex performance",
+        ],
         "expected_symbols": ["DefaultSearchPlugin"],
         "expected_file_patterns": ["search-plugin", "search-strategy", "reindex"],
         "prd_failure_mode": "CONSTRAINT_LOST",
@@ -437,7 +583,13 @@ BICAMERAL_MULTI_REGION = [
     {
         "description": "Drift detection flow: detect changed files in a commit, look up intents grounded to those files, recompute status via hash comparison, update intent status",
         "source_ref": "bicameral-mcp-multi-region",
-        "keywords": ["drift detection", "link_commit", "derive_status", "hash comparison", "detect_drift"],
+        "keywords": [
+            "drift detection",
+            "link_commit",
+            "derive_status",
+            "hash comparison",
+            "detect_drift",
+        ],
         "expected_symbols": [
             "handle_link_commit",
             "handle_detect_drift",
@@ -457,7 +609,13 @@ BICAMERAL_MULTI_REGION = [
     {
         "description": "Team collaboration mode: dual-write adapter intercepts mutations, emits event files, materializes peer events on startup for multi-user ledger sync",
         "source_ref": "bicameral-mcp-multi-region",
-        "keywords": ["team mode", "dual-write", "event sourcing", "TeamWriteAdapter", "materializer"],
+        "keywords": [
+            "team mode",
+            "dual-write",
+            "event sourcing",
+            "TeamWriteAdapter",
+            "materializer",
+        ],
         "expected_symbols": [
             "TeamWriteAdapter",
             "EventFileWriter",

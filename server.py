@@ -37,19 +37,19 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
-from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
+from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
 from handlers.gap_judge import handle_judge_gaps
+from handlers.history import handle_history
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
-from handlers.reset import handle_reset
 from handlers.ratify import handle_ratify
+from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
-from handlers.history import handle_history
 from handlers.update import get_update_notice, handle_update
-from dashboard.server import get_dashboard_server
+from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
 
@@ -72,14 +72,13 @@ def _resolve_server_version() -> str:
     for candidate in (here, here.parent):
         toml = candidate / "pyproject.toml"
         if toml.exists():
-            m = re.search(
-                r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE
-            )
+            m = re.search(r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE)
             if m:
                 return m.group(1)
 
     try:
         from importlib.metadata import version as _pkg_version
+
         return _pkg_version("bicameral-mcp")
     except Exception:
         return "0.1.0"
@@ -194,12 +193,30 @@ async def list_tools() -> list[Tool]:
                         "items": {
                             "type": "object",
                             "properties": {
-                                "decision_id": {"type": "string", "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)"},
-                                "file_path": {"type": "string", "description": "Repo-relative path to the file"},
-                                "symbol_name": {"type": "string", "description": "Function/class/method name"},
-                                "start_line": {"type": "integer", "description": "1-indexed start line (optional — omit to auto-resolve automatically)"},
-                                "end_line": {"type": "integer", "description": "1-indexed end line (optional)"},
-                                "purpose": {"type": "string", "description": "Optional one-line description for display"},
+                                "decision_id": {
+                                    "type": "string",
+                                    "description": "Decision ID from the ledger (e.g. from pending_grounding_decisions)",
+                                },
+                                "file_path": {
+                                    "type": "string",
+                                    "description": "Repo-relative path to the file",
+                                },
+                                "symbol_name": {
+                                    "type": "string",
+                                    "description": "Function/class/method name",
+                                },
+                                "start_line": {
+                                    "type": "integer",
+                                    "description": "1-indexed start line (optional — omit to auto-resolve automatically)",
+                                },
+                                "end_line": {
+                                    "type": "integer",
+                                    "description": "1-indexed end line (optional)",
+                                },
+                                "purpose": {
+                                    "type": "string",
+                                    "description": "Optional one-line description for display",
+                                },
                             },
                             "required": ["decision_id", "file_path", "symbol_name"],
                         },
@@ -794,16 +811,25 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             "t0": time.monotonic(),
             "rationale": arguments.get("rationale", ""),
         }
-        return [TextContent(type="text", text=json.dumps({
-            "session_id": session_id,
-            "skill": arguments["skill_name"],
-            "status": "started",
-        }))]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "session_id": session_id,
+                        "skill": arguments["skill_name"],
+                        "status": "started",
+                    }
+                ),
+            )
+        ]
 
     if name == "bicameral.skill_end":
         from pydantic import ValidationError
-        from telemetry import record_skill_event
+
         from contracts import SKILL_DIAGNOSTIC_MODELS
+        from telemetry import record_skill_event
+
         session_id = arguments["session_id"]
         skill_name = arguments["skill_name"]
         errored = arguments.get("errored", False)
@@ -825,8 +851,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 diagnostic = validated.model_dump()
             except ValidationError as exc:
                 unknown_fields = [
-                    e["loc"][0] for e in exc.errors()
-                    if e["type"] == "extra_forbidden" and e["loc"]
+                    e["loc"][0] for e in exc.errors() if e["type"] == "extra_forbidden" and e["loc"]
                 ]
                 # Strip unknowns and validate the remaining known fields.
                 known_raw = {k: v for k, v in raw_diagnostic.items() if k not in unknown_fields}
@@ -839,8 +864,14 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             diagnostic = raw_diagnostic or None
 
         record_skill_event(
-            skill_name, session_id, duration_ms, errored, SERVER_VERSION,
-            diagnostic=diagnostic, error_class=error_class, rationale=rationale,
+            skill_name,
+            session_id,
+            duration_ms,
+            errored,
+            SERVER_VERSION,
+            diagnostic=diagnostic,
+            error_class=error_class,
+            rationale=rationale,
         )
         response: dict = {
             "session_id": session_id,
@@ -857,6 +888,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if name == "bicameral.feedback":
         from telemetry import send_event
+
         send_event(
             SERVER_VERSION,
             event_type="agent_feedback",
@@ -869,6 +901,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     if name == "bicameral.usage_summary":
         from handlers.usage_summary import handle_usage_summary
+
         data = await handle_usage_summary(ctx, days=int(arguments.get("days", 7)))
         return [TextContent(type="text", text=json.dumps(data, indent=2))]
 
@@ -878,11 +911,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     _sync_result = None
     if name not in ("bicameral.link_commit", "link_commit", "bicameral.update", "update"):
         from handlers.sync_middleware import ensure_ledger_synced
+
         _sync_result = await ensure_ledger_synced(ctx)
 
     try:
         if name in ("bicameral.link_commit", "link_commit"):
-
             result = await handle_link_commit(
                 ctx,
                 commit_hash=arguments.get("commit_hash", "HEAD"),
@@ -924,10 +957,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             # Honest empty path — handler returns None when no matches.
             # Emit an empty envelope the agent can detect and skip on.
             if result is None:
-                return [TextContent(
-                    type="text",
-                    text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
-                )]
+                return [
+                    TextContent(
+                        type="text",
+                        text=json.dumps({"judgment_payload": None, "topic": arguments["topic"]}),
+                    )
+                ]
         elif name in ("bicameral.resolve_compliance", "resolve_compliance"):
             result = await handle_resolve_compliance(
                 ctx,
@@ -983,6 +1018,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse
+
             srv = get_dashboard_server()
             if not srv.running:
                 await srv.start(ctx_factory=BicameralContext.from_env)
@@ -1059,10 +1095,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if isinstance(exc, DestructiveMigrationRequired)
             else "upgrade your binary: pipx upgrade bicameral-mcp"
         )
-        return [TextContent(
-            type="text",
-            text=json.dumps({"error": str(exc), "action": action}, indent=2),
-        )]
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps({"error": str(exc), "action": action}, indent=2),
+            )
+        ]
 
 
 async def run_smoke_test() -> dict[str, object]:
@@ -1110,6 +1148,7 @@ async def serve_stdio() -> None:
     # below once the session is live.
     try:
         from consent import notify_if_first_run
+
         notify_if_first_run()
     except Exception:
         pass
@@ -1202,18 +1241,22 @@ def _dispatch(args: Any) -> int:
     """Route parsed args to the appropriate handler. Returns exit code."""
     if args.command == "config":
         from setup_wizard import run_config_wizard
+
         return run_config_wizard()
     if args.command == "reset":
         from setup_wizard import run_reset_wizard
+
         return run_reset_wizard()
     if args.command == "setup":
         from setup_wizard import run_setup
+
         return run_setup(args.repo_path, args.history_path)
     # triage-adapt: link_commit dispatch — added per #124 backport without
     # the broader _register_subparsers/_dispatch refactor or the branch-scan
     # / --with-push-hook prerequisites
     if args.command == "link_commit":
         from cli.link_commit_cli import main as link_commit_main
+
         return link_commit_main(args.commit_hash, quiet=args.quiet)
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())

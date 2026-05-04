@@ -9,6 +9,7 @@ Codex pass-7 finding #3 (B1) and pass-8 finding #1 (B2/B3) require:
   - cosmetic_hint stays False for renames / docstring edits / etc.
   - cosmetic_hint=True only for whitespace-only diffs
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -44,6 +45,7 @@ def repo_with_baseline(tmp_path):
     the working-tree file to whatever they need to compare against HEAD.
     """
     import subprocess
+
     repo = tmp_path / "repo"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
@@ -80,6 +82,7 @@ def test_docstring_edit_keeps_cosmetic_hint_false(repo_with_baseline, tmp_path):
     _write_file(repo, rel, "def f(x):\n    return x + 1\n")
     # Now overwrite baseline by committing a docstring-only version, then edit working tree.
     import subprocess
+
     _write_file(repo, rel, 'def f(x):\n    """Old."""\n    return x + 1\n')
     subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-q", "-m", "add docstring"], cwd=repo, check=True)
@@ -111,6 +114,7 @@ def test_no_diff_keeps_cosmetic_hint_false(repo_with_baseline):
 def test_unsupported_extension_keeps_cosmetic_hint_false(tmp_path):
     """Files outside EXTENSION_LANGUAGE never get a hint."""
     import subprocess
+
     repo = tmp_path / "repo2"
     repo.mkdir()
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)

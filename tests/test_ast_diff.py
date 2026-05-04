@@ -7,12 +7,12 @@ docstring edits, tool directives. False positives in this layer would
 bias the V2 caller-LLM verdict prompt toward "looks fine" on
 behaviorally-different code.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from ledger.ast_diff import is_cosmetic_change
-
 
 # ── Whitelist: must return True ─────────────────────────────────────
 

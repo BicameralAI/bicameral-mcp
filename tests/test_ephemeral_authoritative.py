@@ -40,6 +40,7 @@ Scenario matrix:
   E21 — ungrounded → feature branch bind → reflected + ephemeral=True   [PASS]
   E22 — switch back to main: no stale ephemeral 'reflected' (→ drifted)  [PASS]
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -54,7 +55,6 @@ from handlers.bind import handle_bind
 from handlers.ingest import handle_ingest
 from handlers.link_commit import handle_link_commit, invalidate_sync_cache
 from handlers.resolve_compliance import handle_resolve_compliance
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -98,7 +98,9 @@ def _merge(repo: Path, branch: str, *, squash: bool = False, no_ff: bool = False
         _git(repo, "merge", "--squash", branch)
         _git(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", f"Squash-merge {branch}")
     elif no_ff:
-        _git(repo, "-c", "commit.gpgsign=false", "merge", "--no-ff", "-m", f"Merge {branch}", branch)
+        _git(
+            repo, "-c", "commit.gpgsign=false", "merge", "--no-ff", "-m", f"Merge {branch}", branch
+        )
     else:
         _git(repo, "-c", "commit.gpgsign=false", "merge", branch)
 
@@ -170,13 +172,18 @@ async def _ingest_and_bind(
     assert ingest.ingested, f"ingest failed: {ingest}"
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": file_path,
-        "symbol_name": symbol_name,
-        "start_line": start_line,
-        "end_line": end_line,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": file_path,
+                "symbol_name": symbol_name,
+                "start_line": start_line,
+                "end_line": end_line,
+            }
+        ],
+    )
     assert bind_resp.bindings, "no bind results"
     assert not bind_resp.bindings[0].error, f"bind error: {bind_resp.bindings[0].error}"
     return decision_id, bind_resp.bindings[0].region_id, bind_resp.bindings[0].content_hash
@@ -200,14 +207,16 @@ async def _resolve_verdict(
     return await handle_resolve_compliance(
         ctx,
         phase=phase,
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": p.region_id,
-            "content_hash": p.content_hash,
-            "verdict": verdict,
-            "confidence": "high",
-            "explanation": "test",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": p.region_id,
+                "content_hash": p.content_hash,
+                "verdict": verdict,
+                "confidence": "high",
+                "explanation": "test",
+            }
+        ],
         flow_id=lc.flow_id,
     )
 
@@ -226,12 +235,15 @@ def _eph_repo(monkeypatch, tmp_path):
     monkeypatch.setenv("USE_REAL_LEDGER", "1")
     monkeypatch.setenv("SURREAL_URL", "memory://")
     repo = tmp_path / "repo"
-    _seed_repo(repo, {
-        "src/calc.py": """
+    _seed_repo(
+        repo,
+        {
+            "src/calc.py": """
             def rate(order_total: float) -> float:
                 return order_total * 0.1
         """,
-    })
+        },
+    )
     monkeypatch.setenv("REPO_PATH", str(repo))
     monkeypatch.setenv("BICAMERAL_AUTHORITATIVE_REF", "main")
     monkeypatch.chdir(repo)
@@ -259,13 +271,21 @@ async def test_e01_authoritative_branch_full_cycle(_eph_repo):
     # Ingest with code_regions so the binding exists before the internal link_commit.
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="10% discount rule", intent="Apply 10% discount on all orders",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate calc",
-                 }]),
+        _payload(
+            repo,
+            text="10% discount rule",
+            intent="Apply 10% discount on all orders",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate calc",
+                }
+            ],
+        ),
     )
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
@@ -314,13 +334,21 @@ async def test_e02_feature_branch_full_cycle(_eph_repo):
     # Ingest on the feature branch — code_regions reference the original file on main.
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Pricing rate", intent="Apply rate to order total",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate calc",
-                 }]),
+        _payload(
+            repo,
+            text="Pricing rate",
+            intent="Apply rate to order total",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate calc",
+                }
+            ],
+        ),
     )
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
@@ -371,13 +399,21 @@ async def test_e03_ff_merge_verdict_survives(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Pricing", intent="Apply rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Pricing",
+            intent="Apply rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
@@ -400,9 +436,7 @@ async def test_e03_ff_merge_verdict_survives(_eph_repo):
     )
     # No new pending compliance check for this decision (verdict already exists).
     new_pending = [p for p in lc_main.pending_compliance_checks if p.decision_id == decision_id]
-    assert not new_pending, (
-        f"Should not re-pend after FF merge with same hash, got: {new_pending}"
-    )
+    assert not new_pending, f"Should not re-pend after FF merge with same hash, got: {new_pending}"
 
 
 # ── E4: Squash merge → same content hash → reflected ──────────────────────────
@@ -429,13 +463,21 @@ async def test_e04_squash_merge_verdict_survives(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate policy", intent="Set 18% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate policy",
+            intent="Set 18% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -479,13 +521,21 @@ async def test_e05_content_change_becomes_drifted(_eph_repo):
 
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="10% discount rule", intent="Apply 10% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="10% discount rule",
+            intent="Apply 10% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc1 = await handle_link_commit(ctx, "HEAD")
@@ -546,13 +596,21 @@ async def test_e06_branch_switch_stale_not_cleared(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate policy", intent="Apply 15% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate policy",
+            intent="Apply 15% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc_a = await handle_link_commit(ctx, "HEAD")
@@ -602,13 +660,21 @@ async def test_e07_feature_to_main_ephemeral_not_promoted(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate", intent="11% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate",
+            intent="11% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -657,13 +723,21 @@ async def test_e08_detached_head_non_ephemeral(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate", intent="Rate policy",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate",
+            intent="Rate policy",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -706,13 +780,21 @@ async def test_e09_process_restart_flag_lost_status_ok(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate", intent="13% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate",
+            intent="13% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -731,22 +813,22 @@ async def test_e09_process_restart_flag_lost_status_ok(_eph_repo):
     rc = await handle_resolve_compliance(
         ctx2,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "post-restart",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "post-restart",
+            }
+        ],
         # No flow_id — simulating process restart
     )
     assert rc.accepted, f"resolve rejected post-restart: {rc.rejected}"
 
     status = await _get_decision_status(ctx2, decision_id)
-    assert status == "reflected", (
-        f"Status must be reflected after restart, got {status}"
-    )
+    assert status == "reflected", f"Status must be reflected after restart, got {status}"
 
     checks = await _get_compliance_checks(ctx2, decision_id)
     assert checks
@@ -778,29 +860,41 @@ async def test_e10_idempotent_resolve_compliance(_eph_repo):
 
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Discount rate", intent="Apply rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Discount rate",
+            intent="Apply rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
     pending = [p for p in lc.pending_compliance_checks if p.decision_id == decision_id]
     assert pending
 
-    verdict_payload = [{
-        "decision_id": decision_id,
-        "region_id": pending[0].region_id,
-        "content_hash": pending[0].content_hash,
-        "verdict": "compliant",
-        "confidence": "high",
-        "explanation": "first call",
-    }]
+    verdict_payload = [
+        {
+            "decision_id": decision_id,
+            "region_id": pending[0].region_id,
+            "content_hash": pending[0].content_hash,
+            "verdict": "compliant",
+            "confidence": "high",
+            "explanation": "first call",
+        }
+    ]
 
-    rc1 = await handle_resolve_compliance(ctx, phase="ingest", verdicts=verdict_payload, flow_id=lc.flow_id)
+    rc1 = await handle_resolve_compliance(
+        ctx, phase="ingest", verdicts=verdict_payload, flow_id=lc.flow_id
+    )
     assert rc1.accepted
 
     # Second call with same payload — must succeed silently.
@@ -842,13 +936,21 @@ async def test_e11_flow_id_mismatch_ephemeral_false_status_ok(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate 14%", intent="Apply 14% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate 14%",
+            intent="Apply 14% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -861,14 +963,16 @@ async def test_e11_flow_id_mismatch_ephemeral_false_status_ok(_eph_repo):
     rc = await handle_resolve_compliance(
         ctx,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "stale flow",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "stale flow",
+            }
+        ],
         flow_id=stale_flow_id,
     )
     assert rc.accepted, f"Expected accepted despite flow_id mismatch, got: {rc.rejected}"
@@ -919,13 +1023,21 @@ async def test_e12_feature_branch_reflected_drift_not_detected(_eph_repo):
     # calc.py IS in changed_files → pending check surfaced → we can verify it.
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate 20%", intent="Rate policy",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate 20%",
+            intent="Rate policy",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc1 = await handle_link_commit(ctx, "HEAD")
@@ -989,13 +1101,21 @@ async def test_e13_rebase_same_hash_verdict_survives(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Tax calc", intent="Compute 7% tax",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "tax",
-                     "start_line": 4, "end_line": 5,
-                     "type": "function", "purpose": "tax",
-                 }]),
+        _payload(
+            repo,
+            text="Tax calc",
+            intent="Compute 7% tax",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "tax",
+                    "start_line": 4,
+                    "end_line": 5,
+                    "type": "function",
+                    "purpose": "tax",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc1 = await handle_link_commit(ctx, "HEAD")
@@ -1062,13 +1182,21 @@ async def test_e14_deleted_branch_verdict_survives(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate 16%", intent="16% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate 16%",
+            intent="16% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -1136,13 +1264,21 @@ async def test_e15_custom_authoritative_ref_non_ephemeral(_eph_repo, monkeypatch
 
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate 19%", intent="19% rate on develop",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate 19%",
+            intent="19% rate on develop",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc = await handle_link_commit(ctx, "HEAD")
@@ -1191,25 +1327,29 @@ async def test_e16_resolve_compliance_without_link_commit(_eph_repo):
     ctx = BicameralContext.from_env()
 
     decision_id, region_id, bind_hash = await _ingest_and_bind(
-        ctx, repo,
+        ctx,
+        repo,
         intent="Direct resolve no link_commit",
         file_path="src/calc.py",
         symbol_name="rate",
-        start_line=1, end_line=2,
+        start_line=1,
+        end_line=2,
     )
 
     # Call resolve_compliance directly (no link_commit, no flow_id).
     rc = await handle_resolve_compliance(
         ctx,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": region_id,
-            "content_hash": bind_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "direct resolve",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": region_id,
+                "content_hash": bind_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "direct resolve",
+            }
+        ],
     )
     assert rc.accepted, f"Direct resolve rejected: {rc.rejected}"
 
@@ -1243,13 +1383,21 @@ async def test_e17_ephemeral_first_write_wins_flag_stuck(_eph_repo):
     ctx = BicameralContext.from_env()
     ingest = await handle_ingest(
         ctx,
-        _payload(repo, text="Rate 17%", intent="17% rate",
-                 code_regions=[{
-                     "file_path": "src/calc.py",
-                     "symbol": "rate",
-                     "start_line": 1, "end_line": 2,
-                     "type": "function", "purpose": "rate",
-                 }]),
+        _payload(
+            repo,
+            text="Rate 17%",
+            intent="17% rate",
+            code_regions=[
+                {
+                    "file_path": "src/calc.py",
+                    "symbol": "rate",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "type": "function",
+                    "purpose": "rate",
+                }
+            ],
+        ),
     )
     decision_id = ingest.created_decisions[0].decision_id
     lc_feat = await handle_link_commit(ctx, "HEAD")
@@ -1275,14 +1423,16 @@ async def test_e17_ephemeral_first_write_wins_flag_stuck(_eph_repo):
     rc_main = await handle_resolve_compliance(
         ctx,
         phase="drift",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": feature_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "main confirmation",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": feature_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "main confirmation",
+            }
+        ],
         # No flow_id — ctx is on main, no pending_ephemeral in sync_state
     )
     assert rc_main.accepted
@@ -1318,9 +1468,7 @@ async def test_e18_bind_branch_local_file(_eph_repo):
     repo = _eph_repo
 
     _checkout(repo, "feat/new-module", create=True)
-    (repo / "src/new_module.py").write_text(
-        "def compute(x: int) -> int:\n    return x * 2\n"
-    )
+    (repo / "src/new_module.py").write_text("def compute(x: int) -> int:\n    return x * 2\n")
     _commit(repo, "add new_module.py (branch-only file)")
 
     ctx = BicameralContext.from_env()
@@ -1332,19 +1480,22 @@ async def test_e18_bind_branch_local_file(_eph_repo):
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/new_module.py",
-        "symbol_name": "compute",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/new_module.py",
+                "symbol_name": "compute",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
 
     assert bind_resp.bindings, "no bind results"
     b = bind_resp.bindings[0]
-    assert not b.error, (
-        f"bind must succeed for a branch-local file; got error: {b.error}"
-    )
+    assert not b.error, f"bind must succeed for a branch-local file; got error: {b.error}"
     assert b.content_hash, "content_hash must be non-empty after successful bind"
 
 
@@ -1395,13 +1546,18 @@ async def test_e19_bind_modified_function_uses_branch_hash(_eph_repo):
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
 
     assert bind_resp.bindings, "no bind results"
     b = bind_resp.bindings[0]
@@ -1462,13 +1618,18 @@ async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo)
     assert ingest.ingested
     decision_id = ingest.created_decisions[0].decision_id
 
-    bind_resp = await handle_bind(ctx, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error
     bind_hash = bind_resp.bindings[0].content_hash
     assert bind_hash, "bind must return content_hash"
@@ -1482,7 +1643,7 @@ async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo)
     # First link_commit: surfaces pending check at H_branch.
     lc1 = await handle_link_commit(ctx, "HEAD")
     pending = [p for p in lc1.pending_compliance_checks if p.decision_id == decision_id]
-    assert pending, f"link_commit must surface pending check for the bound decision"
+    assert pending, "link_commit must surface pending check for the bound decision"
     assert pending[0].content_hash == bind_hash, (
         f"pending_check.content_hash ({pending[0].content_hash[:8]}) must equal "
         f"bind_result.content_hash ({bind_hash[:8]}) — hash consistency invariant"
@@ -1492,14 +1653,16 @@ async def test_e20_bind_link_commit_hash_consistency_no_phantom_drift(_eph_repo)
     rc = await handle_resolve_compliance(
         ctx,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "branch content verified",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "branch content verified",
+            }
+        ],
         flow_id=lc1.flow_id,
     )
     assert rc.accepted, f"resolve_compliance rejected: {rc.rejected}"
@@ -1565,8 +1728,7 @@ async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
     # Engineer creates feature branch and writes the implementation.
     _checkout(repo, "feat/cap-discount", create=True)
     (repo / "src/calc.py").write_text(
-        "def rate(order_total: float) -> float:\n"
-        "    return min(order_total * 0.30, order_total)\n"
+        "def rate(order_total: float) -> float:\n    return min(order_total * 0.30, order_total)\n"
     )
     _commit(repo, "cap discount at 30% (feat/cap-discount)")
 
@@ -1579,13 +1741,18 @@ async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
     )
 
     # Bind to the implementation on the feature branch.
-    bind_resp = await handle_bind(ctx_feat, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx_feat,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error, (
         f"bind must succeed on feature branch: "
         f"{bind_resp.bindings[0].error if bind_resp.bindings else 'no results'}"
@@ -1607,14 +1774,16 @@ async def test_e21_ungrounded_feature_bind_reflected_ephemeral(_eph_repo):
     rc = await handle_resolve_compliance(
         ctx_feat,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "cap implementation verified",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "cap implementation verified",
+            }
+        ],
         flow_id=lc.flow_id,
     )
     assert rc.accepted, f"resolve_compliance rejected: {rc.rejected}"
@@ -1675,21 +1844,25 @@ async def test_e22_switch_to_main_no_stale_reflected(_eph_repo):
     # Feature branch: implement + bind + resolve → reflected, ephemeral=True.
     _checkout(repo, "feat/cap-v2", create=True)
     (repo / "src/calc.py").write_text(
-        "def rate(order_total: float) -> float:\n"
-        "    return min(order_total * 0.30, order_total)\n"
+        "def rate(order_total: float) -> float:\n    return min(order_total * 0.30, order_total)\n"
     )
     _commit(repo, "cap at 30%")
 
     # Fresh ctx on the feature branch.
     ctx_feat = BicameralContext.from_env()
 
-    bind_resp = await handle_bind(ctx_feat, [{
-        "decision_id": decision_id,
-        "file_path": "src/calc.py",
-        "symbol_name": "rate",
-        "start_line": 1,
-        "end_line": 2,
-    }])
+    bind_resp = await handle_bind(
+        ctx_feat,
+        [
+            {
+                "decision_id": decision_id,
+                "file_path": "src/calc.py",
+                "symbol_name": "rate",
+                "start_line": 1,
+                "end_line": 2,
+            }
+        ],
+    )
     assert bind_resp.bindings and not bind_resp.bindings[0].error
 
     lc_feat = await handle_link_commit(ctx_feat, "HEAD")
@@ -1700,14 +1873,16 @@ async def test_e22_switch_to_main_no_stale_reflected(_eph_repo):
     rc = await handle_resolve_compliance(
         ctx_feat,
         phase="ingest",
-        verdicts=[{
-            "decision_id": decision_id,
-            "region_id": pending[0].region_id,
-            "content_hash": pending[0].content_hash,
-            "verdict": "compliant",
-            "confidence": "high",
-            "explanation": "verified on branch",
-        }],
+        verdicts=[
+            {
+                "decision_id": decision_id,
+                "region_id": pending[0].region_id,
+                "content_hash": pending[0].content_hash,
+                "verdict": "compliant",
+                "confidence": "high",
+                "explanation": "verified on branch",
+            }
+        ],
         flow_id=lc_feat.flow_id,
     )
     assert rc.accepted
