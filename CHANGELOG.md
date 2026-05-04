@@ -3,6 +3,22 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `handlers/preflight.py` — `_region_anchored_preflight` now expands caller-supplied `file_paths` by 1 hop along the code-locator graph (callers / callees / imports / inheritance) before the `binds_to` lookup. Lifts the strict exact-match recall ceiling so a decision bound to `app/src/lib/git/reorder.ts` surfaces when the caller passes the structurally-near `app/src/ui/multi-commit-operation/reorder.tsx`. Decisions reached only via expansion carry `confidence=0.7` (vs `0.9` for direct pins). `sources_chained` includes `"region_graph_expanded"` when expansion contributed at least one hit. Bounded by `code_locator/config.py::max_neighbors_per_result` to prevent hub-file explosion. Closes #173.
+- `adapters/code_locator.py::RealCodeLocatorAdapter.expand_file_paths_via_graph` — public method backing the expansion. Returns `(expanded, added)` so callers can mark provenance.
+- `skills/bicameral-preflight/SKILL.md` Step 2 — documents that the server expands by 1 hop, with caller-side `confidence` and `sources_chained` semantics.
+
+### Changed
+
+### Fixed
+
+### Schema
+
+### Security
+
 ## v0.18.0 -- event vocabulary extension: ratify + supersede (#97)
 
 Extends the existing Phase 1 JSONL emitter with two new event types so the shipped vocabulary matches the v0 architecture description. Team-mode replay now restores ratify and supersede outcomes alongside the pre-existing ingest/bind/link_commit events.
