@@ -175,6 +175,19 @@ a feature backed by existing code, populate `file_paths` from your discovery.
 The handler still runs sync and HITL checks either way; passing `file_paths`
 just unlocks the precision channel.
 
+The server expands caller-supplied `file_paths` by 1 hop along the
+code-locator graph's **import edges** (file-level structural
+dependency), so a decision bound to `app/src/lib/git/reorder.ts` still
+surfaces when the caller passes the structurally-near
+`app/src/ui/multi-commit-operation/reorder.tsx` (because the latter
+imports the former). You should still pass concrete paths discovered
+in step 1 — the expansion lifts the recall ceiling on near-misses, it
+doesn't replace caller-side discovery. Decisions reached only via the
+expansion carry `confidence=0.7` in the response (vs `0.9` for direct
+pins), and `sources_chained` includes `"graph"` (alongside `"region"`)
+when expansion contributed at least one hit. Caller can de-prioritize
+expanded matches without losing them.
+
 ### 2.5 Resolve pending compliance checks if present
 
 Before evaluating `response.fired`, check `response._pending_compliance_checks`.

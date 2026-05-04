@@ -102,9 +102,57 @@ def _make_ctx(*, guided_mode: bool, sync_state: dict) -> SimpleNamespace:
 
 def _apply_setup(monkeypatch, setup: dict, ctx: SimpleNamespace) -> None:
     region_decisions = setup.get("region_decisions") or []
-    ctx.ledger.get_decisions_for_files = AsyncMock(
-        return_value=[_make_decision_dict(d) for d in region_decisions]
-    )
+    pinned_decisions = setup.get("region_decisions_pinned_to") or {}
+
+    if pinned_decisions:
+        # Path-aware mock — used by M6 (graph expansion). The handler may call
+        # get_decisions_for_files with the caller's original paths or with
+        # those paths plus 1-hop neighbors; only return decisions whose
+        # pinned file is among the paths supplied in *this* call. That makes
+        # the test honest: M6 passes only when the expansion supplies the
+        # neighbor path that the decision is pinned to.
+        async def _path_aware_lookup(paths):
+            out: list[dict] = []
+            for fp in paths or []:
+                for d in pinned_decisions.get(fp, []):
+                    out.append(_make_decision_dict({**d, "file_path": fp}))
+            return out
+
+        ctx.ledger.get_decisions_for_files = AsyncMock(side_effect=_path_aware_lookup)
+    else:
+        ctx.ledger.get_decisions_for_files = AsyncMock(
+            return_value=[_make_decision_dict(d) for d in region_decisions]
+        )
+
+    # Optional graph-neighbor topology for M6-style scenarios. When set, attach
+    # a stub code_graph adapter to ctx that expands file_paths by 1 hop using
+    # the supplied dict (file_path → list[neighbor_file_path]). When absent,
+    # leave ctx without a code_graph attribute — preflight's expansion path
+    # is defensive (`getattr(ctx, "code_graph", None)`) and falls back to
+    # exact-match-only retrieval.
+    graph_neighbors = setup.get("graph_neighbors") or {}
+    if graph_neighbors:
+
+        class _DatasetCodeGraph:
+            def expand_file_paths_via_graph(
+                self, file_paths: list[str], hops: int = 1
+            ) -> tuple[list[str], list[str]]:
+                expanded: list[str] = []
+                added: list[str] = []
+                seen: set[str] = set()
+                for fp in file_paths or []:
+                    if fp and fp not in seen:
+                        seen.add(fp)
+                        expanded.append(fp)
+                for fp in file_paths or []:
+                    for n in graph_neighbors.get(fp, []):
+                        if n and n not in seen:
+                            seen.add(n)
+                            expanded.append(n)
+                            added.append(n)
+                return expanded, added
+
+        ctx.code_graph = _DatasetCodeGraph()
 
     import ledger.queries as lq
 
