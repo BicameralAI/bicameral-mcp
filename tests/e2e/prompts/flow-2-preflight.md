@@ -1,3 +1,3 @@
-Quick scope shift on the reorder feature — drag-and-drop is out; we're going with a text-editor flow where the user types the desired commit order as a numbered list. No more drag-drop on this surface.
+Add a programmatic API for reordering commits — it takes an ordered list of commit SHAs and rewrites the branch history to match that order. Wire it so any UI surface can call it with a sorted list and apply the new order.
 
-Help me start the refactor — I'll deal with the call-site cleanup separately.
+I'll handle the call-site cleanup separately.
