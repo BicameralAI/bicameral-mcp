@@ -139,10 +139,18 @@ case proceed directly to step 2.
 
 ### 2. Call `bicameral.preflight` for region-anchored and HITL state
 
+**Discover first, then preflight.** Before this call, use Read / Grep / Glob to
+resolve the user's request to concrete file paths. The user often names a
+*feature* ("the reorder feature", "the rate limiter") rather than a *file*; the
+caller LLM is responsible for that mapping — the server does deterministic
+retrieval, not semantic guessing. A topic-only call falls back to fuzzy text
+similarity over decision descriptions; passing `file_paths` engages the
+high-precision `binds_to` graph lookup.
+
 ```
 bicameral.preflight(
   topic="<the 1-line topic>",
-  file_paths=["<repo-relative path>", ...],  # include if you've scoped the files
+  file_paths=["<repo-relative path>", ...],  # discovered in step 1
 )
 ```
 
@@ -160,8 +168,12 @@ those into your in-scope set.
 The response also carries an optional `sync_metrics` field — skip rendering it.
 If `response.product_stage` is non-null, surface it verbatim to the user as a brief note (shown once per device only).
 
-**Omit `file_paths`** if you haven't scoped the files yet (early "how should I
-approach X?" queries). The handler still runs sync and HITL checks.
+**`file_paths` may be omitted only** for genuinely abstract queries with no
+file referent yet (e.g. *"how should I approach building a retry helper?"* —
+no existing files to point at). For implementation prompts that name or imply
+a feature backed by existing code, populate `file_paths` from your discovery.
+The handler still runs sync and HITL checks either way; passing `file_paths`
+just unlocks the precision channel.
 
 ### 2.5 Resolve pending compliance checks if present
 
