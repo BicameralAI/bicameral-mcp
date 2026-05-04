@@ -3,6 +3,7 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+<<<<<<< triage-from-dev
 ## [Unreleased]
 
 ### Added
@@ -24,6 +25,8 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ### Security
 
+=======
+>>>>>>> main
 ## v0.13.6 — Triage: dashboard tooltip + capture-corrections source fix + #108 sim — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Triage release per [DEV_CYCLE.md §10.5](DEV_CYCLE.md). Forwards three
