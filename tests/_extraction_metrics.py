@@ -38,6 +38,7 @@ Skipped (``{"skipped": True, ...}``) when the fixture file is absent, so
 fixture-less transcripts don't break CI before the ground-truth set is
 bootstrapped.
 """
+
 from __future__ import annotations
 
 import json
@@ -67,9 +68,7 @@ def _descs(items: list[dict]) -> list[str]:
     return [str(d.get("description", "")).strip() for d in items if d.get("description")]
 
 
-def _rapidfuzz_match(
-    actual: list[str], expected: list[str]
-) -> list[tuple[int, int | None]]:
+def _rapidfuzz_match(actual: list[str], expected: list[str]) -> list[tuple[int, int | None]]:
     """Rapidfuzz 1:1 matching. Returns (actual_idx, expected_idx | None) pairs.
 
     For each actual in order, pick the best remaining expected by
@@ -143,6 +142,7 @@ def compute_extraction_metrics(
         # Import inside the function so offline tests that force
         # matcher="rapidfuzz" don't drag in httpx / network code.
         from _extraction_matcher import llm_match  # type: ignore[import-not-found]
+
         pairs = llm_match(actual, expected)
     elif chosen == "rapidfuzz":
         pairs = _rapidfuzz_match(actual, expected)

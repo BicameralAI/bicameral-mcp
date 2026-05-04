@@ -17,7 +17,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from typing import Optional
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def _save_cache(data: dict) -> None:
         pass
 
 
-def _fetch_recommended_version() -> Optional[str]:
+def _fetch_recommended_version() -> str | None:
     """Fetch RECOMMENDED_VERSION from GitHub with a 1-hour cache."""
     cache = _load_cache()
     now = time.time()
@@ -84,7 +84,7 @@ def get_update_notice(current_version: str) -> dict | None:
         "action_required": (
             f"Ask the user: 'bicameral-mcp v{recommended} is available "
             f"(you are on v{current_version}) — upgrade now? (yes/no)'. "
-            "If yes, call bicameral.update {\"action\": \"apply\"}."
+            'If yes, call bicameral.update {"action": "apply"}.'
         ),
     }
 
@@ -134,12 +134,12 @@ def _apply_pending_migration(repo_path: str) -> dict:
       replay_plan: list[dict]     (only when migrated=True)
       error: str                  (only on failure)
     """
-    import tempfile, os
+    import os
+    import tempfile
+
     tmp = None
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".py", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(_MIGRATION_SCRIPT)
             tmp = f.name
         result = subprocess.run(
@@ -167,6 +167,7 @@ def _read_guided_from_config(repo_path: str) -> bool:
     """Return the guided: flag from .bicameral/config.yaml, defaulting to False."""
     try:
         import re
+
         config_path = Path(repo_path) / ".bicameral" / "config.yaml"
         if not config_path.exists():
             return False
@@ -191,7 +192,7 @@ def _reinstall_skills(repo_path: str) -> int:
             f"rp = Path(r'{repo_path}'); "
             f"n = _install_skills(rp); "
             f"_install_claude_hooks(rp); "
-            + (f"_install_git_post_commit_hook(rp); " if guided else "")
+            + ("_install_git_post_commit_hook(rp); " if guided else "")
             + "print(n)"
         )
         result = subprocess.run(
@@ -249,6 +250,7 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
             # and handles externally-managed-environment restrictions on macOS.
             # Fall back to pip for venv/dev installs.
             import shutil
+
             if shutil.which("pipx"):
                 cmd = ["pipx", "install", target, "--force"]
             else:
@@ -270,7 +272,9 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                 )
 
                 # Auto-apply any pending destructive migration using the new binary.
-                migration_result = _apply_pending_migration(repo_path) if repo_path else {"migrated": False}
+                migration_result = (
+                    _apply_pending_migration(repo_path) if repo_path else {"migrated": False}
+                )
                 if migration_result.get("migrated"):
                     cursors_wiped = migration_result.get("cursors_wiped", 0)
                     replay_plan = migration_result.get("replay_plan", [])

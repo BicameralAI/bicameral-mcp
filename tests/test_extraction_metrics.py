@@ -3,6 +3,7 @@
 Exercises the fuzzy matching, 1:1 assignment, and aggregate math with
 synthetic extracted/fixture pairs. No network, no fixture files on disk.
 """
+
 from __future__ import annotations
 
 import sys
@@ -33,14 +34,18 @@ def test_skipped_when_fixture_absent():
 
 
 def test_perfect_match_is_p1_r1_f1_1():
-    fixture = _f([
-        "Add 12-second timeout to payment authorize calls",
-        "Emit payment.timeout event via EventBus",
-    ])
-    extracted = _e([
-        "Add 12-second timeout to payment authorize calls",
-        "Emit payment.timeout event via EventBus",
-    ])
+    fixture = _f(
+        [
+            "Add 12-second timeout to payment authorize calls",
+            "Emit payment.timeout event via EventBus",
+        ]
+    )
+    extracted = _e(
+        [
+            "Add 12-second timeout to payment authorize calls",
+            "Emit payment.timeout event via EventBus",
+        ]
+    )
     out = compute_extraction_metrics(extracted, fixture, matcher="rapidfuzz")
     assert out["skipped"] is False
     assert out["true_positives"] == 2
@@ -74,16 +79,20 @@ def test_low_similarity_is_false_positive_and_false_negative():
 
 
 def test_partial_match_mixed_precision_and_recall():
-    fixture = _f([
-        "Add timeout to authorize calls",
-        "Emit timeout event via EventBus",
-        "Drop garbage provider responses",
-    ])
-    extracted = _e([
-        "Add timeout to authorize calls",   # TP
-        "Drop garbage provider responses",  # TP
-        "Use circuit breaker for rate limiting",  # FP
-    ])
+    fixture = _f(
+        [
+            "Add timeout to authorize calls",
+            "Emit timeout event via EventBus",
+            "Drop garbage provider responses",
+        ]
+    )
+    extracted = _e(
+        [
+            "Add timeout to authorize calls",  # TP
+            "Drop garbage provider responses",  # TP
+            "Use circuit breaker for rate limiting",  # FP
+        ]
+    )
     out = compute_extraction_metrics(extracted, fixture, matcher="rapidfuzz")
     assert out["true_positives"] == 2
     assert out["false_positives"] == 1
@@ -95,10 +104,12 @@ def test_partial_match_mixed_precision_and_recall():
 def test_one_to_one_matching_prevents_double_counting():
     """If two extracted items both look like one fixture item, only one wins."""
     fixture = _f(["Add 12-second timeout to payment authorize calls"])
-    extracted = _e([
-        "Add 12-second timeout to payment authorize calls",
-        "Add a 12-second timeout to authorize calls in payments",  # very similar
-    ])
+    extracted = _e(
+        [
+            "Add 12-second timeout to payment authorize calls",
+            "Add a 12-second timeout to authorize calls in payments",  # very similar
+        ]
+    )
     out = compute_extraction_metrics(extracted, fixture, matcher="rapidfuzz")
     assert out["true_positives"] == 1  # not 2
     assert out["false_positives"] == 1  # the second one doesn't match anything new
@@ -109,13 +120,21 @@ def test_aggregate_sums_across_scored_and_ignores_skipped():
     per_transcript = [
         {
             "skipped": False,
-            "true_positives": 3, "false_positives": 1, "false_negatives": 2,
-            "precision": 0.75, "recall": 0.6, "f1": 0.667,
+            "true_positives": 3,
+            "false_positives": 1,
+            "false_negatives": 2,
+            "precision": 0.75,
+            "recall": 0.6,
+            "f1": 0.667,
         },
         {
             "skipped": False,
-            "true_positives": 5, "false_positives": 0, "false_negatives": 1,
-            "precision": 1.0, "recall": 0.833, "f1": 0.909,
+            "true_positives": 5,
+            "false_positives": 0,
+            "false_negatives": 1,
+            "precision": 1.0,
+            "recall": 0.833,
+            "f1": 0.909,
         },
         {"skipped": True, "reason": "no fixture"},
     ]
@@ -126,8 +145,8 @@ def test_aggregate_sums_across_scored_and_ignores_skipped():
     assert out["false_positives"] == 1
     assert out["false_negatives"] == 3
     # precision = 8/9, recall = 8/11
-    assert abs(out["precision"] - 8/9) < 1e-3
-    assert abs(out["recall"] - 8/11) < 1e-3
+    assert abs(out["precision"] - 8 / 9) < 1e-3
+    assert abs(out["recall"] - 8 / 11) < 1e-3
 
 
 def test_aggregate_all_skipped_returns_skipped():
@@ -153,18 +172,21 @@ def test_empty_extraction_and_empty_fixture_gives_zero_not_error():
 
 def test_pick_matcher_auto_picks_llm_when_key_present(monkeypatch):
     from _extraction_metrics import _pick_matcher
+
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-fake")
     assert _pick_matcher("auto") == "llm"
 
 
 def test_pick_matcher_auto_falls_back_to_rapidfuzz(monkeypatch):
     from _extraction_metrics import _pick_matcher
+
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     assert _pick_matcher("auto") == "rapidfuzz"
 
 
 def test_pick_matcher_explicit_overrides_env(monkeypatch):
     from _extraction_metrics import _pick_matcher
+
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-api03-fake")
     assert _pick_matcher("rapidfuzz") == "rapidfuzz"
 
@@ -227,8 +249,8 @@ def test_llm_match_parses_valid_response_into_pairs():
 def test_compute_extraction_metrics_dispatches_to_llm(monkeypatch):
     """When matcher='llm', compute_extraction_metrics calls llm_match
     instead of rapidfuzz. We stub llm_match so no network is needed."""
-    import _extraction_metrics
     import _extraction_matcher
+    import _extraction_metrics
 
     actual = _e(["X", "Y", "Z"])
     fixture = _f(["P", "Q"])

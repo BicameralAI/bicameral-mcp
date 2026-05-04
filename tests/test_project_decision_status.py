@@ -9,6 +9,7 @@ content_hash had no cache entry. The session-start banner queried
 
 Closes the gap v0.6.1's session-start banner infra couldn't close on its own.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -33,6 +34,7 @@ async def _seed_decision(client: LedgerClient, description: str = "test decision
     # canonical_id has a UNIQUE index — derive a stable unique value from the
     # description so multiple decisions in one test don't collide.
     import hashlib
+
     canonical = hashlib.sha256(description.encode()).hexdigest()[:16]
     rows = await client.query(
         "CREATE decision SET description = $d, canonical_id = $c, source_type = 'manual'",

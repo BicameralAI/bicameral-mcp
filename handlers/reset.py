@@ -48,7 +48,11 @@ async def handle_reset(
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
-    if confirm and hasattr(ledger, "force_migrate") and getattr(ledger, "_pending_destructive", None):
+    if (
+        confirm
+        and hasattr(ledger, "force_migrate")
+        and getattr(ledger, "_pending_destructive", None)
+    ):
         await ledger.force_migrate()
 
     cursors = await _get_cursors(ledger, ctx.repo_path)
@@ -68,7 +72,11 @@ async def handle_reset(
 
     if not confirm:
         if wipe_mode == "full":
-            dir_desc = f" and the entire .bicameral/ directory at {bicameral_dir!r}" if bicameral_dir else ""
+            dir_desc = (
+                f" and the entire .bicameral/ directory at {bicameral_dir!r}"
+                if bicameral_dir
+                else ""
+            )
             next_action = (
                 f"DRY RUN — FULL WIPE. Would delete {cursors_before} source_cursor row(s), "
                 f"every bicameral node/edge scoped to {ctx.repo_path!r}{dir_desc}. "
@@ -95,6 +103,7 @@ async def handle_reset(
     # Invalidate within-call sync cache before any destructive operation.
     try:
         from handlers.link_commit import invalidate_sync_cache
+
         invalidate_sync_cache(ctx)
     except Exception:
         pass
@@ -123,7 +132,10 @@ async def handle_reset(
 
     logger.info(
         "[reset] wipe_mode=%s, wiped %d source_cursor(s) for repo=%s bicameral_dir=%r",
-        wipe_mode, cursors_before, ctx.repo_path, bicameral_dir,
+        wipe_mode,
+        cursors_before,
+        ctx.repo_path,
+        bicameral_dir,
     )
 
     if wipe_mode == "full":
@@ -165,15 +177,14 @@ async def _wipe_ledger(ledger, repo_path: str) -> None:
     inner = getattr(ledger, "_inner", ledger)
     client = getattr(inner, "_client", None)
     if client is None:
-        raise RuntimeError(
-            "reset: ledger adapter does not expose wipe_all_rows or an inner client"
-        )
+        raise RuntimeError("reset: ledger adapter does not expose wipe_all_rows or an inner client")
     import shutil
+
     url = getattr(inner, "_url", "")
     await client.close()
     inner._connected = False
     if url.startswith("surrealkv://"):
-        db_path = url[len("surrealkv://"):]
+        db_path = url[len("surrealkv://") :]
         if db_path:
             shutil.rmtree(db_path, ignore_errors=True)
     await inner._ensure_connected()
@@ -219,7 +230,7 @@ def _resolve_bicameral_dir(ledger) -> str:
             continue
         url = getattr(obj, "_url", "")
         if url.startswith("surrealkv://"):
-            db_path = url[len("surrealkv://"):]
+            db_path = url[len("surrealkv://") :]
             if db_path:
                 return str(Path(db_path).expanduser().parent)
     return ""
@@ -251,4 +262,5 @@ def _resolve_ledger_url(ctx, ledger) -> str:
         if v:
             return str(v)
     import os
+
     return os.environ.get("SURREAL_URL", "")

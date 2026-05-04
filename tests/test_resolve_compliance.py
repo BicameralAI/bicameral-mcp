@@ -11,6 +11,7 @@ Covers:
   link_commit + resolve flow on a tmp git repo.
 - not_relevant verdict prunes the binds_to edge + audit row kept
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -72,8 +73,7 @@ async def _seed_region(
     symbol: str = "do_thing",
 ) -> str:
     rows = await client.query(
-        "CREATE code_region SET file_path = $f, symbol_name = $s, "
-        "start_line = 1, end_line = 10",
+        "CREATE code_region SET file_path = $f, symbol_name = $s, start_line = 1, end_line = 10",
         {"f": file_path, "s": symbol},
     )
     return str(rows[0]["id"])
@@ -100,7 +100,9 @@ async def test_resolve_compliance_writes_compliance_check_row():
         )
 
         resp = await handle_resolve_compliance(
-            ctx, phase="ingest", verdicts=[verdict],
+            ctx,
+            phase="ingest",
+            verdicts=[verdict],
         )
 
         assert resp.phase == "ingest"
@@ -246,7 +248,10 @@ async def test_resolve_compliance_mixed_batch_partitions_correctly():
         )
 
         resp = await handle_resolve_compliance(
-            ctx, phase="drift", verdicts=[good, bad], commit_hash="abc123",
+            ctx,
+            phase="drift",
+            verdicts=[good, bad],
+            commit_hash="abc123",
         )
 
         assert len(resp.accepted) == 1
@@ -272,9 +277,7 @@ async def test_resolve_compliance_accepts_all_phase_values():
         decision_id = await _seed_decision(client)
         region_id = await _seed_region(client)
 
-        for i, phase in enumerate(
-            ("ingest", "drift", "regrounding", "supersession", "divergence")
-        ):
+        for i, phase in enumerate(("ingest", "drift", "regrounding", "supersession", "divergence")):
             v = ComplianceVerdict(
                 decision_id=decision_id,
                 region_id=region_id,
@@ -296,7 +299,9 @@ async def test_resolve_compliance_rejects_unknown_phase():
     try:
         with pytest.raises(ValueError, match="Unknown phase"):
             await handle_resolve_compliance(
-                ctx, phase="speculation", verdicts=[],
+                ctx,
+                phase="speculation",
+                verdicts=[],
             )
     finally:
         await _client.close()
@@ -322,7 +327,9 @@ async def test_resolve_compliance_accepts_dict_verdicts():
             "explanation": "from JSON",
         }
         resp = await handle_resolve_compliance(
-            ctx, phase="ingest", verdicts=[verdict_dict],
+            ctx,
+            phase="ingest",
+            verdicts=[verdict_dict],
         )
         assert len(resp.accepted) == 1
     finally:
@@ -354,7 +361,9 @@ async def test_not_relevant_verdict_prunes_binds_to_edge():
             explanation="this region is unrelated",
         )
         resp = await handle_resolve_compliance(
-            ctx, phase="ingest", verdicts=[verdict],
+            ctx,
+            phase="ingest",
+            verdicts=[verdict],
         )
         assert len(resp.accepted) == 1
 
@@ -376,7 +385,11 @@ async def test_not_relevant_verdict_prunes_binds_to_edge():
 
 def _git(cwd: Path, *args: str) -> str:
     result = subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True,
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return result.stdout.strip()
 
@@ -386,12 +399,14 @@ def _seed_repo(root: Path) -> None:
     _git(root, "init", "-q", "-b", "main")
     _git(root, "config", "user.email", "test@example.com")
     _git(root, "config", "user.name", "Test")
-    (root / "pricing.py").write_text(dedent("""
+    (root / "pricing.py").write_text(
+        dedent("""
         def calculate_discount(order_total):
             if order_total >= 100:
                 return order_total * 0.10
             return 0
-    """).lstrip("\n"))
+    """).lstrip("\n")
+    )
     _git(root, "add", "pricing.py")
     _git(root, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "seed")
 
@@ -433,13 +448,15 @@ async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
                 },
                 "intent": "Apply 10% discount on orders of $100 or more",
                 "symbols": ["calculate_discount"],
-                "code_regions": [{
-                    "file_path": "pricing.py",
-                    "symbol": "calculate_discount",
-                    "type": "function",
-                    "start_line": 1,
-                    "end_line": 4,
-                }],
+                "code_regions": [
+                    {
+                        "file_path": "pricing.py",
+                        "symbol": "calculate_discount",
+                        "type": "function",
+                        "start_line": 1,
+                        "end_line": 4,
+                    }
+                ],
                 # Ratified signoff required for drift detection to run (v0.7+)
                 "signoff": {
                     "state": "ratified",
@@ -454,9 +471,7 @@ async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
 
     assert ingest_resp.sync_status is not None, "ingest should populate sync_status"
     pending = ingest_resp.sync_status.pending_compliance_checks
-    assert len(pending) == 1, (
-        f"Expected one pending check from drift sweep, got {len(pending)}"
-    )
+    assert len(pending) == 1, f"Expected one pending check from drift sweep, got {len(pending)}"
 
     p = pending[0]
     assert p.decision_description == "Apply 10% discount on orders of $100 or more"
@@ -512,13 +527,15 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
                 },
                 "intent": "Apply 50% discount on orders of $100 or more",
                 "symbols": ["calculate_discount"],
-                "code_regions": [{
-                    "file_path": "pricing.py",
-                    "symbol": "calculate_discount",
-                    "type": "function",
-                    "start_line": 1,
-                    "end_line": 4,
-                }],
+                "code_regions": [
+                    {
+                        "file_path": "pricing.py",
+                        "symbol": "calculate_discount",
+                        "type": "function",
+                        "start_line": 1,
+                        "end_line": 4,
+                    }
+                ],
                 # Ratified signoff required for drift detection to run (v0.7+)
                 "signoff": {
                     "state": "ratified",
@@ -553,7 +570,10 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
     assert len(drifted) == 1
     inner = getattr(ledger, "_inner", ledger)
     cached = await get_compliance_verdict(
-        inner._client, p.decision_id, p.region_id, p.content_hash,
+        inner._client,
+        p.decision_id,
+        p.region_id,
+        p.content_hash,
     )
     assert cached is not None
     assert cached["verdict"] == "drifted"

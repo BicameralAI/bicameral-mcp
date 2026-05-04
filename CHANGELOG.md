@@ -3,6 +3,30 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+<<<<<<< triage-from-dev
+## [Unreleased]
+
+### Added
+
+- `handlers/preflight.py` — `_region_anchored_preflight` now expands caller-supplied `file_paths` by 1 hop along the code-locator graph's **import edges** before the `binds_to` lookup. Lifts the strict exact-match recall ceiling so a decision bound to `app/src/lib/git/reorder.ts` surfaces when the caller passes the structurally-near `app/src/ui/multi-commit-operation/reorder.tsx`. Decisions reached only via expansion carry `confidence=0.7` (vs `0.9` for direct pins). `sources_chained` includes `"graph"` (alongside `"region"`) when expansion contributed at least one hit. Bounded per #64: ≤10 input seeds × `max_neighbors_per_result` neighbors per seed. Closes #173 (and supersedes #64).
+- `adapters/code_locator.py::RealCodeLocatorAdapter.expand_file_paths_via_graph` — public method backing the expansion. Filters to ``imports`` edges only (file-level structural dependency); ``invokes`` / ``inherits`` / ``contains`` are symbol-level edges that over-broaden the file-level expansion. Returns `(expanded, added)` so callers can mark provenance.
+- `skills/bicameral-preflight/SKILL.md` Step 2 — documents the imports-only expansion + caller-side `confidence` and `sources_chained` semantics.
+- `tests/eval/preflight_dataset.jsonl` — M6 row flipped from XFAIL → live. Setup updated to specify graph-neighbor topology (`graph_neighbors`) and pinned-decision targets (`region_decisions_pinned_to`); the asserter now tests true graph-expansion semantics rather than mock-returns-decision-regardless-of-input.
+- `tests/eval/run_preflight_eval.py` — `_apply_setup` extended with `region_decisions_pinned_to` (path-aware decision lookup) and `graph_neighbors` (stub code_graph) so M6-style scenarios can be expressed in the dataset.
+
+### Changed
+
+- `skills/bicameral-preflight/SKILL.md` Step 5.6 — judgment for contradiction-capture moves from the agent to the user via `AskUserQuestion` (Step 5.6.1). The agent no longer infers whether the prompt contradicts a surfaced decision; it asks the user (`supersede` / `keep_both` / `unrelated`) and acts mechanically on the answer (Step 5.6.2 — ingest + resolve_collision). The PostToolUse hook reminder now templates the disambiguation question rather than the bare ingest+resolve_collision sequence. Closes #175.
+- `tests/e2e/run_e2e_flows.py::assert_flow_2a` — pass criterion changed from "ingest+resolve_collision fired" to "`AskUserQuestion` invoked with disambiguation shape after preflight surfaced ≥1 decision." The user-side response can't be driven in headless `claude -p`, so the testable signal is the question invocation. The mechanical capture (Step 5.6.2) only fires after a human answers and is exercised in interactive Claude Code sessions, not CI.
+
+### Fixed
+
+### Schema
+
+### Security
+
+=======
+>>>>>>> main
 ## v0.13.6 — Triage: dashboard tooltip + capture-corrections source fix + #108 sim — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Triage release per [DEV_CYCLE.md §10.5](DEV_CYCLE.md). Forwards three

@@ -11,6 +11,7 @@ the caller LLM actually evaluated.
 These tests pin the fields, the enum constraints, the defaults, and the
 UNIQUE cache-key index. They run against memory:// for hermetic isolation.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -165,9 +166,7 @@ async def test_phase_accepts_all_five_reserved_values():
     """
     c = await _fresh_client()
     try:
-        for i, phase in enumerate(
-            ("ingest", "drift", "regrounding", "supersession", "divergence")
-        ):
+        for i, phase in enumerate(("ingest", "drift", "regrounding", "supersession", "divergence")):
             await c.execute(
                 "CREATE compliance_check SET decision_id = $i, region_id = $r, "
                 "content_hash = $h, verdict = 'compliant', confidence = 'high', "
@@ -298,10 +297,7 @@ async def test_init_schema_is_idempotent_against_existing_db():
         await init_schema(c)
 
         # Sanity: schema still works after repeated inits.
-        await c.execute(
-            "CREATE intent SET description = 'init-idem test', "
-            "source_type = 'manual'"
-        )
+        await c.execute("CREATE intent SET description = 'init-idem test', source_type = 'manual'")
         rows = await c.query("SELECT description FROM intent")
         assert len(rows) == 1
         assert rows[0]["description"] == "init-idem test"

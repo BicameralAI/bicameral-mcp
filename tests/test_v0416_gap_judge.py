@@ -36,7 +36,6 @@ from handlers.gap_judge import (
 )
 from handlers.ingest import handle_ingest
 
-
 # ── Layer 1: pure rubric shape tests ────────────────────────────────
 
 
@@ -144,7 +143,10 @@ def test_build_context_decisions_groups_related_by_symbol():
         source_ref="r1",
         code_regions=[
             CodeRegionSummary(
-                file_path="src/limit.py", symbol="Limiter", lines=(1, 10), purpose="",
+                file_path="src/limit.py",
+                symbol="Limiter",
+                lines=(1, 10),
+                purpose="",
             )
         ],
         drift_evidence="",
@@ -160,7 +162,10 @@ def test_build_context_decisions_groups_related_by_symbol():
         source_ref="r2",
         code_regions=[
             CodeRegionSummary(
-                file_path="src/limit.py", symbol="Limiter", lines=(1, 10), purpose="",
+                file_path="src/limit.py",
+                symbol="Limiter",
+                lines=(1, 10),
+                purpose="",
             )
         ],
         drift_evidence="",
@@ -176,7 +181,10 @@ def test_build_context_decisions_groups_related_by_symbol():
         source_ref="r3",
         code_regions=[
             CodeRegionSummary(
-                file_path="src/other.py", symbol="Other", lines=(1, 10), purpose="",
+                file_path="src/other.py",
+                symbol="Other",
+                lines=(1, 10),
+                purpose="",
             )
         ],
         drift_evidence="",
@@ -222,8 +230,12 @@ def _seed_repo(repo_root: Path, body: str) -> None:
     _git(repo_root, "add", ".")
     _git(
         repo_root,
-        "-c", "commit.gpgsign=false",
-        "commit", "-q", "-m", "seed",
+        "-c",
+        "commit.gpgsign=false",
+        "commit",
+        "-q",
+        "-m",
+        "seed",
     )
 
 
@@ -303,7 +315,8 @@ async def test_judge_gaps_honest_empty_path(_isolated_ledger):
     ctx = BicameralContext.from_env()
 
     payload = await handle_judge_gaps(
-        ctx, topic="topic-that-has-no-decisions-anywhere",
+        ctx,
+        topic="topic-that-has-no-decisions-anywhere",
     )
     assert payload is None
 
@@ -333,7 +346,8 @@ async def test_judge_gaps_builds_context_pack(_isolated_ledger):
     # Search BM25 against the decision terms directly — generic topics
     # like "discount pricing" don't rank above min_confidence=0.3.
     judgment = await handle_judge_gaps(
-        ctx, topic="apply 10% discount on orders",
+        ctx,
+        topic="apply 10% discount on orders",
     )
     assert judgment is not None, "judge_gaps must build a pack on matches"
     assert judgment.topic == "apply 10% discount on orders"
@@ -342,9 +356,7 @@ async def test_judge_gaps_builds_context_pack(_isolated_ledger):
     assert "VERBATIM" in judgment.judgment_prompt
     assert judgment.as_of, "as_of must be populated with ISO datetime"
 
-    assert len(judgment.decisions) >= 1, (
-        "judge_gaps should see the just-ingested decision"
-    )
+    assert len(judgment.decisions) >= 1, "judge_gaps should see the just-ingested decision"
     decision = judgment.decisions[0]
     assert "10%" in decision.description or "discount" in decision.description.lower()
     assert "10%" in decision.source_excerpt or "$100" in decision.source_excerpt

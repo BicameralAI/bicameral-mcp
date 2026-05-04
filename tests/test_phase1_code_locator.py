@@ -16,7 +16,6 @@ import pytest
 
 from adapters.code_locator import get_code_locator
 
-
 # ── Real adapter tests (Phase 1 — require indexed repo) ─────────────
 
 
@@ -70,6 +69,7 @@ def test_get_neighbors_returns_valid_edges(monkeypatch, repo_path):
 
 
 # ── extract_symbols ──────────────────────────────────────────────────
+
 
 @pytest.mark.phase1
 @pytest.mark.asyncio

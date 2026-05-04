@@ -6,7 +6,6 @@ import pytest
 
 from codegenome.config import CodeGenomeConfig
 
-
 _ALL_FLAGS = (
     "BICAMERAL_CODEGENOME_ENABLED",
     "BICAMERAL_CODEGENOME_WRITE_IDENTITY_RECORDS",
@@ -67,6 +66,10 @@ def test_identity_writes_active_requires_both_flags():
     assert CodeGenomeConfig().identity_writes_active() is False
     assert CodeGenomeConfig(enabled=True).identity_writes_active() is False
     assert CodeGenomeConfig(write_identity_records=True).identity_writes_active() is False
-    assert CodeGenomeConfig(
-        enabled=True, write_identity_records=True,
-    ).identity_writes_active() is True
+    assert (
+        CodeGenomeConfig(
+            enabled=True,
+            write_identity_records=True,
+        ).identity_writes_active()
+        is True
+    )

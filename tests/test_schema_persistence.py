@@ -80,6 +80,7 @@ async def test_destructive_migration_blocked(tmp_path):
     allow_destructive=False is safe when there are no destructive steps.
     """
     from ledger.schema import DESTRUCTIVE_MIGRATIONS
+
     url = f"surrealkv://{tmp_path / 'ledger.db'}"
     client = LedgerClient(url=url, ns="bicameral", db="ledger")
     await client.connect()

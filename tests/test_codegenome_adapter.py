@@ -22,7 +22,6 @@ from codegenome.deterministic_adapter import (
     DeterministicCodeGenomeAdapter,
 )
 
-
 # ── Phase 1: ABC + dataclasses ──────────────────────────────────────────────
 
 

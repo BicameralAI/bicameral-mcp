@@ -107,6 +107,7 @@ def _response_dict(response) -> dict:
 
 # ── Real code locator helpers ────────────────────────────────────────
 
+
 def _locate_hits(adapter, query_str: str, limit: int = 2) -> list[dict]:
     """Resolve a bag-of-words query to {file_path, symbol_name, line_number}
     hits for test payload construction.
@@ -134,12 +135,14 @@ def _locate_hits(adapter, query_str: str, limit: int = 2) -> list[dict]:
         row = db.lookup_by_id(sid)
         if row is None:
             continue
-        hits.append({
-            "file_path": row["file_path"],
-            "symbol_name": row["name"],
-            "line_number": row["start_line"],
-            "score": v.get("match_score", 0) / 100.0,
-        })
+        hits.append(
+            {
+                "file_path": row["file_path"],
+                "symbol_name": row["name"],
+                "line_number": row["start_line"],
+                "score": v.get("match_score", 0) / 100.0,
+            }
+        )
         if len(hits) >= limit:
             break
     return hits
@@ -175,30 +178,34 @@ def _build_payload_from_real_code(
                 sym = hit.get("symbol_name", "")
                 line = hit.get("line_number", 1)
                 if fp:
-                    code_regions.append({
-                        "file_path": fp,
-                        "symbol": sym or fp.split("/")[-1],
-                        "type": "function",
-                        "start_line": line,
-                        "end_line": line + 20,
-                        "purpose": f"Located from search terms: {item['search']!r}",
-                    })
+                    code_regions.append(
+                        {
+                            "file_path": fp,
+                            "symbol": sym or fp.split("/")[-1],
+                            "type": "function",
+                            "start_line": line,
+                            "end_line": line + 20,
+                            "purpose": f"Located from search terms: {item['search']!r}",
+                        }
+                    )
                     if sym:
                         symbols.append(sym)
 
-        mappings.append({
-            "span": {
-                "span_id": f"e2e-{i}",
-                "source_type": source_type,
-                "text": item["text"],
-                "speaker": item.get("speaker", ""),
-                "source_ref": source_ref,
-            },
-            "intent": item["intent"],
-            "symbols": symbols,
-            "code_regions": code_regions,
-            "dependency_edges": [],
-        })
+        mappings.append(
+            {
+                "span": {
+                    "span_id": f"e2e-{i}",
+                    "source_type": source_type,
+                    "text": item["text"],
+                    "speaker": item.get("speaker", ""),
+                    "source_ref": source_ref,
+                },
+                "intent": item["intent"],
+                "symbols": symbols,
+                "code_regions": code_regions,
+                "dependency_edges": [],
+            }
+        )
 
     return {
         "query": query,
@@ -214,6 +221,7 @@ def _build_payload_from_real_code(
 # "A known technical limit surfaces mid-sprint instead of at design time"
 # Tool: bicameral.search — pre-flight before coding
 # ══════════════════════════════════════════════════════════════════════
+
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
@@ -277,6 +285,7 @@ async def test_constraint_lost__search_surfaces_prior_decisions(ctx):
 # "The 'why' behind a decision is split across Slack, Notion, and memory"
 # Tool: bicameral.ingest — normalizes intent from multiple sources
 # ══════════════════════════════════════════════════════════════════════
+
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
@@ -355,6 +364,7 @@ async def test_context_scattered__ingest_unifies_sources(ctx):
 # Tool: bicameral.status — tracks decided vs built, surfaces ungrounded
 # ══════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.phase3
 @pytest.mark.asyncio
 async def test_decision_undocumented__status_surfaces_ungrounded(ctx):
@@ -414,6 +424,7 @@ async def test_decision_undocumented__status_surfaces_ungrounded(ctx):
 # Tool: search + code locator — retrieves full decision provenance
 # ══════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.phase3
 @pytest.mark.asyncio
 async def test_repeated_explanation__search_returns_full_provenance(ctx):
@@ -471,6 +482,7 @@ async def test_repeated_explanation__search_returns_full_provenance(ctx):
 # Tool: bicameral.drift — surfaces institutional memory tied to code
 # ══════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.phase3
 @pytest.mark.asyncio
 async def test_tribal_knowledge__drift_surfaces_decisions_for_file(ctx):
@@ -521,6 +533,7 @@ async def test_tribal_knowledge__drift_surfaces_decisions_for_file(ctx):
 # ══════════════════════════════════════════════════════════════════════
 # INTEGRATION: Full lifecycle + graph integrity
 # ══════════════════════════════════════════════════════════════════════
+
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
@@ -576,7 +589,9 @@ async def test_full_lifecycle_graph_integrity(ctx):
     _dump("06_lifecycle_03_status", _response_dict(r_status))
 
     # Step 4: Search
-    r_search = await handle_search_decisions(ctx, query="BM25 search provenance", min_confidence=0.1)
+    r_search = await handle_search_decisions(
+        ctx, query="BM25 search provenance", min_confidence=0.1
+    )
     assert len(r_search.matches) >= 1
     _dump("06_lifecycle_04_search", _response_dict(r_search))
 

@@ -42,7 +42,7 @@ def _resolve_subjects_eligible(decision: dict) -> bool:
     """
     level = decision.get("decision_level")
     if level is None:
-        return True   # pre-v0.9.3 decisions: eligible by default for backward compat
+        return True  # pre-v0.9.3 decisions: eligible by default for backward compat
     return level == "L2"
 
 
@@ -73,18 +73,20 @@ def raw_decisions_to_drift_entries(
             counts["ungrounded"] += 1
 
         _signoff = d.get("signoff") or {}
-        entries.append(DriftEntry(
-            decision_id=d["decision_id"],
-            description=d["description"],
-            status=status,
-            signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
-            symbol=region.get("symbol", ""),
-            lines=tuple(region.get("lines", (0, 0))),
-            drift_evidence=drift_evidence,
-            source_ref=d.get("source_ref", ""),
-            source_excerpt=d.get("source_excerpt", ""),
-            meeting_date=d.get("meeting_date", ""),
-        ))
+        entries.append(
+            DriftEntry(
+                decision_id=d["decision_id"],
+                description=d["description"],
+                status=status,
+                signoff_state=(_signoff.get("state") if isinstance(_signoff, dict) else None),
+                symbol=region.get("symbol", ""),
+                lines=tuple(region.get("lines", (0, 0))),
+                drift_evidence=drift_evidence,
+                source_ref=d.get("source_ref", ""),
+                source_excerpt=d.get("source_excerpt", ""),
+                meeting_date=d.get("meeting_date", ""),
+            )
+        )
 
     return entries, counts
 
@@ -101,12 +103,8 @@ async def handle_detect_drift(
     if os.getenv("USE_REAL_CODE_LOCATOR", "0") == "1":
         abs_path = str((Path(ctx.repo_path) / file_path).resolve())
         all_symbols = await ctx.code_graph.extract_symbols(abs_path)
-        decision_symbols = {
-            d.get("code_region", {}).get("symbol", "") for d in raw_decisions
-        }
-        undocumented = [
-            s["name"] for s in all_symbols if s["name"] not in decision_symbols
-        ]
+        decision_symbols = {d.get("code_region", {}).get("symbol", "") for d in raw_decisions}
+        undocumented = [s["name"] for s in all_symbols if s["name"] not in decision_symbols]
     else:
         undocumented = await ctx.ledger.get_undocumented_symbols(file_path)
 
@@ -188,7 +186,12 @@ def _enrich_with_cosmetic_hints(
             head_range = resolve_symbol_lines(file_path, entry.symbol, repo_path, ref="HEAD")
             wt_range = resolve_symbol_lines(file_path, entry.symbol, repo_path, ref="working_tree")
         except Exception as exc:
-            logger.debug("[detect_drift] resolve_symbol_lines failed for %s/%s: %s", file_path, entry.symbol, exc)
+            logger.debug(
+                "[detect_drift] resolve_symbol_lines failed for %s/%s: %s",
+                file_path,
+                entry.symbol,
+                exc,
+            )
             continue
         if head_range is None or wt_range is None:
             continue  # symbol absent at one side — not a cosmetic case
@@ -200,8 +203,8 @@ def _enrich_with_cosmetic_hints(
         if wt_start <= 0 or wt_end < wt_start:
             continue
 
-        head_slice = "\n".join(head_lines[head_start - 1:head_end])
-        wt_slice = "\n".join(wt_lines[wt_start - 1:wt_end])
+        head_slice = "\n".join(head_lines[head_start - 1 : head_end])
+        wt_slice = "\n".join(wt_lines[wt_start - 1 : wt_end])
         if not head_slice or not wt_slice:
             continue
         if head_slice == wt_slice:

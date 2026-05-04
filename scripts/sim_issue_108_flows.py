@@ -75,9 +75,7 @@ async def make_temp_ctx(repo_path: str, session_id: str = "sim-issue-108"):
 
 def init_temp_git(prefix: str) -> str:
     tmpdir = tempfile.mkdtemp(prefix=prefix)
-    subprocess.run(
-        ["git", "init", "-b", "main"], cwd=tmpdir, check=True, capture_output=True
-    )
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmpdir, check=True, capture_output=True)
     subprocess.run(
         ["git", "config", "user.email", "sim@sim.com"],
         cwd=tmpdir,
@@ -98,9 +96,7 @@ def commit_file(repo: str, relpath: str, content: str, message: str) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content)
     subprocess.run(["git", "add", relpath], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True
-    )
+    subprocess.run(["git", "commit", "-m", message], cwd=repo, check=True, capture_output=True)
 
 
 # ── Flow 1: Record decisions from a meeting ────────────────────────────
@@ -156,9 +152,7 @@ async def flow_1_record_decisions() -> None:
 
         # Read raw signoff to verify state
         inner = getattr(ctx.ledger, "_inner", ctx.ledger)
-        raw_rows = await inner._client.query(
-            f"SELECT signoff FROM {decision_id} LIMIT 1"
-        )
+        raw_rows = await inner._client.query(f"SELECT signoff FROM {decision_id} LIMIT 1")
         raw_signoff = (raw_rows[0].get("signoff") or {}) if raw_rows else {}
         signoff_state_post_ingest = raw_signoff.get("state", "?")
         status_post_ingest = await project_decision_status(inner._client, decision_id)
@@ -174,8 +168,7 @@ async def flow_1_record_decisions() -> None:
             and signoff_state_post_ingest == "proposed"
             and status_post_ingest == "ungrounded"
             and signoff_state_post_ratify == "ratified"
-            and status_post_ratify
-            == "ungrounded"  # still ungrounded — bind not yet called
+            and status_post_ratify == "ungrounded"  # still ungrounded — bind not yet called
         )
 
         body = (
@@ -396,9 +389,7 @@ async def flow_3_commit_to_reflected() -> None:
         # Out-of-session-committer invariant: status === 'pending' is the state that
         # drives the dashboard tooltip. Tooltip text in dashboard.html:
         #   "Pending compliance — run /bicameral-sync in your Claude Code session to resolve."
-        out_of_session_state_correct = (
-            status_pending == "pending" and len(pending_checks) >= 1
-        )
+        out_of_session_state_correct = status_pending == "pending" and len(pending_checks) >= 1
 
         # Caller-LLM resolves the queue (this is what /bicameral-sync does)
         verdicts = [
@@ -413,17 +404,11 @@ async def flow_3_commit_to_reflected() -> None:
             for c in pending_checks
         ]
         if verdicts:
-            await handle_resolve_compliance(
-                ctx, phase="drift", verdicts=verdicts, flow_id=flow_id
-            )
+            await handle_resolve_compliance(ctx, phase="drift", verdicts=verdicts, flow_id=flow_id)
 
         status_after = await project_decision_status(inner._client, decision_id)
 
-        passed = (
-            out_of_session_state_correct
-            and bool(flow_id)
-            and status_after == "reflected"
-        )
+        passed = out_of_session_state_correct and bool(flow_id) and status_after == "reflected"
 
         body = (
             f"Pre-resolve (out-of-session committer state):\n"
@@ -464,9 +449,7 @@ async def flow_3a_ephemeral_branch() -> None:
         check=True,
         capture_output=True,
     )
-    commit_file(
-        tmpdir, "feat.py", "def feature():\n    return 'branch'\n", "feat: branch impl"
-    )
+    commit_file(tmpdir, "feat.py", "def feature():\n    return 'branch'\n", "feat: branch impl")
 
     try:
         ctx = await make_temp_ctx(tmpdir, "sim-flow3a")
@@ -546,18 +529,14 @@ async def flow_3a_ephemeral_branch() -> None:
                 }
                 for c in pending_checks
             ]
-            await handle_resolve_compliance(
-                ctx, phase="drift", verdicts=verdicts, flow_id=flow_id
-            )
+            await handle_resolve_compliance(ctx, phase="drift", verdicts=verdicts, flow_id=flow_id)
 
         inner = getattr(ctx.ledger, "_inner", ctx.ledger)
         status_on_branch = await project_decision_status(inner._client, did)
 
         # Switch back to main — ensure_ledger_synced should fire on next tool call
         # and the stale repair should mark the decision drifted (since H_main != H_branch).
-        subprocess.run(
-            ["git", "checkout", "main"], cwd=tmpdir, check=True, capture_output=True
-        )
+        subprocess.run(["git", "checkout", "main"], cwd=tmpdir, check=True, capture_output=True)
         # Force fresh sync by invalidating any caches
         try:
             from handlers.link_commit import invalidate_sync_cache
@@ -650,12 +629,8 @@ async def flow_4_session_end_capture() -> None:
         decision_id = ingest_r.created_decisions[0].decision_id
 
         inner = getattr(ctx.ledger, "_inner", ctx.ledger)
-        raw_rows = await inner._client.query(
-            f"SELECT signoff FROM {decision_id} LIMIT 1"
-        )
-        signoff_state = (
-            (raw_rows[0].get("signoff") or {}).get("state", "?") if raw_rows else "?"
-        )
+        raw_rows = await inner._client.query(f"SELECT signoff FROM {decision_id} LIMIT 1")
+        signoff_state = (raw_rows[0].get("signoff") or {}).get("state", "?") if raw_rows else "?"
         status = await project_decision_status(inner._client, decision_id)
 
         # Verify source_type round-trips (history readback is the user-facing surface)
@@ -667,9 +642,7 @@ async def flow_4_session_end_capture() -> None:
         target = next((d for d in all_decisions if d.id == decision_id), None)
         sources = target.sources if target else []
         # HistorySource is a Pydantic model — attribute access, not .get()
-        source_types = (
-            [getattr(s, "source_type", "?") for s in sources] if sources else []
-        )
+        source_types = [getattr(s, "source_type", "?") for s in sources] if sources else []
         source_type_round_trip = source_types[0] if source_types else "?"
 
         passed = (
@@ -771,9 +744,7 @@ async def flow_5_history_axes() -> None:
         }
 
         all_have_status = all(d.status in valid_status for d in all_decisions)
-        all_have_signoff = all(
-            (d.signoff_state in valid_signoff) for d in all_decisions
-        )
+        all_have_signoff = all((d.signoff_state in valid_signoff) for d in all_decisions)
         feature_count = len(hist.features)
 
         # Verify the orthogonalization: the ratified decision should show
@@ -786,17 +757,16 @@ async def flow_5_history_axes() -> None:
         )
 
         passed = (
-            feature_count >= 2
-            and all_have_status
-            and all_have_signoff
-            and ratified_axes_correct
+            feature_count >= 2 and all_have_status and all_have_signoff and ratified_axes_correct
         )
 
         body = f"Feature groups: {feature_count}\n\n"
         for fg in hist.features:
             body += f"  [{fg.name}] — {len(fg.decisions)} decision(s)\n"
             for d in fg.decisions:
-                body += f"    status={d.status}  signoff_state={d.signoff_state}  '{d.summary[:50]}'\n"
+                body += (
+                    f"    status={d.status}  signoff_state={d.signoff_state}  '{d.summary[:50]}'\n"
+                )
 
         body += (
             f"\nSpec invariant — orthogonal axes:\n"

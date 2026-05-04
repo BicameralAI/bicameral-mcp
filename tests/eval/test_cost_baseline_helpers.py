@@ -4,6 +4,7 @@ Pinned coverage for:
 - Synthetic ledger generator: determinism, shape, scaling, status distribution
 - Token counter: basic call, JSON-serialized payloads, monotonicity
 """
+
 from __future__ import annotations
 
 import sys
@@ -28,7 +29,6 @@ from _synthetic_ledger import (  # noqa: E402  (sibling module)
 )
 from _token_count import count_tokens, count_tokens_json  # noqa: E402
 
-
 # ── Generator: determinism ──────────────────────────────────────────────
 
 
@@ -50,7 +50,11 @@ def test_generator_diverges_for_different_seeds():
 def test_generator_top_level_shape():
     ledger = generate_ledger(n_features=10)
     assert set(ledger.keys()) >= {
-        "features", "truncated", "total_features", "as_of", "sync_metrics",
+        "features",
+        "truncated",
+        "total_features",
+        "as_of",
+        "sync_metrics",
         "_generator_version",
     }
     assert ledger["total_features"] == 10
@@ -78,12 +82,7 @@ def test_generator_decision_shape():
 
 def test_drifted_decision_has_drift_evidence_and_fulfillment():
     ledger = generate_ledger(n_features=200, seed=42)
-    drifted = [
-        d
-        for f in ledger["features"]
-        for d in f["decisions"]
-        if d["status"] == "drifted"
-    ]
+    drifted = [d for f in ledger["features"] for d in f["decisions"] if d["status"] == "drifted"]
     assert drifted, "expected at least one drifted decision at N=200"
     for d in drifted:
         assert d["drift_evidence"], "drifted decisions must carry drift_evidence"
@@ -93,10 +92,7 @@ def test_drifted_decision_has_drift_evidence_and_fulfillment():
 def test_ungrounded_decision_has_no_fulfillment():
     ledger = generate_ledger(n_features=200, seed=42)
     ungrounded = [
-        d
-        for f in ledger["features"]
-        for d in f["decisions"]
-        if d["status"] == "ungrounded"
+        d for f in ledger["features"] for d in f["decisions"] if d["status"] == "ungrounded"
     ]
     assert ungrounded, "expected at least one ungrounded decision at N=200"
     for d in ungrounded:

@@ -92,9 +92,7 @@ async def test_ratify_event_roundtrip(tmp_path: Path) -> None:
     }
     await team_a.apply_ratify(decision_id_a, signoff)
 
-    rows = await inner_a._client.query(
-        f"SELECT signoff FROM {decision_id_a} LIMIT 1"
-    )
+    rows = await inner_a._client.query(f"SELECT signoff FROM {decision_id_a} LIMIT 1")
     assert rows and rows[0]["signoff"]["state"] == "ratified"
 
     # Fresh adapter, same JSONL log, fresh watermark — replay from 0.
@@ -104,13 +102,10 @@ async def test_ratify_event_roundtrip(tmp_path: Path) -> None:
 
     decision_id_b = await find_decision_by_canonical_id(inner_b._client, canonical)
     assert decision_id_b, "ingest event did not replay (no row for canonical_id)"
-    rows_b = await inner_b._client.query(
-        f"SELECT signoff FROM {decision_id_b} LIMIT 1"
-    )
+    rows_b = await inner_b._client.query(f"SELECT signoff FROM {decision_id_b} LIMIT 1")
     replayed_signoff = rows_b[0].get("signoff") or {}
     assert replayed_signoff.get("state") == "ratified", (
-        "decision_ratified.completed event did not replay; "
-        f"got signoff={replayed_signoff!r}"
+        f"decision_ratified.completed event did not replay; got signoff={replayed_signoff!r}"
     )
 
 
@@ -154,8 +149,7 @@ async def test_supersede_event_roundtrip(tmp_path: Path) -> None:
     rows_b = await inner_b._client.query(f"SELECT signoff FROM {old_id_b} LIMIT 1")
     replayed = rows_b[0].get("signoff") or {}
     assert replayed.get("state") == "superseded", (
-        "decision_superseded.completed event did not replay; "
-        f"got signoff={replayed!r}"
+        f"decision_superseded.completed event did not replay; got signoff={replayed!r}"
     )
     assert replayed.get("superseded_by") == new_id_b
 
@@ -188,8 +182,6 @@ async def test_ingest_event_roundtrip_regression(tmp_path: Path) -> None:
 
     decision_id_b = await find_decision_by_canonical_id(inner_b._client, canonical)
     assert decision_id_b, "ingest.completed regression — canonical lookup failed"
-    rows = await inner_b._client.query(
-        f"SELECT description FROM {decision_id_b} LIMIT 1"
-    )
+    rows = await inner_b._client.query(f"SELECT description FROM {decision_id_b} LIMIT 1")
     assert rows, "ingest.completed regression — decision row missing after replay"
     assert "regression-intent" in str(rows[0].get("description", ""))

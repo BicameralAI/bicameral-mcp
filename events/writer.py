@@ -17,9 +17,9 @@ import json
 import logging
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, IO
+from typing import IO, Any
 
 from pydantic import BaseModel, Field
 
@@ -71,10 +71,11 @@ else:
 
 class EventEnvelope(BaseModel):
     """One event line in ``{email}.jsonl``."""
+
     schema_version: int = 2
     event_type: str
     author: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -83,7 +84,10 @@ def _get_git_email(repo_path: str | Path) -> str:
     try:
         result = subprocess.run(
             ["git", "config", "user.email"],
-            capture_output=True, text=True, timeout=5, cwd=str(repo_path),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd=str(repo_path),
         )
         email = result.stdout.strip()
         if email:
@@ -117,7 +121,9 @@ class EventFileWriter:
     def write(self, event_type: str, payload: dict[str, Any]) -> Path:
         """Append one event line. Returns the JSONL file path."""
         envelope = EventEnvelope(
-            event_type=event_type, author=self._author, payload=payload,
+            event_type=event_type,
+            author=self._author,
+            payload=payload,
         )
         line = json.dumps(envelope.model_dump(), separators=(",", ":"), default=str) + "\n"
         with open(self._path, "ab") as f:

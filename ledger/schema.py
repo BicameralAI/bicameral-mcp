@@ -14,6 +14,7 @@ Schema migrations: await migrate(client)
 from __future__ import annotations
 
 import logging
+from datetime import UTC
 
 from .client import LedgerClient, LedgerError
 
@@ -38,7 +39,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     7: "0.8.0",
     8: "0.9.0",
     9: "0.9.3",
-    11: "0.11.0",   # placeholder; release-eng pins final value at PR merge
+    11: "0.11.0",  # placeholder; release-eng pins final value at PR merge
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -72,16 +73,14 @@ _ANALYZERS = [
 # Core tables
 _TABLES = [
     # ── Decision tier ────────────────────────────────────────────────────
-
     # input_span — raw verbatim text excerpt from a meeting, PRD, Slack, or
     # implementation-time rationale. "What was said / written."
     # text is required — no DEFAULT. A span without verbatim text is rejected
     # at the ingest contract boundary (IngestDecision.source_excerpt must be
     # non-empty). See v0.5.0 plan §Core Principle.
     "DEFINE TABLE input_span SCHEMAFULL",
-    "DEFINE FIELD text           ON input_span TYPE string "
-    "ASSERT string::len($value) > 0",
-    "DEFINE FIELD source_type    ON input_span TYPE string",       # transcript | notion | slack | document | manual | implementation_choice
+    "DEFINE FIELD text           ON input_span TYPE string ASSERT string::len($value) > 0",
+    "DEFINE FIELD source_type    ON input_span TYPE string",  # transcript | notion | slack | document | manual | implementation_choice
     "DEFINE FIELD source_ref     ON input_span TYPE string DEFAULT ''",  # meeting ID, page URL, etc.
     "DEFINE FIELD speakers       ON input_span TYPE array<string> DEFAULT []",
     "DEFINE FIELD meeting_date   ON input_span TYPE string DEFAULT ''",
@@ -89,7 +88,6 @@ _TABLES = [
     "DEFINE INDEX idx_input_span_ref   ON input_span FIELDS source_type, source_ref",
     # Dedup: same excerpt from same source is the same span
     "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text UNIQUE",
-
     # decision — extracted decision / requirement. "What was decided."
     # Denormalized source fields (source_type, source_ref, speakers, meeting_date)
     # are kept for query speed; they mirror the linked input_span but are never
@@ -122,9 +120,7 @@ _TABLES = [
     "SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75) HIGHLIGHTS",
     # Powers the "awaiting signoff" PM dashboard queue
     "DEFINE INDEX idx_decision_signoff ON decision FIELDS signoff",
-
     # ── Shared / unchanged ──────────────────────────────────────────────
-
     # symbol — a named code entity (function, class, file). Retrieval-tier only.
     "DEFINE TABLE symbol SCHEMAFULL",
     "DEFINE FIELD name           ON symbol TYPE string",
@@ -134,12 +130,11 @@ _TABLES = [
     "DEFINE FIELD hit_count      ON symbol TYPE int DEFAULT 0",
     "DEFINE INDEX idx_sym_name   ON symbol FIELDS name SEARCH ANALYZER code_analyzer BM25(1.2, 0.75)",
     "DEFINE INDEX idx_sym_file   ON symbol FIELDS file_path",
-
     # code_region — a specific span within a file. Shared between the two tiers:
     # decision tier addresses it via binds_to; retrieval tier via locates.
     "DEFINE TABLE code_region SCHEMAFULL CHANGEFEED 30d INCLUDE ORIGINAL",
     "DEFINE FIELD file_path      ON code_region TYPE string",
-    "DEFINE FIELD symbol_name    ON code_region TYPE string",   # display-only metadata, not a graph edge target
+    "DEFINE FIELD symbol_name    ON code_region TYPE string",  # display-only metadata, not a graph edge target
     "DEFINE FIELD start_line     ON code_region TYPE int",
     "DEFINE FIELD end_line       ON code_region TYPE int",
     "DEFINE FIELD purpose        ON code_region TYPE string DEFAULT ''",
@@ -148,7 +143,6 @@ _TABLES = [
     "DEFINE FIELD content_hash   ON code_region TYPE string DEFAULT ''",
     "DEFINE INDEX idx_region_sym  ON code_region FIELDS symbol_name",
     "DEFINE INDEX idx_region_file ON code_region FIELDS repo, file_path",
-
     # vocab_cache — grounding reuse cache for query→code_region lookups
     "DEFINE TABLE vocab_cache SCHEMAFULL",
     "DEFINE FIELD query_text     ON vocab_cache TYPE string",
@@ -158,14 +152,12 @@ _TABLES = [
     "DEFINE FIELD last_hit       ON vocab_cache TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_vocab_query ON vocab_cache FIELDS query_text SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75)",
     "DEFINE INDEX idx_vocab_repo  ON vocab_cache FIELDS repo",
-
     # ledger_sync — idempotency cursor (last synced commit per repo)
     "DEFINE TABLE ledger_sync SCHEMAFULL",
     "DEFINE FIELD repo               ON ledger_sync TYPE string",
     "DEFINE FIELD last_synced_commit ON ledger_sync TYPE string",
     "DEFINE FIELD synced_at          ON ledger_sync TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_sync_repo ON ledger_sync FIELDS repo UNIQUE",
-
     # source_cursor — upstream ingestion checkpoint per source stream
     "DEFINE TABLE source_cursor SCHEMAFULL",
     "DEFINE FIELD repo            ON source_cursor TYPE string",
@@ -177,13 +169,12 @@ _TABLES = [
     "DEFINE FIELD status          ON source_cursor TYPE string DEFAULT 'ok'",
     "DEFINE FIELD error           ON source_cursor TYPE string DEFAULT ''",
     "DEFINE INDEX idx_source_cursor ON source_cursor FIELDS repo, source_type, source_scope UNIQUE",
-
     # compliance_check — LLM verification cache.
     # Cache key: (decision_id, region_id, content_hash) — one verdict per code shape.
     # pruned=true means the caller said "not_relevant" — retrieval mistake, binds_to
     # edge has been deleted. Row kept for audit trail.
     "DEFINE TABLE compliance_check SCHEMAFULL",
-    "DEFINE FIELD decision_id  ON compliance_check TYPE string",   # renamed from intent_id
+    "DEFINE FIELD decision_id  ON compliance_check TYPE string",  # renamed from intent_id
     "DEFINE FIELD region_id    ON compliance_check TYPE string",
     "DEFINE FIELD content_hash ON compliance_check TYPE string",
     "DEFINE FIELD commit_hash  ON compliance_check TYPE string DEFAULT ''",
@@ -203,7 +194,6 @@ _TABLES = [
     "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
     "DEFINE INDEX idx_cc_commit    ON compliance_check FIELDS commit_hash",
     "DEFINE INDEX idx_cc_ephemeral ON compliance_check FIELDS ephemeral",
-
     # graph_proposal — AI-generated edge proposals for human review.
     # from_id / to_id are TYPE string (not TYPE record) because this table can
     # link across different node types. Traverse via type::thing($from_id).
@@ -220,12 +210,10 @@ _TABLES = [
     "DEFINE FIELD session_id    ON graph_proposal TYPE string DEFAULT ''",
     "DEFINE FIELD created_at    ON graph_proposal TYPE datetime DEFAULT time::now()",
     "DEFINE FIELD reviewed_at   ON graph_proposal TYPE option<datetime> DEFAULT NONE",
-
     # ── CodeGenome tier (v11, additive — Phase 1+2 / #59) ───────────────
     # All writes are gated by codegenome.write_identity_records=True at the
     # handler boundary. Tables exist unconditionally so toggling the flag
     # mid-deployment does not require a migration.
-
     # code_subject — a conceptual code target (function, class, module…)
     # that can survive movement across files. Distinct from `symbol`,
     # which is keyed on name+kind at one point in time.
@@ -233,13 +221,10 @@ _TABLES = [
     "DEFINE FIELD kind               ON code_subject TYPE string",
     "DEFINE FIELD canonical_name     ON code_subject TYPE string",
     "DEFINE FIELD repo_ref           ON code_subject TYPE option<string>",
-    "DEFINE FIELD current_confidence ON code_subject TYPE float "
-    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD current_confidence ON code_subject TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at         ON code_subject TYPE datetime DEFAULT time::now()",
     "DEFINE FIELD updated_at         ON code_subject TYPE datetime DEFAULT time::now()",
-    "DEFINE INDEX idx_code_subject_canonical "
-    "ON code_subject FIELDS kind, canonical_name UNIQUE",
-
+    "DEFINE INDEX idx_code_subject_canonical ON code_subject FIELDS kind, canonical_name UNIQUE",
     # subject_identity — durable fingerprint for one observation of a
     # code_subject. Phase 3 (#60) will add a supersedes edge between
     # identities; not defined yet.
@@ -255,7 +240,6 @@ _TABLES = [
     "DEFINE FIELD model_version        ON subject_identity TYPE string",
     "DEFINE FIELD created_at           ON subject_identity TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_subject_identity_address ON subject_identity FIELDS address UNIQUE",
-
     # subject_version — concrete location/symbol observation at one
     # repo_ref. Phase 3 (#60) will write versions when a continuity match
     # resolves a relocation; Phase 1+2 only defines the table (foundation
@@ -291,27 +275,23 @@ _EDGES = [
     "DEFINE TABLE yields SCHEMAFULL TYPE RELATION IN input_span OUT decision",
     "DEFINE FIELD created_at ON yields TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_yields_unique ON yields FIELDS in, out UNIQUE",
-
     # decision → code_region (direct binding — decision tier only)
     "DEFINE TABLE binds_to SCHEMAFULL TYPE RELATION IN decision OUT code_region",
     "DEFINE FIELD confidence ON binds_to TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}",
     "DEFINE FIELD created_at ON binds_to TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_binds_to_unique ON binds_to FIELDS in, out UNIQUE",
-
     # symbol → code_region (retrieval tier — BM25 / graph / future embeddings)
     "DEFINE TABLE locates SCHEMAFULL TYPE RELATION IN symbol OUT code_region",
     "DEFINE FIELD confidence ON locates TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at ON locates TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_locates_unique ON locates FIELDS in, out UNIQUE",
-
     # decision → decision (human-confirmed supersession — v0.8.0 HITL)
     "DEFINE TABLE supersedes SCHEMAFULL TYPE RELATION IN decision OUT decision",
     "DEFINE FIELD confidence  ON supersedes TYPE float",
     "DEFINE FIELD reason      ON supersedes TYPE string DEFAULT ''",
     "DEFINE FIELD created_at  ON supersedes TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_supersedes_unique ON supersedes FIELDS in, out UNIQUE",
-
     # input_span → decision (human-confirmed context provision — v0.8.0 HITL)
     "DEFINE TABLE context_for SCHEMAFULL TYPE RELATION IN input_span OUT decision",
     "DEFINE FIELD relevance_score ON context_for TYPE float",
@@ -320,34 +300,26 @@ _EDGES = [
     "ASSERT $value IN ['proposed', 'confirmed', 'rejected'] DEFAULT 'proposed'",
     "DEFINE FIELD created_at      ON context_for TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_ctx_unique ON context_for FIELDS in, out UNIQUE",
-
     # code_region → code_region (structural dependency — unchanged)
     "DEFINE TABLE depends_on SCHEMAFULL TYPE RELATION IN code_region OUT code_region",
     "DEFINE FIELD edge_type  ON depends_on TYPE string",
     "DEFINE FIELD created_at ON depends_on TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_depends_on_unique ON depends_on FIELDS in, out, edge_type UNIQUE",
-
     # ── CodeGenome edges (v11, additive — Phase 1+2 / #59) ──────────────
-
     # code_subject → has_identity → subject_identity
     "DEFINE TABLE has_identity SCHEMAFULL TYPE RELATION IN code_subject OUT subject_identity",
-    "DEFINE FIELD confidence ON has_identity TYPE float "
-    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD confidence ON has_identity TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at ON has_identity TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_has_identity_unique ON has_identity FIELDS in, out UNIQUE",
-
     # code_subject → has_version → subject_version
     "DEFINE TABLE has_version SCHEMAFULL TYPE RELATION IN code_subject OUT subject_version",
-    "DEFINE FIELD confidence ON has_version TYPE float "
-    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD confidence ON has_version TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at ON has_version TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_has_version_unique ON has_version FIELDS in, out UNIQUE",
-
     # decision → about → code_subject (used by find_subject_identities_for_decision
     # to walk decision → subject → identity in two hops)
     "DEFINE TABLE about SCHEMAFULL TYPE RELATION IN decision OUT code_subject",
-    "DEFINE FIELD confidence ON about TYPE float "
-    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD confidence ON about TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at ON about TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_about_unique ON about FIELDS in, out UNIQUE",
 ]
@@ -368,9 +340,15 @@ def _with_overwrite(sql: str) -> str:
     the current field constraints (ASSERT clauses, DEFAULT values, TYPE) even
     when the field already exists in the DB.
     """
-    for keyword in ("DEFINE TABLE", "DEFINE FIELD", "DEFINE INDEX", "DEFINE ANALYZER", "DEFINE EVENT"):
+    for keyword in (
+        "DEFINE TABLE",
+        "DEFINE FIELD",
+        "DEFINE INDEX",
+        "DEFINE ANALYZER",
+        "DEFINE EVENT",
+    ):
         if sql.upper().startswith(keyword) and "OVERWRITE" not in sql.upper():
-            return keyword + " OVERWRITE" + sql[len(keyword):]
+            return keyword + " OVERWRITE" + sql[len(keyword) :]
     return sql
 
 
@@ -402,13 +380,14 @@ async def init_schema(client: LedgerClient) -> None:
     clauses, DEFAULT values, TYPE) are always brought up to the current schema
     definition — even when running against a DB created by an older version.
     """
-    for sql in (_ANALYZERS + _TABLES + _EDGES + _META):
+    for sql in _ANALYZERS + _TABLES + _EDGES + _META:
         sql = sql.strip()
         if sql:
             await _execute_define_idempotent(client, _with_overwrite(sql))
 
 
 # ── Migrations ──────────────────────────────────────────────────────────
+
 
 async def _migrate_v4_to_v5(client: LedgerClient) -> None:
     """v4 → v5: Remove stale v3-era yields edges and deduplicate.
@@ -431,7 +410,7 @@ async def _migrate_v4_to_v5(client: LedgerClient) -> None:
             "WHERE string::starts_with(type::string(in), 'source_span:') "
             "   OR string::starts_with(type::string(out), 'intent:')"
         )
-        for row in (stale or []):
+        for row in stale or []:
             try:
                 await client.execute(f"DELETE {row['id']}")
             except Exception:
@@ -448,7 +427,7 @@ async def _migrate_v4_to_v5(client: LedgerClient) -> None:
         all_yields = await client.query("SELECT id, in, out FROM yields")
         seen: set[tuple[str, str]] = set()
         removed = 0
-        for row in (all_yields or []):
+        for row in all_yields or []:
             key = (str(row.get("in", "")), str(row.get("out", "")))
             if key in seen:
                 try:
@@ -482,16 +461,14 @@ async def _migrate_v5_to_v6(client: LedgerClient) -> None:
 
     New ingests after v0.7.0 write signoff = {state:'proposed', ...} by default.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(UTC).isoformat()
 
     try:
-        all_decisions = await client.query(
-            "SELECT id, product_signoff FROM decision"
-        )
+        all_decisions = await client.query("SELECT id, product_signoff FROM decision")
         migrated = 0
-        for row in (all_decisions or []):
+        for row in all_decisions or []:
             decision_id = str(row.get("id", ""))
             old_signoff = row.get("product_signoff")
 
@@ -560,7 +537,6 @@ async def _migrate_v6_to_v7(client: LedgerClient) -> None:
         "DEFINE FIELD reason      ON supersedes TYPE string DEFAULT ''",
         "DEFINE FIELD created_at  ON supersedes TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_supersedes_unique ON supersedes FIELDS in, out UNIQUE",
-
         "DEFINE TABLE context_for SCHEMAFULL TYPE RELATION IN input_span OUT decision",
         "DEFINE FIELD relevance_score ON context_for TYPE float",
         "DEFINE FIELD reason          ON context_for TYPE string DEFAULT ''",
@@ -568,7 +544,6 @@ async def _migrate_v6_to_v7(client: LedgerClient) -> None:
         "ASSERT $value IN ['proposed', 'confirmed', 'rejected'] DEFAULT 'proposed'",
         "DEFINE FIELD created_at      ON context_for TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_ctx_unique ON context_for FIELDS in, out UNIQUE",
-
         # Proposal infrastructure (AI does not write here yet)
         "DEFINE TABLE graph_proposal SCHEMAFULL",
         "DEFINE FIELD proposal_type ON graph_proposal TYPE string "
@@ -582,7 +557,6 @@ async def _migrate_v6_to_v7(client: LedgerClient) -> None:
         "DEFINE FIELD session_id    ON graph_proposal TYPE string DEFAULT ''",
         "DEFINE FIELD created_at    ON graph_proposal TYPE datetime DEFAULT time::now()",
         "DEFINE FIELD reviewed_at   ON graph_proposal TYPE option<datetime> DEFAULT NONE",
-
         # Expanded status ASSERT (v6→v7 era; narrowed again in v10)
         "DEFINE FIELD status ON decision TYPE string DEFAULT 'ungrounded' "
         "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded', "
@@ -609,7 +583,9 @@ async def _migrate_v7_to_v8(client: LedgerClient) -> None:
 
     try:
         await client.execute("UPDATE compliance_check SET ephemeral = false WHERE ephemeral = NONE")
-        logger.info("[migration] v7 → v8: backfilled compliance_check.ephemeral = false on existing rows")
+        logger.info(
+            "[migration] v7 → v8: backfilled compliance_check.ephemeral = false on existing rows"
+        )
     except Exception as exc:
         logger.warning("[migration] v7 → v8: backfill failed (non-fatal): %s", exc)
 
@@ -651,15 +627,16 @@ async def _migrate_v9_to_v10(client: LedgerClient) -> None:
        code-compliance status will be re-derived on the next drift sweep.
     3. Tighten the ASSERT constraint on the status field.
     """
-    from datetime import datetime, timezone
-    _now = datetime.now(timezone.utc).isoformat()
+    from datetime import datetime
+
+    _now = datetime.now(UTC).isoformat()
 
     # Step 1: superseded decisions — move superseded into signoff
     superseded_rows = await client.query(
         "SELECT type::string(id) AS id, signoff FROM decision WHERE status = 'superseded'"
     )
     migrated_superseded = 0
-    for row in (superseded_rows or []):
+    for row in superseded_rows or []:
         decision_id = row.get("id", "")
         existing_signoff = row.get("signoff") or {}
         if not decision_id:
@@ -684,8 +661,7 @@ async def _migrate_v9_to_v10(client: LedgerClient) -> None:
     # (their signoff already carries the right state; the status field was a
     # projection artifact of the old project_decision_status short-circuits)
     await client.execute(
-        "UPDATE decision SET status = 'ungrounded' "
-        "WHERE status IN ['proposal', 'context_pending']"
+        "UPDATE decision SET status = 'ungrounded' WHERE status IN ['proposal', 'context_pending']"
     )
 
     # Step 3: tighten ASSERT
@@ -723,7 +699,6 @@ async def _migrate_v10_to_v11(client: LedgerClient) -> None:
         "DEFINE FIELD updated_at         ON code_subject TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_code_subject_canonical "
         "ON code_subject FIELDS kind, canonical_name UNIQUE",
-
         "DEFINE TABLE subject_identity SCHEMAFULL",
         "DEFINE FIELD address              ON subject_identity TYPE string",
         "DEFINE FIELD identity_type        ON subject_identity TYPE string",
@@ -735,9 +710,7 @@ async def _migrate_v10_to_v11(client: LedgerClient) -> None:
         "ASSERT $value >= 0 AND $value <= 1",
         "DEFINE FIELD model_version        ON subject_identity TYPE string",
         "DEFINE FIELD created_at           ON subject_identity TYPE datetime DEFAULT time::now()",
-        "DEFINE INDEX idx_subject_identity_address "
-        "ON subject_identity FIELDS address UNIQUE",
-
+        "DEFINE INDEX idx_subject_identity_address ON subject_identity FIELDS address UNIQUE",
         "DEFINE TABLE subject_version SCHEMAFULL",
         "DEFINE FIELD repo_ref       ON subject_version TYPE string",
         "DEFINE FIELD file_path      ON subject_version TYPE string",
@@ -750,23 +723,17 @@ async def _migrate_v10_to_v11(client: LedgerClient) -> None:
         "DEFINE FIELD created_at     ON subject_version TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_subject_version_loc "
         "ON subject_version FIELDS repo_ref, file_path, start_line, end_line",
-
         # Edges
         "DEFINE TABLE has_identity SCHEMAFULL TYPE RELATION IN code_subject OUT subject_identity",
-        "DEFINE FIELD confidence ON has_identity TYPE float "
-        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD confidence ON has_identity TYPE float ASSERT $value >= 0 AND $value <= 1",
         "DEFINE FIELD created_at ON has_identity TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_has_identity_unique ON has_identity FIELDS in, out UNIQUE",
-
         "DEFINE TABLE has_version SCHEMAFULL TYPE RELATION IN code_subject OUT subject_version",
-        "DEFINE FIELD confidence ON has_version TYPE float "
-        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD confidence ON has_version TYPE float ASSERT $value >= 0 AND $value <= 1",
         "DEFINE FIELD created_at ON has_version TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_has_version_unique ON has_version FIELDS in, out UNIQUE",
-
         "DEFINE TABLE about SCHEMAFULL TYPE RELATION IN decision OUT code_subject",
-        "DEFINE FIELD confidence ON about TYPE float "
-        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD confidence ON about TYPE float ASSERT $value >= 0 AND $value <= 1",
         "DEFINE FIELD created_at ON about TYPE datetime DEFAULT time::now()",
         "DEFINE INDEX idx_about_unique ON about FIELDS in, out UNIQUE",
     ]
@@ -831,7 +798,9 @@ async def migrate(client: LedgerClient, allow_destructive: bool = False) -> None
 
     logger.info(
         "[migration] Schema version %d → %d (%d migration(s) to apply)",
-        current, SCHEMA_VERSION, SCHEMA_VERSION - current,
+        current,
+        SCHEMA_VERSION,
+        SCHEMA_VERSION - current,
     )
 
     for target_version in range(current + 1, SCHEMA_VERSION + 1):

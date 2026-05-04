@@ -31,20 +31,16 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 from contracts import (
-    ActionHint,
     BriefDecision,
-    BriefDivergence,
-    BriefGap,
     CodeRegionSummary,
     DecisionMatch,
     PreflightResponse,
 )
-from handlers.analysis import _to_brief_decision
 from handlers.action_hints import generate_hints_from_findings
+from handlers.analysis import _to_brief_decision
 
 logger = logging.getLogger(__name__)
 
@@ -76,22 +72,86 @@ def _should_show_product_stage() -> bool:
     except Exception:
         return False
 
-_GENERIC_TOPICS = frozenset({
-    "code", "project", "everything", "anything", "stuff",
-    "thing", "things", "feature", "features", "system",
-    "module", "function", "method",
-})
 
-_STOPWORDS = frozenset({
-    "the", "and", "for", "that", "this", "with", "are", "from", "have",
-    "will", "when", "then", "been", "also", "into", "about", "should",
-    "must", "need", "each", "they", "their", "there", "which", "where",
-    "what", "than", "some", "more", "such", "only", "very", "just",
-    "like", "make", "made", "use", "used", "using", "after", "before",
-    "over", "under", "between", "through", "against", "implement",
-    "build", "create", "modify", "refactor", "update", "change", "fix",
-    "edit", "remove", "delete",
-})
+_GENERIC_TOPICS = frozenset(
+    {
+        "code",
+        "project",
+        "everything",
+        "anything",
+        "stuff",
+        "thing",
+        "things",
+        "feature",
+        "features",
+        "system",
+        "module",
+        "function",
+        "method",
+    }
+)
+
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "and",
+        "for",
+        "that",
+        "this",
+        "with",
+        "are",
+        "from",
+        "have",
+        "will",
+        "when",
+        "then",
+        "been",
+        "also",
+        "into",
+        "about",
+        "should",
+        "must",
+        "need",
+        "each",
+        "they",
+        "their",
+        "there",
+        "which",
+        "where",
+        "what",
+        "than",
+        "some",
+        "more",
+        "such",
+        "only",
+        "very",
+        "just",
+        "like",
+        "make",
+        "made",
+        "use",
+        "used",
+        "using",
+        "after",
+        "before",
+        "over",
+        "under",
+        "between",
+        "through",
+        "against",
+        "implement",
+        "build",
+        "create",
+        "modify",
+        "refactor",
+        "update",
+        "change",
+        "fix",
+        "edit",
+        "remove",
+        "delete",
+    }
+)
 
 
 def _content_tokens(text: str) -> set[str]:
@@ -99,6 +159,7 @@ def _content_tokens(text: str) -> set[str]:
     shape but with implementation verbs added to the stopword set so
     'implement Stripe webhook' yields ['stripe', 'webhook']."""
     import re
+
     raw = re.findall(r"[A-Za-z]{4,}", text or "")
     return {t.lower() for t in raw if t.lower() not in _STOPWORDS}
 
@@ -153,16 +214,26 @@ def _check_dedup(ctx, topic: str) -> bool:
 async def _region_anchored_preflight(
     ctx,
     file_paths: list[str],
-) -> list[DecisionMatch]:
+) -> tuple[list[DecisionMatch], bool]:
     """file_paths (caller-supplied) → decisions pinned to those regions.
 
     The caller LLM is responsible for resolving which files a proposed change
     will touch — preflight then looks up decisions pinned to those files in
-    the ledger. Returns DecisionMatch objects with confidence=0.9 (direct
-    pin, not keyword match).
+    the ledger. Before the lookup, run a 1-hop code-graph expansion via the
+    code-locator adapter (#173): caller-LLM discovery is imprecise, and a
+    decision bound to ``app/src/lib/git/reorder.ts`` should still surface
+    when the caller passes the structurally-near ``app/src/ui/multi-commit-
+    operation/reorder.tsx``. Expansion is deterministic, no LLM in the path,
+    bounded by ``code_locator/config.py::max_neighbors_per_result``.
+
+    Returns ``(matches, expanded)`` where ``expanded`` is True iff the graph
+    expansion produced extra paths beyond the caller-supplied set, so the
+    caller can record ``"graph"`` in ``sources_chained``. Direct-pin matches
+    carry ``confidence=0.9``; matches surfaced only via expanded paths carry
+    ``confidence=0.7``.
     """
     if not file_paths:
-        return []
+        return [], False
 
     # Dedup + normalize while preserving caller-supplied order.
     seen_paths: set[str] = set()
@@ -173,16 +244,34 @@ async def _region_anchored_preflight(
             seen_paths.add(fp)
             ordered.append(fp)
     if not ordered:
-        return []
+        return [], False
+
+    # Graph expansion. Defensive: code_graph may be absent (mock contexts) or
+    # the adapter may not implement the method (older deployments). Either
+    # case falls back to direct file_paths only.
+    direct_paths: set[str] = set(ordered)
+    expanded_paths = list(ordered)
+    expanded_only_paths: set[str] = set()
+    code_graph = getattr(ctx, "code_graph", None)
+    expander = getattr(code_graph, "expand_file_paths_via_graph", None) if code_graph else None
+    if expander is not None:
+        try:
+            expanded_paths, added_paths = expander(ordered, hops=1)
+            expanded_only_paths = set(added_paths)
+        except Exception as exc:
+            logger.debug("[preflight:region] graph expansion failed: %s", exc)
+            expanded_paths = list(ordered)
+            expanded_only_paths = set()
 
     try:
-        raw = await ctx.ledger.get_decisions_for_files(ordered)
+        raw = await ctx.ledger.get_decisions_for_files(expanded_paths)
     except Exception as exc:
         logger.debug("[preflight:region] ledger region lookup failed: %s", exc)
-        return []
+        return [], False
 
     matches: list[DecisionMatch] = []
     seen_ids: set[str] = set()
+    surfaced_via_expansion = False
     for d in raw:
         did = d.get("decision_id", "")
         if did in seen_ids:
@@ -191,35 +280,55 @@ async def _region_anchored_preflight(
         region_dict = d.get("code_region")
         regions = []
         if region_dict:
-            regions = [CodeRegionSummary(
-                file_path=region_dict.get("file_path", ""),
-                symbol=region_dict.get("symbol", ""),
-                lines=tuple(region_dict.get("lines", (0, 0))),
-                purpose=region_dict.get("purpose", ""),
-            )]
+            regions = [
+                CodeRegionSummary(
+                    file_path=region_dict.get("file_path", ""),
+                    symbol=region_dict.get("symbol", ""),
+                    lines=tuple(region_dict.get("lines", (0, 0))),
+                    purpose=region_dict.get("purpose", ""),
+                )
+            ]
 
         status = str(d.get("status") or "ungrounded")
         if status not in ("reflected", "drifted", "pending", "ungrounded"):
             status = "ungrounded" if not regions else "pending"
 
+        # Provenance: a decision is "directly pinned" if any of its bound
+        # code_regions live in a caller-supplied path; otherwise it was only
+        # reached via 1-hop graph expansion. Caller can de-prioritize the
+        # latter (lower confidence) without losing recall.
+        bound_paths = {
+            (r.get("file_path") or "").strip()
+            for r in (d.get("code_regions") or [])
+            if r and (r.get("file_path") or "").strip()
+        }
+        # Single-region decisions also have a top-level ``code_region`` (used
+        # above); include it in the provenance check.
+        if region_dict and (region_dict.get("file_path") or "").strip():
+            bound_paths.add(region_dict["file_path"].strip())
+        is_direct = bool(bound_paths & direct_paths) if bound_paths else not expanded_only_paths
+        if not is_direct:
+            surfaced_via_expansion = True
+
         _sf = d.get("signoff") or {}
-        matches.append(DecisionMatch(
-            decision_id=d.get("decision_id", ""),
-            description=d.get("description", ""),
-            status=status,
-            signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-            confidence=0.9,
-            source_ref=d.get("source_ref", ""),
-            code_regions=regions,
-            drift_evidence="",
-            related_constraints=[],
-            source_excerpt=d.get("source_excerpt", ""),
-            meeting_date=d.get("meeting_date", ""),
-            signoff=d.get("signoff"),
-        ))
+        matches.append(
+            DecisionMatch(
+                decision_id=d.get("decision_id", ""),
+                description=d.get("description", ""),
+                status=status,
+                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
+                confidence=0.9 if is_direct else 0.7,
+                source_ref=d.get("source_ref", ""),
+                code_regions=regions,
+                drift_evidence="",
+                related_constraints=[],
+                source_excerpt=d.get("source_excerpt", ""),
+                meeting_date=d.get("meeting_date", ""),
+                signoff=d.get("signoff"),
+            )
+        )
 
-    return matches
-
+    return matches, surfaced_via_expansion
 
 
 async def handle_preflight(
@@ -233,7 +342,10 @@ async def handle_preflight(
 
     # Explicit mute via env var — one-line off-switch for the session.
     if os.getenv("BICAMERAL_PREFLIGHT_MUTE", "").strip().lower() in (
-        "1", "true", "yes", "on",
+        "1",
+        "true",
+        "yes",
+        "on",
     ):
         return PreflightResponse(
             topic=topic,
@@ -254,13 +366,13 @@ async def handle_preflight(
 
     # V1 A3: time the call locally so the metric reflects THIS handler's catch-up.
     import time as _time
-    from handlers.sync_middleware import ensure_ledger_synced
+
     from contracts import SyncMetrics
+    from handlers.sync_middleware import ensure_ledger_synced
+
     _t0 = _time.perf_counter()
     await ensure_ledger_synced(ctx)
-    sync_metrics = SyncMetrics(
-        sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3)
-    )
+    sync_metrics = SyncMetrics(sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3))
 
     sources_chained: list[str] = []
 
@@ -271,9 +383,11 @@ async def handle_preflight(
     region_matches: list[DecisionMatch] = []
     if file_paths:
         try:
-            region_matches = await _region_anchored_preflight(ctx, file_paths)
+            region_matches, used_graph_expansion = await _region_anchored_preflight(ctx, file_paths)
             if region_matches:
                 sources_chained.append("region")
+                if used_graph_expansion:
+                    sources_chained.append("graph")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 
@@ -285,28 +399,33 @@ async def handle_preflight(
     context_pending_ready: list[BriefDecision] = []
     try:
         from ledger.queries import get_collision_pending_decisions, get_context_for_ready_decisions
+
         inner = getattr(ctx.ledger, "_inner", ctx.ledger)
         client = inner._client
         coll_rows = await get_collision_pending_decisions(client)
         for r in coll_rows:
             _sf = r.get("signoff") or {}
-            unresolved_collisions.append(BriefDecision(
-                decision_id=r["decision_id"],
-                description=r["description"],
-                status=r.get("status") or "ungrounded",
-                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-                signoff=r.get("signoff"),
-            ))
+            unresolved_collisions.append(
+                BriefDecision(
+                    decision_id=r["decision_id"],
+                    description=r["description"],
+                    status=r.get("status") or "ungrounded",
+                    signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
+                    signoff=r.get("signoff"),
+                )
+            )
         ctx_rows = await get_context_for_ready_decisions(client)
         for r in ctx_rows:
             _sf = r.get("signoff") or {}
-            context_pending_ready.append(BriefDecision(
-                decision_id=r["decision_id"],
-                description=r["description"],
-                status=r.get("status") or "ungrounded",
-                signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-                signoff=r.get("signoff"),
-            ))
+            context_pending_ready.append(
+                BriefDecision(
+                    decision_id=r["decision_id"],
+                    description=r["description"],
+                    status=r.get("status") or "ungrounded",
+                    signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
+                    signoff=r.get("signoff"),
+                )
+            )
     except Exception as exc:
         logger.debug("[preflight] HITL annotation queries failed: %s", exc)
 

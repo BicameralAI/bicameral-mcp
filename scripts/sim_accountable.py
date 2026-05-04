@@ -11,45 +11,58 @@ Covers:
   Run 7  — Search in surrealkv:// persistent mode (fix 3 verification)
   Run 8  — pending_compliance_checks → resolve_compliance → reflected status (v0.9.3 skill gap fix)
 """
-import sys, asyncio, os, tempfile, shutil, pathlib
-sys.path.insert(0, '/Users/jinhongkuan/github/bicameral/pilot/mcp')
 
-REPO = '/Users/jinhongkuan/github/Accountable-App-3.0'
-os.environ['SURREAL_URL'] = 'memory://'
-os.environ['REPO_PATH'] = REPO
+import asyncio
+import os
+import pathlib
+import shutil
+import sys
+import tempfile
+
+sys.path.insert(0, "/Users/jinhongkuan/github/bicameral/pilot/mcp")
+
+REPO = "/Users/jinhongkuan/github/Accountable-App-3.0"
+os.environ["SURREAL_URL"] = "memory://"
+os.environ["REPO_PATH"] = REPO
 
 RESULTS = []
 
+
 def section(title, body):
     RESULTS.append(f"\n## {title}\n\n{body.rstrip()}\n")
-    preview = body[:120].replace('\n', ' ')
+    preview = body[:120].replace("\n", " ")
     print(f"[{title}]", preview)
 
 
 def make_fresh_ledger():
-    import importlib, adapters.ledger as _al
+    import importlib
+
+    import adapters.ledger as _al
+
     importlib.reload(_al)
     return _al.get_ledger()
 
 
 async def make_ctx(repo_path=None, surreal_url=None):
     if surreal_url:
-        os.environ['SURREAL_URL'] = surreal_url
+        os.environ["SURREAL_URL"] = surreal_url
     if repo_path:
-        os.environ['REPO_PATH'] = repo_path
+        os.environ["REPO_PATH"] = repo_path
     from adapters.code_locator import get_code_locator
+
     ledger = make_fresh_ledger()
     await ledger.connect()
     code_graph = get_code_locator()
 
     class Ctx:
         pass
+
     ctx = Ctx()
     ctx.repo_path = repo_path or REPO
-    ctx.session_id = 'sim-accountable-v2'
-    ctx.authoritative_ref = 'main'
-    ctx.authoritative_sha = ''
-    ctx.head_sha = ''
+    ctx.session_id = "sim-accountable-v2"
+    ctx.authoritative_ref = "main"
+    ctx.authoritative_sha = ""
+    ctx.head_sha = ""
     ctx.drift_analyzer = None
     ctx._sync_state = {}
     ctx.ledger = ledger
@@ -58,24 +71,70 @@ async def make_ctx(repo_path=None, surreal_url=None):
 
 
 SLACK_DECISIONS = [
-    {"description": "All code changes must go to staging first via PR targeting staging branch — Ian cannot merge direct to main", "feature_group": "Dev Process", "decision_level": "L1"},
-    {"description": "Staging environment mirrors prod with real integrations (except SMS and Zoom) and must stay in sync with main", "feature_group": "Dev Process", "decision_level": "L2"},
-    {"description": "Brian Borg acts as engineering quarterback and coordinator — all PRs assigned to Brian before going to prod", "feature_group": "Dev Process", "decision_level": "L1"},
-    {"description": "All high-value secrets live in Supabase secrets — not in Vercel env vars", "feature_group": "Security", "decision_level": "L2"},
-    {"description": "Sentry auth token must be rotated and marked Sensitive in Vercel after Vercel breach exposed unprotected env vars", "feature_group": "Security", "decision_level": "L1"},
-    {"description": "Assess Sentry vs PostHog — PostHog now captures ~80% of Sentry value; evaluate eliminating redundant tool", "feature_group": "Observability", "decision_level": "L2"},
-    {"description": "Individual coaching portal for 1:1 clients to manage engagements, see recording transcripts, insights and trends", "feature_group": "Coaching Portal", "decision_level": "L1"},
-    {"description": "Weekly workshop module should be a repeatable component — AI agent populates it and creates a new record each week rather than generating new code", "feature_group": "Weekly Workshop", "decision_level": "L2"},
-    {"description": "Users can view their daily check-in completion history and trend data in the Accountable platform", "feature_group": "Daily Check-in", "decision_level": "L1"},
-    {"description": "Claude reasoning level should be task-appropriate — start at lower reasoning with escalation tiers rather than always using maximum reasoning", "feature_group": "AI Coach", "decision_level": "L2"},
-    {"description": "Weekly community bulletin delivered as a dynamic page — email directs users there rather than embedding full content to protect deliverability", "feature_group": "Email / Comms", "decision_level": "L2"},
+    {
+        "description": "All code changes must go to staging first via PR targeting staging branch — Ian cannot merge direct to main",
+        "feature_group": "Dev Process",
+        "decision_level": "L1",
+    },
+    {
+        "description": "Staging environment mirrors prod with real integrations (except SMS and Zoom) and must stay in sync with main",
+        "feature_group": "Dev Process",
+        "decision_level": "L2",
+    },
+    {
+        "description": "Brian Borg acts as engineering quarterback and coordinator — all PRs assigned to Brian before going to prod",
+        "feature_group": "Dev Process",
+        "decision_level": "L1",
+    },
+    {
+        "description": "All high-value secrets live in Supabase secrets — not in Vercel env vars",
+        "feature_group": "Security",
+        "decision_level": "L2",
+    },
+    {
+        "description": "Sentry auth token must be rotated and marked Sensitive in Vercel after Vercel breach exposed unprotected env vars",
+        "feature_group": "Security",
+        "decision_level": "L1",
+    },
+    {
+        "description": "Assess Sentry vs PostHog — PostHog now captures ~80% of Sentry value; evaluate eliminating redundant tool",
+        "feature_group": "Observability",
+        "decision_level": "L2",
+    },
+    {
+        "description": "Individual coaching portal for 1:1 clients to manage engagements, see recording transcripts, insights and trends",
+        "feature_group": "Coaching Portal",
+        "decision_level": "L1",
+    },
+    {
+        "description": "Weekly workshop module should be a repeatable component — AI agent populates it and creates a new record each week rather than generating new code",
+        "feature_group": "Weekly Workshop",
+        "decision_level": "L2",
+    },
+    {
+        "description": "Users can view their daily check-in completion history and trend data in the Accountable platform",
+        "feature_group": "Daily Check-in",
+        "decision_level": "L1",
+    },
+    {
+        "description": "Claude reasoning level should be task-appropriate — start at lower reasoning with escalation tiers rather than always using maximum reasoning",
+        "feature_group": "AI Coach",
+        "decision_level": "L2",
+    },
+    {
+        "description": "Weekly community bulletin delivered as a dynamic page — email directs users there rather than embedding full content to protect deliverability",
+        "feature_group": "Email / Comms",
+        "decision_level": "L2",
+    },
 ]
 
 
 # ── Run 1: Ingest ────────────────────────────────────────────────────────────
 
+
 async def run_ingest(ctx):
     from handlers.ingest import handle_ingest
+
     mappings = [
         {
             "intent": d["description"],
@@ -91,11 +150,14 @@ async def run_ingest(ctx):
         }
         for d in SLACK_DECISIONS
     ]
-    result = await handle_ingest(ctx, {
-        "repo": REPO,
-        "query": "Accountable platform decisions from #accountable-tech",
-        "mappings": mappings,
-    })
+    result = await handle_ingest(
+        ctx,
+        {
+            "repo": REPO,
+            "query": "Accountable platform decisions from #accountable-tech",
+            "mappings": mappings,
+        },
+    )
 
     created = result.created_decisions
     body = (
@@ -106,9 +168,11 @@ async def run_ingest(ctx):
         "Entries:\n"
     )
     for d in created:
-        body += f"  [{d.decision_level or '?'}] {d.decision_id}  \"{d.description[:58]}...\"\n"
+        body += f'  [{d.decision_level or "?"}] {d.decision_id}  "{d.description[:58]}..."\n'
 
-    l1_in_pending = [d for d in result.pending_grounding_decisions if d.get("decision_level") == "L1"]
+    l1_in_pending = [
+        d for d in result.pending_grounding_decisions if d.get("decision_level") == "L1"
+    ]
     body += (
         f"\nL1 filter: pending_grounding_decisions has "
         f"{len(result.pending_grounding_decisions)} entries, "
@@ -120,20 +184,26 @@ async def run_ingest(ctx):
 
 # ── Run 2: Preflight regression ──────────────────────────────────────────────
 
+
 async def run_preflight_quick(ctx):
     from handlers.preflight import handle_preflight
+
     r = await handle_preflight(ctx, topic="weekly workshop module repeatable component")
-    fired = getattr(r, 'fired', False)
-    count = len(getattr(r, 'decisions', []) or [])
+    fired = getattr(r, "fired", False)
+    count = len(getattr(r, "decisions", []) or [])
     body = f"Topic: 'weekly workshop module repeatable component'\nFired: {fired}, decisions surfaced: {count}\n"
-    body += "Result: " + ("PASS — preflight regression clean\n" if fired and count >= 1 else "FAIL\n")
+    body += "Result: " + (
+        "PASS — preflight regression clean\n" if fired and count >= 1 else "FAIL\n"
+    )
     section("Run 2 — Preflight regression", body)
 
 
 # ── Run 3: History + fix-2 verification ─────────────────────────────────────
 
+
 async def run_history_verify(ctx):
     from handlers.history import handle_history
+
     result = await handle_history(ctx)
     features = result.features or []
 
@@ -141,24 +211,25 @@ async def run_history_verify(ctx):
     name_ok = True
     level_ok = False
     for fg in features:
-        name = fg.name      # correct attr (was fg.feature_group in v1 sim → showed '?')
+        name = fg.name  # correct attr (was fg.feature_group in v1 sim → showed '?')
         decisions = fg.decisions or []
         body += f"  [{name}] — {len(decisions)} decision(s)\n"
-        if not name or name == '?':
+        if not name or name == "?":
             name_ok = False
         for d in decisions[:2]:
-            lvl = d.decision_level   # new field — was absent from HistoryDecision in v1 sim
+            lvl = d.decision_level  # new field — was absent from HistoryDecision in v1 sim
             body += f"    [{lvl or 'None'}|{d.status}] {d.summary[:65]}\n"
             if lvl is not None:
                 level_ok = True
 
-    body += f"\nFix 2 verdict:\n"
+    body += "\nFix 2 verdict:\n"
     body += f"  fg.name populated: {name_ok} (was '?' in v1 — fixed)\n"
     body += f"  d.decision_level populated: {level_ok} (was absent in v1 — fixed)\n"
     section("Run 3 — History + fix-2 verification (HistoryDecision.decision_level)", body)
 
 
 # ── Run 4: Bind L2 decisions to Accountable code ────────────────────────────
+
 
 async def run_bind_accountable(ctx, ingest_result):
     from handlers.bind import handle_bind
@@ -168,7 +239,10 @@ async def run_bind_accountable(ctx, ingest_result):
     ai_coach_id = next((v for k, v in id_by_desc.items() if "reasoning level" in k.lower()), None)
 
     if not weekly_id or not ai_coach_id:
-        section("Run 4 — Bind L2 decisions to Accountable code", "ERROR: target IDs not found in created_decisions")
+        section(
+            "Run 4 — Bind L2 decisions to Accountable code",
+            "ERROR: target IDs not found in created_decisions",
+        )
         return None
 
     bindings = [
@@ -212,12 +286,14 @@ async def run_bind_accountable(ctx, ingest_result):
 
 # ── Run 5: Drift check post-bind (should be clean) ──────────────────────────
 
+
 async def run_drift_post_bind(ctx):
     from handlers.detect_drift import handle_detect_drift
+
     target = "supabase/functions/generate-weekly-ai-insights/index.ts"
     result = await handle_detect_drift(ctx, file_path=target)
-    drifted = getattr(result, 'drifted', []) or []
-    reflected = getattr(result, 'reflected', []) or []
+    drifted = getattr(result, "drifted", []) or []
+    reflected = getattr(result, "reflected", []) or []
     body = (
         f"File: {target}\n"
         f"Drifted: {len(drifted)}, Reflected: {len(reflected)}\n"
@@ -260,21 +336,34 @@ def apply_tier_bonus(base: float, tier: str) -> float:
 async def run_full_drift_loop():
     """Follow-up 4: ingest → bind → modify file → detect drift."""
     import subprocess
-    tmpdir = tempfile.mkdtemp(prefix='bicam_drift_test_')
+
+    tmpdir = tempfile.mkdtemp(prefix="bicam_drift_test_")
     try:
         # Bootstrap a real git repo so compute_content_hash works
-        subprocess.run(['git', 'init', '-b', 'main'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'config', 'user.email', 'test@test.com'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=tmpdir, check=True, capture_output=True
+        )
 
         # Write and commit initial version
         test_file = pathlib.Path(tmpdir) / "discount.py"
         test_file.write_text(TEMP_FILE_CONTENT_V1)
-        subprocess.run(['git', 'add', 'discount.py'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', 'initial: 10% discount on $100+'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "add", "discount.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial: 10% discount on $100+"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
 
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = tmpdir
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = tmpdir
 
         ledger = make_fresh_ledger()
         await ledger.connect()
@@ -283,12 +372,13 @@ async def run_full_drift_loop():
 
         class Ctx:
             pass
+
         ctx = Ctx()
         ctx.repo_path = tmpdir
-        ctx.session_id = 'sim-drift-loop'
-        ctx.authoritative_ref = 'main'
-        ctx.authoritative_sha = ''
-        ctx.head_sha = ''
+        ctx.session_id = "sim-drift-loop"
+        ctx.authoritative_ref = "main"
+        ctx.authoritative_sha = ""
+        ctx.head_sha = ""
         ctx.drift_analyzer = None
         ctx._sync_state = {}
         ctx.ledger = ledger
@@ -296,64 +386,78 @@ async def run_full_drift_loop():
 
         # Step 1: ingest a decision about the discount logic
         from handlers.ingest import handle_ingest
-        ingest_result = await handle_ingest(ctx, {
-            "repo": tmpdir,
-            "query": "discount policy decision",
-            "mappings": [{
-                "intent": "Apply 10% discount on orders over $100",
-                "feature_group": "Pricing",
-                "decision_level": "L2",
-                "span": {
-                    "text": "Apply 10% discount on orders over $100",
-                    "source_type": "slack",
-                    "source_ref": "eng-discussion",
-                    "meeting_date": "2026-04-26",
-                    "speakers": ["Jin"],
-                },
-            }],
-        })
+
+        ingest_result = await handle_ingest(
+            ctx,
+            {
+                "repo": tmpdir,
+                "query": "discount policy decision",
+                "mappings": [
+                    {
+                        "intent": "Apply 10% discount on orders over $100",
+                        "feature_group": "Pricing",
+                        "decision_level": "L2",
+                        "span": {
+                            "text": "Apply 10% discount on orders over $100",
+                            "source_type": "slack",
+                            "source_ref": "eng-discussion",
+                            "meeting_date": "2026-04-26",
+                            "speakers": ["Jin"],
+                        },
+                    }
+                ],
+            },
+        )
         decision_id = ingest_result.created_decisions[0].decision_id
 
         # Step 2: bind to the file at its current state
         from handlers.bind import handle_bind
-        bind_result = await handle_bind(ctx, bindings=[{
-            "decision_id": decision_id,
-            "file_path": "discount.py",
-            "symbol_name": "calculate_discount",
-            "start_line": 1,
-            "end_line": 5,
-            "purpose": "Discount calculation — 10% on orders over $100",
-        }])
+
+        bind_result = await handle_bind(
+            ctx,
+            bindings=[
+                {
+                    "decision_id": decision_id,
+                    "file_path": "discount.py",
+                    "symbol_name": "calculate_discount",
+                    "start_line": 1,
+                    "end_line": 5,
+                    "purpose": "Discount calculation — 10% on orders over $100",
+                }
+            ],
+        )
         bind_ok = bind_result.bindings and not bind_result.bindings[0].error
         initial_hash = bind_result.bindings[0].content_hash if bind_ok else "?"
 
         region_id = bind_result.bindings[0].region_id
 
         # Step 3: snapshot the stored hash before modification
-        pre_hash_row = await ledger._client.query(
-            f"SELECT content_hash FROM {region_id} LIMIT 1"
-        )
+        pre_hash_row = await ledger._client.query(f"SELECT content_hash FROM {region_id} LIMIT 1")
         pre_hash = (pre_hash_row[0].get("content_hash") or "") if pre_hash_row else ""
 
         # Step 3b: check drift status — should be pending (V1: no compliance verdict yet)
         from handlers.detect_drift import handle_detect_drift
+
         pre_result = await handle_detect_drift(ctx, file_path="discount.py")
-        pre_pending = len(getattr(pre_result, 'pending', []) or [])
+        pre_pending = len(getattr(pre_result, "pending", []) or [])
 
         # Step 4: modify the file and commit (threshold and rate changed)
         test_file.write_text(TEMP_FILE_CONTENT_V2)
-        subprocess.run(['git', 'add', 'discount.py'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', 'change: 15% discount on $50+'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "add", "discount.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "change: 15% discount on $50+"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
 
         # Step 5: run detect_drift — triggers link_commit which re-hashes the file
         post_result = await handle_detect_drift(ctx, file_path="discount.py")
-        post_drifted = getattr(post_result, 'drifted', []) or []
-        post_pending = getattr(post_result, 'pending', []) or []
+        post_drifted = getattr(post_result, "drifted", []) or []
+        post_pending = getattr(post_result, "pending", []) or []
 
         # Step 5b: confirm the stored hash updated to reflect the new content
-        post_hash_row = await ledger._client.query(
-            f"SELECT content_hash FROM {region_id} LIMIT 1"
-        )
+        post_hash_row = await ledger._client.query(f"SELECT content_hash FROM {region_id} LIMIT 1")
         post_hash = (post_hash_row[0].get("content_hash") or "") if post_hash_row else ""
         hash_changed = pre_hash != post_hash and bool(post_hash)
 
@@ -385,66 +489,80 @@ async def run_full_drift_loop():
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = REPO
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = REPO
 
     section("Run 6 — Full ingest→bind→modify→drift loop (follow-up 4)", body)
 
 
 # ── Run 7: Search in surrealkv:// persistent mode ───────────────────────────
 
+
 async def run_search_persistent():
-    tmpdir = tempfile.mkdtemp(prefix='bicam_search_test_')
+    tmpdir = tempfile.mkdtemp(prefix="bicam_search_test_")
     try:
-        db_url = f'surrealkv://{tmpdir}/test.db'
-        os.environ['SURREAL_URL'] = db_url
-        os.environ['REPO_PATH'] = REPO
+        db_url = f"surrealkv://{tmpdir}/test.db"
+        os.environ["SURREAL_URL"] = db_url
+        os.environ["REPO_PATH"] = REPO
 
         ledger = make_fresh_ledger()
         await ledger.connect()
 
         from ledger.queries import upsert_decision
+
         client = ledger._client
 
         test_decisions = [
-            ("Coaching portal enables 1:1 client engagement visibility with transcripts", "Coaching Portal"),
-            ("Weekly workshop creates a new repeatable record each week via AI agent", "Weekly Workshop"),
+            (
+                "Coaching portal enables 1:1 client engagement visibility with transcripts",
+                "Coaching Portal",
+            ),
+            (
+                "Weekly workshop creates a new repeatable record each week via AI agent",
+                "Weekly Workshop",
+            ),
             ("Sentry token must be rotated after Vercel breach exposed env vars", "Security"),
         ]
         for desc, fg in test_decisions:
             await upsert_decision(
-                client, description=desc, source_type="slack",
-                source_ref="accountable-tech", status="ungrounded", feature_group=fg,
+                client,
+                description=desc,
+                source_type="slack",
+                source_ref="accountable-tech",
+                status="ungrounded",
+                feature_group=fg,
             )
 
         await asyncio.sleep(0.3)  # let FTS index settle
 
         class Ctx2:
             pass
+
         ctx2 = Ctx2()
         ctx2.repo_path = REPO
-        ctx2.session_id = 'sim-search'
-        ctx2.authoritative_ref = 'main'
-        ctx2.authoritative_sha = ''
-        ctx2.head_sha = ''
+        ctx2.session_id = "sim-search"
+        ctx2.authoritative_ref = "main"
+        ctx2.authoritative_sha = ""
+        ctx2.head_sha = ""
         ctx2.drift_analyzer = None
         ctx2._sync_state = {}
         ctx2.ledger = ledger
         ctx2.code_graph = None
 
         from handlers.search_decisions import handle_search_decisions
+
         queries = ["coaching portal", "weekly workshop", "Sentry breach"]
         results_map = {}
         for q in queries:
             r = await handle_search_decisions(ctx2, query=q)
-            results_map[q] = getattr(r, 'decisions', []) or []
+            results_map[q] = getattr(r, "decisions", []) or []
 
         total_matches = sum(len(v) for v in results_map.values())
-        body = f"DB: surrealkv:// (persistent, temp path)\nIngested 3 decisions, ran 3 queries.\n\n"
+        body = "DB: surrealkv:// (persistent, temp path)\nIngested 3 decisions, ran 3 queries.\n\n"
         for q, matches in results_map.items():
             body += f"Query: '{q}'\n  Matches: {len(matches)}\n"
             for d in matches[:2]:
-                body += f"    - {getattr(d,'description','')[:70]}\n"
+                body += f"    - {getattr(d, 'description', '')[:70]}\n"
 
         if total_matches == 0:
             body += (
@@ -460,13 +578,14 @@ async def run_search_persistent():
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = REPO
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = REPO
 
     section("Run 7 — Search in surrealkv:// persistent mode (fix 3 verification)", body)
 
 
 # ── Run 8: pending_compliance_checks → resolve_compliance → reflected ────────
+
 
 async def run_compliance_resolution_loop():
     """
@@ -477,24 +596,37 @@ async def run_compliance_resolution_loop():
     This is the exact flow the updated scan-branch / drift skills now prescribe.
     """
     import subprocess
-    tmpdir = tempfile.mkdtemp(prefix='bicam_compliance_test_')
+
+    tmpdir = tempfile.mkdtemp(prefix="bicam_compliance_test_")
     try:
-        subprocess.run(['git', 'init', '-b', 'main'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'config', 'user.email', 'test@test.com'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=tmpdir, check=True, capture_output=True
+        )
 
         test_file = pathlib.Path(tmpdir) / "auth.py"
         test_file.write_text(
-            'def require_auth(request):\n'
+            "def require_auth(request):\n"
             '    """Reject unauthenticated requests with 401."""\n'
             '    if not request.get("token"):\n'
             '        raise PermissionError("401 Unauthorized")\n'
         )
-        subprocess.run(['git', 'add', 'auth.py'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', 'initial: auth gate'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "add", "auth.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "initial: auth gate"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
 
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = tmpdir
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = tmpdir
 
         ledger = make_fresh_ledger()
         await ledger.connect()
@@ -503,12 +635,13 @@ async def run_compliance_resolution_loop():
 
         class Ctx:
             pass
+
         ctx = Ctx()
         ctx.repo_path = tmpdir
-        ctx.session_id = 'sim-compliance'
-        ctx.authoritative_ref = 'main'
-        ctx.authoritative_sha = ''
-        ctx.head_sha = ''
+        ctx.session_id = "sim-compliance"
+        ctx.authoritative_ref = "main"
+        ctx.authoritative_sha = ""
+        ctx.head_sha = ""
         ctx.drift_analyzer = None
         ctx._sync_state = {}
         ctx.ledger = ledger
@@ -516,22 +649,28 @@ async def run_compliance_resolution_loop():
 
         # Step 1: ingest
         from handlers.ingest import handle_ingest
-        ingest_result = await handle_ingest(ctx, {
-            "repo": tmpdir,
-            "query": "auth gate decision",
-            "mappings": [{
-                "intent": "All API endpoints must reject unauthenticated requests with HTTP 401",
-                "feature_group": "Auth",
-                "decision_level": "L2",
-                "span": {
-                    "text": "All API endpoints must reject unauthenticated requests with HTTP 401",
-                    "source_type": "slack",
-                    "source_ref": "eng-discussion",
-                    "meeting_date": "2026-04-26",
-                    "speakers": ["Jin"],
-                },
-            }],
-        })
+
+        ingest_result = await handle_ingest(
+            ctx,
+            {
+                "repo": tmpdir,
+                "query": "auth gate decision",
+                "mappings": [
+                    {
+                        "intent": "All API endpoints must reject unauthenticated requests with HTTP 401",
+                        "feature_group": "Auth",
+                        "decision_level": "L2",
+                        "span": {
+                            "text": "All API endpoints must reject unauthenticated requests with HTTP 401",
+                            "source_type": "slack",
+                            "source_ref": "eng-discussion",
+                            "meeting_date": "2026-04-26",
+                            "speakers": ["Jin"],
+                        },
+                    }
+                ],
+            },
+        )
         decision_id = ingest_result.created_decisions[0].decision_id
 
         # Step 2: ratify the decision — proposed decisions are drift-exempt and
@@ -539,23 +678,33 @@ async def run_compliance_resolution_loop():
         # In real sessions the user reviews proposed decisions and calls ratify;
         # in this simulation we ratify immediately for verification purposes.
         from handlers.ratify import handle_ratify
+
         await handle_ratify(ctx, decision_id=decision_id, signer="sim-run8", action="ratify")
 
         # Step 3: bind
         from handlers.bind import handle_bind
-        bind_result = await handle_bind(ctx, bindings=[{
-            "decision_id": decision_id,
-            "file_path": "auth.py",
-            "symbol_name": "require_auth",
-            "start_line": 1,
-            "end_line": 4,
-            "purpose": "Auth gate — reject unauthenticated requests with 401",
-        }])
+
+        bind_result = await handle_bind(
+            ctx,
+            bindings=[
+                {
+                    "decision_id": decision_id,
+                    "file_path": "auth.py",
+                    "symbol_name": "require_auth",
+                    "start_line": 1,
+                    "end_line": 4,
+                    "purpose": "Auth gate — reject unauthenticated requests with 401",
+                }
+            ],
+        )
         bind_ok = bind_result.bindings and not bind_result.bindings[0].error
         region_id = bind_result.bindings[0].region_id if bind_ok else None
 
         if not bind_ok:
-            section("Run 8 — pending_compliance_checks → resolve_compliance → reflected", "FAIL — bind failed")
+            section(
+                "Run 8 — pending_compliance_checks → resolve_compliance → reflected",
+                "FAIL — bind failed",
+            )
             return
 
         # Step 3: advance HEAD so the sync cache is stale and link_commit sweeps fresh.
@@ -563,32 +712,40 @@ async def run_compliance_resolution_loop():
         # last_synced_commit, so without a new commit the detect_drift call
         # would hit the stale pre-bind cache and find 0 regions.
         test_file.write_text(
-            'def require_auth(request):\n'
+            "def require_auth(request):\n"
             '    """Reject unauthenticated requests with 401."""\n'
             '    if not request.get("token"):\n'
             '        raise PermissionError("401 Unauthorized")\n'
-            '# v2: docstring clarified\n'
+            "# v2: docstring clarified\n"
         )
-        subprocess.run(['git', 'add', 'auth.py'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', 'docs: clarify require_auth docstring'], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "add", "auth.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "commit", "-m", "docs: clarify require_auth docstring"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
 
         # Step 4: detect_drift — triggers a fresh link_commit that sweeps auth.py,
         # finds the grounded region, and generates pending_compliance_checks.
         from handlers.detect_drift import handle_detect_drift
+
         drift_result = await handle_detect_drift(ctx, file_path="auth.py")
-        sync_status = getattr(drift_result, 'sync_status', None)
-        pending_checks = getattr(sync_status, 'pending_compliance_checks', []) or []
-        flow_id = getattr(sync_status, 'flow_id', '') or ''
+        sync_status = getattr(drift_result, "sync_status", None)
+        pending_checks = getattr(sync_status, "pending_compliance_checks", []) or []
+        flow_id = getattr(sync_status, "flow_id", "") or ""
 
         status_before = "unknown"
         if pending_checks:
             # Read the actual decision status before resolving
             from ledger.queries import project_decision_status
-            inner = getattr(ledger, '_inner', ledger)
+
+            inner = getattr(ledger, "_inner", ledger)
             status_before = await project_decision_status(inner._client, decision_id)
 
         # Step 5: call resolve_compliance for each pending check
         from handlers.resolve_compliance import handle_resolve_compliance
+
         verdicts_written = 0
         if pending_checks:
             verdicts = [
@@ -612,10 +769,11 @@ async def run_compliance_resolution_loop():
 
         # Step 6: verify status is now 'reflected'
         from ledger.queries import project_decision_status
-        inner = getattr(ledger, '_inner', ledger)
+
+        inner = getattr(ledger, "_inner", ledger)
         status_after = await project_decision_status(inner._client, decision_id)
 
-        passed = (status_after == "reflected")
+        passed = status_after == "reflected"
 
         if pending_checks:
             body = (
@@ -642,13 +800,16 @@ async def run_compliance_resolution_loop():
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = REPO
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = REPO
 
-    section("Run 8 — pending_compliance_checks → resolve_compliance → reflected (skill gap fix)", body)
+    section(
+        "Run 8 — pending_compliance_checks → resolve_compliance → reflected (skill gap fix)", body
+    )
 
 
 # ── Run 9: signoff/status decoupling verification ───────────────────────────
+
 
 async def run_signoff_status_decoupling():
     """
@@ -660,30 +821,40 @@ async def run_signoff_status_decoupling():
     C. resolve_collision supersede merges signoff dict — ratification record preserved
     D. History shows superseded decisions with last code-compliance status + signoff_state
     """
-    import subprocess, datetime as dt
-    tmpdir = tempfile.mkdtemp(prefix='bicam_signoff_test_')
-    try:
-        subprocess.run(['git', 'init', '-b', 'main'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'config', 'user.email', 'test@test.com'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'config', 'user.name', 'Test'], cwd=tmpdir, check=True, capture_output=True)
-        (pathlib.Path(tmpdir) / 'app.py').write_text('def main(): pass\n')
-        subprocess.run(['git', 'add', 'app.py'], cwd=tmpdir, check=True, capture_output=True)
-        subprocess.run(['git', 'commit', '-m', 'init'], cwd=tmpdir, check=True, capture_output=True)
+    import datetime as dt
+    import subprocess
 
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = tmpdir
+    tmpdir = tempfile.mkdtemp(prefix="bicam_signoff_test_")
+    try:
+        subprocess.run(["git", "init", "-b", "main"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "config", "user.email", "test@test.com"],
+            cwd=tmpdir,
+            check=True,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test"], cwd=tmpdir, check=True, capture_output=True
+        )
+        (pathlib.Path(tmpdir) / "app.py").write_text("def main(): pass\n")
+        subprocess.run(["git", "add", "app.py"], cwd=tmpdir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, check=True, capture_output=True)
+
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = tmpdir
         ledger = make_fresh_ledger()
         await ledger.connect()
         from adapters.code_locator import get_code_locator
 
         class Ctx:
             pass
+
         ctx = Ctx()
         ctx.repo_path = tmpdir
-        ctx.session_id = 'sim-signoff'
-        ctx.authoritative_ref = 'main'
-        ctx.authoritative_sha = ''
-        ctx.head_sha = ''
+        ctx.session_id = "sim-signoff"
+        ctx.authoritative_ref = "main"
+        ctx.authoritative_sha = ""
+        ctx.head_sha = ""
         ctx.drift_analyzer = None
         ctx._sync_state = {}
         ctx.ledger = ledger
@@ -698,36 +869,39 @@ async def run_signoff_status_decoupling():
         from handlers.ingest import handle_ingest
         from ledger.queries import project_decision_status
 
-        ingest_r = await handle_ingest(ctx, {
-            "repo": tmpdir,
-            "query": "signoff decoupling test",
-            "mappings": [{
-                "intent": "Feature flags must be documented before enabling in prod",
-                "feature_group": "Release",
-                "decision_level": "L2",
-                "span": {
-                    "text": "Feature flags must be documented before enabling in prod",
-                    "source_type": "slack",
-                    "source_ref": "eng-channel",
-                    "meeting_date": "2026-04-26",
-                    "speakers": ["Jin"],
-                },
-                # NOTE: no 'signoff' key — server stamps signoff.state='proposed'
-            }],
-        })
+        ingest_r = await handle_ingest(
+            ctx,
+            {
+                "repo": tmpdir,
+                "query": "signoff decoupling test",
+                "mappings": [
+                    {
+                        "intent": "Feature flags must be documented before enabling in prod",
+                        "feature_group": "Release",
+                        "decision_level": "L2",
+                        "span": {
+                            "text": "Feature flags must be documented before enabling in prod",
+                            "source_type": "slack",
+                            "source_ref": "eng-channel",
+                            "meeting_date": "2026-04-26",
+                            "speakers": ["Jin"],
+                        },
+                        # NOTE: no 'signoff' key — server stamps signoff.state='proposed'
+                    }
+                ],
+            },
+        )
         did = ingest_r.created_decisions[0].decision_id
 
-        inner = getattr(ledger, '_inner', ledger)
+        inner = getattr(ledger, "_inner", ledger)
         code_status = await project_decision_status(inner._client, did)
 
-        raw_rows = await inner._client.query(
-            f"SELECT signoff FROM {did} LIMIT 1"
-        )
-        raw_signoff = (raw_rows[0].get('signoff') or {}) if raw_rows else {}
-        signoff_state = raw_signoff.get('state', '?')
-        discovered = raw_signoff.get('discovered', '?')
+        raw_rows = await inner._client.query(f"SELECT signoff FROM {did} LIMIT 1")
+        raw_signoff = (raw_rows[0].get("signoff") or {}) if raw_rows else {}
+        signoff_state = raw_signoff.get("state", "?")
+        discovered = raw_signoff.get("discovered", "?")
 
-        a_pass = (code_status == 'ungrounded' and signoff_state == 'proposed')
+        a_pass = code_status == "ungrounded" and signoff_state == "proposed"
         results_a = [
             f"  decision_id:    {did}",
             f"  status:         {code_status}  (expected: ungrounded)",
@@ -738,9 +912,7 @@ async def run_signoff_status_decoupling():
 
         # ── B: session-start banner detects stale proposal via signoff ────────
         # Backdate the signoff to simulate 15-day-old proposal
-        stale_created = (
-            dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=15)
-        ).isoformat()
+        stale_created = (dt.datetime.now(dt.UTC) - dt.timedelta(days=15)).isoformat()
         await inner._client.execute(
             f"UPDATE {did} SET signoff = $s",
             {"s": {**raw_signoff, "created_at": stale_created}},
@@ -748,6 +920,7 @@ async def run_signoff_status_decoupling():
 
         # Mock the ledger's get_decisions_by_status to return our stale-proposal row
         from unittest.mock import AsyncMock, patch
+
         stale_row = {
             "decision_id": did,
             "description": "Feature flags must be documented before enabling in prod",
@@ -759,6 +932,7 @@ async def run_signoff_status_decoupling():
 
         class BannerCtx:
             pass
+
         bctx = BannerCtx()
         bctx._sync_state = {}
         mock_ledger = AsyncMock()
@@ -766,14 +940,15 @@ async def run_signoff_status_decoupling():
         bctx.ledger = mock_ledger
 
         from handlers.sync_middleware import get_session_start_banner
+
         banner = await get_session_start_banner(bctx)
 
         b_pass = (
             banner is not None
             and banner.stale_proposal_count == 1
             and banner.proposal_count == 1
-            and any(i.get('signoff_state') == 'proposed' for i in banner.items)
-            and 'stale proposal' in banner.message
+            and any(i.get("signoff_state") == "proposed" for i in banner.items)
+            and "stale proposal" in banner.message
         )
         results_b = [
             f"  banner fired:           {banner is not None}",
@@ -788,37 +963,46 @@ async def run_signoff_status_decoupling():
         # ── C: resolve_collision supersede merges signoff ─────────────────────
         # Ratify the old decision first
         from handlers.ratify import handle_ratify
+
         rat = await handle_ratify(ctx, decision_id=did, signer="sim-run9")
         old_signoff_after_ratify = rat.signoff
 
         # Ingest a new superseding decision
-        ingest_new = await handle_ingest(ctx, {
-            "repo": tmpdir,
-            "query": "supersede test",
-            "mappings": [{
-                "intent": "Feature flags must be documented AND reviewed by two engineers before prod",
-                "feature_group": "Release",
-                "decision_level": "L2",
-                "span": {
-                    "text": "Feature flags must be documented AND reviewed by two engineers",
-                    "source_type": "slack",
-                    "source_ref": "eng-channel-v2",
-                    "meeting_date": "2026-04-26",
-                    "speakers": ["Jin"],
-                },
-            }],
-        })
+        ingest_new = await handle_ingest(
+            ctx,
+            {
+                "repo": tmpdir,
+                "query": "supersede test",
+                "mappings": [
+                    {
+                        "intent": "Feature flags must be documented AND reviewed by two engineers before prod",
+                        "feature_group": "Release",
+                        "decision_level": "L2",
+                        "span": {
+                            "text": "Feature flags must be documented AND reviewed by two engineers",
+                            "source_type": "slack",
+                            "source_ref": "eng-channel-v2",
+                            "meeting_date": "2026-04-26",
+                            "speakers": ["Jin"],
+                        },
+                    }
+                ],
+            },
+        )
         new_did = ingest_new.created_decisions[0].decision_id
 
         from handlers.resolve_collision import handle_resolve_collision
+
         await handle_resolve_collision(ctx, new_id=new_did, old_id=did, action="supersede")
 
         # Read the old decision's signoff after supersession
         post_rows = await inner._client.query(f"SELECT signoff FROM {did} LIMIT 1")
-        post_signoff = (post_rows[0].get('signoff') or {}) if post_rows else {}
+        post_signoff = (post_rows[0].get("signoff") or {}) if post_rows else {}
 
-        c_ratified_preserved = post_signoff.get('ratified_at') == old_signoff_after_ratify.get('ratified_at')
-        c_state_superseded = post_signoff.get('state') == 'superseded'
+        c_ratified_preserved = post_signoff.get("ratified_at") == old_signoff_after_ratify.get(
+            "ratified_at"
+        )
+        c_state_superseded = post_signoff.get("state") == "superseded"
         c_pass = c_state_superseded and c_ratified_preserved
 
         results_c = [
@@ -831,15 +1015,15 @@ async def run_signoff_status_decoupling():
 
         # ── D: history shows superseded decisions with code-compliance status ─
         from handlers.history import handle_history
+
         hist = await handle_history(ctx)
         superseded_decisions = [
-            d for fg in hist.features for d in fg.decisions
-            if d.signoff_state == 'superseded'
+            d for fg in hist.features for d in fg.decisions if d.signoff_state == "superseded"
         ]
         d_pass = (
             len(superseded_decisions) == 1
-            and superseded_decisions[0].status in ('ungrounded', 'pending', 'drifted', 'reflected')
-            and superseded_decisions[0].signoff_state == 'superseded'
+            and superseded_decisions[0].status in ("ungrounded", "pending", "drifted", "reflected")
+            and superseded_decisions[0].signoff_state == "superseded"
         )
         results_d_dec = superseded_decisions[0] if superseded_decisions else None
         results_d = [
@@ -851,20 +1035,24 @@ async def run_signoff_status_decoupling():
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        os.environ['SURREAL_URL'] = 'memory://'
-        os.environ['REPO_PATH'] = REPO
+        os.environ["SURREAL_URL"] = "memory://"
+        os.environ["REPO_PATH"] = REPO
 
     all_pass = a_pass and b_pass and c_pass and d_pass
     body = (
         "Testing v0.9+ status/signoff orthogonalization:\n\n"
         "A — Ingest without signoff → status='ungrounded', signoff.state='proposed'\n"
-        + '\n'.join(results_a) + '\n\n'
+        + "\n".join(results_a)
+        + "\n\n"
         "B — Session-start banner detects stale proposals via signoff.state (not status)\n"
-        + '\n'.join(results_b) + '\n\n'
+        + "\n".join(results_b)
+        + "\n\n"
         "C — resolve_collision supersede merges signoff (preserves ratification record)\n"
-        + '\n'.join(results_c) + '\n\n'
+        + "\n".join(results_c)
+        + "\n\n"
         "D — History surfaces superseded decisions with last code-compliance status\n"
-        + '\n'.join(results_d) + '\n\n'
+        + "\n".join(results_d)
+        + "\n\n"
         f"Overall: {'PASS — all four orthogonalization invariants hold' if all_pass else 'PARTIAL PASS — see sub-results'}\n"
     )
     section("Run 9 — signoff/status decoupling verification (v0.9+)", body)
@@ -872,10 +1060,11 @@ async def run_signoff_status_decoupling():
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
+
 async def main():
     print("=== Bicameral MCP v0.9.3 extended simulation ===\n")
 
-    ctx = await make_ctx(repo_path=REPO, surreal_url='memory://')
+    ctx = await make_ctx(repo_path=REPO, surreal_url="memory://")
     ingest_result = await run_ingest(ctx)
     await run_preflight_quick(ctx)
     await run_history_verify(ctx)

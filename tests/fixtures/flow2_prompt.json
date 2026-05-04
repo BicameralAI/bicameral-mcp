@@ -1,0 +1,3 @@
+{
+  "prompt": "I know the roadmap said drag-and-drop to reorder commits, but actually we're switching to a text-editor approach. Please update cherry-pick.ts and reorder.ts."
+}

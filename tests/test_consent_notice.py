@@ -13,7 +13,9 @@ import pytest
 
 def _reload_consent():
     import importlib
+
     import consent
+
     importlib.reload(consent)
     return consent
 
@@ -21,7 +23,9 @@ def _reload_consent():
 # ── telemetry_allowed() — gating behavior ──────────────────────────────
 
 
-def test_telemetry_allowed_no_marker_default_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_telemetry_allowed_no_marker_default_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No marker: default-on (preserves upgrade-path behavior)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -30,7 +34,9 @@ def test_telemetry_allowed_no_marker_default_on(tmp_path: Path, monkeypatch: pyt
     assert consent.telemetry_allowed() is True
 
 
-def test_telemetry_allowed_env_off_overrides_marker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_telemetry_allowed_env_off_overrides_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Env BICAMERAL_TELEMETRY=0 wins even when marker says enabled."""
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
@@ -137,7 +143,14 @@ def test_notice_re_emitted_on_policy_version_bump(
     # Simulate a stale marker (older policy version).
     (tmp_path / ".bicameral").mkdir(parents=True, exist_ok=True)
     (tmp_path / ".bicameral" / "consent.json").write_text(
-        json.dumps({"telemetry": "enabled", "policy_version": 0, "acknowledged_at": "x", "acknowledged_via": "wizard"}),
+        json.dumps(
+            {
+                "telemetry": "enabled",
+                "policy_version": 0,
+                "acknowledged_at": "x",
+                "acknowledged_via": "wizard",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -170,7 +183,9 @@ def test_notice_swallows_marker_write_failure(
     monkeypatch.setenv("USERPROFILE", str(tmp_path))
     monkeypatch.delenv("BICAMERAL_SKIP_CONSENT_NOTICE", raising=False)
     consent = _reload_consent()
-    monkeypatch.setattr(consent, "write_consent", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full")))
+    monkeypatch.setattr(
+        consent, "write_consent", lambda *a, **kw: (_ for _ in ()).throw(OSError("disk full"))
+    )
     # Must not raise.
     consent.notify_if_first_run()
 
@@ -186,7 +201,9 @@ def test_telemetry_send_event_blocked_when_consent_disabled(
     consent.write_consent(telemetry=False, via="wizard")
 
     import importlib
+
     import telemetry
+
     importlib.reload(telemetry)
 
     # Patch the network path; if relay was attempted, this would be called.
@@ -195,6 +212,7 @@ def test_telemetry_send_event_blocked_when_consent_disabled(
     telemetry.send_event("0.13.3", skill="bicameral-ingest", duration_ms=100)
     # Counter should still increment locally.
     import local_counters
+
     importlib.reload(local_counters)
     # Relay was NOT called (consent denied).
     assert sent == []

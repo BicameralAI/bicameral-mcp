@@ -29,9 +29,11 @@ from handlers.ingest import _normalize_payload
 def test_canonical_description_survives():
     """`decisions[].description` is the canonical field — must produce
     a mapping with the description as the intent."""
-    out = _normalize_payload({
-        "decisions": [{"description": "Use Redis for session cache"}],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [{"description": "Use Redis for session cache"}],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
     assert mappings[0]["intent"] == "Use Redis for session cache"
@@ -41,9 +43,11 @@ def test_canonical_description_survives():
 def test_canonical_title_fallback():
     """`decisions[].title` is the documented secondary field — used when
     `description` is absent."""
-    out = _normalize_payload({
-        "decisions": [{"title": "Apply 10% discount on orders over $100"}],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [{"title": "Apply 10% discount on orders over $100"}],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
     assert mappings[0]["intent"] == "Apply 10% discount on orders over $100"
@@ -53,9 +57,11 @@ def test_text_alias_for_decisions():
     """v0.4.16 alias: `text` on a decision should flow through as the
     intent. This is the exact shape the old SKILL.md documented; keeping
     it working guards against a regression."""
-    out = _normalize_payload({
-        "decisions": [{"text": "Cache user sessions in Redis"}],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [{"text": "Cache user sessions in Redis"}],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
     assert mappings[0]["intent"] == "Cache user sessions in Redis"
@@ -65,12 +71,16 @@ def test_description_preferred_over_text_when_both_present():
     """When a decision has both `description` and `text`, the canonical
     `description` wins. This is the documented priority order:
     description > title > text."""
-    out = _normalize_payload({
-        "decisions": [{
-            "description": "canonical description wins",
-            "text": "alias should lose",
-        }],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [
+                {
+                    "description": "canonical description wins",
+                    "text": "alias should lose",
+                }
+            ],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
     assert mappings[0]["intent"] == "canonical description wins"
@@ -79,13 +89,15 @@ def test_description_preferred_over_text_when_both_present():
 def test_decision_with_all_text_fields_empty_is_dropped():
     """If a decision has no text in any accepted field, it must be
     silently dropped rather than producing a phantom mapping."""
-    out = _normalize_payload({
-        "decisions": [
-            {"description": "real decision"},
-            {"status": "proposed"},  # no description/title/text
-            {"id": "abc", "participants": ["Ian"]},  # metadata only
-        ],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [
+                {"description": "real decision"},
+                {"status": "proposed"},  # no description/title/text
+                {"id": "abc", "participants": ["Ian"]},  # metadata only
+            ],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
     assert mappings[0]["intent"] == "real decision"
@@ -95,9 +107,11 @@ def test_action_items_not_written_to_ledger():
     """action_items are accepted in payload for backwards compat but NOT
     written to the ledger (not converted to mappings). They belong in a
     ticket tracker, not the decision ledger."""
-    out = _normalize_payload({
-        "action_items": [{"action": "Write retry tests", "owner": "Ian"}],
-    })
+    out = _normalize_payload(
+        {
+            "action_items": [{"action": "Write retry tests", "owner": "Ian"}],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 0
 
@@ -105,10 +119,12 @@ def test_action_items_not_written_to_ledger():
 def test_action_items_mixed_with_decisions():
     """When payload has both decisions and action_items, only decisions
     become mappings — action_items are silently ignored."""
-    out = _normalize_payload({
-        "decisions": [{"description": "Use Redis for session cache"}],
-        "action_items": [{"action": "Write retry tests", "owner": "Ian"}],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [{"description": "Use Redis for session cache"}],
+            "action_items": [{"action": "Write retry tests", "owner": "Ian"}],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 1
     assert mappings[0]["intent"] == "Use Redis for session cache"
@@ -120,17 +136,19 @@ def test_the_exact_dogfood_payload():
     1 phantom '[Action: Ian] ' mapping, grounded to unrelated symbols.
     After the fix: only real decisions surface; action_items are accepted
     for backwards compat but not written to the ledger."""
-    out = _normalize_payload({
-        "source": "transcript",
-        "title": "demo-gallery",
-        "decisions": [
-            {"text": "Cache user sessions in Redis for horizontal scaling"},
-            {"text": "Apply 10% discount on orders over $100"},
-        ],
-        "action_items": [
-            {"text": "Write tests for retry policy", "owner": "Ian"},
-        ],
-    })
+    out = _normalize_payload(
+        {
+            "source": "transcript",
+            "title": "demo-gallery",
+            "decisions": [
+                {"text": "Cache user sessions in Redis for horizontal scaling"},
+                {"text": "Apply 10% discount on orders over $100"},
+            ],
+            "action_items": [
+                {"text": "Write tests for retry policy", "owner": "Ian"},
+            ],
+        }
+    )
     mappings = out.get("mappings", [])
     intents = [m["intent"] for m in mappings]
     assert "Cache user sessions in Redis for horizontal scaling" in intents
@@ -143,13 +161,15 @@ def test_the_exact_dogfood_payload():
 def test_mixed_canonical_and_alias_in_same_payload():
     """A payload can mix canonical and alias fields across decisions —
     the handler normalizes each decision independently."""
-    out = _normalize_payload({
-        "decisions": [
-            {"description": "First decision via canonical field"},
-            {"title": "Second decision via title fallback"},
-            {"text": "Third decision via text alias"},
-        ],
-    })
+    out = _normalize_payload(
+        {
+            "decisions": [
+                {"description": "First decision via canonical field"},
+                {"title": "Second decision via title fallback"},
+                {"text": "Third decision via text alias"},
+            ],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 3
     assert mappings[0]["intent"] == "First decision via canonical field"
@@ -160,11 +180,13 @@ def test_mixed_canonical_and_alias_in_same_payload():
 def test_action_items_always_produce_zero_mappings():
     """action_items are never written to the ledger regardless of their fields.
     This guards against the '[Action: <owner>] ' phantom-mapping regression."""
-    out = _normalize_payload({
-        "action_items": [
-            {"action": "real action", "owner": "Ian"},
-            {"action": "another action"},
-        ],
-    })
+    out = _normalize_payload(
+        {
+            "action_items": [
+                {"action": "real action", "owner": "Ian"},
+                {"action": "another action"},
+            ],
+        }
+    )
     mappings = out.get("mappings", [])
     assert len(mappings) == 0

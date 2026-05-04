@@ -56,7 +56,9 @@ class _CtxWithCodegenome:
 def _stub_bind_dependencies(content_hash="abc123"):
     stack = ExitStack()
     stack.enter_context(patch("ledger.adapter.compute_content_hash", return_value=content_hash))
-    stack.enter_context(patch("ledger.status.get_git_content", return_value="def foo():\n    return 1\n"))
+    stack.enter_context(
+        patch("ledger.status.get_git_content", return_value="def foo():\n    return 1\n")
+    )
     stack.enter_context(patch("ledger.status.hash_lines", return_value=content_hash))
     return stack
 
@@ -75,13 +77,18 @@ async def test_bind_with_flag_off_writes_no_identity():
         ctx = _CtxWithCodegenome(adapter, write_identity_records=False)
 
         with _stub_bind_dependencies(content_hash="hash_off"):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "server.py",
-                "symbol_name": "handle_search",
-                "start_line": 10,
-                "end_line": 30,
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "server.py",
+                        "symbol_name": "handle_search",
+                        "start_line": 10,
+                        "end_line": 30,
+                    }
+                ],
+            )
 
         assert len(resp.bindings) == 1
         assert resp.bindings[0].error is None
@@ -111,13 +118,18 @@ async def test_bind_with_flag_on_writes_identity_and_links_decision():
 
         fixed_hash = "deadbeefcafe1234"
         with _stub_bind_dependencies(content_hash=fixed_hash):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "checkout/rate_limit.py",
-                "symbol_name": "enforce_checkout_rate_limit",
-                "start_line": 24,
-                "end_line": 67,
-            }])
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "checkout/rate_limit.py",
+                        "symbol_name": "enforce_checkout_rate_limit",
+                        "start_line": 24,
+                        "end_line": 67,
+                    }
+                ],
+            )
 
         assert len(resp.bindings) == 1
         bind_result = resp.bindings[0]
@@ -189,17 +201,26 @@ async def test_codegenome_failure_does_not_change_bind_response():
         decision_id = await _seed_decision(client, "x")
         ctx = _CtxWithCodegenome(adapter, write_identity_records=True)
 
-        with patch.object(
-            ctx.codegenome, "compute_identity",
-            side_effect=RuntimeError("simulated codegenome failure"),
-        ), _stub_bind_dependencies(content_hash="h2"):
-            resp = await handle_bind(ctx, bindings=[{
-                "decision_id": decision_id,
-                "file_path": "a.py",
-                "symbol_name": "f",
-                "start_line": 1,
-                "end_line": 5,
-            }])
+        with (
+            patch.object(
+                ctx.codegenome,
+                "compute_identity",
+                side_effect=RuntimeError("simulated codegenome failure"),
+            ),
+            _stub_bind_dependencies(content_hash="h2"),
+        ):
+            resp = await handle_bind(
+                ctx,
+                bindings=[
+                    {
+                        "decision_id": decision_id,
+                        "file_path": "a.py",
+                        "symbol_name": "f",
+                        "start_line": 1,
+                        "end_line": 5,
+                    }
+                ],
+            )
 
         assert len(resp.bindings) == 1
         assert resp.bindings[0].error is None
