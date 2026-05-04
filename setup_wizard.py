@@ -392,7 +392,7 @@ def _build_session_end_command(mcp_config_path: str | None = None) -> str:
     return (
         '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
         "BICAMERAL_SESSION_END_RUNNING=1 "
-        f"claude -p '/bicameral:capture-corrections --auto-ingest'{extra_flags} || true"
+        f"claude -p '/bicameral-capture-corrections --auto-ingest'{extra_flags} || true"
     )
 
 
@@ -404,7 +404,7 @@ _BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
 # Fires after every Bash tool use. When the command is a git write-op
 # (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
 # envelope whose additionalContext nudges the agent to invoke
-# /bicameral:sync — running the full link_commit → compliance check
+# /bicameral-sync — running the full link_commit → compliance check
 # flow so status is authoritative immediately.
 #
 # Was a plain-stdout python -c one-liner. Per Claude Code 2.x hook docs
@@ -937,11 +937,11 @@ def run_setup(
 
     if "claude" in agents:
         print("  Claude Code slash commands:")
-        print("    /bicameral:ingest     — ingest a transcript, Slack thread, or PRD")
-        print("    /bicameral:preflight  — pre-flight: surface decisions before coding")
-        print("    /bicameral:history    — list all tracked decisions by feature area")
-        print("    /bicameral:dashboard  — open live decision dashboard in browser")
-        print("    /bicameral:reset      — nuke and replay the ledger (emergency)")
+        print("    /bicameral-ingest     — ingest a transcript, Slack thread, or PRD")
+        print("    /bicameral-preflight  — pre-flight: surface decisions before coding")
+        print("    /bicameral-history    — list all tracked decisions by feature area")
+        print("    /bicameral-dashboard  — open live decision dashboard in browser")
+        print("    /bicameral-reset      — nuke and replay the ledger (emergency)")
         print()
 
     print("  Or just ask naturally:")

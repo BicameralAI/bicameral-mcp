@@ -64,7 +64,7 @@ Observable evidence that a real user / agent / contributor stubbed their
 toe on something that should "just work." Symptoms, not fixes.
 
 Examples:
-- Slack thread from a design partner showing `claude -p '/bicameral:sync'`
+- Slack thread from a design partner showing `claude -p '/bicameral-sync'`
   exiting silently (#124).
 - Dashboard footage of a mid-session constraint orphaning as a parallel
   decision instead of linking to its parent.

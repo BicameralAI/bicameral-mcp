@@ -1,6 +1,6 @@
-# /bicameral:config — Interactive Configuration
+# /bicameral-config — Interactive Configuration
 
-**Trigger**: user types `/bicameral:config`
+**Trigger**: user types `/bicameral-config`
 
 Walk through each bicameral configuration setting interactively, write the
 updated `config.yaml`, and reinstall all hooks so changes take effect

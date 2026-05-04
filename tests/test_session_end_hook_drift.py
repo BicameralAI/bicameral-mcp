@@ -10,7 +10,7 @@ The canonical command per skills/bicameral-capture-corrections/SKILL.md:207:
 
   [ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && \
     BICAMERAL_SESSION_END_RUNNING=1 \
-    claude -p '/bicameral:capture-corrections --auto-ingest' || true
+    claude -p '/bicameral-capture-corrections --auto-ingest' || true
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 CANONICAL_COMMAND = (
     '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
     "BICAMERAL_SESSION_END_RUNNING=1 "
-    "claude -p '/bicameral:capture-corrections --auto-ingest' || true"
+    "claude -p '/bicameral-capture-corrections --auto-ingest' || true"
 )
 
 

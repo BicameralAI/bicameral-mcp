@@ -2,7 +2,7 @@
 
 When the agent runs ``git commit`` / ``git merge`` / ``git pull`` /
 ``git rebase --continue``, inject a system-reminder telling the agent to
-call ``/bicameral:sync`` so the decision ledger picks up the new HEAD,
+call ``/bicameral-sync`` so the decision ledger picks up the new HEAD,
 runs compliance checks, and produces authoritative reflected/drifted
 verdicts before the next user turn.
 
@@ -12,7 +12,7 @@ that previously lived inline in ``setup_wizard.py``. Per Claude Code
 from PostToolUse hooks is silently dropped to the debug log — only
 UserPromptSubmit / UserPromptExpansion / SessionStart treat raw stdout
 as agent-visible context. Symptom: the agent committed but never
-followed through to call ``link_commit`` / ``/bicameral:sync`` because
+followed through to call ``link_commit`` / ``/bicameral-sync`` because
 the reminder never reached the model. Fix: emit the structured
 envelope ``{"hookSpecificOutput": {"hookEventName": "PostToolUse",
 "additionalContext": "..."}}``.
@@ -33,7 +33,7 @@ import sys
 BASH_TOOL_NAME = "Bash"
 
 # Substrings that mark a git write-op against HEAD that the agent should
-# follow up with /bicameral:sync. Exact phrasing matches the legacy
+# follow up with /bicameral-sync. Exact phrasing matches the legacy
 # inline command's tuple so behavior is byte-identical except for the
 # stdout envelope.
 WRITE_OP_MARKERS: tuple[str, ...] = (
@@ -44,7 +44,7 @@ WRITE_OP_MARKERS: tuple[str, ...] = (
 )
 
 REMINDER_TEXT = (
-    "bicameral: new commit detected — run /bicameral:sync to resolve "
+    "bicameral: new commit detected — run /bicameral-sync to resolve "
     "compliance and get authoritative reflected/drifted status"
 )
 
