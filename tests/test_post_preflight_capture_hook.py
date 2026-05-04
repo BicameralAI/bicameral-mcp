@@ -61,7 +61,12 @@ def _hook_output(parsed: dict) -> dict:
 
 
 def test_emits_reminder_when_decisions_surfaced():
-    """fired=True with ≥1 decision → envelope with reminder containing each decision_id + Step 5.6 template."""
+    """fired=True with ≥1 decision → envelope with reminder containing each
+    decision_id + the Step 5.6.1 AskUserQuestion disambiguation template
+    (per #175). The reminder no longer templates the bare ingest+
+    resolve_collision sequence — it templates the user-disambiguation
+    question whose answer drives Step 5.6.2's mechanical capture.
+    """
     stdin = _make_stdin(
         fired=True,
         decisions=[
@@ -74,21 +79,28 @@ def test_emits_reminder_when_decisions_surfaced():
     inner = _hook_output(json.loads(out))
     ctx = inner["additionalContext"]
     assert "<system-reminder>" in ctx
+    # Surfaced decisions are listed verbatim so the agent can scope the
+    # disambiguation question.
     assert "decision:abc123" in ctx
     assert "decision:def456" in ctx
     assert "Drag-and-drop to reorder commits" in ctx
-    assert "bicameral.ingest" in ctx
+    # The Step 5.6.1 AskUserQuestion shape is templated.
+    assert "AskUserQuestion" in ctx
+    assert "supersede" in ctx and "keep_both" in ctx
+    assert "unrelated" in ctx
+    # Branch instructions for Step 5.6.2 are still present so the agent
+    # knows what to do with each answer.
     assert "agent_session" in ctx
-    assert "bicameral.resolve_collision" in ctx
-    assert "supersede" in ctx and "keep_both" in ctx and "link_parent" in ctx
+    assert "resolve_collision" in ctx
 
 
-def test_reminder_is_unconditional_not_judgment_gated():
-    """The reminder must instruct mechanical capture, NOT condition on the
-    agent's own judgment of whether the prompt 'really' contradicts. An
-    earlier conditional phrasing let the agent skip capture on borderline
-    prompts even when preflight surfaced relevant decisions. Lock the
-    unconditional posture in so future edits don't quietly regress it.
+def test_reminder_routes_judgment_to_user_not_agent():
+    """Per #175, the agent must NOT judge contradiction itself — it asks
+    the user via ``AskUserQuestion`` and acts on the answer mechanically.
+    Lock the user-disambiguation posture in so future edits don't quietly
+    regress to ``"you MUST capture"`` (which the agent demonstrably
+    ignored on borderline prompts) or to the original ``"IF you
+    contradict ..."`` conditional gate.
     """
     stdin = _make_stdin(
         fired=True,
@@ -96,11 +108,14 @@ def test_reminder_is_unconditional_not_judgment_gated():
     )
     _, out, _ = _run_hook(stdin)
     ctx = _hook_output(json.loads(out))["additionalContext"]
-    # Affirmative imperative present.
-    assert "BEFORE any code edits, you MUST capture" in ctx
-    assert "do NOT judge" in ctx
-    # Negative: must not gate on the agent's own contradiction judgment, and
-    # must not give an explicit escape hatch for "compatible" prompts.
+    # Affirmative: judgment moves to the user.
+    assert "do NOT judge contradiction yourself" in ctx
+    assert "ask the user" in ctx
+    assert "AskUserQuestion" in ctx
+    # Negative: must NOT contain the prior unconditional capture wording
+    # (which short-circuited the user-in-the-loop design) NOR the original
+    # conditional escape hatch (which over-deferred to agent judgment).
+    assert "BEFORE any code edits, you MUST capture" not in ctx
     assert "If your current prompt CONTRADICTS" not in ctx
     assert "If your prompt is COMPATIBLE" not in ctx
     assert "ignore this and proceed normally" not in ctx
