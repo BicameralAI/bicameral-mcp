@@ -141,6 +141,32 @@ def clean_ledger(ledger_dir: pathlib.Path) -> None:
         shutil.rmtree(ledger_dir, ignore_errors=True)
 
 
+def clean_claude_memory_for_repo(desktop_repo_path: str) -> None:
+    """Purge Claude Code's per-project memory directory for the test repo.
+
+    Claude Code maintains per-cwd memory at ``~/.claude/projects/<key>/memory/``
+    where ``<key>`` is the absolute repo path with ``/`` replaced by ``-``.
+    This memory persists across runs on the same machine (and on shared CI
+    runners across PR runs).
+
+    Without this purge, memory written during one e2e run leaks into the
+    next: e.g. a stale ``MEMORY.md`` from a prior run lets the agent answer
+    Flow 5's "PM Friday review" prompt directly from disk instead of
+    invoking ``bicameral.history``, which then breaks the Flow 5 asserter
+    AND cascades to Flow 3 (whose ledger snapshot relies on Flow 5's
+    bicameral call to drain the post-commit JSONL queue via the
+    ``EventMaterializer.replay_new_events`` trigger). Observed on PR #181;
+    root-causing in this PR's harness fix.
+    """
+    home = pathlib.Path.home()
+    project_key = (
+        str(pathlib.Path(desktop_repo_path).resolve()).replace("\\", "-").replace("/", "-")
+    )
+    memory_dir = home / ".claude" / "projects" / project_key / "memory"
+    if memory_dir.exists():
+        shutil.rmtree(memory_dir, ignore_errors=True)
+
+
 def reset_desktop_repo(desktop_repo_path: str) -> None:
     """Reset desktop-clone to its pinned HEAD between runs. Flow 3 makes a
     real commit; without a reset, the second-onwards run starts from a
