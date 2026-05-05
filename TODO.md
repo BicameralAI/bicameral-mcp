@@ -201,3 +201,48 @@ From eng review 2026-04-26. Four independent workstreams — A+B+C launch in par
 All mocks deleted. V1 introduces no new mocks (read-path advisory
 only). See git history for the original Phase 1 / Phase 2 mock
 replacements (`RealCodeLocatorAdapter`, `SurrealDBLedgerAdapter`).
+
+---
+
+## Priority C v1 — Notion ingest + cache contract migration (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-notion-v1.md`](plan-priority-c-team-server-notion-v1.md). Three-round
+audit cycle (VETO → VETO → PASS); implementation 64/64 team-server tests passing.
+
+### Phase 0: Cache contract migration — DONE
+
+- [x] `team_server/schema.py` — schema v1→v2; `schema_version` table; `_MIGRATIONS` callable dispatch
+- [x] `team_server/extraction/canonical_cache.py` — `get_or_compute` replaced by `upsert_canonical_extraction(...) -> tuple[dict, bool]`
+- [x] `team_server/workers/slack_worker.py` — adapted to new tuple-return contract; `_cache_row_exists` deleted
+- [x] `tests/test_team_server_cache_upsert.py` — 4 functionality tests
+- [x] `tests/test_team_server_schema_migration.py` — 4 functionality tests (incl. callable-dispatch + schema_version row)
+- [x] `tests/test_team_server_slack_worker.py` — adapted; new no-event-on-unchanged + event-on-changed pair
+- [x] `tests/test_team_server_canonical_cache.py` — rewritten under v2 upsert contract
+
+### Phase 0.5: Worker-task lifecycle pattern + Slack reference wiring — DONE
+
+Closes the v0 dormant-Slack-worker gap (v0 plan claimed an active worker; v0 code shipped a function with no production caller).
+
+- [x] `team_server/workers/runner.py` — `worker_loop(name, interval, work_fn)` lifecycle helper
+- [x] `team_server/workers/slack_runner.py` — `run_slack_iteration(db_client, extractor)` with workspace iteration, Fernet decryption, channel allowlist read, per-workspace failure isolation
+- [x] `team_server/app.py` — lifespan registers Slack task unconditionally + Notion task opt-in
+- [x] `tests/test_team_server_worker_lifecycle.py` — 7 functionality tests (incl. round-trip encryption test closing audit-round-2 blind spot)
+
+### Phase 1: Notion auth + content fetch primitives — DONE
+
+- [x] `team_server/auth/notion_client.py` — `load_token`, `list_databases`, `query_database`, `fetch_page_blocks`; `Notion-Version: 2022-06-28` pinned
+- [x] `team_server/extraction/notion_serializer.py` — `serialize_row(page, blocks) -> str` deterministic
+- [x] `team_server/config.py` — `DEFAULT_CONFIG_PATH` constant with env-var fallback
+- [x] `tests/test_team_server_notion_client.py` — 7 functionality tests
+- [x] `tests/test_team_server_notion_serializer.py` — 3 functionality tests
+
+### Phase 2: Notion ingest worker — DONE
+
+- [x] `team_server/workers/notion_worker.py` — polls allowlist-via-share databases, per-database watermark, peer-author event identity
+- [x] `tests/test_team_server_notion_worker.py` — 9 functionality tests (incl. partial-failure recovery, edit semantics, content_hash via deterministic serialization)
+
+### Phase 3: Notion task registration — DONE
+
+- [x] `team_server/workers/notion_runner.py` — `run_notion_iteration(db_client, token, extractor)` thin wrapper for symmetry with slack_runner
+- [x] `team_server/app.py` — Notion task registration via the same `worker_loop` helper; opt-in on `notion_client.load_token` success
+- [x] `tests/test_team_server_notion_lifecycle.py` — 4 functionality tests

@@ -1340,19 +1340,36 @@ async def serve_stdio() -> None:
     except Exception:
         pass
 
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name=SERVER_NAME,
-                server_version=SERVER_VERSION,
-                capabilities=server.get_capabilities(
-                    notification_options=_notification_options(),
-                    experimental_capabilities={},
+    # Team-server event consumer — opt-in via BICAMERAL_TEAM_SERVER_URL env.
+    # Closes the v0 pull→dispatch wiring gap (issue #160). Periodically
+    # pulls events from the team-server's /events endpoint, bridges to
+    # IngestPayload, and invokes the inner adapter's ingest_payload.
+    from adapters.ledger import get_ledger
+    from events.team_server_consumer import start_team_server_consumer_if_configured
+
+    team_consumer_task = start_team_server_consumer_if_configured(get_ledger())
+
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name=SERVER_NAME,
+                    server_version=SERVER_VERSION,
+                    capabilities=server.get_capabilities(
+                        notification_options=_notification_options(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+    finally:
+        if team_consumer_task is not None:
+            team_consumer_task.cancel()
+            try:
+                await team_consumer_task
+            except asyncio.CancelledError:
+                pass
 
 
 def cli_main(argv: list[str] | None = None) -> int:
