@@ -1,0 +1,6 @@
+services:
+  bicameral-team-server:
+    environment:
+      SLACK_CLIENT_ID: "${SLACK_CLIENT_ID:?SLACK_CLIENT_ID required}"
+      SLACK_CLIENT_SECRET: "${SLACK_CLIENT_SECRET:?SLACK_CLIENT_SECRET required}"
+      SLACK_REDIRECT_URI: "${SLACK_REDIRECT_URI:?SLACK_REDIRECT_URI required (public tunnel /oauth/slack/callback)}"

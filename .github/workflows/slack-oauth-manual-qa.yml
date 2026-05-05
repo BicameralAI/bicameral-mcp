@@ -1,0 +1,163 @@
+name: slack oauth manual qa (PR #153)
+
+# Manual QA harness for the two unchecked items in PR #153's test plan:
+#   - docker-compose stack health
+#   - Slack OAuth round-trip in a dev workspace
+#
+# workflow_dispatch ONLY — never runs on push/PR. Gated by the existing
+# `recording-approval` environment so the run sits in "Waiting" until a
+# maintainer with reviewer permission clicks Approve. Same gate the
+# v0-user-flow-e2e recording job uses.
+#
+# Required secrets (repo or env-scoped to `recording-approval`):
+#   SLACK_CLIENT_ID         - dev Slack OAuth app
+#   SLACK_CLIENT_SECRET     - dev Slack OAuth app
+#   SLACK_STORAGE_STATE_B64 - base64 of Playwright storage_state.json for a
+#                             pre-logged-in test Slack user
+# See tests/manual_qa/README.md for capture steps.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  slack-oauth-e2e:
+    name: slack oauth round-trip (manual approval)
+    runs-on: ubuntu-latest
+    environment: recording-approval
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test deps + Playwright Chromium
+        run: |
+          pip install pytest httpx playwright cryptography
+          playwright install --with-deps chromium
+
+      - name: Required-secret presence probe
+        env:
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+          SLACK_STORAGE_STATE_B64: ${{ secrets.SLACK_STORAGE_STATE_B64 }}
+        run: |
+          set -e
+          for v in SLACK_CLIENT_ID SLACK_CLIENT_SECRET SLACK_STORAGE_STATE_B64; do
+            if [ -z "${!v}" ]; then
+              echo "::error::secret $v is missing on the recording-approval environment"
+              exit 1
+            fi
+          done
+
+      - name: Install cloudflared
+        run: |
+          curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb -o /tmp/cloudflared.deb
+          sudo dpkg -i /tmp/cloudflared.deb
+
+      - name: Start cloudflared quick tunnel; capture URL
+        # Boots a tunnel pointed at localhost:8765 (where docker-compose
+        # will listen). Cloudflare emits the trycloudflare.com URL to
+        # stderr/stdout once the tunnel registers; we tail that and
+        # export it as MANUAL_QA_PUBLIC_URL for downstream steps.
+        run: |
+          mkdir -p /tmp/tunnel
+          nohup cloudflared tunnel --no-autoupdate --url http://localhost:8765 \
+            > /tmp/tunnel/log 2>&1 &
+          echo $! > /tmp/tunnel/pid
+          for i in $(seq 1 30); do
+            url=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' /tmp/tunnel/log | head -1 || true)
+            if [ -n "$url" ]; then
+              echo "MANUAL_QA_PUBLIC_URL=$url" >> "$GITHUB_ENV"
+              echo "Tunnel up at $url"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::cloudflared tunnel did not advertise a URL within 60s"
+          cat /tmp/tunnel/log
+          exit 1
+
+      - name: Generate Fernet key for token-at-rest encryption
+        run: |
+          key=$(python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+          echo "::add-mask::$key"
+          echo "BICAMERAL_TEAM_SERVER_SECRET_KEY=$key" >> "$GITHUB_ENV"
+
+      - name: Start team-server stack
+        env:
+          SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
+          SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
+        run: |
+          export SLACK_REDIRECT_URI="${MANUAL_QA_PUBLIC_URL}/oauth/slack/callback"
+          docker compose \
+            -f deploy/team-server.docker-compose.yml \
+            -f tests/manual_qa/docker-compose.override.yml \
+            up -d --build
+
+      - name: Wait for /health (via local port)
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8765/health >/dev/null 2>&1; then
+              echo "team-server healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::team-server /health never became OK"
+          docker compose -f deploy/team-server.docker-compose.yml logs --tail=200
+          exit 1
+
+      - name: Run manual-QA suite
+        env:
+          SLACK_STORAGE_STATE_B64: ${{ secrets.SLACK_STORAGE_STATE_B64 }}
+        run: |
+          mkdir -p test-results/manual-qa
+          pytest tests/manual_qa/ -v -s \
+            --junit-xml=test-results/manual-qa/junit.xml \
+            --tb=short \
+            --capture=no
+        # Continue on test failure so we still capture videos + logs.
+        continue-on-error: true
+        id: pytest
+
+      - name: Collect Playwright videos
+        if: always()
+        run: |
+          mkdir -p artifacts/videos
+          # pytest tmp_path roots vary by runner; sweep both common locations.
+          find /tmp /home -name "*.webm" -path "*manual-qa*" -o -name "*.webm" -path "*pytest*" 2>/dev/null \
+            | xargs -I {} cp -v {} artifacts/videos/ 2>/dev/null || true
+          ls -la artifacts/videos/ || true
+
+      - name: Capture team-server logs
+        if: always()
+        run: |
+          mkdir -p artifacts/logs
+          docker compose -f deploy/team-server.docker-compose.yml \
+            logs --no-color > artifacts/logs/team-server.log 2>&1 || true
+          cp /tmp/tunnel/log artifacts/logs/cloudflared.log 2>/dev/null || true
+
+      - name: Upload manual-QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr153-slack-oauth-evidence
+          path: |
+            artifacts/
+            test-results/manual-qa/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Tear down stack
+        if: always()
+        run: |
+          docker compose -f deploy/team-server.docker-compose.yml down -v || true
+          if [ -f /tmp/tunnel/pid ]; then kill "$(cat /tmp/tunnel/pid)" 2>/dev/null || true; fi
+
+      - name: Re-raise pytest failure
+        if: steps.pytest.outcome == 'failure'
+        run: exit 1
