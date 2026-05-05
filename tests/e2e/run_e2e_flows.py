@@ -89,6 +89,7 @@ sys.path.insert(0, str(E2E_ROOT))
 # isort: off
 from _harness_setup import (  # noqa: E402,I001  # path tweak above
     bootstrap_bicameral_dir as _bootstrap_helper,
+    clean_claude_memory_for_repo as _clean_claude_memory_helper,
     clean_ledger as _clean_ledger_helper,
     materialize_mcp_config,
     materialize_settings_with_hooks,
@@ -102,6 +103,10 @@ _MCP_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def _clean_ledger() -> None:
     _clean_ledger_helper(LEDGER_DIR)
+
+
+def _clean_claude_memory() -> None:
+    _clean_claude_memory_helper(DESKTOP_REPO_PATH)
 
 
 def _reset_desktop_repo() -> None:
@@ -1187,6 +1192,7 @@ def main() -> int:
     print(f"Flows:              {len(FLOW_PLAN)}\n")
 
     _clean_ledger()
+    _clean_claude_memory()
     _reset_desktop_repo()
     _bootstrap_bicameral_dir()
 
