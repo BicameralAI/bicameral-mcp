@@ -43,14 +43,21 @@ MCP_CONFIG_TEMPLATE = E2E_ROOT / "bicameral.mcp.json"
 RESULTS_DIR = pathlib.Path(__file__).resolve().parents[2] / "test-results" / "e2e"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Wall-clock cap for a single `claude -p` flow invocation. Was 300s; CI
-# repeatedly tripped that limit on Flow 2 (the longest flow — chained
-# preflight → ingest(agent_session) → resolve_collision sequence after the
-# #154 hook landed). Last clean dev-branch Flow 2 measured 289.7s — only
-# ~3% headroom on the old cap. Bumped to 600s to give the post-hook
-# sequence plenty of margin without inflating the recording job's wall
-# beyond what GitHub Actions tolerates.
-CLAUDE_SESSION_TIMEOUT_S = 600
+# Wall-clock cap for a single `claude -p` flow invocation.
+#
+# History:
+#   - 300s: original cap. CI tripped it repeatedly on Flow 2 after #154's
+#     PostToolUse hook added the chained preflight → ingest(agent_session)
+#     → resolve_collision sequence.
+#   - 600s: bumped from 300s. Last clean dev-branch Flow 2 measured 289.7s
+#     against the 300s cap — only ~3% headroom — so 600s gave the post-hook
+#     sequence what looked like plenty of margin.
+#   - 900s: bumped from 600s after PR #181 run 25377562963 hit a 600s
+#     timeout on Flow 2. Root cause: #175 (AskUserQuestion disambiguation
+#     gate at preflight Step 5.6.1) added turns to Flow 2's chain that
+#     weren't in the 600s baseline. Same age-out pattern as the 300→600
+#     bump. 50% headroom over observed runtime.
+CLAUDE_SESSION_TIMEOUT_S = 900
 
 # Persistent ledger shared across the 5 flow sessions in a single run, wiped
 # at the start of each run so flow-1 seeds → flow-2 refines → flow-3 reflects
