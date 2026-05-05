@@ -134,7 +134,7 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
 
 1. Identify the dominant feature area from the source (same noun phrase you'd use in Step 1.5 — e.g. "Session Identity", "Accountable Live", "Checkout Flow").
 
-2. Call `bicameral.search(query=<feature_area>, top_k=10)`.
+2. Call `bicameral.history(feature_filter=<feature_area>)`. (`bicameral.search` was retired — `history` with a substring filter is the live equivalent. There is no `top_k` or `min_confidence` knob; the filter is a substring match over the feature/decision text.)
 
 3. Read the results and note:
    - **Business drivers already established** in this area (privacy, compliance, contract, SLA). A new candidate whose driver matches an established pattern is more likely to be real — even if the source is silent on the driver.
@@ -145,7 +145,7 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
    - If ledger context establishes a privacy/compliance pattern and a new candidate is privacy-shaped → treat the ledger context as evidence for the business driver, even if the source is silent. Ingest as `proposed` with a note: `"business driver inferred from ledger: <prior decision description>"`.
    - If no ledger context → apply the filters strictly and park ambiguous cases.
 
-**Skip this step** (proceed directly to Step 1) when the source is a completely new domain with no plausible overlap with existing decisions (e.g. first-ever ingest into an empty ledger). The `bicameral.search` call is cheap — when in doubt, call it.
+**Skip this step** (proceed directly to Step 1) when the source is a completely new domain with no plausible overlap with existing decisions (e.g. first-ever ingest into an empty ledger). The `bicameral.history` call is cheap — when in doubt, call it.
 
 ### 1. Extract candidate decisions
 
