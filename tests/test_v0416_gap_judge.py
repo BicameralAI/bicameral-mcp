@@ -8,8 +8,8 @@ Three layers:
   2. Context pack builder tests against the real surreal ledger —
      honest empty path, related-decision cross-linking, phrasing-gap
      forwarding.
-  3. End-to-end ingest → brief → judgment_payload auto-chain tests.
-     Also locks in: standalone brief never carries a judgment_payload,
+  3. End-to-end ingest → brief → unified-brief auto-chain tests.
+     Also locks in: standalone brief never carries gap-judge findings,
      gap-judge chain failure is non-fatal to ingest.
 
 All tests use the same in-memory surreal ledger + seeded git repo
@@ -365,9 +365,14 @@ async def test_judge_gaps_builds_context_pack(_isolated_ledger):
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_ingest_chain_attaches_judgment_payload(_isolated_ledger):
+async def test_ingest_chain_attaches_brief_with_rubric(_isolated_ledger):
     """End-to-end: a successful ingest with a derivable topic returns
-    IngestResponse.judgment_payload populated by the judge_gaps chain."""
+    IngestResponse.brief populated by the judge_gaps chain (#187 unification —
+    replaces the legacy IngestResponse.judgment_payload field).
+
+    `brief.rubric` carries the GapRubric reference that previously lived on
+    `judgment_payload.rubric`; `created_decisions` carries the ingest input
+    that was previously surfaced via `judgment_payload.decisions`."""
     ledger = get_ledger()
     await ledger.connect()
     ctx = BicameralContext.from_env()
@@ -379,17 +384,19 @@ async def test_ingest_chain_attaches_judgment_payload(_isolated_ledger):
     )
     response = await handle_ingest(ctx, payload)
 
-    assert response.judgment_payload is not None, (
-        "judgment_payload must be attached when ingest has a derivable topic"
+    assert response.brief is not None, "brief must be attached when ingest has a derivable topic"
+    assert len(response.created_decisions) >= 1, (
+        "created_decisions carries the ingest-input that was previously "
+        "surfaced via judgment_payload.decisions"
     )
-    assert len(response.judgment_payload.decisions) >= 1
-    assert len(response.judgment_payload.rubric.categories) == 5
+    assert response.brief.rubric is not None
+    assert len(response.brief.rubric.categories) == 5
 
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
-async def test_ingest_chain_skips_judgment_when_no_topic(_isolated_ledger):
-    """When the payload has no derivable topic, judgment_payload is None."""
+async def test_ingest_chain_skips_brief_when_no_topic(_isolated_ledger):
+    """When the payload has no derivable topic, brief is None (silent-on-no-signal)."""
     ledger = get_ledger()
     await ledger.connect()
     ctx = BicameralContext.from_env()
@@ -400,14 +407,14 @@ async def test_ingest_chain_skips_judgment_when_no_topic(_isolated_ledger):
     }
     response = await handle_ingest(ctx, payload)
 
-    assert response.judgment_payload is None
+    assert response.brief is None
 
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
 async def test_gap_judge_chain_failure_is_non_fatal(_isolated_ledger):
     """If the chained handle_judge_gaps raises, the ingest itself
-    must still return a valid IngestResponse with judgment_payload=None."""
+    must still return a valid IngestResponse with brief=None."""
     ledger = get_ledger()
     await ledger.connect()
     ctx = BicameralContext.from_env()
@@ -424,7 +431,7 @@ async def test_gap_judge_chain_failure_is_non_fatal(_isolated_ledger):
         response = await handle_ingest(ctx, payload)
 
     assert response.ingested is True
-    assert response.judgment_payload is None
+    assert response.brief is None
 
 
 @pytest.mark.phase2
