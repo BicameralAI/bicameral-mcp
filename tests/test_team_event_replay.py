@@ -227,8 +227,7 @@ async def _seed_decision_and_region(
     """
     client = inner._client
     d_rows = await client.query(
-        "CREATE decision SET description = $d, source_type = 'manual', "
-        "canonical_id = $cid",
+        "CREATE decision SET description = $d, source_type = 'manual', canonical_id = $cid",
         {"d": description, "cid": canonical_id},
     )
     decision_id = str(d_rows[0]["id"])

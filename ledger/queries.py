@@ -890,8 +890,7 @@ async def get_region_descriptor(
     record ids are per-DB and not portable across teammates.
     """
     rows = await client.query(
-        f"SELECT repo, file_path, symbol_name, start_line, end_line "
-        f"FROM {region_id} LIMIT 1"
+        f"SELECT repo, file_path, symbol_name, start_line, end_line FROM {region_id} LIMIT 1"
     )
     if not rows:
         return None
@@ -929,9 +928,10 @@ async def find_region_by_descriptor(
     if not rows:
         return None
     for row in rows:
-        if int(row.get("start_line") or 0) == start_line and int(
-            row.get("end_line") or 0
-        ) == end_line:
+        if (
+            int(row.get("start_line") or 0) == start_line
+            and int(row.get("end_line") or 0) == end_line
+        ):
             return str(row.get("id", ""))
     return str(rows[0].get("id", ""))
 
