@@ -573,8 +573,7 @@ class IngestResponse(BaseModel):
     pending_grounding_decisions: list[dict] = []
     context_for_candidates: list[ContextForCandidate] = []
     source_cursor: SourceCursorSummary | None = None
-    judgment_payload: GapJudgmentPayload | None = None  # kept for backward compat
-    judgment_payloads: list[GapJudgmentPayload] = []  # one per feature_group topic
+    brief: BriefEnvelope | None = None  # #187: unified brief envelope; replaces judgment_payload[s]
     sync_status: LinkCommitResponse | None = None
 
 
@@ -608,6 +607,30 @@ class BriefDivergence(BaseModel):
     file_path: str
     conflicting_decisions: list[BriefDecision]
     summary: str
+
+
+class BriefEnvelope(BaseModel):
+    """Unified brief envelope returned inline on `IngestResponse.brief` (#187).
+
+    Shares its shape with the brief surface that `PreflightResponse` already
+    exposes via flat fields — same readers, one model. Server-side population
+    of `gaps` (via the gap-judge auto-chain) replaces the previously-fragile
+    dual-render contract where callers had to know to render
+    `IngestResponse.judgment_payload` separately from the brief decisions.
+
+    `rubric` carries the `GapRubric` reference that previously lived on
+    `judgment_payload.rubric` (5 fixed v0.4.19 categories; structurally
+    locked by `GapRubricCategory.key` Literal typing). `None` when no
+    gap-judge findings are present.
+    """
+
+    divergences: list[BriefDivergence] = []
+    drift_candidates: list[BriefDecision] = []
+    decisions: list[BriefDecision] = []
+    gaps: list[BriefGap] = []
+    rubric: GapRubric | None = None
+    action_hints: list[ActionHint] = []
+    suggested_questions: list[str] = []
 
 
 # ── Tool 7: /bicameral_reset ─────────────────────────────────────────
@@ -961,5 +984,6 @@ class SetDecisionLevelResponse(BaseModel):
 
 
 # Forward references
+BriefEnvelope.model_rebuild()  # forward ref to GapRubric defined later in file
 IngestResponse.model_rebuild()
 ResolveCollisionResponse.model_rebuild()

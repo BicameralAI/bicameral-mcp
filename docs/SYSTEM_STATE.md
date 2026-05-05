@@ -1,61 +1,101 @@
-# System State — post-#114-substantiation snapshot
+# System State — post-#124-substantiation snapshot
 
 **Generated**: 2026-04-29
-**HEAD**: `f2eca47` (Issue #114 sealed)
-**Branch**: `feat/114-grounding-lint` (off `BicameralAI/dev` post-#117)
-**Tracked PR**: will target `BicameralAI/dev` (Issue #114); aggregate `dev → main` PR is downstream
+**HEAD**: `7c210b4` (Issue #124 implementation; seal pending commit)
+**Branch**: `feat/124-link-commit-cli` (off `BicameralAI/dev` post-#119 governance v0.17.2)
+**Tracked PR**: will target `BicameralAI/dev` (Issue #124); aggregate `dev → main` PR is downstream
 **Genesis hash**: `29dfd085...`
-**#114 seal**: Entry #20 — `a19a04debe5f8f38aab182263e94819d50743849a26cdb8cc4aa3279a81be265`
-**#48 seal** (prior on chain): Entry #18 — `eacc6f89...`
+**#124 seal**: Entry #23 — `950f362cb700da5a4db85c545f6b55bb725502a5744bfbb2c2eb3a9c9728661a`
+**#114 seal** (other in-flight branch): Entry #20 — `a19a04de...` (PR #121 pending merge)
+**#48 seal** (last-on-dev): Entry #18 — `eacc6f89...`
 
-## #114 (CI grounding lint — plan-paths + PR-body refs) implementation — 7 files, ~573 LOC, 14 new tests, 29/29 targeted regression
+## #124 (post-commit hook bug fix — link_commit CLI subcommand) implementation — 8 files, ~398 LOC delta, 9 new tests, 20/21 targeted regression
 
 | Phase | Files | New tests | Notes |
 |---|---|---|---|
-| 0 — plan-grounding lint (blocking) | 1 new prod + 1 new test | 8 | `scripts/lint_plan_grounding.py` 212 LOC; walker + classifier + CLI; pure stdlib; exit 1 on unresolved paths |
-| 1 — PR-body refs lint (advisory) | 1 new prod + 1 new test | 6 | `.github/scripts/lint_pr_body_refs.py` 162 LOC; **OWASP A03 hardened** via `--from-env` env-var read (no shell interpolation); always exit 0 |
-| 2 — CI integration | 1 modified + 1 new workflow | 0 | `lint-and-typecheck.yml` plan-grounding step (only on PR-modified plans, via git-diff); `pr-body-refs-lint.yml` advisory workflow with `continue-on-error: true`, `pull_request` (fork-safe), `pull-requests: read` only |
-| 3 — Documentation | 2 modified | 0 | `DEV_CYCLE.md` §2.1 (Check A callout) + §4.3 (Check B PR-body discipline); `CHANGELOG.md` `[Unreleased]` Added entry |
+| 0a — Decompose `cli_main` | 1 modified | 0 | `server.py:cli_main` 92 → 15 LOC; new `_register_subparsers` (16 LOC) + `_dispatch` (29 LOC). Pure refactor under existing coverage. |
+| 0 — Promote `_invoke_link_commit` | 1 new + 1 modified | 0 | `cli/_link_commit_runner.py` (38 LOC, shared sync wrapper). Pure refactor. |
+| 1 — Register `link_commit` subcommand | 1 new prod + 1 modified + 1 new test | 6 | `cli/link_commit_cli.py` (29 LOC); JSON-to-stdout + `--quiet` flag; always exit 0. |
+| 2 — Hook hardening | 1 modified + 1 new test | 3 | `${HOME}/.bicameral/hook-errors.log` capture + stderr-loud + always exit 0. Smoke test asserts every hook subcommand is registered + dispatched. |
+| 3 — Documentation | 1 modified | 0 | `CHANGELOG.md` `[Unreleased]` Fixed entry. |
 
 ### Files in scope
 
 **New** (5):
-- `scripts/lint_plan_grounding.py` (212 LOC) — walker + classifier + CLI; HTML-comment + blockquote + multi-word skip; exemption markers (`**new**`, `(planned)`, `(future)`, `(v2)`, `(nonexistent)`, `(example)`)
-- `tests/test_lint_plan_grounding.py` (117 LOC, 8 tests) — clean plan, nonexistent path, **new** marker, (planned) suffix, HTML comment, blockquote, main exit codes
-- `.github/scripts/lint_pr_body_refs.py` (162 LOC) — `--body <file>` + `--from-env <NAME>` modes; reads `os.environ` directly; warns to stderr; always returns 0
-- `tests/test_lint_pr_body_refs.py` (82 LOC, 6 tests) — including security-critical `test_main_reads_from_env_var`
-- `.github/workflows/pr-body-refs-lint.yml` (37 LOC YAML) — advisory workflow
+- `cli/_link_commit_runner.py` (38 LOC) — shared sync wrapper around `handle_link_commit`; lazy-imports SurrealDB-touching modules; collapses no-ledger and handler-exception cases to `None` for graceful skip.
+- `cli/link_commit_cli.py` (29 LOC) — `link_commit` CLI entry point.
+- `tests/test_link_commit_cli.py` (95 LOC, 6 tests).
+- `tests/test_hook_command_registration.py` (78 LOC, 3 tests). **Original #124 bug class is now caught at PR time.**
+- `plan-124-post-commit-hook-fix.md` (477 LOC, plan committed at `44c6568`).
 
-**Modified** (3):
-- `.github/workflows/lint-and-typecheck.yml` (+10 LOC) — Plan-grounding step that only runs against PR-modified plans (avoids historical-plan regressions blocking unrelated PRs)
-- `docs/DEV_CYCLE.md` (~+20 LOC) — §2.1 Check A callout + §4.3 Check B PR-body keyword discipline
-- `CHANGELOG.md` (`[Unreleased]` Added entry under feat:)
+**Modified** (4):
+- `server.py` — Phase 0a decomposition (cli_main 92 → 15 + new helpers) + Phase 1 link_commit subparser/dispatch + `from typing import Any`. Net –19 LOC.
+- `cli/branch_scan.py` — Phase 0 refactor (delegates to `_link_commit_runner`). Net –19 LOC.
+- `setup_wizard.py` — Phase 2 hook hardening. Net +4 LOC.
+- `CHANGELOG.md` — `[Unreleased]` Fixed entry.
 
-**Plan**: `plan-114-grounding-lint.md` (366 LOC, committed at `4ea06be` post-remediation)
+### Plan deviations (none structural)
 
-### Plan deviations (none)
+Implementation matches v2 plan (`44c6568`) 1:1. Mid-Phase-2 hook-message fix ("bicameral-mcp post-commit" → "Bicameral post-commit") was a self-test discovery — the smoke-test regex caught a false-positive subcommand match in the loud-failure echo string. Plan didn't pin the exact message wording, so it's a refinement, not a deviation.
 
-Implementation matches plan v2 (`4ea06be`) 1:1. The remediation between v1 (VETO at `a5e6a05`) and v2 (PASS at `4ea06be`) was the OWASP A03 fix — that's in the implementation. No deviations from v2 plan.
+### Architectural decisions retained from plan (Q1–Q5)
 
-### Architectural decisions retained from plan
+- **Q1**: JSON to stdout default + `--quiet` flag.
+- **Q2**: No migration needed — existing Guided-mode hooks start working automatically.
+- **Q3**: Bundled silent-suppression + registration fix in same PR (smoke-test interdependence).
+- **Q4**: Separate subcommand (not reusing `branch-scan`) — distinct semantics.
+- **Q5**: Promoted `_invoke_link_commit` to shared module — DRY at 2 callers.
 
-- **Q1**: CI-only for v1 (no pre-commit hook bootstrapping); pre-commit deferred to follow-up issue.
-- **Q2**: Dynamic discovery via `_PACKAGE_DIR_RE` token classifier (vs static package list); adapts as new top-level packages land.
-- **Q3**: Check A blocks (joins `ruff check` semantics); Check B advisory (`continue-on-error: true`).
-- **Q4**: Hard-coded keyword list for v1 (`Closes`, `Fixes`, `Resolves`, `Refs`, `Related`, `See`, etc.).
-- **Q5**: Asymmetric placement — `scripts/` for the dev-utility checker; `.github/scripts/` for the CI-only checker.
-- **Q6**: CI lint and audit's grounding pass are complementary (CI = fast pre-audit; audit = deeper API/contract verification).
+### Audit findings remediated (v1 → v2 → IMPL)
+
+- **F-1 (BLOCKING — Section 4 razor)**: `cli_main` 92 → 120 LOC was 3x over cap. **Closed**: Phase 0a decomposed before Phase 1 added the subcommand. All three resulting functions razor-compliant.
+- **F-2 (NON-BLOCKING — OWASP A01/A05)**: `/tmp/bicameral-hook.err` predictable-path symlink risk. **Closed**: replaced with `${HOME}/.bicameral/hook-errors.log`.
+- **F-3 (NON-BLOCKING — completeness)**: `>` truncation semantics not stated. **Closed**: explicit paragraph added.
 
 ### Capability shortfalls (carried)
 
-- `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
-- `qor/reliability/` enforcement scripts absent — Step 4.6 reliability sweep skipped.
-- `agent-teams` capability not declared — sequential mode.
-- `codex-plugin` capability not declared — solo audit mode.
-- Step 7.5 version-bump-and-tag skipped — version stays at v0.17.x; #114 ships in next aggregate release PR.
-- This is the **third consecutive plan** in this session where SG-PLAN-GROUNDING-DRIFT prevention worked at *author-time* via `ls -d */` rather than audit-time. Now the durable countermeasure is in place: the lint that catches the next instance is shipped in this very PR.
+- `qor/scripts/`, `qor/reliability/` absent — gate-chain artifacts not written; reliability sweep skipped.
+- `agent-teams`, `codex-plugin` not declared — sequential + solo modes.
+- #114 grounding lint not yet on dev (PR #121 pending) — author-time `ls -d */` discipline.
+- Step 7.5 version-bump-and-tag skipped — ships in next aggregate release PR.
 
-## #48 (pre-push drift hook + branch-scan CLI) implementation — 7 files, ~609 LOC, 11 new tests, 27/28 targeted regression
+### Test state (post-implementation)
+
+- 20 passed, 1 skipped (Windows chmod from #48).
+- 9 new (6 link_commit_cli + 3 hook-command-registration) all green.
+- 11 regression (7 branch_scan_cli + 4 setup_pre_push_hook) all green.
+- All test functions ≤ 18 LOC. Largest file 95 LOC.
+- ruff check + format + mypy: clean.
+
+### Razor self-check
+
+| Function | LOC | Cap | Headroom |
+|---|---|---|---|
+| `server.cli_main` | 15 | 40 | 25 |
+| `server._register_subparsers` | 16 | 40 | 24 (≈ 8 more subcommands) |
+| `server._dispatch` | 29 | 40 | 11 (≈ 3 more if/branches before refactor) |
+| `cli._link_commit_runner.invoke_link_commit` | 22 | 40 | 18 |
+| `cli.link_commit_cli.main` | 13 | 40 | 27 |
+| `cli.branch_scan._compute_drift` | 9 | 40 | 31 (was 14 pre-Phase-0) |
+
+### Workflow security review
+
+- Hook writes to `${HOME}/.bicameral/hook-errors.log` — user-owned, no shared-system race, no `/tmp/` symlink-attack vector.
+- No shell interpolation of user-controlled input.
+- `exit 0` invariant preserved — failed sync never blocks user's commit.
+- `[ -d .bicameral ]` guard preserved — no-op when ledger directory absent.
+- File mode `0o755` on installed hook (#48 pattern unchanged).
+
+---
+
+# System State — post-#48-substantiation snapshot
+
+**Generated**: 2026-04-29
+**HEAD**: latest (Issue #48 sealed)
+**Branch**: `feat/48-pre-push-drift-hook` (off `BicameralAI/dev` post-#113, current dev tip `77b9ee3`)
+**Tracked PR**: will target `BicameralAI/dev` (Issue #48); aggregate `dev → main` PR is downstream
+**Genesis hash**: `29dfd085...`
+**#48 seal**: see Entry #18 (computed during this substantiation)
 
 ## #48 (pre-push drift hook + branch-scan CLI) implementation — 7 files, ~609 LOC, 11 new tests, 27/28 targeted regression
 
@@ -299,3 +339,366 @@ CHANGELOG.md                     # v0.11.0 entry; v0.12.0 entry to follow at PR-
 - BicameralAI/bicameral-mcp#70 — AssertionError cluster umbrella (~20 tests)
 - BicameralAI/bicameral-mcp#72 — `binds_to.provenance` schema needs FLEXIBLE keyword
 - MythologIQ-Labs-LLC/Qor-logic#18 — convention proposal: commit-trailer attribution
+
+---
+
+## #135 triage substantiation — addendum (2026-04-30)
+
+**Branch**: `triage/135-dashboard-tooltip-scope-cut` (off `BicameralAI/dev`)
+**Tracked PR**: will target `BicameralAI/dev` (issue `BicameralAI/bicameral-mcp#135`)
+**Seal**: Entry #26 — `efd0304b2f0e0b3ca28aa4620c2b8ea2eda5ab9e2828ca852ab9f3c5adda6eb5`
+
+### Scope (deliberately narrow — scope-cut from #135's original L2 proposal)
+
+| Surface | File | Δ LOC | Notes |
+|---|---|---|---|
+| Repo | `pilot/mcp/assets/dashboard.html` | +5/-1 | `renderStateCell()` ternary → if/else if; new `pending` branch with tooltip text *"Pending compliance — run /bicameral-sync in your Claude Code session to resolve."* |
+| Repo | `pilot/mcp/skills/bicameral-dashboard/SKILL.md` | +1/-0 | One bullet under **Notes** documenting the tooltip nudge contract |
+| External | `BicameralAI/bicameral-mcp#135` | — | `gh issue close` with scope-cut comment, post-merge |
+| External | `BicameralAI/bicameral#108` body | — | Flow 3 out-of-session paragraph + Flow 1 step 3 wording fix, post-merge |
+
+### Architectural decision recorded
+
+`bicameral-mcp#135`'s original P0 proposal called for a `--auto-resolve-trivial`
+flag on `link_commit` to close the post-commit drift→resolution loop without a
+caller LLM. Design enumeration produced 7 options (hash-equality, AST-equality,
+CodeGenome-classifier, Hosted GitHub App, pure-notification, tiered, defer).
+All require either an LLM in the deterministic core (violating the "selection
+over generation" guardrail) or trivial-cases enumeration with non-zero
+false-positive risk.
+
+**Cut**: accept the architectural limit. Post-commit hook stays sync-only.
+Resolution path = dashboard tooltip on `status === 'pending'` rows → user
+runs `/bicameral-sync` in their Claude Code session. No code is auto-resolved.
+
+### Section 4 razor (post-change)
+
+| Function | LOC | Cap | Status |
+|---|---|---|---|
+| `renderStateCell` | 19 | 40 | OK (was 13; +6 for if/else if) |
+
+`dashboard.html` is 786 LOC (HTML+CSS+JS bundle, delta-only evaluated per
+audit precedent).
+
+### Plan deviations
+
+Zero structural. Implementation matches Entry #24 audit blueprint 1:1.
+
+### Test verification
+
+- 0 new automated tests (acknowledged advisory per Entry #24 audit;
+  `dashboard.html` has no existing automated test infrastructure).
+- Mitigation: PR description includes manual verification step (composed
+  in `/qor-document`).
+- No console.log artifacts introduced.
+- Section 4 razor: clean.
+
+### Capability shortfalls (carried, no regression vs Entry #23)
+
+1. `qor/scripts/` runtime helpers absent — gate-chain artifacts not written.
+2. `tools/reliability/` validators absent — Steps 4.6–4.8 skipped.
+3. `agent-teams` capability not declared — sequential.
+4. `codex-plugin` capability not declared — solo audit/seal.
+5. Step 5.5 `intent_lock` capture skipped (no `qor.reliability.intent_lock`).
+
+### Outstanding (carried into next phase)
+
+- `bicameral-mcp#125` scope should be widened — 7 skills under
+  `pilot/mcp/.claude/skills/` are absent from canonical `pilot/mcp/skills/`
+  location claimed by `pilot/mcp/CLAUDE.md`.
+- `bicameral#108` Flow 1 step 3 spec drift: doc claimed
+  `IngestResponse.supersession_candidates` exists when it does not;
+  collision detection lives caller-side via `bicameral-context-sentry`
+  skill and surfaces via `bicameral.preflight.unresolved_collisions`.
+  Spec-text correction is a `/qor-document`-phase external `gh` action.
+
+---
+
+# System State — Priority C v0 team-server (2026-05-02, sealed `6f4f8f8f`)
+
+**Generated**: 2026-05-02
+**HEAD**: branch `claude/priority-c-selective-ingest` off `upstream/dev`
+**Tracked PR**: not yet opened (operator decision at Step 9.6)
+**Predecessor seal**: `efd0304b` (Entry #26, #135-triage)
+**Implementation seal**: `211ffb9e` (Entry #27)
+**Substantiation seal**: `6f4f8f8f` (Entry #28 — this seal)
+
+## Priority C v0 — self-managing team-server, Slack-first
+
+Implements `plan-priority-c-team-server-slack-v0.md` Phases 1–4. Phase 5 (CocoIndex #136) deferred to follow-up plan per slip-independence design and operator's "if we can manage it" feasibility caveat.
+
+### Files added (30)
+
+**Production — `team_server/` package**:
+- `__init__.py`, `app.py` (47 LOC), `db.py` (41), `schema.py` (80), `config.py` (40), `requirements.txt`
+- `auth/`: `__init__.py`, `encryption.py`, `slack_oauth.py` (58), `router.py` (73)
+- `extraction/`: `__init__.py`, `canonical_cache.py` (45), `llm_extractor.py`
+- `sync/`: `__init__.py`, `peer_writer.py` (42)
+- `workers/`: `__init__.py`, `slack_worker.py` (100)
+- `api/`: `__init__.py`, `events.py`
+
+**Production — `events/` extension**:
+- `events/team_server_pull.py` (57 LOC) — failure-isolated `EventMaterializer` extension
+
+**Deployment**:
+- `deploy/team-server.docker-compose.yml`
+- `deploy/Dockerfile.team-server`
+
+**Tests** (8 files / 25 functionality tests):
+- `tests/test_team_server_app.py` (5), `tests/test_team_server_deploy.py` (1)
+- `tests/test_team_server_slack_oauth.py` (5), `tests/test_team_server_channel_allowlist.py` (2)
+- `tests/test_team_server_canonical_cache.py` (3), `tests/test_team_server_slack_worker.py` (3)
+- `tests/test_team_server_events_api.py` (3), `tests/test_materializer_team_server_pull.py` (3)
+
+### Test state
+
+- Priority C v0: **25 / 25 PASS** in 5.99s
+- Existing dev suite (743 tests): collects unaffected
+- Razor: largest production file 100 LOC; all functions ≤ 25 LOC; depth ≤ 2; no nested ternaries
+
+### Schema additions (team-server's own DB; separate from per-repo bicameral ledger)
+
+`SCHEMA_VERSION = 1` in `team_server/schema.py` (independent of `ledger/schema.py`'s SCHEMA_VERSION). Tables:
+- `workspace` — one row per Slack workspace (id, name, slack_team_id, oauth_token_encrypted, created_at)
+- `channel_allowlist` — workspace × channel allow-list
+- `extraction_cache` — `FLEXIBLE TYPE object` for `canonical_extraction` (per #72 lesson + audit Advisory #3); keyed UNIQUE on `(source_type, source_ref, content_hash)`
+- `team_event` — append-only event log; `FLEXIBLE TYPE object` for `payload`; sequence ordered
+
+### Architectural properties achieved
+
+- **Self-managing**: schema migrates on startup via `ensure_schema()` (idempotent); restart is no-op; no human ops surface
+- **Failure-isolated**: `events/team_server_pull.py` swallows transport errors; per-dev preflight does not cascade on team-server outage
+- **Multi-dev convergence**: same Slack message → same canonical extraction across devs via `(source_type, source_ref, content_hash)` cache key
+- **Local-first per CONCEPT.md literal-keyword parsing**: server-side component is self-managing (compatible) not vendor-managed (forbidden)
+- **Section 4 razor**: all functions ≤ 25 lines, all files ≤ 100 lines
+
+### Audit advisory disposition
+
+- Advisory #1 (term home cross-reference) — fixed in plan before implementation
+- Advisory #2 (`app.py` size monitoring) — proactively factored OAuth + events routes into per-package routers; `app.py` ends at 47 lines
+- Advisory #3 (FLEXIBLE TYPE object) — applied to `extraction_cache.canonical_extraction` and `team_event.payload` at schema definition time
+
+### Phase 5 deferred state
+
+CocoIndex (#136) integration deferred. `extraction_cache.model_version` carries `interim-claude-v1` tombstone so Phase 5 can identify+rebuild interim entries when it lands.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+- Step 2.5 — Version bump: no `pyproject.toml` Target Version in plan; downstream project uses different release cadence
+- Step 4.7 — Doc integrity (Phase 28 wiring): targets qor-logic's `docs/Planning/plan-qor-phase{NN}*.md` convention not present in this repo
+- Step 6.5 — Doc currency / badge currency: targets qor-logic's `docs/architecture.md`/`docs/lifecycle.md` system docs not present
+- Step 7.4 — SSDF tag emission: targets qor-logic's own SESSION SEAL convention
+- Step 7.5/7.6 — Version bump + CHANGELOG stamp: no `## [Unreleased]` block convention in this repo's CHANGELOG
+- Step 7.7 — Post-seal verification: targets qor-logic's plan-path globbing
+- Step 7.8 — Gate-chain completeness (Phase 52+): grandfathered for entries < 52
+- Step 8.5 — Dist recompile: qor-logic-internal variant compile
+- Step 9.5.5 — Annotated seal-tag: no version bump → no tag
+
+---
+
+## Priority C v1 — Notion ingest + cache contract migration (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-notion-v1.md`](../plan-priority-c-team-server-notion-v1.md). Three-round audit cycle (VETO → VETO → PASS); 64/64 team-server tests passing.
+
+### Files added (13)
+
+```
+team_server/workers/runner.py             — worker_loop lifecycle helper (29 LOC)
+team_server/workers/slack_runner.py       — workspace iteration + per-WS fan-out (67 LOC)
+team_server/workers/notion_worker.py      — Notion polling + watermark (123 LOC)
+team_server/workers/notion_runner.py      — Notion task wrapper (23 LOC)
+team_server/auth/notion_client.py         — internal-integration auth + API (110 LOC)
+team_server/extraction/notion_serializer.py — deterministic row serialization (64 LOC)
+
+tests/test_team_server_cache_upsert.py        — 4 tests
+tests/test_team_server_schema_migration.py    — 4 tests
+tests/test_team_server_worker_lifecycle.py    — 7 tests
+tests/test_team_server_notion_client.py       — 7 tests
+tests/test_team_server_notion_serializer.py   — 3 tests
+tests/test_team_server_notion_worker.py       — 9 tests
+tests/test_team_server_notion_lifecycle.py    — 4 tests
+```
+
+### Files modified (7)
+
+```
+team_server/schema.py                      — schema v1→v2 + schema_version table + callable migration dispatch
+team_server/extraction/canonical_cache.py  — get_or_compute() → upsert_canonical_extraction() -> tuple[dict, bool]
+team_server/workers/slack_worker.py        — adapted to new tuple-return contract; _cache_row_exists deleted
+team_server/app.py                         — lifespan registers worker tasks via worker_loop helper
+team_server/config.py                      — DEFAULT_CONFIG_PATH constant with env-var fallback
+
+tests/test_team_server_slack_worker.py     — adapted; new no-event-on-unchanged + event-on-changed pair
+tests/test_team_server_canonical_cache.py  — rewritten under v2 upsert contract
+```
+
+### Test state
+
+- 64/64 team-server tests passing (full suite)
+- 695/703 non-team-server regression: 8 pre-existing failures in unrelated tests (`test_alpha_flow`, `test_bind`, `test_ephemeral_authoritative`, `test_v0417_jargon_hygiene`); none touch files modified in this implementation
+- Razor: largest production file 139 LOC (schema.py); all functions ≤ 25 LOC; depth ≤ 3; no nested ternaries
+
+### Schema state (team-server v2)
+
+`SCHEMA_VERSION = 2` in `team_server/schema.py`. Tables (additions in **bold**):
+- `workspace` — one row per Slack workspace
+- `channel_allowlist` — workspace × channel allow-list
+- `extraction_cache` — UNIQUE keyed on `(source_type, source_ref)` ONLY (was `(source_type, source_ref, content_hash)` in v1); `content_hash` becomes a tracked column; UPSERT semantics
+- `team_event` — append-only event log; payload now includes `notion_database_row` source_type
+- **`source_watermark`** — generic per-source / per-resource watermark; used by Notion polling
+- **`schema_version`** — single-row table holding the current `SCHEMA_VERSION` after migrations apply (DELETE-then-CREATE preserves single-row invariant)
+
+### Architectural properties achieved (v1 additions)
+
+- **Cache contract uniformity**: both Slack and Notion use the same `upsert_canonical_extraction` contract; cache holds latest snapshot (bounded growth), `team_event` log preserves history
+- **Worker-task lifecycle pattern**: `worker_loop` is the single source of truth for the asyncio.create_task / cancel-on-shutdown pattern; Slack and Notion both delegate
+- **Slack worker no longer dormant**: v0 plan claimed an active Slack ingest worker but v0 code shipped a function with no production caller. Phase 0.5 closes this gap by wiring `slack_runner.run_slack_iteration` into `lifespan` via `worker_loop`. The encryption round-trip is verified end-to-end by `test_slack_runner_decrypts_workspace_token_with_loaded_key`.
+- **Notion ingest of database rows**: deterministic serialization (title + sorted properties + body), per-database watermark, peer-author identity (`team-server@notion.bicameral`), per-database failure isolation
+- **Internal-integration auth**: no OAuth router for Notion; allow-list derived from `databases.list` (operator's act of sharing a database with the integration is the signal)
+
+### Audit cycle outcomes
+
+- Round 1 VETO (4 findings, missing/undeclared symbols) — closed in amendment round 2
+- Round 2 VETO (1 finding, wrong-call-shape for `decrypt_token`) — closed in amendment round 3 with explicit encrypt-side precedent mirror + round-trip test
+- Round 3 PASS (2 non-blocking advisories) — both addressed during implementation
+
+### Implementation deviations from plan (logged)
+
+1. `PEER_AUTHOR_EMAIL` renamed `PEER_WORKSPACE_ID = "notion"` — `write_team_event` wraps as `team-server@<workspace_id>.bicameral`, so passing the literal email would have double-wrapped to `team-server@team-server@notion.bicameral.bicameral`.
+2. `slack_sdk` import made lazy in `slack_runner.py` (inside `run_slack_iteration`) — declared in `team_server/requirements.txt` but not always installed in dev venvs; lazy import lets the team_server package be importable in tests for unrelated code paths. Production runtime path unaffected.
+
+### qor-logic-internal steps skipped (downstream-project rationale, same as v0 entry)
+
+Same set as v0 (Steps 2.5, 4.7, 6.5, 7.4–7.8, 8.5, 9.5.5) — this repo does not author qor-logic phase plans nor maintain the system-tier doc set / dist-compile pipeline that those wirings expect. The fundamental S.H.I.E.L.D. checks (PASS verdict prerequisite, Reality vs Promise, Section 4 Razor, Merkle seal calculation, ledger entry) all run.
+
+---
+
+## Priority C v1.1 — Real heuristic+LLM extractor (2026-05-02)
+
+Plan: [`plan-priority-c-team-server-real-extractor-v1.md`](../plan-priority-c-team-server-real-extractor-v1.md). First-round PASS audit; 102/102 team-server tests passing.
+
+### Files added (10)
+
+```
+team_server/extraction/heuristic_classifier.py — deterministic Stage 1 classifier (105 LOC)
+team_server/extraction/pipeline.py             — Stage 1 → Stage 2 wiring (59 LOC)
+team_server/extraction/corpus_learner.py       — option-c feedback loop (114 LOC)
+
+tests/test_team_server_classifier_version.py        — 5 tests
+tests/test_team_server_heuristic_classifier.py      — 9 tests
+tests/test_team_server_rules.py                     — 5 tests
+tests/test_team_server_llm_extractor.py             — 7 tests
+tests/test_team_server_pipeline.py                  — 5 tests
+tests/test_team_server_corpus_learner.py            — 5 tests
+tests/test_team_server_corpus_learner_lifecycle.py  — 2 tests
+```
+
+### Files modified (9)
+
+```
+team_server/schema.py                       — SCHEMA_VERSION 2→4; classifier_version field; learned_heuristic_terms table
+team_server/extraction/canonical_cache.py   — upsert second-axis (content_hash + classifier_version) cache identity
+team_server/extraction/llm_extractor.py     — full rewrite: Anthropic SDK call, _one_attempt helper, fail-loud + fail-soft + retry-on-429
+team_server/config.py                       — HeuristicGlobalRules / SlackHeuristics / NotionHeuristics; resolve_rules_for_{slack,notion}; CorpusLearnerConfig
+team_server/workers/slack_worker.py         — pipeline-routed with thread/reaction context; legacy fallback when config=None
+team_server/workers/notion_worker.py        — pipeline-routed with last_edited_by/edit_count context; legacy fallback when config=None
+team_server/app.py                          — config loaded from DEFAULT_CONFIG_PATH; corpus learner registered when enabled
+
+tests/test_team_server_cache_upsert.py     — adapted to classifier_version= keyword-only argument
+tests/test_team_server_canonical_cache.py  — adapted to classifier_version= keyword-only argument
+```
+
+### Test state
+
+- 102/102 team-server tests passing (full suite, up from 64 at v1.0)
+- 38 net-new functionality tests across Phases 0–5
+- Razor: max file 180 LOC (notion_worker); max function ~30 (extract via _one_attempt helper); depth ≤3; zero nested ternaries
+
+### Schema state (team-server v4)
+
+`SCHEMA_VERSION = 4`. New tables (additions in **bold**):
+- `extraction_cache` — gains `classifier_version` field (default `'legacy-pre-v3'`); cache hit requires both content_hash AND classifier_version match
+- **`learned_heuristic_terms`** — corpus learner output; UNIQUE (source_type, term)
+- All v1.0 tables retained: `workspace`, `channel_allowlist`, `team_event`, `source_watermark`, `schema_version`
+
+### Architectural properties achieved (v1.1)
+
+- **Heuristic-first determinism**: Stage 1 classifier is pure-function over (message, context, rules); zero API calls on chatter
+- **LLM-only-when-needed**: Stage 2 (Anthropic Haiku 4.5 default) runs only on heuristic-positive messages; cache locks results so each unique input costs once
+- **Rule-version-driven cache invalidation**: classifier_version is a SHA256 of the rule set; operator config edits → automatic cache invalidation on next poll
+- **All four "dynamic" angles wired**: per-workspace YAML (a) / per-channel/db override (b) / corpus-learned terms (c) / context-aware boosters (d)
+- **Anti-goal alignment**: heuristic Stage 1 grows the deterministic core; LLM call is scoped narrowly outside the deterministic core (network calls permitted there per CONCEPT.md literal-keyword parsing)
+- **Auditability**: every positive classification stores `matched_triggers` array (which keyword/reaction/thread-position fired)
+
+### Audit advisories addressed during implementation
+
+1. `extract()` split into `_one_attempt(client, model, prompt) -> (status, payload)` helper; main `extract` body is ~14 lines (well under Razor)
+2. `TeamServerRules` resolved as `TeamServerConfig` (single rename in implementation, not a new type)
+3. Corpus learner reads from `team_event` rows (per OQ-1) whose `payload.extraction.decisions` is non-empty; does NOT query a `decision` table that doesn't exist on the team-server's ledger
+
+### Implementation deviations from plan (logged)
+
+1. `team_server/workers/{slack_worker,notion_worker}.py` keep a backwards-compat path: when `config=None`, fall back to the legacy `extractor(text)` callable. Preserves v1.0 worker tests + provides a clean cutover path. When `config` is provided, the pipeline runs.
+2. Anthropic SDK imported lazily inside `extract()` (matches the slack_sdk lazy-import pattern from v1.0 Phase 0.5) so the package imports cleanly when `anthropic` is in `requirements.txt` but not installed in dev venv.
+
+---
+
+## Priority C v0 release-blockers — channel allowlist + materializer bridge (2026-05-03)
+
+Plan: [`plan-priority-c-team-server-v0-release-blockers.md`](../plan-priority-c-team-server-v0-release-blockers.md). Three-round audit cycle (VETO → VETO → PASS); 123/123 team-server + materializer tests passing. Closes [#160](https://github.com/BicameralAI/bicameral-mcp/issues/160) and [#161](https://github.com/BicameralAI/bicameral-mcp/issues/161).
+
+### Files added (6)
+
+```
+team_server/auth/allowlist_sync.py  — startup-time YAML→DB reconcile (73 LOC)
+events/team_server_consumer.py      — periodic pull→bridge→ingest_payload task (100 LOC)
+events/team_server_bridge.py        — team-server payload → IngestPayload (56 LOC)
+
+tests/test_team_server_allowlist_sync.py     — 5 tests
+tests/test_team_server_allowlist_lifespan.py — 2 tests
+tests/test_team_server_consumer.py            — 7 tests (incl. no-echo invariant)
+```
+
+### Files modified (4)
+
+```
+team_server/app.py                       — lifespan calls sync_channel_allowlist after schema; config loaded once for both sync + corpus learner
+events/materializer.py                   — dispatch case for event_type='ingest' AND 'ingest.completed' with team-server-shaped payload bridges to IngestPayload
+server.py                                 — serve_stdio spawns the periodic team-server consumer task; cancels on shutdown
+tests/test_materializer_team_server_pull.py  — 6 new bridge functionality tests + legacy regression coverage
+```
+
+### Test state
+
+- 123/123 team-server + materializer tests passing
+- Test counts by phase: Phase 1 sync 5 / Phase 1 lifespan 2 / Phase 1.5 consumer 7 / Phase 2 bridge 6 = 20 net-new
+- Razor: max file 167 LOC (events/materializer.py); max function ~25; nesting ≤3; zero nested ternaries
+
+### Architectural properties achieved (closing v0 release blockers)
+
+- **End-to-end ingest pipeline functional**: Slack OAuth → workspace row → YAML allowlist sync → channel_allowlist populated → Slack worker polls allowlisted channels → heuristic+LLM extraction → team_event row → /events HTTP → per-dev consumer pulls → bridges to IngestPayload → inner_adapter.ingest_payload → per-dev local ledger
+- **No-echo invariant** (audit-round-2 Finding A): consumer's `start_team_server_consumer_if_configured` unwraps `TeamWriteAdapter._inner` so consumer-driven ingest does NOT emit synthetic `'ingest.completed'` events into per-dev JSONL files. Verified by `test_consumer_unwraps_team_write_adapter_does_not_echo_to_jsonl` constructing a real TeamWriteAdapter with a recording writer
+- **SurrealQL strict-type handling**: `record<workspace>` field on `channel_allowlist.workspace_id` requires `type::thing()` coercion; allowlist_sync uses the same pattern as the v1.0 schema migration
+- **Materializer dispatch is shape-discriminating**: `is_team_server_payload` predicate distinguishes team-server payloads (have `extraction` key) from legacy CodeLocatorPayload (have `repo`/`commit_hash` but no `extraction`); legacy `'ingest.completed'` path preserved unchanged
+
+### Audit cycle outcomes (3-round VETO → VETO → PASS)
+
+- Round 1 VETO: `infrastructure-mismatch` (pull_team_server_events had zero production callers; bridge would be dead code) → closed by Phase 1.5 (consumer + serve_stdio integration)
+- Round 2 VETO: `specification-drift` (sketch passed wrapped TeamWriteAdapter; would echo events O(N²) cross-dev) → closed by inline unwrap + dedicated no-echo test
+- Round 3 PASS: 0 findings; all 6 SHADOW_GENOME #7 heuristics held
+
+### SHADOW_GENOME #7 heuristic catalog grew 4 → 6 across this branch
+
+1. Existence (Entry #7)
+2. Signature (Entry #7)
+3. Type-boundary (Entry #7)
+4. Helper-symmetry (Entry #7)
+5. **Upstream-consumer** (Entry #37 — added by v0-blockers round-1 VETO)
+6. **Wrapper-side-effect** (Entry #38 — added by v0-blockers round-2 VETO)
+
+The catalog is the productive deposit beyond the code: each heuristic is reusable for future audits.
+
+### Implementation deviation from plan (logged)
+
+1. SurrealQL `record<workspace>` strict type required `type::thing()` coercion in allowlist_sync.py — not anticipated in plan but matches the v1.0 migration's existing pattern at `team_server/schema.py:106-110`. Caught at first test run; fix took two minutes.
+2. Lifespan integration test originally tried pre-seeding workspace via `TeamServerDB.from_env()` then re-opening for the app — `memory://` doesn't persist across connect/close. Test rewritten to mock `sync_channel_allowlist` and assert it was invoked at startup with the correct config. Test directly exercises the lifespan→sync wiring via interception, not via DB observation.

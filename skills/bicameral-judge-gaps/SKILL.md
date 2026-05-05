@@ -1,6 +1,6 @@
 ---
 name: bicameral-judge-gaps
-description: Apply the v0.4.19 business-requirement gap-judgment rubric to a context pack from bicameral_judge_gaps. Fired automatically when an ingest response carries a judgment_payload. Scope is business requirement gaps ONLY — product, policy, and commitment holes. Engineering gaps (wire protocols, migrations, Dockerfiles, CI, retries) are out of scope and explicitly rejected. Caller-session LLM — the server never reasoned about these gaps, you do.
+description: Apply the v0.4.19 business-requirement gap-judgment rubric to a context pack from bicameral_judge_gaps. Fired automatically when an ingest response's brief.gaps is non-empty (#187 unified brief envelope; previously the legacy IngestResponse.judgment_payload field). Scope is business requirement gaps ONLY — product, policy, and commitment holes. Engineering gaps (wire protocols, migrations, Dockerfiles, CI, retries) are out of scope and explicitly rejected. Caller-session LLM — the server never reasoned about these gaps, you do.
 ---
 
 # Bicameral Judge-Gaps
@@ -33,15 +33,16 @@ This skill is **not fired directly by user phrasings**. It is a
 **chained skill**, invoked in one of two ways:
 
 1. **Auto-chain from `bicameral-ingest`** — when an ingest response
-   carries a non-null `judgment_payload`, the ingest skill delegates
-   the rubric-rendering to this skill (see step 6 of
-   `skills/bicameral-ingest/SKILL.md`).
+   carries `brief.gaps` (#187 unified brief envelope), the ingest skill
+   delegates the rubric-rendering to this skill (see step 6 of
+   `skills/bicameral-ingest/SKILL.md`). The `GapRubric` reference lives at
+   `response.brief.rubric`; gap findings live at `response.brief.gaps[]`.
 2. **Explicit call to `bicameral.judge_gaps(topic)`** — when the user
    asks to judge gaps on a specific topic standalone. The tool returns
-   a `GapJudgmentPayload` (or `null` on the honest empty path).
+   a `GapJudgmentPayload` (or `null` on the honest empty path) — same
+   shape, just a different delivery mechanism.
 
-If you see a `judgment_payload` in any response envelope, apply this
-skill.
+If you see `brief.gaps` populated in any ingest response, apply this skill.
 
 ## Input contract
 

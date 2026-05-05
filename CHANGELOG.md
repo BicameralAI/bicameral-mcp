@@ -26,6 +26,50 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
     interpolation; OWASP A03 mitigation caught at audit v1).
   - Documentation: `DEV_CYCLE.md` §2.1 (plan-grounding lint
     callout) + §4.3 (PR-body keyword discipline). Issue #114.
+- `handlers/preflight.py` — `_region_anchored_preflight` now expands caller-supplied `file_paths` by 1 hop along the code-locator graph's **import edges** before the `binds_to` lookup. Lifts the strict exact-match recall ceiling so a decision bound to `app/src/lib/git/reorder.ts` surfaces when the caller passes the structurally-near `app/src/ui/multi-commit-operation/reorder.tsx`. Decisions reached only via expansion carry `confidence=0.7` (vs `0.9` for direct pins). `sources_chained` includes `"graph"` (alongside `"region"`) when expansion contributed at least one hit. Bounded per #64: ≤10 input seeds × `max_neighbors_per_result` neighbors per seed. Closes #173 (and supersedes #64).
+- `adapters/code_locator.py::RealCodeLocatorAdapter.expand_file_paths_via_graph` — public method backing the expansion. Filters to ``imports`` edges only (file-level structural dependency); ``invokes`` / ``inherits`` / ``contains`` are symbol-level edges that over-broaden the file-level expansion. Returns `(expanded, added)` so callers can mark provenance.
+- `skills/bicameral-preflight/SKILL.md` Step 2 — documents the imports-only expansion + caller-side `confidence` and `sources_chained` semantics.
+- `tests/eval/preflight_dataset.jsonl` — M6 row flipped from XFAIL → live. Setup updated to specify graph-neighbor topology (`graph_neighbors`) and pinned-decision targets (`region_decisions_pinned_to`); the asserter now tests true graph-expansion semantics rather than mock-returns-decision-regardless-of-input.
+- `tests/eval/run_preflight_eval.py` — `_apply_setup` extended with `region_decisions_pinned_to` (path-aware decision lookup) and `graph_neighbors` (stub code_graph) so M6-style scenarios can be expressed in the dataset.
+
+### Changed
+
+- `skills/bicameral-preflight/SKILL.md` Step 5.6 — judgment for contradiction-capture moves from the agent to the user via `AskUserQuestion` (Step 5.6.1). The agent no longer infers whether the prompt contradicts a surfaced decision; it asks the user (`supersede` / `keep_both` / `unrelated`) and acts mechanically on the answer (Step 5.6.2 — ingest + resolve_collision). The PostToolUse hook reminder now templates the disambiguation question rather than the bare ingest+resolve_collision sequence. Closes #175.
+- `tests/e2e/run_e2e_flows.py::assert_flow_2a` — pass criterion changed from "ingest+resolve_collision fired" to "`AskUserQuestion` invoked with disambiguation shape after preflight surfaced ≥1 decision." The user-side response can't be driven in headless `claude -p`, so the testable signal is the question invocation. The mechanical capture (Step 5.6.2) only fires after a human answers and is exercised in interactive Claude Code sessions, not CI.
+
+### Fixed
+
+### Schema
+
+### Security
+
+## v0.18.0 -- event vocabulary extension: ratify + supersede (#97)
+
+Extends the existing Phase 1 JSONL emitter with two new event types so the shipped vocabulary matches the v0 architecture description. Team-mode replay now restores ratify and supersede outcomes alongside the pre-existing ingest/bind/link_commit events.
+
+### Added
+
+- `events/team_adapter.py` -- `apply_ratify` and `apply_supersede` wrappers; emit `decision_ratified.completed` / `decision_superseded.completed` with `canonical_id` so cross-author replay can resolve to peer-local rows.
+- `events/materializer.py` -- replay cases for the two new event types; warns + skips on unresolved canonical_id (out-of-order cross-author replay).
+- `ledger/adapter.py` -- idempotent `apply_ratify(decision_id, signoff)` and `apply_supersede(new_id, old_id, ...)` adapter methods.
+- `ledger/queries.py` -- `get_canonical_id` and `find_decision_by_canonical_id` helpers.
+- `tests/test_team_event_replay.py` -- round-trip coverage for ratify, supersede (with edge replay), and an ingest regression guard.
+
+### Changed
+
+- `handlers/ratify.py` -- routes the actual write through `ledger.apply_ratify` instead of the inline UPDATE + project + update_status sequence. Pre-write idempotency check unchanged.
+- `handlers/resolve_collision.py` -- routes the supersede branch through `ledger.apply_supersede`. Frozen-signoff merge moves into the adapter so it's reachable from replay.
+
+### Closes
+
+Partial close of #97 -- event vocabulary wedge. CHANGEFEED extension to `code_subject` / `subject_identity` / `binds_to` / `code_region` and the SHA256 chain remain open.
+
+## v0.17.2 -- governance architecture documentation (#111)
+
+New `docs/semantic-drift-governance.md` describing the shipped governance surface (Phases 1-4 from the #108-#112 plan): contracts, engine, config, HITL bypass flow, MCP tools, and the non-blocking absolute. Includes two Mermaid diagrams (lifecycle and inference-vs-determinism) and explicit cross-references to existing docs.
+
+### Closes
+#111
 
 ## v0.17.1 -- preflight HITL bypass flow (#112)
 
@@ -69,6 +113,22 @@ Adds `governance/` package with the deterministic escalation policy engine, deci
 
 ## [Unreleased]
 
+### Fixed
+
+- **Post-commit hook now actually syncs the ledger (#124).** The
+  `bicameral-mcp setup` (Guided mode) post-commit hook called
+  `bicameral-mcp link_commit HEAD`, which was never a registered CLI
+  subcommand — every commit since the hook was introduced silently
+  failed via `>/dev/null 2>&1 || true` and the user never saw the
+  argparse error. This release adds the missing `link_commit`
+  subcommand (with a `--quiet` flag for hook scripts), replaces the
+  silent-failure suppression with stderr-loud reporting captured to
+  `${HOME}/.bicameral/hook-errors.log` (still exits 0 so commits never
+  block), and adds a smoke test that walks every command referenced
+  in installed hook scripts and asserts each is registered. **Existing
+  Guided-mode installs start working automatically; no reinstall
+  required.**
+
 ### Added
 
 - **`bicameral-mcp branch-scan` CLI + opt-in pre-push git hook (#48).**
@@ -82,18 +142,18 @@ Adds `governance/` package with the deterministic escalation policy engine, deci
   exists. New module `cli/branch_scan.py`; new
   `_install_git_pre_push_hook` in `setup_wizard.py`; new `--with-push-hook`
   flag in `bicameral-mcp setup`. Issue #48.
-- **GitHub Action — sticky PR-comment drift report (#49).** New advisory
-  workflow `.github/workflows/drift-report.yml` posts a sticky Markdown
-  comment on every PR open/synchronize with the drift state computed
-  from `link_commit`. Stateless sticky strategy via HTML marker; the
-  comment edits in place on each push instead of accumulating new ones.
-  Path C maintainer call: workflow gracefully skips with a
-  configuration-prompt comment when no `bicameral/decisions.yaml`
-  manifest exists in repo root (manifest format spec deferred to a
-  follow-up issue). New module `cli/drift_report.py` — pure-function
-  Markdown renderer with a CLI entry point invoked by the workflow.
-  New helper `.github/scripts/post_drift_comment.py` — stdlib-only
-  GitHub API client (no new dependencies). Issue #49.
+
+### Removed
+
+- **Sticky PR-comment drift-report GitHub Action (#49 / PR #113).**
+  Reverted before reaching a numbered release. The action was
+  installed under `.github/workflows/` of `bicameral-mcp` itself,
+  which conflated dogfooding with delivery: the feature is meant to
+  ship to *customer* repos, not police our own CI. Removed the
+  workflow, the `cli/drift_report.py` renderer, the
+  `.github/scripts/post_drift_comment.py` poster, and their tests.
+  A future re-introduction will package the same artifacts as a
+  template under a non-CI path so users opt in by copying it.
 
 ## v0.16.0 -- decision_level classifier + MCP primitives (#77 + Phase 5+6 of #76 in sibling PR)
 

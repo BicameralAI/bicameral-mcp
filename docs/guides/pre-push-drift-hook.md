@@ -125,5 +125,3 @@ already present — skipped` and changes nothing.
   classified at commit time; drift is visible at push time.
 - [`cli/branch_scan.py`](../../cli/branch_scan.py) — the source for what
   the hook calls.
-- [`cli/drift_report.py`](../../cli/drift_report.py) (Issue #49) —
-  Markdown variant for PR-side drift reporting.

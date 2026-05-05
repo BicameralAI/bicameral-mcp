@@ -194,8 +194,8 @@ Running `bicameral-mcp setup` writes these files to your repo:
 | `.bicameral/ledger.db` | SurrealDB decision ledger (solo mode) | Auto-created on first tool call |
 | `.gitignore` entry | Ignores `.bicameral/` in solo mode | Recommended |
 | `.claude/settings.json` | PostToolUse hook: auto-calls `bicameral.link_commit` after git commits | Optional — improves sync |
-| `.claude/settings.json` | SessionEnd hook: runs `bicameral-capture-corrections` to catch uningested mid-session decisions | Optional — closes correction capture gap |
-| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral:ingest`, `/bicameral:preflight`, `/bicameral:capture-corrections`, etc.) | Recommended |
+| `.claude/settings.json` | SessionEnd hook: writes the session transcript to `.bicameral/pending-transcripts/`; next session drains the queue to surface uningested mid-session decisions | Optional — closes correction capture gap |
+| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral-ingest`, `/bicameral-preflight`, `/bicameral-capture-corrections`, etc.) | Recommended |
 
 ### Removing Bicameral
 
@@ -227,11 +227,11 @@ After setup, Claude Code gets these slash commands:
 
 | Command | When to use |
 |---|---|
-| `/bicameral:ingest` | Paste a transcript, PRD, or Slack thread to track its decisions |
-| `/bicameral:preflight` | Surface relevant decisions and drift before implementing |
-| `/bicameral:history` | See all tracked decisions grouped by feature area |
-| `/bicameral:dashboard` | Open the live decision dashboard in your browser |
-| `/bicameral:reset` | Wipe and replay the ledger (emergency use) |
+| `/bicameral-ingest` | Paste a transcript, PRD, or Slack thread to track its decisions |
+| `/bicameral-preflight` | Surface relevant decisions and drift before implementing |
+| `/bicameral-history` | See all tracked decisions grouped by feature area |
+| `/bicameral-dashboard` | Open the live decision dashboard in your browser |
+| `/bicameral-reset` | Wipe and replay the ledger (emergency use) |
 
 The agent also fires these automatically — `preflight` before any code change, `ingest` when you paste a document.
 

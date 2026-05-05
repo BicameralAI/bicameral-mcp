@@ -21,6 +21,172 @@ merges to `main` except `dev` (and the rare hotfix — see §10).
 
 ---
 
+## 0. Workflow Feature Release Cycle
+
+**Audience**: anyone proposing a new agentic workflow capability — a new
+skill, a new lifecycle hook, a new auto-fire trigger, a new dashboard
+surface. Distinct from §6 (engineering version release): §6 covers how a
+finished change reaches users; **§0 covers how a workflow idea becomes a
+finished change worth releasing.**
+
+**Why this exists separately**: most of our P0 misses (#146 preflight
+auto-fire, #147 SessionEnd capture-corrections, the e2e harness churn
+across 2026-04 → 2026-05) trace back to the same root cause — we shipped
+the implementation BEFORE we wrote down what success looks like and
+BEFORE we had any way to observe whether it actually worked in the wild.
+The fix is to put validation in front of implementation, not behind it.
+
+### The cycle
+
+```
+┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+│  1.      │  │  2.      │  │  3.      │  │  4.      │  │  5.      │  │  6.      │
+│ Friction │─▶│Candidate │─▶│  Test    │─▶│Functional│─▶│Telemetry │─▶│Optimized │
+│ capture  │  │ workflow │  │ harness  │  │ solution │  │collection│  │ solution │
+└──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘  └──────────┘
+                                  ▲                            │
+                                  │   ◀─── feedback loop ──────┘
+                                  │   (telemetry surfaces gaps the harness should have caught)
+```
+
+**Anti-pattern (the trap we keep falling into)**: jump from step 1
+directly to step 4. Build the skill. Ship it. Discover the harness can't
+observe the auto-fire and telemetry surfaces nothing. Now you're
+retrofitting phases 2/3/5 onto a thing already in production — every
+iteration loses fidelity because the spec and the implementation are
+entangled. (See: every revision history of `tests/e2e/run_e2e_flows.py`.)
+
+### Phases
+
+#### 1. Friction capture
+
+Observable evidence that a real user / agent / contributor stubbed their
+toe on something that should "just work." Symptoms, not fixes.
+
+Examples:
+- Slack thread from a design partner showing `claude -p '/bicameral-sync'`
+  exiting silently (#124).
+- Dashboard footage of a mid-session constraint orphaning as a parallel
+  decision instead of linking to its parent.
+- An e2e harness flow that fails for a reason no one can immediately
+  explain.
+
+Captured as a GitHub issue with `friction` or `desync:*` label, in the
+repo where the friction was observed. Body answers: *what was the user
+trying to do, what happened instead, what would "right" look like.*
+
+**Out of scope at this stage**: solution shape, file paths, schema
+changes. Don't pre-commit to an implementation in the friction note.
+
+#### 2. Candidate workflow
+
+A short prose spec of what the new workflow should look like end-to-end,
+written from the user/agent perspective, NOT the implementation
+perspective. Lives in a source-of-truth issue (e.g.
+`BicameralAI/bicameral#108` for the v0 user flow spec).
+
+Format:
+- **Trigger**: what does the user do or say to enter this workflow?
+- **Sequence**: numbered list of agent-observable steps — tool calls,
+  hook fires, status transitions. Reference the spec; do NOT inline
+  implementation details (file paths, function names, schema columns).
+- **Success outcome**: what visible state proves the workflow worked?
+  Status flip, ledger row, dashboard panel, ratification record.
+- **Failure modes**: what should the user see when each step fails, and
+  what's the recovery path?
+
+The spec is the contract for phases 3–6. If the spec is wrong, the
+harness validates the wrong thing and the implementation chases the
+wrong target.
+
+#### 3. Test harness
+
+A real e2e test that exercises the spec from step 2 against a real
+claude session (not mocks). For bicameral-mcp this lives at
+`tests/e2e/run_e2e_flows.py`.
+
+**Required before any implementation work begins.** The harness fails on
+day one — that's the point. A failing harness with a clear assertion
+message is the spec made executable.
+
+Harness rules:
+- Assert on the spec's success outcome, not the implementation path.
+  ("After commit, decision X is in `pending` state" is good. "Agent
+  called `link_commit` then `resolve_compliance` in that order" is
+  brittle and couples the test to the substrate.)
+- Use natural prompts — never name the tool the agent is supposed to
+  auto-fire. Naming the tool defeats the trigger that IS the product.
+- When success isn't observable in stream-json (e.g. a SessionEnd
+  subprocess writes to the ledger out-of-band), validate via post-hoc
+  ledger query. Document the indirection in the asserter docstring.
+- When a flow fails: distinguish test-harness bug from product gap. If
+  the asserter is wrong about the spec, fix the asserter (no GitHub
+  issue needed). If the spec says X happens and X doesn't happen, that's
+  a product gap — open or update an issue, leave the harness asserting
+  the spec, mark the failure as expected until the implementation lands.
+
+#### 4. Functional solution
+
+Implementation pass that makes the harness pass. Optimize for spec
+correctness — not performance, not polish. Skill description, tool
+contract, lifecycle hooks all in scope.
+
+Done when:
+- Harness PASSes against the unmodified natural prompt from step 3.
+- A real user can complete the flow end-to-end without hitting any of
+  the friction from step 1.
+- Implementation is documented at the level needed for phase 5 telemetry
+  to know what to count.
+
+#### 5. Telemetry collection
+
+Instrument the new workflow with PostHog events /
+`bicameral.skill_begin/end` calls / structured logs that answer: *is
+this actually being used, by whom, and does it work in their hands?*
+
+Telemetry contract is part of the spec, not an afterthought. Each step
+in the candidate workflow (phase 2) should map to a telemetry event the
+dashboard can query.
+
+Wire telemetry BEFORE merging the implementation PR. A workflow you
+can't observe in production is a workflow that's never validated in
+production.
+
+#### 6. Optimized solution
+
+Iterate based on what telemetry shows:
+- Drop-off after step N → step N is unclear or broken in real
+  conditions. Could be a description fix or a substrate change.
+- Auto-fire rate &lt;X% → trigger discipline is losing the priority race;
+  restate the skill description, change the trigger phrasing, or move to
+  a deterministic hook.
+- Compliance verdict mix unexpected → either the rubric is wrong or the
+  user is using the workflow differently than the spec assumed.
+
+Optimization changes route through the same cycle: telemetry-observed
+friction → updated workflow spec → updated harness → new functional
+pass → new telemetry. Don't optimize without re-passing the harness.
+
+### Audit trail
+
+Every workflow feature gets a short META_LEDGER entry at each phase
+boundary:
+
+```
+2026-05-01  workflow:bicameral-capture-corrections  phase=3→4
+  harness PR: BicameralAI/bicameral-mcp#147 (SKIP→SETUP)
+  spec: BicameralAI/bicameral#108 § Flow 4
+  next: implementation PR + telemetry wiring
+```
+
+This makes it possible to look at any open workflow feature and
+immediately see which phase it's in, what's blocking the next phase, and
+where the spec lives. It's also the first place to look when a feature
+ships and silently regresses — phase boundaries are where the harness
+should pass before/after the change.
+
+---
+
 ## 1. Lifecycle map
 
 ```
@@ -384,11 +550,27 @@ CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
 
 ### 5.1 Strategy
 
-**Squash-merge.** One commit per PR on `dev`. The squash subject = PR title; the
-body = PR body's `## Summary` + `Closes #X`.
+**Squash merging is disabled at the repo level** (`allow_squash_merge: false`)
+so the wrong choice is unavailable, not just discouraged. The reason this
+matters at all — beyond style preference — is that squash collapses
+multi-commit PRs into opaque blobs that cannot be cleanly cherry-picked into
+the §10.5 triage lane. See §10.5.0 "Why this lane exists" for the full
+rationale. Two options remain:
 
-Why squash, not merge-commit: `dev` history is read by humans deciding
-"what's pending release". One line per shipped change keeps that view legible.
+| Merge style | When to use | Rationale |
+|---|---|---|
+| **Rebase and merge** *(default — covers ~all PRs)* | Single-commit PRs; multi-commit features; any PR a maintainer might backport to `triage-from-dev`; any PR with a `Triage-Cc:` trailer (see §10.5); Dependabot bumps | Preserves atomic commits as individually-cherry-pickable SHAs on `dev`. For single-commit PRs, this is the literal squash equivalent (one commit on `dev`) without the opaque-blob failure mode. GitHub's docs explicitly warn that squashing long-running branches "makes merge conflicts more likely … you'll have to resolve the same conflicts repeatedly." |
+| **Merge commit (`--no-ff`)** | Multi-commit features whose grouping matters historically (e.g. coordinated multi-handler refactor); any PR you may want to revert atomically with `git revert -m 1` | Preserves both individual commits *and* the merge boundary. Use sparingly — `dev` log gets noisy fast. |
+
+**Author obligation, not just merger obligation.** If you write a PR that may be
+triage-eligible, write atomic commits — one logical change per commit, each
+individually buildable, each with a meaningful subject line. The Linux kernel's
+atomic-commit discipline ([Linus on commit messages](https://yarchive.net/comp/linux/commit_messages.html))
+exists precisely so cherry-pick is mechanical, not interpretive. Reviewers may
+ask you to reorganize. WIP messages like `wip`, `fix typo`, `address review`
+should be squashed locally with `git rebase -i` *before* the PR is merged —
+since repo-level squash is off, the rebase-and-merge button will preserve them
+verbatim otherwise.
 
 ### 5.2 Pre-merge checklist (for the merger)
 
@@ -404,9 +586,10 @@ Why squash, not merge-commit: `dev` history is read by humans deciding
 - Milestone progress bar advances.
 - Branch may be deleted (GitHub default).
 - If the work shipped a new tool / new tool field / changed default, the matching
-  `pilot/mcp/skills/<tool>/SKILL.md` **must** be in the same squash commit
-  (project rule from `CLAUDE.md`). Reviewers reject silently-mismatched skill
-  contracts.
+  `pilot/mcp/skills/<tool>/SKILL.md` **must** be in the same PR — for
+  rebase-and-merge, in the same atomic commit; for merge-commit, in one of the
+  commits being merged. Project rule from `CLAUDE.md`. Reviewers reject
+  silently-mismatched skill contracts.
 
 ---
 
@@ -674,6 +857,182 @@ dev  ─────────────────────────
 
 Hotfixes never carry feature work — feature work goes through the normal
 feature → dev → release cycle.
+
+### 10.5 Triage lane (`dev` → `triage-from-dev` → `main`)
+
+`triage-from-dev` is a long-lived **curated stable lane** that ships a *subset*
+of `dev` to `main` between full releases. It exists for changes that should
+reach users faster than the next minor release allows, but that aren't
+emergency hotfixes (which use §10's path).
+
+#### 10.5.0 Why this lane exists
+
+The triage lane plus the §5.1 rebase-and-merge default (with squash disabled
+at the repo level) together **allow for parallel development of feature work
+on `dev` and selective incorporation into production based on live feedback**.
+
+That goal decomposes into three constraints the existing two-branch flow
+(feature → dev → main) cannot satisfy on its own:
+
+- **Fast iteration on `dev` shouldn't gate user-visible delivery on `main`.**
+  Without a triage lane, every minor-release cycle is "ship the whole
+  integrated batch or wait." A bug fix that's ready in week one of a six-week
+  release cycle waits five weeks for a milestone full of unrelated work to
+  close. The triage lane lets ready-and-eligible work reach users on its own
+  cadence.
+- **Live feedback should steer what reaches `main`, not just what reaches
+  `dev`.** When telemetry / a customer report / a security finding marks a
+  specific change as important, the maintainer needs to be able to ship that
+  change *without* shipping everything ahead of it on `dev`. Cherry-picking a
+  selected subset (under §10.5.1's eligibility rule) is that mechanism.
+- **The merge style on `dev` must preserve cherry-pickability.** Squash
+  collapses a multi-commit PR into one opaque blob — fine for `dev`'s log,
+  fatal for backport. Rebase-and-merge keeps each commit as an individually
+  addressable SHA, which is the unit the §10.5.3 cherry-pick mechanic operates
+  on. §5.1's "squash disabled at the repo level" exists to make this
+  guarantee structural rather than aspirational.
+
+Together these rules let the project hold two timelines: a fast-iteration
+trunk where features can land in pieces and the team can change its mind, and
+a slower curated trunk where users see only what's been deemed ready for
+broad delivery. Neither trunk forces the other's cadence.
+
+```
+dev ────●────●────●────●────●────●─────▶
+            \         \    \
+             cherry-pick -x  (selected commits only)
+              \         \    \
+               ▼         ▼    ▼
+triage-from-dev ●────────●────●─────▶ ──── release PR ────▶ main
+```
+
+**Direction is one-way.** Cherry-picks flow `dev → triage-from-dev` only. Never
+develop on `triage-from-dev` directly; never cherry-pick `triage-from-dev →
+dev`. (Bugs introduced *only* on the triage lane get fixed on `dev` first, then
+re-cherry-picked.)
+
+#### 10.5.1 Eligibility — what gets triaged
+
+Modeled after the Linux kernel's `stable` tree rules
+([kernel.org stable rules](https://docs.kernel.org/process/stable-kernel-rules.html)).
+A commit is triage-eligible if **all** of:
+
+- It is small and self-contained (rough guideline: ≤ 100 lines of context-diff,
+  one logical change).
+- It is **obviously correct and tested** — the kernel's exact phrasing.
+- It fixes one of: a real user-facing bug, a security regression, a build break
+  on a supported platform, a data-loss/corruption bug, or a documented
+  cross-platform quirk. Or it is a small additive feature whose risk surface is
+  isolated (e.g. a new optional MCP tool field with a default).
+- It does not depend on `dev`-only refactors that haven't shipped to `main`. If
+  it does, the prerequisites must be triage-eligible too, and they all
+  cherry-pick as a coherent batch.
+
+**Not triage-eligible** by default: schema-migrating changes, breaking
+public-API changes, multi-PR feature epics, "v1 patches" (the catch-all
+`triage-from-dev` PR title uses for work explicitly held for the next major).
+
+When in doubt, the change waits for the next `dev → main` release.
+
+#### 10.5.2 Author trailer — `Triage-Cc:`
+
+If you (the author) believe a commit belongs on the triage lane, add a trailer:
+
+```
+Triage-Cc: triage-from-dev
+```
+
+For commits that fix an earlier commit (kernel-style), also add:
+
+```
+Fixes: <abbrev-sha> ("<subject of fixed commit>")
+```
+
+The release manager finds candidates with:
+
+```bash
+git log --grep='^Triage-Cc:' origin/dev ^origin/triage-from-dev
+```
+
+Trailers are advisory — the release manager makes the final call — but they
+make the candidate set legible without re-reading every commit message.
+
+#### 10.5.3 Cherry-pick mechanics
+
+Always use `cherry-pick -x` so the resulting commit message records its
+provenance (`(cherry picked from commit <dev-sha>)`):
+
+```bash
+git checkout triage-from-dev
+git fetch origin
+git cherry-pick -x <dev-sha>
+# resolve conflicts narrowly — do NOT pull in unrelated dev refactors
+git push origin triage-from-dev
+```
+
+When a cherry-pick conflicts, classify the conflict before resolving:
+
+- **Missing-prerequisite conflict** — the dev commit calls a function /
+  references a schema field / depends on a contract that does not exist on
+  `triage-from-dev` and is not introduced by this same commit. **Stop.** Either
+  pick the prerequisite first (if it is itself triage-eligible per §10.5.1) or
+  hold the change for the next full `dev → main` release.
+- **Diverged-surface conflict** — the change's *target file* has been
+  refactored on dev's path between triage's branch point and the cherry-pick
+  source, but every symbol / schema field / contract the cherry-picked commit
+  *actually depends on* either already exists on triage or is additively
+  introduced in this same commit. **Adaptable** — see below.
+
+##### Adaptation clause
+
+A diverged-surface conflict may be resolved by manually adapting the conflict
+hunks to triage's surrounding code, provided **all** of the following hold:
+
+1. The cherry-pick's *intent* (the conceptual change — e.g. "route through
+   new adapter method", "add replay case for new event type") is preserved.
+   The semantic effect on triage matches the semantic effect on dev from any
+   external caller's POV.
+2. No new logic is *invented* — every line in the resolution either comes
+   from the cherry-picked commit, exists on triage already, or is the
+   minimal mechanical glue to bridge the two (e.g. renaming a local variable
+   to match triage's existing identifier).
+3. Each adapted hunk is annotated:
+   - In the **commit message** under an `Adaptation:` trailer:
+     `Adaptation: handlers/ratify.py — rewrote against pre-#65 inline impl`
+   - In the **code itself**, where the adapted block isn't trivially obvious,
+     with `# triage-adapt: <one-line reason>` immediately above the block.
+
+If you find yourself writing a hunk that doesn't satisfy (2) — i.e. you're
+inventing logic to bridge the gap — the conflict is in fact a missing-
+prerequisite conflict in disguise. Stop and reclassify.
+
+The release manager reviews adapted commits with extra scrutiny at the
+§10.5.4 release PR; adapted commits should be a small fraction of any
+triage release, and a triage cycle that's mostly adaptations is a signal
+that the lane has drifted too far from `dev`.
+
+Resolving conflicts by inventing replacement code that does not satisfy the
+adaptation clause above is forbidden — the cherry-pick must remain a faithful
+subset of `dev`, modulo legitimate adaptation to a diverged surface.
+
+The fact that `triage-from-dev` already carries some commits with **different
+SHAs than dev** (e.g. v0.14.0 telemetry, RFC #98) is sunk cost from the lane's
+pre-§10.5 era. Going forward every cherry-pick uses `-x` and the audit trail
+re-converges. Do **not** rewrite history on `triage-from-dev` to fix the
+divergence — it is a published branch.
+
+#### 10.5.4 Release PR (`triage-from-dev` → `main`)
+
+The triage release PR follows §6 with two adjustments:
+
+- **Title**: `release: v0.X.Y (triage)` — the patch version bumps; minor stays
+  pinned to whatever `main` last tagged from a full `dev → main` release.
+- **Flow label**: `flow:release` (same as a full release).
+- **Body** lists each cherry-picked commit with its source `dev-sha` and the
+  issue/PR it traces back to.
+
+After the triage release tags on `main`, sync `main` back to `dev` per §10
+(merge or cherry-pick — the next-release CHANGELOG flip absorbs the patch).
 
 ---
 

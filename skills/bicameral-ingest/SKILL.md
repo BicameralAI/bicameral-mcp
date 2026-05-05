@@ -134,7 +134,7 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
 
 1. Identify the dominant feature area from the source (same noun phrase you'd use in Step 1.5 — e.g. "Session Identity", "Accountable Live", "Checkout Flow").
 
-2. Call `bicameral.search(query=<feature_area>, top_k=10)`.
+2. Call `bicameral.history(feature_filter=<feature_area>)`. (`bicameral.search` was retired — `history` with a substring filter is the live equivalent. There is no `top_k` or `min_confidence` knob; the filter is a substring match over the feature/decision text.)
 
 3. Read the results and note:
    - **Business drivers already established** in this area (privacy, compliance, contract, SLA). A new candidate whose driver matches an established pattern is more likely to be real — even if the source is silent on the driver.
@@ -145,7 +145,7 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
    - If ledger context establishes a privacy/compliance pattern and a new candidate is privacy-shaped → treat the ledger context as evidence for the business driver, even if the source is silent. Ingest as `proposed` with a note: `"business driver inferred from ledger: <prior decision description>"`.
    - If no ledger context → apply the filters strictly and park ambiguous cases.
 
-**Skip this step** (proceed directly to Step 1) when the source is a completely new domain with no plausible overlap with existing decisions (e.g. first-ever ingest into an empty ledger). The `bicameral.search` call is cheap — when in doubt, call it.
+**Skip this step** (proceed directly to Step 1) when the source is a completely new domain with no plausible overlap with existing decisions (e.g. first-ever ingest into an empty ledger). The `bicameral.history` call is cheap — when in doubt, call it.
 
 ### 1. Extract candidate decisions
 
@@ -734,14 +734,17 @@ the boxes. Two intensities, controlled by `guided: bool`:
 
 When `brief` is `null` (no derivable topic or chain failed), skip silently.
 
-### 6. Apply the gap-judge rubric (v0.4.16+)
+### 6. Apply the gap-judge rubric (v0.4.16+; unified brief shape from #187)
 
-When the ingest response contains a non-null `judgment_payload`, apply the
+When `IngestResponse.brief.gaps` is non-empty, apply the
 `bicameral-judge-gaps` rubric using the visual format from
-`skills/gap_visualization/SKILL.md`. Full contract is in
+`skills/gap_visualization/SKILL.md`. The rubric itself lives at
+`response.brief.rubric` (5 fixed v0.4.19 categories). Full contract is in
 `skills/bicameral-judge-gaps/SKILL.md`.
 
 **Key rendering rules for this flow:**
+- Iterate `response.brief.gaps[]` (a list of `BriefGap`) — each entry
+  corresponds to one finding the rubric should apply to.
 - Render each ask-gap as its corresponding box template (templates #1–#5).
 - **Skip empty categories entirely** — no header, no `✓ no gaps found`.
   The user only sees boxes for actual findings.
@@ -750,7 +753,14 @@ When the ingest response contains a non-null `judgment_payload`, apply the
 - Max 3 boxes per category; if more exist, surface the batched gate from
   `bicameral-judge-gaps` for the remainder.
 
-When `judgment_payload` is `null` (no decisions or chain failed), skip silently.
+When `response.brief` is `null` OR `response.brief.gaps` is empty (no
+decisions or chain failed), skip silently.
+
+**Migration note (#187)**: the legacy `IngestResponse.judgment_payload` and
+`IngestResponse.judgment_payloads` fields were removed. Gap findings now
+live at `response.brief.gaps[]` and the rubric reference at
+`response.brief.rubric`. Older callers asserting on `judgment_payload`
+must migrate.
 
 ### 7. Ratify proposals (v0.7.0+)
 

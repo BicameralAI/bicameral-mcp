@@ -165,22 +165,30 @@ def _select_agents() -> list[str]:
     return selected
 
 
+class RunnerNotFoundError(RuntimeError):
+    """Raised when no viable runner for bicameral-mcp is on PATH.
+
+    There is no `bicameral_mcp` package — the entry point is `server:cli_main` —
+    so `python -m bicameral_mcp` is not a valid fallback.
+    """
+
+
 def _detect_runner() -> tuple[str, list[str]]:
     """Detect the best available runner for bicameral-mcp.
 
-    Preference order:
-      1. bicameral-mcp binary on PATH — uses the actual installed environment,
-         so local subpackages (dashboard/, etc.) and editable installs work.
-      2. python3 -m bicameral_mcp — fallback for source checkouts / venvs.
+    Only one runner is supported: the `bicameral-mcp` script installed by
+    `pip install bicameral-mcp` (or an editable install in a venv). pipx run
+    is intentionally NOT used: it downloads a fresh ephemeral copy from PyPI
+    on every server start, missing local-only modules and risking version skew.
 
-    pipx run is intentionally NOT used: it downloads a fresh ephemeral copy
-    from PyPI on every server start, which misses local-only modules and can
-    run a different version than what the user installed.
+    The previous `python -m bicameral_mcp` fallback was removed because there
+    is no `bicameral_mcp` package; the resulting MCP config was non-functional.
     """
     if shutil.which("bicameral-mcp"):
         return ("bicameral-mcp", [])
-    python = "python3" if shutil.which("python3") else "python"
-    return (python, ["-m", "bicameral_mcp"])
+    raise RunnerNotFoundError(
+        "No runner found for bicameral-mcp. Install with: pip install bicameral-mcp"
+    )
 
 
 def _build_config(
@@ -358,36 +366,92 @@ def _install_for_agent(
     return True
 
 
-_BICAMERAL_SESSION_END_COMMAND = (
-    "[ -d .bicameral ] && claude -p '/bicameral:capture-corrections' || true"
-)
+def _build_session_end_command(mcp_config_path: str | None = None) -> str:
+    """Canonical SessionEnd hook command (#156 pivot).
+
+    Replaces the prior ``claude -p '/bicameral-capture-corrections
+    --auto-ingest'`` invocation, which spawned an empty subprocess that
+    couldn't access the parent session's transcript — corrections
+    silently failed to surface.
+
+    The new shape pipes Claude Code's stdin envelope into a Python
+    script that extracts ``transcript_path`` and copies it to the
+    pending-transcripts queue at
+    ``<repo>/.bicameral/pending-transcripts/<session_id>.jsonl``. The
+    next session's preflight Step 3.5 (or capture-corrections Step 0)
+    drains the queue and surfaces corrections with full ledger context.
+
+    ``mcp_config_path`` is retained for signature stability with
+    consumers that pass it through; the new hook doesn't use it (no
+    claude subprocess to configure).
+    """
+    return (
+        '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
+        "BICAMERAL_SESSION_END_RUNNING=1 "
+        "python3 scripts/hooks/session_end_queue_writer.py || true"
+    )
+
+
+# Canonical no-args form — what `_install_claude_hooks` writes to a fresh
+# end-user's ``.claude/settings.json``. Re-derived from the helper so the
+# function is the single source of truth.
+_BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
 
 # Fires after every Bash tool use. When the command is a git write-op
-# (commit / merge / pull / rebase --continue), prints a trigger line that
-# causes the agent to invoke /bicameral:sync — running the full
-# link_commit → compliance check flow so status is authoritative immediately.
-_BICAMERAL_POST_COMMIT_COMMAND = (
-    'python3 -c "'
-    "import json,sys; "
-    "d=json.load(sys.stdin); "
-    "c=d.get('tool_input',{}).get('command',''); "
-    "ops=('git commit','git merge ','git pull','git rebase --continue'); "
-    "[print('bicameral: new commit detected — run /bicameral:sync to resolve compliance and get authoritative reflected/drifted status') "
-    'for _ in [1] if any(op in c for op in ops)]"'
-)
+# (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
+# envelope whose additionalContext nudges the agent to invoke
+# /bicameral-sync — running the full link_commit → compliance check
+# flow so status is authoritative immediately.
+#
+# Was a plain-stdout python -c one-liner. Per Claude Code 2.x hook docs
+# (https://code.claude.com/docs/en/hooks), plain stdout from PostToolUse
+# is dropped to the debug log — only UserPromptSubmit / UserPromptExpansion
+# / SessionStart treat raw stdout as agent-visible context. Symptom: the
+# agent committed but never followed through with link_commit because
+# the reminder never reached the model. Console script writes the proper
+# envelope; source: scripts/hooks/post_commit_sync_reminder.py.
+_BICAMERAL_POST_COMMIT_COMMAND = "bicameral-mcp-post-commit-sync-reminder"
+
+# UserPromptSubmit hook: deterministic regex over a verb list elevates
+# bicameral.preflight above the agent's default tool-selection priority
+# whenever a prompt indicates code-implementation intent. Console script
+# is exposed via pyproject.toml [project.scripts] so it resolves on PATH
+# regardless of cwd. Closes #146 for end-user installs (the dogfood path
+# in the bicameral repo's own .claude/settings.json invokes the source
+# file directly via python3).
+_BICAMERAL_PREFLIGHT_REMINDER_COMMAND = "bicameral-mcp-preflight-reminder"
+
+# PostToolUse hook scoped to the bicameral.preflight tool: when preflight
+# surfaces ≥1 decision, prints a system-reminder templating the
+# correction-capture loop (Step 5.6 of bicameral-preflight) so the agent
+# reliably calls bicameral.ingest(source=agent_session) +
+# bicameral.resolve_collision when the user's prompt contradicts a
+# surfaced decision. Closes #154 for end-user installs (the dogfood path
+# invokes the source file directly via python3).
+_BICAMERAL_COLLISION_CAPTURE_REMINDER_COMMAND = "bicameral-mcp-collision-capture-reminder"
+_BICAMERAL_PREFLIGHT_TOOL_NAME = "mcp__bicameral__bicameral_preflight"
 
 
 def _install_claude_hooks(repo_path: Path) -> bool:
     """Merge bicameral hooks into the project-level .claude/settings.json.
 
-    Installs two hooks:
+    Installs four hooks:
     - PostToolUse/Bash: reminds the agent to call link_commit immediately
       after git write-ops (commit / merge / pull / rebase --continue).
-    - SessionEnd: runs bicameral-capture-corrections to catch uningested
-      mid-session corrections (only fires when .bicameral/ exists).
+    - PostToolUse/bicameral_preflight: reminds the agent to capture
+      refinements via ingest(agent_session) + resolve_collision when
+      preflight surfaces decisions that the user's prompt contradicts.
+    - SessionEnd: writes the parent session's transcript to
+      .bicameral/pending-transcripts/<session_id>.jsonl; the next session's
+      preflight Step 3.5 / capture-corrections Step 0 drains the queue and
+      surfaces uningested corrections (#156). Only fires when .bicameral/
+      exists.
+    - UserPromptSubmit: deterministic verb-list classifier injects a
+      <system-reminder> elevating bicameral.preflight above the agent's
+      default tool-selection priority on code-implementation prompts.
 
     Idempotent — safe to call on every setup run. Returns True if any new
-    entry was written, False if both were already present.
+    entry was written, False if all four were already present.
     """
     settings_path = repo_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -416,6 +480,29 @@ def _install_claude_hooks(repo_path: Path) -> bool:
         bash_entry["hooks"] = non_bic + [new_post_hook]
         wrote_anything = True
 
+    # ── PostToolUse / bicameral_preflight — collision capture reminder ─
+    preflight_entry = next(
+        (e for e in post_tool_use if e.get("matcher") == _BICAMERAL_PREFLIGHT_TOOL_NAME),
+        None,
+    )
+    if preflight_entry is None:
+        preflight_entry = {"matcher": _BICAMERAL_PREFLIGHT_TOOL_NAME, "hooks": []}
+        post_tool_use.append(preflight_entry)
+    old_pre_hooks = preflight_entry.get("hooks", [])
+    non_bic_pre = [
+        h
+        for h in old_pre_hooks
+        if "bicameral" not in h.get("command", "")
+        and "post_preflight_capture_reminder" not in h.get("command", "")
+    ]
+    new_pre_hook = {
+        "type": "command",
+        "command": _BICAMERAL_COLLISION_CAPTURE_REMINDER_COMMAND,
+    }
+    if non_bic_pre != old_pre_hooks or new_pre_hook not in old_pre_hooks:
+        preflight_entry["hooks"] = non_bic_pre + [new_pre_hook]
+        wrote_anything = True
+
     # ── SessionEnd — capture uningested corrections ──────────────────
     session_end: list = hooks.setdefault("SessionEnd", [])
     # Remove any stale bicameral SessionEnd entries, then write current.
@@ -429,6 +516,23 @@ def _install_claude_hooks(repo_path: Path) -> bool:
         hooks["SessionEnd"] = non_bic_se + [new_se_entry]
         wrote_anything = True
 
+    # ── UserPromptSubmit — preflight auto-fire reinforcement ─────────
+    user_prompt_submit: list = hooks.setdefault("UserPromptSubmit", [])
+    non_bic_ups = [
+        e
+        for e in user_prompt_submit
+        if not any(
+            "bicameral" in h.get("command", "") or "preflight_reminder" in h.get("command", "")
+            for h in e.get("hooks", [])
+        )
+    ]
+    new_ups_entry = {
+        "hooks": [{"type": "command", "command": _BICAMERAL_PREFLIGHT_REMINDER_COMMAND}]
+    }
+    if non_bic_ups != user_prompt_submit or new_ups_entry not in user_prompt_submit:
+        hooks["UserPromptSubmit"] = non_bic_ups + [new_ups_entry]
+        wrote_anything = True
+
     if wrote_anything:
         settings_path.write_text(json.dumps(existing, indent=2) + "\n")
     return wrote_anything
@@ -438,8 +542,14 @@ _GIT_POST_COMMIT_HOOK = """\
 #!/bin/sh
 # Bicameral MCP — post-commit hook (installed by bicameral-mcp setup, Guided mode)
 # Syncs the decision ledger after every commit so drift status is current immediately.
-# Silent on failure; only runs when .bicameral/ exists.
-[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>&1 || true
+# Loud-but-non-blocking failure: any stderr from link_commit is captured to
+# ${HOME}/.bicameral/hook-errors.log and surfaced on stderr in the same commit.
+# The `>` redirection truncates the log file each run, so successful commits
+# auto-clear stale errors from prior failed runs. Always exits 0 — the commit
+# itself never blocks on a sync hook failure (#124).
+[ -d .bicameral ] && bicameral-mcp link_commit HEAD >/dev/null 2>"${HOME}/.bicameral/hook-errors.log"
+[ -s "${HOME}/.bicameral/hook-errors.log" ] && echo "Bicameral post-commit hook failed; see ${HOME}/.bicameral/hook-errors.log" >&2
+exit 0
 """
 
 
@@ -527,6 +637,9 @@ def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
     skills_src = Path(__file__).parent / "skills"
     if not skills_src.exists():
+        print(f"  WARNING: skill source not found at {skills_src}")
+        print("  Skills were not installed. The wheel may have been built without skills/.")
+        print("  Re-install bicameral-mcp from a recent release, or report this bug.")
         return 0
 
     skills_dst = repo_path / ".claude" / "skills"
@@ -764,11 +877,11 @@ def run_setup(
     agents = _select_agents()
 
     # Step 3: Runner check
-    command, _ = _detect_runner()
-    if command not in ("bicameral-mcp",):
-        print("\n  Note: bicameral-mcp binary not found on PATH.")
-        print(f"  Using '{command} -m bicameral_mcp' as runner.")
-        print("  Install for a cleaner setup: pip install bicameral-mcp")
+    try:
+        _detect_runner()
+    except RunnerNotFoundError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
 
     # Step 4: Collaboration mode + guided intensity + telemetry + gitignore
     collab_mode = _select_collaboration_mode()
@@ -791,8 +904,7 @@ def run_setup(
     # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
         num_skills = _install_skills(repo_path)
-        if num_skills:
-            print(f"  Claude Code: installed {num_skills} slash commands")
+        print(f"  Claude Code: installed {num_skills} skill(s) at {repo_path}/.claude/skills/")
         if _install_claude_hooks(repo_path):
             print(
                 "  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end"
@@ -824,11 +936,11 @@ def run_setup(
 
     if "claude" in agents:
         print("  Claude Code slash commands:")
-        print("    /bicameral:ingest     — ingest a transcript, Slack thread, or PRD")
-        print("    /bicameral:preflight  — pre-flight: surface decisions before coding")
-        print("    /bicameral:history    — list all tracked decisions by feature area")
-        print("    /bicameral:dashboard  — open live decision dashboard in browser")
-        print("    /bicameral:reset      — nuke and replay the ledger (emergency)")
+        print("    /bicameral-ingest     — ingest a transcript, Slack thread, or PRD")
+        print("    /bicameral-preflight  — pre-flight: surface decisions before coding")
+        print("    /bicameral-history    — list all tracked decisions by feature area")
+        print("    /bicameral-dashboard  — open live decision dashboard in browser")
+        print("    /bicameral-reset      — nuke and replay the ledger (emergency)")
         print()
 
     print("  Or just ask naturally:")

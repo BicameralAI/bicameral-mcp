@@ -58,8 +58,8 @@ The `/qor-audit` skill already runs grounding manually. Does Check A duplicate t
 - `.github/workflows/`: `drift-report.yml`, `label-merged-to-dev.yml`, `lint-and-typecheck.yml`, `preflight-eval.yml`, `publish.yml`, `secret-scan.yml`, `test-mcp-regression.yml`, `test-schema-persistence.yml`. Lint workflow runs `ruff check .` + `ruff format --check .` + `mypy .` on PRs to `main` and `dev`.
 - No `.pre-commit-config.yaml` exists.
 - `scripts/` exists at repo root with `sim_accountable.py` and `CLAUDE.md`.
-- `.github/scripts/post_drift_comment.py` (from PR #113) is the precedent for CI-only Python helpers — stdlib-only, no new runtime deps.
-- `cli/` is for user-facing console tools (`classify`, `branch_scan`, `drift_report`); not the right home for a lint script.
+- `.github/scripts/post_drift_comment.py` (nonexistent) (from PR #113 — was the precedent for CI-only Python helpers; deleted on dev between this branch and merge).
+- `cli/` is for user-facing console tools (`classify`, `branch_scan`); not the right home for a lint script.
 
 ---
 

@@ -10,6 +10,8 @@ import logging
 from datetime import UTC
 
 from contracts import (
+    BriefEnvelope,
+    BriefGap,
     ContextForCandidate,
     CreatedDecision,
     IngestPayload,
@@ -323,6 +325,8 @@ async def handle_ingest(
 
     # Auto-chain: fire judge_gaps per feature_group topic so the caller gets
     # one structured gap-judgment payload per segment. Failures are swallowed.
+    # #187: collected payloads are folded into the unified `brief` envelope
+    # below; the legacy flat `judgment_payload[s]` fields were removed.
     judgment_payloads: list = []
     try:
         topics = _derive_topics(payload)
@@ -335,7 +339,6 @@ async def handle_ingest(
                     judgment_payloads.append(jp)
     except Exception as exc:
         logger.warning("[ingest] post-ingest gap-judge chain failed: %s", exc)
-    judgment_payload = judgment_payloads[0] if judgment_payloads else None
 
     cursor_summary = None
     source_type = str(
@@ -373,6 +376,21 @@ async def handle_ingest(
         source_refs,
     )
 
+    # #187: build the unified brief envelope from the gap-judge findings.
+    # Future PR may also surface drift_candidates/divergences here once
+    # those are computed in the ingest path; today only gaps + rubric are
+    # populated server-side. brief stays None when there's nothing to render
+    # (silent-on-no-signal — matches PreflightResponse contract).
+    brief: BriefEnvelope | None = None
+    if judgment_payloads:
+        gaps: list[BriefGap] = []
+        for jp in judgment_payloads:
+            gaps.extend(jp.phrasing_gaps)
+        brief = BriefEnvelope(
+            gaps=gaps,
+            rubric=judgment_payloads[0].rubric,
+        )
+
     ingest_response = IngestResponse(
         ingested=bool(result.get("ingested", False)),
         repo=str(result.get("repo", repo)),
@@ -400,8 +418,7 @@ async def handle_ingest(
         ],
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
-        judgment_payload=judgment_payload,
-        judgment_payloads=judgment_payloads,
+        brief=brief,
         sync_status=sync_status,
     )
 

@@ -281,3 +281,240 @@ SG-PLAN-GROUNDING-DRIFT
 ```
 
 ---
+
+## Failure Entry #6
+
+**Date**: 2026-05-02T22:00:00Z
+**Verdict ID**: research-brief-priority-c-selective-ingest-2026-05-02.md (deleted) — operator-rejected during dialogue
+**Failure Mode**: INVARIANT_FROM_IMPLEMENTATION (Hallucination-class; SG-1 family)
+
+### What Failed
+
+`/qor-research` for v0 Priority C (selective source ingest) read the current
+`bicameral.ingest` code surface (`handlers/ingest.py:217`), observed that
+the server accepts pre-extracted text and has no source-fetcher / OAuth /
+API-client code, and elevated this **v0 implementation state** to a
+**product principle**:
+
+> "Architecture invariant: bicameral-mcp does not fetch source content;
+> the agent fetches via host's tools. Any future 'source connector'
+> proposal should be VETO'd at audit unless it explicitly bypasses this
+> invariant for a documented reason."
+
+The brief recommended an entire framing reversal of the user's stated
+priority — from "build selective ingest for sources" to "build a
+curation/quality-gate UX over what the agent already fetches" — based on
+this invented invariant. The brief was about to be filed as advisory
+input to the follow-on `/qor-plan` and the invariant about to be saved
+as a project memory entry.
+
+### Why It Failed
+
+The Sales Enablement & Positioning Playbook (operator-supplied during
+post-research dialogue) explicitly positions Bicameral as the
+**destination** of a `Decision Sources → Bicameral.LEDGER` arrow in
+its ecosystem-fit diagram. Decision continuity at multi-developer,
+multi-agent scale is **Value Pillar #1**. The agent-fetches-only model
+fragments the ledger across sessions: Dev A's Cursor session, Dev B's
+Claude Code session, and Dev C's Claude Desktop session each produce
+independent reads of the same Slack thread, with independent extractions.
+Two devs preflighting the same code path against the same conversational
+source can get different drift verdicts.
+
+The product principle is **decision continuity at scale**. The v0 code's
+agent-fetches-only pattern is a solo-developer simplification, not a
+load-bearing invariant. Treating the simplification as a principle
+would have shipped a plan whose executive summary directly contradicts
+the product positioning the team is selling against.
+
+### Pattern to Avoid
+
+**Distinguish "what the code does today" from "what the product principle
+is."** A v0 simplification is evidence of a design choice at a moment in
+time — not evidence of the load-bearing rule. Authoritative product
+principles live in:
+
+- `docs/CONCEPT.md` (project DNA)
+- `docs/ARCHITECTURE_PLAN.md` (interface contracts + risk grade)
+- Sales Enablement & Positioning Playbook (operator-curated, off-repo)
+- Founder/maintainer dialogue when the artifacts are silent or
+  contradictory
+
+Code-state observations may *suggest* an invariant, but the invariant must
+be checked against authoritative sources before being ascribed product
+weight. When code and product positioning diverge, the code is the
+v0-state, not the contract.
+
+### Detection Heuristic
+
+Before writing the phrase "architecture invariant" or "product principle"
+or "by design" in a research brief, ask:
+
+1. Is this claim grounded in a non-code authoritative source? (CONCEPT.md,
+   ARCHITECTURE_PLAN.md, positioning doc, founder dialogue.)
+2. If only grounded in code, am I sure the code reflects the product
+   principle and not just a v0 simplification?
+3. Could this claim, if elevated to a project memory, contradict the
+   product's market positioning if the team scales?
+
+A "no" or "unsure" on any of these means the claim is unproven. **Anything
+unproven is only theater.** Quote it as observation, not as principle.
+
+### Remediation
+
+- Research brief deleted (no archival; the failure mode is more useful
+  preserved here than the false brief is in the docs tree).
+- Project memory entry "bicameral does not fetch source content" was
+  about to be saved; intercepted before write.
+- Operator-supplied playbook treated as primary substrate for the
+  re-research that follows.
+- Doctrine "anything unproven is only theater" saved as project memory
+  feedback for future research/audit phases.
+
+
+### Addendum to Entry #6 (2026-05-02T22:30:00Z)
+
+The pattern catalogued above is **symmetric**: it applies as much to project doctrine documents as to source code. After the v1 brief failure, dialogue with the operator revealed CONCEPT.md anti-goals were also being read too generously — specifically *"No remote DB, no managed backend"* was treated as "no server-side components at organizational scale," which conflicts with multi-org sync requirements implied by the playbook.
+
+The operator parsed the anti-goal literally: the load-bearing keyword is **"managed"**, not "backend." A managed backend is one that requires human ops (DBA tasks, on-call, capacity planning, manual migration) — i.e., a SaaS the customer pays an ops tax for. A **self-managing** backend (self-hosted, schema-migrating itself, deterministic, no on-call surface) is fully compatible. Sentry self-hosted, Supabase self-host, embedded-SurrealDB-already-in-repo are the precedents.
+
+### Pattern to Avoid (extension)
+
+When parsing project doctrine documents (CONCEPT.md anti-goals, ARCHITECTURE_PLAN.md interface contracts, positioning playbooks), identify the **load-bearing keyword** in each clause and read the rest as gloss on that keyword. Do NOT generalize the clause beyond what the keyword warrants:
+
+- *"No managed backend"* — load-bearing word: **managed**. Allows server-side that's self-managing.
+- *"No cloud, no network calls in the deterministic core"* — load-bearing words: **deterministic core**. Allows network calls outside the deterministic core (e.g., source ingest workers, telemetry).
+- *"Not an LLM-powered ledger"* — load-bearing words: **ledger**. Allows LLMs as callers, classifiers, and orchestrators around the ledger.
+
+When the operator's product positioning implies a feature that seems to violate an anti-goal, do not assume the anti-goal blocks the feature — first parse the keyword and see whether the feature actually trips it.
+
+### Detection Heuristic (extension)
+
+Before declaring "this anti-goal forbids X," ask:
+1. What is the load-bearing keyword in the anti-goal clause?
+2. Does X trip that specific keyword, or just the broader gloss around it?
+3. Is there an industry precedent (self-hosted Sentry, Supabase OSS, etc.) where a system honors this anti-goal-keyword while still implementing X?
+
+If 2 says "just the gloss" or 3 surfaces a precedent, X is not blocked — it's compatible with the anti-goal under literal-keyword parsing.
+
+---
+
+## Failure Entry #7
+
+**Date**: 2026-05-02T06:55:00Z
+**Session**: `2026-05-02T0625-8ea4cc`
+**Skill that produced the artifact**: `/qor-plan` (`plan-priority-c-team-server-notion-v1.md`)
+**Skill that detected**: `/qor-audit`
+**Verdict**: VETO (`infrastructure-mismatch`)
+
+### Pattern Observed: PARALLEL_STRUCTURE_ASSUMED
+
+The plan extended a v0 codebase by repeatedly assuming the v0 had implemented patterns *symmetric* with the v1 ambition. In four places:
+
+1. The plan referenced a `schema-version row` that was never added to v0's schema (`SCHEMA_VERSION` is an in-code constant only).
+2. The plan changed `_MIGRATIONS`'s type signature from tuple-of-stmts to dict-of-callables without acknowledging the corresponding `ensure_schema` dispatch loop change — assuming the dispatch was already callable-shaped.
+3. The plan said "extend the existing `lifespan` to spawn a Notion-worker task" — assuming a Slack-worker task was already registered. It was not. The Slack worker shipped in v0 Phase 3 has no production caller and is invoked only by tests.
+4. The plan referenced `_resolve_extractor()` and `DEFAULT_CONFIG_PATH` in a code sketch — assuming Slack precedents existed. They did not.
+
+The common signature: "the plan generalizes from a Slack-shaped pattern that the plan author *imagined* the v0 had built, rather than the pattern the v0 actually built." This is a class of plan-text drift specifically tied to writing v1 plans against v0 codebases without grep-verifying every named symbol.
+
+### Root Cause
+
+The Governor was treating the v0 plan document (`plan-priority-c-team-server-slack-v0.md`) as the ground truth for v0 state, rather than the v0 *code*. The v0 plan promised a worker-task lifecycle pattern in §Phase 3; the v0 code shipped the worker function but never wired it. The Governor read the plan, not the code. The audit caught it because Step 2 verified state against the code itself.
+
+### Pattern to Avoid
+
+When writing a v1 plan that extends a landed v0:
+
+1. Do NOT cite a v0 symbol in a v1 plan without `grep`-verifying it exists in the current code tree. The audit's Infrastructure Alignment Pass enforces this; the plan should pre-empt it.
+2. Do NOT use phrasing like "extend the existing X" without identifying the exact file/line where X is registered. If you cannot point to a registration site, X may not exist — and "extend" becomes "establish."
+3. Do NOT change a type signature of landed code without an explicit Affected-Files entry naming every dispatch / consumption site that must change.
+4. Do NOT write code sketches with helper-function references (`_helper()`, `CONST`) unless the helper / constant is either declared in Affected Files or already exists at a cited path.
+
+### Detection Heuristic
+
+For every Affected-Files line in a v1 plan that says MUTATE:
+1. Read the file. Confirm the cited symbol exists.
+2. Confirm the cited type signature matches reality.
+3. If the mutation is type-changing, list every consumption site of the changed type and add it as a sub-bullet to the Affected-Files entry.
+
+For every code sketch in §Changes:
+1. Every imported symbol must trace to either an Affected-Files entry OR a current-tree path.
+2. Every `_helper()` call must be either local (defined within the same sketch) or declared.
+3. Every constant reference (`UPPERCASE_CONST`) must be either local or declared in Affected Files.
+
+### Project Memory Implication
+
+This pattern is the natural consequence of treating a previous-phase plan document as evidence about current state. Plans drift from code as soon as the implement phase ends. **Only the code is ground truth for the next plan's state-of-the-world claims.** Every plan referencing prior-phase symbols should grep-verify those symbols against current HEAD before submission.
+
+The remediation pattern is uniform: the plan amendment must replace each unsupported claim with either (a) a citation to current code, or (b) an explicit Affected-Files entry establishing the missing infrastructure.
+
+### Addendum to Entry #7 (2026-05-02T07:25:00Z)
+
+The amended plan that followed Entry #7 (audit round 2 of `plan-priority-c-team-server-notion-v1.md`) closed all four original findings successfully but introduced a sibling failure under the same root cause: `slack_runner.run_slack_iteration` called `decrypt_token(ws["oauth_token_encrypted"])` with one argument, where the actual signature is `decrypt_token(ciphertext: bytes, key: bytes) -> str`.
+
+The pattern surfaced in Entry #7 was *missing/undeclared symbols*. The amendment correctly closed that pattern by either declaring or grounding every symbol — but the round-2 sketch invoked an *existing, declared* symbol with the wrong call shape. The verification heuristic in Entry #7 ("for every cited symbol... confirm the cited type signature matches reality") was correct in principle but underspecified in practice: it covered `MUTATE` Affected-Files entries but not the in-line code sketches in §Changes blocks.
+
+### Pattern to Avoid (extension)
+
+Extending Entry #7's heuristic — for every code sketch in §Changes:
+
+1. **Existence check**: every `from X import Y` traces to a real module + symbol. (Original Entry #7 contract.)
+2. **Signature check**: every call to `Y(...)` matches `Y`'s actual signature: arity, positional-vs-keyword discipline, and argument types. The audit's Infrastructure Alignment Pass should `inspect.signature(Y)` against the call shape. (New extension.)
+3. **Type-boundary check**: when a value crosses a persistence boundary (DB column type ↔ in-memory Python type), the conversion must be explicit in the sketch. Specifically: any `str` field stored from a `bytes` source must be encoded back at the read site (e.g. `ws["x"].encode("utf-8")`); any `bytes` field stored from a `str` source must be decoded at the read site. (New extension.)
+4. **Helper-symmetry check**: if a write-side path (e.g. `team_server/auth/router.py`'s OAuth callback) uses `helper_a` + `helper_b` to perform the encode + persist combination, the read-side path must use the symmetric `helper_b_inverse` + `helper_a_inverse` chain — not a single helper missing one argument. The existing precedent in the repo IS the contract.
+
+### Detection Heuristic (extension)
+
+For every code sketch with an external function call:
+
+1. Read the function's actual definition. Confirm arity matches.
+2. Confirm argument types match. If a literal or named variable in the sketch is the wrong type for the function, name the conversion explicitly in the sketch.
+3. Find the symmetric existing precedent in the repo (e.g. the encrypt-side for a decrypt call). If the precedent exists, model the sketch after it.
+
+Adding these to the round-3 amendment closes the documented residual.
+
+### Addendum to Entry #7 (2026-05-02T22:55:00Z) — second-instance heuristic refinement
+
+Entry #34 (v1.1 first-round PASS) gave evidence that the Entry #7 heuristic was durable. Entry #37 (v0-release-blockers VETO) gave evidence that the heuristic needs one more refinement.
+
+**Pattern observed in Entry #37**: The Governor planned to MUTATE `events/materializer.py` to add a dispatch case for team-server events. The plan correctly cited the materializer's existing dispatch loop, the `event_type='ingest'` event_type team-server emits, and the `IngestPayload` shape. All cited symbols verified clean. **But the Governor did not verify whether the materializer's input stream actually receives team-server events.** That verification — checking the *upstream* of the unit being mutated — exposed that `pull_team_server_events` has zero production callers; events are produced and pulled but never enter the JSONL stream the materializer reads.
+
+The Entry #7 detection heuristics covered:
+1. Existence check (does the cited symbol exist?)
+2. Signature check (does the call shape match?)
+3. Type-boundary check (do conversions across persistence cross correctly?)
+4. Helper-symmetry check (do encode/decode pairs mirror?)
+
+Entry #37 surfaces a fifth heuristic:
+
+5. **Upstream-consumer check**: When planning to MUTATE a unit whose intended downstream effect depends on an upstream producer, grep for production callers of the upstream producer. If zero, the mutation is dead code regardless of correctness. The Governor must surface this — either by adding a phase that wires the producer, or by acknowledging the dead-code state in plan boundaries.
+
+### Detection Heuristic (further extension)
+
+Before declaring "this MUTATE closes gap X":
+
+1. Apply heuristics 1-4 from Entry #7 addendum (existence, signature, type-boundary, helper-symmetry).
+2. **(NEW)** Identify the upstream producer that feeds the unit-under-mutation. Grep for production callers of THAT producer. If zero, the mutation does nothing in production — the plan must either wire the producer or declare the dead-code state explicitly.
+
+This refinement fits naturally into the Step 2 state-verification of `/qor-audit`. The heuristic-extension prompt: for every plan that says "this fixes the case where X feeds Y but Y rejects it," verify that X actually feeds Y in production.
+
+### Addendum to Entry #7 (2026-05-02T23:25:00Z) — sixth heuristic surfaced by Entry #38
+
+Entry #38 (v0-release-blockers round 2 VETO) introduced a sibling defect while closing the round-1 finding. Pattern: Governor's amendment correctly cited `get_ledger()` accessor and the `TeamWriteAdapter._inner` attribute, but the §Changes sketch passed the wrapper to the consumer without unwrapping. The wrapper's `ingest_payload` method has side effects (writes to JSONL via `_writer.write`); the sketch ignored those side effects.
+
+This adds a sixth heuristic to the catalog (heuristics 1-5 from prior addenda):
+
+6. **Wrapper-side-effect check**: When a plan invokes a method through a registry/factory accessor (`get_X()`, `_singleton_X`, etc.), grep the returned type's method body for side effects. If side effects are present, the plan must either (a) use the appropriate inner/raw accessor that bypasses them, or (b) acknowledge and handle them in the calling code. Mere correct citation of the accessor is insufficient when the returned object has implicit side-effect semantics.
+
+The full Entry #7 detection heuristic catalog now reads:
+
+1. **Existence check** (does the cited symbol exist?)
+2. **Signature check** (does the call shape match arity / kwargs / types?)
+3. **Type-boundary check** (do conversions across persistence boundaries cross correctly — bytes vs str, etc.?)
+4. **Helper-symmetry check** (do encode/decode pairs mirror at read-side and write-side?)
+5. **Upstream-consumer check** (when MUTATEing a unit whose downstream effect depends on an upstream producer, grep callers of the producer; zero callers = dead code)
+6. **Wrapper-side-effect check** (when invoking through a registry/factory, grep the returned type for side effects; bypass via inner accessor if present)
+
+The cumulative heuristic catalog represents the failure modes observed across 4 sessions (v1.0 round-1 through v0-blockers round-2) of this codebase's audit cycles. Each VETO that surfaced a new heuristic produced a durable gain — heuristics 1-4 prevented the v1.1 first-round PASS, heuristic 5 catalyzed Entry #37, heuristic 6 catalyzed Entry #38. Audit Step 2 should consult this catalog as a checklist when verifying plan-cited symbols against current code.
+

@@ -59,6 +59,22 @@ If uncertain whether the user will write code, **fire anyway** — the
 handler is gated on actionable signal and will stay silent if nothing
 relevant is found. The cost of a false fire is one silent no-op.
 
+### Hook reinforcement
+
+The trigger described above is reinforced by a `UserPromptSubmit` hook
+configured in [`.claude/settings.json`](../../.claude/settings.json).
+The hook reads the user prompt, runs a deterministic regex over the
+canonical verb list at
+[`scripts/hooks/preflight_intent.py`](../../scripts/hooks/preflight_intent.py),
+and — on match — injects a `<system-reminder>` block elevating
+`bicameral.preflight` above the agent's default tool-selection priority.
+
+For v0 the verb list is duplicated by intent: the SKILL.md
+`description` field above embeds the list as a string literal so
+Claude Code skill discovery can read it, while the Python module is
+the canonical source for the hook. Both must be edited together to
+evolve the trigger surface; future configurability will deduplicate.
+
 ## Telemetry
 
 > **Guard**: Only call `skill_begin` and `skill_end` if telemetry is enabled. Telemetry is enabled by default; disabled by setting `BICAMERAL_TELEMETRY=0` (or `false`/`off`/`no`). If disabled, skip both calls and omit all `diagnostic` tracking.
@@ -123,10 +139,18 @@ case proceed directly to step 2.
 
 ### 2. Call `bicameral.preflight` for region-anchored and HITL state
 
+**Discover first, then preflight.** Before this call, use Read / Grep / Glob to
+resolve the user's request to concrete file paths. The user often names a
+*feature* ("the reorder feature", "the rate limiter") rather than a *file*; the
+caller LLM is responsible for that mapping — the server does deterministic
+retrieval, not semantic guessing. A topic-only call falls back to fuzzy text
+similarity over decision descriptions; passing `file_paths` engages the
+high-precision `binds_to` graph lookup.
+
 ```
 bicameral.preflight(
   topic="<the 1-line topic>",
-  file_paths=["<repo-relative path>", ...],  # include if you've scoped the files
+  file_paths=["<repo-relative path>", ...],  # discovered in step 1
 )
 ```
 
@@ -144,8 +168,25 @@ those into your in-scope set.
 The response also carries an optional `sync_metrics` field — skip rendering it.
 If `response.product_stage` is non-null, surface it verbatim to the user as a brief note (shown once per device only).
 
-**Omit `file_paths`** if you haven't scoped the files yet (early "how should I
-approach X?" queries). The handler still runs sync and HITL checks.
+**`file_paths` may be omitted only** for genuinely abstract queries with no
+file referent yet (e.g. *"how should I approach building a retry helper?"* —
+no existing files to point at). For implementation prompts that name or imply
+a feature backed by existing code, populate `file_paths` from your discovery.
+The handler still runs sync and HITL checks either way; passing `file_paths`
+just unlocks the precision channel.
+
+The server expands caller-supplied `file_paths` by 1 hop along the
+code-locator graph's **import edges** (file-level structural
+dependency), so a decision bound to `app/src/lib/git/reorder.ts` still
+surfaces when the caller passes the structurally-near
+`app/src/ui/multi-commit-operation/reorder.tsx` (because the latter
+imports the former). You should still pass concrete paths discovered
+in step 1 — the expansion lifts the recall ceiling on near-misses, it
+doesn't replace caller-side discovery. Decisions reached only via the
+expansion carry `confidence=0.7` in the response (vs `0.9` for direct
+pins), and `sources_chained` includes `"graph"` (alongside `"region"`)
+when expansion contributed at least one hit. Caller can de-prioritize
+expanded matches without losing them.
 
 ### 2.5 Resolve pending compliance checks if present
 
@@ -203,7 +244,7 @@ so you can see what your branch changes relative to main.
 ### 3.5 Scan recent user turns for uningested corrections
 
 Before classifying server-returned findings, invoke
-`/bicameral:capture-corrections` in **in-session mode**:
+`/bicameral-capture-corrections` in **in-session mode**:
 
 ```
 Skill("bicameral:capture-corrections", args="--mode in-session")
@@ -365,6 +406,105 @@ A one-line forward narration helps:
 > "Proceeding with implementation; pulling the Redis SETNX pattern
 > from idempotency.ts. I'll flag the event.id deduplication question
 > for you to answer before I commit."
+
+### 5.6 Capture refinements — ask the user, then act mechanically
+
+When preflight surfaced ≥1 decision and the user's request operates on or
+near the same feature surface, **do not judge contradiction yourself.**
+LLM contradiction detection has been observed to silently miss
+structural-mismatch refinements (e.g. user asks for a "programmatic API
+to reorder commits" while a prior decision describes "drag-to-reorder
+UI" — the conflict is real but not lexical, and the agent rationalizes
+"these can coexist"). Per #175, the judgment moves to the user.
+
+#### 5.6.1 Disambiguate via `AskUserQuestion`
+
+Fires whenever `response.fired == True` and `len(response.decisions) >= 1`,
+regardless of guided mode (capture is the headline product behavior, not
+opt-in). Ask once per surfaced decision the user's request plausibly
+touches; skip for surfaced decisions that are clearly unrelated to the
+prompt domain.
+
+```python
+AskUserQuestion({
+  "question": (
+      "Your request appears to operate on the same feature surface as "
+      "surfaced decision <decision_id> ('<one-line description>'). "
+      "Treat this work as a refinement of that prior plan?"
+  ),
+  "multiSelect": False,
+  "options": [
+    {
+      "label": "Yes — supersede prior plan",
+      "description": "<paraphrase user's direction; replaces the prior decision wholesale>",
+    },
+    {
+      "label": "Yes — keep both (addition or scoping)",
+      "description": "<paraphrase; adds to or narrows the prior decision; both remain>",
+    },
+    {
+      "label": "No — unrelated to prior plan",
+      "description": "Continue without capture",
+    },
+  ],
+})
+```
+
+#### 5.6.2 Mechanical capture (after user disambiguation)
+
+Based on the user's selection, branch:
+
+- **"supersede"** → execute the two-call capture below with `action="supersede"`.
+- **"keep both"** → execute the two-call capture below with `action="keep_both"`.
+- **"unrelated"** → skip capture; proceed to implementation. Narrate one
+  line ("noted — surfaced context isn't applicable here") and move on.
+
+For the two "yes" branches:
+
+1. **Ingest the refinement** with `source=agent_session`, scoped to the
+   same `feature_group` as the surfaced decision:
+
+```
+bicameral.ingest(payload={
+  "query": "<surfaced decision's topic>",
+  "source": "agent_session",
+  "title": "<short label, e.g. 'reorder-programmatic-api'>",
+  "date": "<today ISO date>",
+  "decisions": [{ "description": "<user's direction, stated as a decision>" }]
+}, feature_group="<same feature group as the surfaced decision>")
+```
+
+2. **Wire it to the seeded decision** via `bicameral.resolve_collision`:
+
+```
+bicameral.resolve_collision(
+  new_id="<just-ingested refinement id>",
+  old_id="<surfaced decision id>",
+  action="supersede" | "keep_both" | "link_parent"
+)
+```
+
+`link_parent` is also available (selectable at the `AskUserQuestion`
+step if the surfaced decision is an L1 parent and the user's direction
+is an L2 child) — wires `parent_decision_id`, no supersede edge, no
+status change.
+
+The user has answered the disambiguation question, so capture is
+mechanical from this point. PM ratifies in the inbox.
+
+Narrate one line: *"Captured refinement: '<paraphrase>' — wired as
+<action> of <feature> roadmap entry."*
+
+#### Hook reinforcement
+
+A PostToolUse hook scoped to `mcp__bicameral__bicameral_preflight` injects a
+`<system-reminder>` after every preflight call that surfaces ≥1 decision. The
+reminder templates Step 5.6.1's `AskUserQuestion` shape with the surfaced
+`decision_id` + description filled in, so the question fires reliably even
+when the agent's natural inclination would be to skip the disambiguation.
+Source: `scripts/hooks/post_preflight_capture_reminder.py`; wired by
+`setup_wizard._install_claude_hooks` and the e2e harness's
+`materialize_settings_with_hooks`.
 
 ### 6. Honor blocking hints (guided mode vs normal mode)
 

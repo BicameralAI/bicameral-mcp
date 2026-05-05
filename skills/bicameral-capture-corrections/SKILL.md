@@ -47,7 +47,7 @@ bicameral.skill_end(skill_name="bicameral-capture-corrections", session_id=<stor
 ```
 
 Pass `invocation_mode` as a top-level string kwarg (not inside `diagnostic`):
-- `invocation_mode="auto_ingest"` — fired by SessionEnd hook with `--auto-ingest`
+- `invocation_mode="queue_drain"` — invoked by next-session preflight Step 3.5 / Step 0 to drain `<repo>/.bicameral/pending-transcripts/` (the SessionEnd hook itself is now a queue writer, not a capture-corrections invoker — see #156)
 - `invocation_mode="manual"` — invoked directly by the user
 
 `error_class` values (pass only when `errored=true`): `ledger_empty`, `user_abort`, `other`.
@@ -65,6 +65,30 @@ Set `g11_user_overrode` to `0` (no batch confirmation in in-session mode).
 
 <!-- This section is the authoritative source. bicameral-preflight/SKILL.md
      step 3.5 is derived from it. Keep both in sync. -->
+
+### Step 0 — drain the pending-transcripts queue (#156)
+
+Before scanning the current session's transcript, check `<repo>/.bicameral/pending-transcripts/`. Each `*.jsonl` file there is a transcript from a prior session whose corrections never surfaced (the SessionEnd hook deferred them to next-session triage rather than running an empty `claude -p` subprocess that couldn't see the parent transcript).
+
+For each pending file, in mtime-order (oldest first):
+
+1. Read the file (it's a Claude Code transcript JSONL — same shape as the current session's, just from a prior run).
+2. Apply Steps A/B/C below to the file's user turns. Treat each correction-marker hit as a candidate for ingest, just like the in-session path.
+3. After processing, archive the file by invoking the queue module via the dedicated helper:
+
+   ```
+   python3 scripts/hooks/transcript_archive.py <basename>.jsonl
+   ```
+
+   `<basename>.jsonl` is the filename only (e.g. `abc-1234.jsonl`), not the full path. The helper resolves it to `<repo>/.bicameral/pending-transcripts/<basename>` itself, calls `events.transcript_queue.archive_processed`, and ensures idempotent overwrite + cross-platform behavior. Exit code `0` on success, `2` on usage error (unsafe basename), `1` on missing file.
+
+   Do NOT use raw `mv` shell — it bypasses the queue module's idempotent overwrite semantic and breaks on Windows.
+
+If `<repo>/.bicameral/pending-transcripts/` doesn't exist or is empty, skip Step 0 entirely.
+
+The processed-transcripts folder is kept for audit; v1 has no automatic cleanup. A future team-server config may override retention.
+
+**Why this Step 0 exists**: prior to #156, the canonical `SessionEnd` hook ran `claude -p '/bicameral-capture-corrections --auto-ingest'` which spawned an empty subprocess that couldn't see the parent transcript — corrections silently failed to surface. The new shape defers transcript handling to the next session, where the agent + user are present with full ledger context to confirm or dismiss each correction (matches the in-session path's UX).
 
 ### Step A — cheap pre-filter
 
@@ -103,13 +127,17 @@ Only `user` turns qualify. Claude's own responses are never corrections.
 For each **ask** correction:
 
 ```
-bicameral.search(query=<one-line paraphrase of correction>, top_k=3, min_confidence=0.4)
+bicameral.history(feature_filter=<short keyword from the correction>)
 ```
 
-If any result is returned → treat as already ingested, skip.
-`bicameral.search` uses full-text scoring; `min_confidence=0.4` sets the
-floor. Presence in the result set (not a score value) is the dedup signal.
-All corrections with no results → queue as `uningested_corrections`.
+(`bicameral.search` was retired — `history` with a substring `feature_filter`
+is the live equivalent. There is no `top_k` or `min_confidence`; the filter
+is a substring match over feature/decision text.)
+
+If any decision in the response describes the same correction → treat as
+already ingested, skip. Presence in the result set (not a score value) is
+the dedup signal. All corrections with no matching decision → queue as
+`uningested_corrections`.
 
 For **mechanical** corrections: skip the ledger check, auto-ingest directly.
 
@@ -129,7 +157,7 @@ re-examine the same turns repeatedly).
 user messages.
 
 **2. Mechanical corrections:**
-Auto-ingest silently via `bicameral.ingest(source="conversation", decisions=[...])`.
+Auto-ingest silently via `bicameral.ingest(source="agent_session", decisions=[...])`.
 No user question asked.
 
 **3. Ask corrections:**
@@ -146,7 +174,7 @@ capture-corrections output.
 ## SessionEnd batch mode
 
 Fires via the `SessionEnd` hook in `.claude/settings.json`. Also invocable
-manually as `/bicameral:capture-corrections`.
+manually as `/bicameral-capture-corrections`.
 
 ### Steps
 
@@ -154,9 +182,13 @@ manually as `/bicameral:capture-corrections`.
 If not present, exit silently — this repo isn't using bicameral.
 
 **2. Determine invocation mode and transcript scope.**
-- If invoked with `--auto-ingest` (by the SessionEnd hook): scan the full
-  session and skip the user confirmation in steps 6-7 — auto-ingest all
-  found corrections immediately without prompting.
+- If invoked via next-session queue drain (Step 0 above, originating from
+  the SessionEnd hook's queue write — see #156): for each pending
+  transcript file, scan its full user turns. Surface findings through the
+  confirmation flow (steps 6-7) so the user reviews each correction with
+  full ledger context — the prior `--auto-ingest` "skip confirmation" path
+  is gone (it was unsafe in a separate-session subprocess that lacked the
+  parent transcript).
 - If invoked manually (no flag): scan the last 20 user turns as a proxy
   for the session and show the confirmation flow.
 
@@ -190,7 +222,7 @@ No pre-selections — user opts in to each correction. Loop through all batches 
 **8. For each confirmed decision, call:**
 ```
 bicameral.ingest(
-  source="conversation",
+  source="agent_session",
   decisions=[{
     "description": "<correction stated as a decision>",
     "source_ref": "session-correction-<YYYY-MM-DD>",
@@ -217,10 +249,11 @@ gate at the end of every session.
 2. **Only user turns.** Claude's own text is never a correction source.
 3. **No double-ask.** If preflight already surfaced a correction this
    session, do not surface it again in the SessionEnd batch.
-4. **Dedup by presence, not score.** Call `bicameral.search` with
-   `min_confidence=0.4`. If any result is returned, treat the correction
-   as already ingested. Search scores are corpus-dependent and unbounded —
-   never gate on a numeric score value.
+4. **Dedup by presence, not score.** Call `bicameral.history` with a
+   short `feature_filter`. If any decision in the response describes the
+   same correction, treat it as already ingested. Never gate on a numeric
+   score value (the retired `bicameral.search` returned scores; `history`
+   does not).
 5. **Ingest as proposals.** Captured corrections enter as `proposed`
    and need explicit ratification — same as all other ingests.
 6. **Guard on `.bicameral/`.** Never run in repos without a bicameral
@@ -233,18 +266,29 @@ gate at the end of every session.
 The SessionEnd hook is installed automatically by `bicameral setup` into the
 user's project `.claude/settings.json`. No manual configuration needed.
 
-Command written by the setup wizard:
+Command written by the setup wizard (post #156):
 ```
-[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral:capture-corrections --auto-ingest' || true
+[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 python3 scripts/hooks/session_end_queue_writer.py || true
 ```
+
+The hook is now a queue writer, not a capture-corrections invoker. It reads
+the SessionEnd JSON envelope from stdin (containing `session_id` and
+`transcript_path`), copies the transcript into
+`<repo>/.bicameral/pending-transcripts/<session_id>.jsonl`, and exits.
+Capture-corrections runs in the *next* session via Step 0 of this skill (or
+preflight Step 3.5), where the agent has full ledger context to surface each
+correction through the user-facing confirmation flow.
 
 Two guards:
 - `.bicameral` directory check — keeps it silent in repos that don't use bicameral.
-- `BICAMERAL_SESSION_END_RUNNING` env var — the child `claude -p` process inherits
-  the env var, so when it terminates and fires its own SessionEnd hook, the guard
-  sees the var is set and exits immediately. Prevents infinite recursion.
+- `BICAMERAL_SESSION_END_RUNNING` env var — defense-in-depth re-entrancy guard
+  preserved from the prior shape; the new hook does not spawn a subprocess so
+  recursion is no longer the threat, but the guard remains in case a parent
+  shell loops on SessionEnd events.
 
-`--auto-ingest` skips the interactive Y/n confirmation (non-interactive invocation).
+The prior shape (`claude -p '/bicameral-capture-corrections --auto-ingest'`)
+spawned an empty subprocess that couldn't see the parent transcript — corrections
+silently failed to surface. #156 replaces it with the queue-write pattern above.
 
 ---
 

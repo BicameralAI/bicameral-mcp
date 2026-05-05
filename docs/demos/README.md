@@ -15,6 +15,7 @@ authoring rules and the demo template.
 | 02 | Commit-sync hook → resolve_compliance | "how does it play with git?" | planned |
 | 03 | Continuity matcher: function rename auto-redirect (Phase 3) | "what about refactors?" | planned |
 | 04 | Cosmetic-vs-semantic drift classifier (Phase 4) | "why no whitespace false-flags?" | planned |
+| —  | [v0 user flow e2e (split-screen)](./v0-userflow-e2e.md) | "what does the loop look like end-to-end?" | live (manual workflow) |
 
 ## Authoring rules (summary)
 

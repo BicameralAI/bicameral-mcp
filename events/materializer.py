@@ -86,6 +86,21 @@ class EventMaterializer:
                     except json.JSONDecodeError:
                         continue
                     etype, payload = event.get("event_type", ""), event.get("payload", {})
+                    # v0-release-blockers: team-server emits event_type='ingest'
+                    # with a payload shaped {source_type, source_ref, content_hash,
+                    # extraction}. Bridge to IngestPayload before dispatching.
+                    if etype in ("ingest", "ingest.completed"):
+                        from events.team_server_bridge import (
+                            bridge_team_server_payload,
+                            is_team_server_payload,
+                        )
+
+                        if is_team_server_payload(payload):
+                            bridged = bridge_team_server_payload(payload)
+                            if bridged.get("decisions"):
+                                await inner_adapter.ingest_payload(bridged)
+                                replayed += 1
+                            continue
                     if etype == "ingest.completed":
                         await inner_adapter.ingest_payload(payload)
                         replayed += 1
@@ -93,6 +108,104 @@ class EventMaterializer:
                         await inner_adapter.ingest_commit(
                             payload.get("commit_hash", ""),
                             payload.get("repo_path", ""),
+                        )
+                        replayed += 1
+                    elif etype == "decision_ratified.completed":
+                        # Resolve canonical_id → local decision_id; the
+                        # event was emitted by a peer whose local
+                        # decision_id is meaningless in this DB.
+                        from ledger.queries import find_decision_by_canonical_id
+
+                        local_id = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("canonical_id", ""),
+                        )
+                        if local_id is None:
+                            logger.warning(
+                                "[materializer] skipping decision_ratified — "
+                                "canonical_id %r not found locally (ingest event missing or out-of-order)",
+                                payload.get("canonical_id"),
+                            )
+                            continue
+                        await inner_adapter.apply_ratify(
+                            local_id,
+                            payload.get("signoff", {}),
+                        )
+                        replayed += 1
+                    elif etype == "decision_superseded.completed":
+                        from ledger.queries import find_decision_by_canonical_id
+
+                        local_new = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("new_canonical_id", ""),
+                        )
+                        local_old = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("old_canonical_id", ""),
+                        )
+                        if local_new is None or local_old is None:
+                            logger.warning(
+                                "[materializer] skipping decision_superseded — "
+                                "canonical_id resolution failed (new=%r old=%r)",
+                                payload.get("new_canonical_id"),
+                                payload.get("old_canonical_id"),
+                            )
+                            continue
+                        await inner_adapter.apply_supersede(
+                            new_id=local_new,
+                            old_id=local_old,
+                            signer=payload.get("signer", ""),
+                            signoff_note=payload.get("signoff_note", ""),
+                            superseded_at=payload.get("superseded_at", ""),
+                            session_id=payload.get("session_id", ""),
+                        )
+                        replayed += 1
+                    elif etype == "compliance_check.completed":
+                        # #190: receiver re-applies the verdict by resolving
+                        # the cross-author key (canonical_decision_id +
+                        # content-addressable region descriptor) to local row
+                        # ids. Idempotent on the receiver via the existing
+                        # UNIQUE index on (decision_id, region_id, content_hash).
+                        from ledger.queries import (
+                            find_code_region_by_content,
+                            find_decision_by_canonical_id,
+                        )
+
+                        local_decision_id = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("canonical_decision_id", ""),
+                        )
+                        if local_decision_id is None:
+                            logger.warning(
+                                "[materializer] skipping compliance_check.completed — "
+                                "canonical_decision_id %r not found locally",
+                                payload.get("canonical_decision_id"),
+                            )
+                            continue
+                        region = payload.get("region") or {}
+                        local_region_id = await find_code_region_by_content(
+                            inner_adapter._client,
+                            repo=region.get("repo", ""),
+                            file_path=region.get("file_path", ""),
+                            symbol_name=region.get("symbol_name", ""),
+                            content_hash=region.get("content_hash", ""),
+                        )
+                        if local_region_id is None:
+                            logger.warning(
+                                "[materializer] skipping compliance_check.completed — "
+                                "region (%s::%s @ %s) not yet materialized locally",
+                                region.get("file_path"),
+                                region.get("symbol_name"),
+                                str(region.get("content_hash", ""))[:12],
+                            )
+                            continue
+                        await inner_adapter.apply_compliance_verdict_from_event(
+                            decision_id=local_decision_id,
+                            region_id=local_region_id,
+                            content_hash=region.get("content_hash", ""),
+                            verdict=payload.get("verdict", ""),
+                            pinned_commit=payload.get("pinned_commit", ""),
+                            evidence=payload.get("evidence", ""),
                         )
                         replayed += 1
                 new_offsets[author] = f.tell()

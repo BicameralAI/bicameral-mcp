@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 
+from ledger.queries import get_canonical_id
+
 from .materializer import EventMaterializer
 from .writer import EventFileWriter
 
@@ -138,6 +140,107 @@ class TeamWriteAdapter:
             repo=repo,
             ref=ref,
             purpose=purpose,
+        )
+
+    async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
+        """Emit decision_ratified event, then delegate to inner adapter.
+
+        The event payload carries ``canonical_id`` so cross-author replay
+        can resolve to the peer's local decision row.
+        """
+        await self._ensure_ready()
+        canonical_id = await get_canonical_id(self._inner._client, decision_id)
+        self._writer.write(
+            "decision_ratified.completed",
+            {
+                "canonical_id": canonical_id,
+                "decision_id": decision_id,
+                "signoff": signoff,
+            },
+        )
+        return await self._inner.apply_ratify(decision_id, signoff)
+
+    async def apply_supersede(
+        self,
+        new_id: str,
+        old_id: str,
+        signer: str = "",
+        signoff_note: str = "",
+        superseded_at: str = "",
+        session_id: str = "",
+    ) -> dict:
+        """Emit decision_superseded event, then delegate to inner adapter.
+
+        The event payload carries canonical_ids for both decisions so
+        cross-author replay can resolve to the peer's local rows.
+        """
+        await self._ensure_ready()
+        new_canonical = await get_canonical_id(self._inner._client, new_id)
+        old_canonical = await get_canonical_id(self._inner._client, old_id)
+        self._writer.write(
+            "decision_superseded.completed",
+            {
+                "new_canonical_id": new_canonical,
+                "old_canonical_id": old_canonical,
+                "new_id": new_id,
+                "old_id": old_id,
+                "signer": signer,
+                "signoff_note": signoff_note,
+                "superseded_at": superseded_at,
+                "session_id": session_id,
+            },
+        )
+        return await self._inner.apply_supersede(
+            new_id=new_id,
+            old_id=old_id,
+            signer=signer,
+            signoff_note=signoff_note,
+            superseded_at=superseded_at,
+            session_id=session_id,
+        )
+
+    async def apply_resolve_compliance(
+        self,
+        *,
+        canonical_decision_id: str,
+        repo: str,
+        file_path: str,
+        symbol_name: str,
+        content_hash: str,
+        verdict: str,
+        pinned_commit: str,
+        evidence: str = "",
+    ) -> None:
+        """Emit compliance_check.completed to the team-sync JSONL stream.
+
+        Fires once per accepted ComplianceVerdict (called from
+        ``handle_resolve_compliance`` after each successful
+        ``upsert_compliance_check``). Receiver replays via the materializer's
+        content-addressable lookup; idempotent on receiver side because
+        ``upsert_compliance_check`` first-write-wins on
+        ``(decision_id, region_id, content_hash)`` (see ``ledger/schema.py``
+        idx_cc_cache_key).
+
+        Unlike ``apply_ratify`` / ``apply_supersede``, this method does NOT
+        delegate to the inner adapter — the local DB write was already
+        performed by the handler's direct ``upsert_compliance_check`` call.
+        Emit-only, by design.
+        """
+        await self._ensure_ready()
+        self._writer.write(
+            "compliance_check.completed",
+            {
+                "canonical_decision_id": canonical_decision_id,
+                "region": {
+                    "repo": repo,
+                    "file_path": file_path,
+                    "symbol_name": symbol_name,
+                    "content_hash": content_hash,
+                },
+                "verdict": verdict,
+                "pinned_commit": pinned_commit,
+                "evidence": evidence,
+            },
         )
 
     async def wipe_all_rows(self, repo: str) -> None:

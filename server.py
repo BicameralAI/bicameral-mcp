@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from argparse import ArgumentParser
+from typing import Any
 
 import mcp.server.stdio
 from mcp.server import Server
@@ -132,7 +133,7 @@ async def list_tools() -> list[Tool]:
                 "Sync a commit into the decision ledger. Updates implemented_by/touches edges, "
                 "recomputes content hashes, re-evaluates drift for affected decisions. "
                 "Idempotent — calling twice for the same commit is a no-op. "
-                "Slash alias: /bicameral:link-commit"
+                "Slash alias: /bicameral-link-commit"
             ),
             inputSchema={
                 "type": "object",
@@ -168,7 +169,7 @@ async def list_tools() -> list[Tool]:
                 "At least one text field per decision must be non-empty or the decision is silently dropped. "
                 "The `query` field drives the post-ingest auto-brief and gap-judge chain — always pass it. "
                 "Auto-grounds decisions to code via semantic search over the symbol graph. Ensures the code index is fresh before grounding. "
-                "Slash alias: /bicameral:ingest"
+                "Slash alias: /bicameral-ingest"
             ),
             inputSchema={
                 "type": "object",
@@ -201,7 +202,7 @@ async def list_tools() -> list[Tool]:
                 "Pass start_line/end_line when you have exact lines (e.g. from a Read call) — "
                 "omit them to let the server resolve the exact line range automatically. Binding the same "
                 "(decision, region) pair twice is idempotent. "
-                "Slash alias: /bicameral:bind"
+                "Slash alias: /bicameral-bind"
             ),
             inputSchema={
                 "type": "object",
@@ -287,7 +288,7 @@ async def list_tools() -> list[Tool]:
                 "before confirming full mode. "
                 "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
                 "Pass confirm=true to actually wipe. "
-                "Slash alias: /bicameral:reset"
+                "Slash alias: /bicameral-reset"
             ),
             inputSchema={
                 "type": "object",
@@ -331,7 +332,7 @@ async def list_tools() -> list[Tool]:
                 "When fired=false, the agent MUST produce no output and proceed silently — "
                 "that's the trust contract. When fired=true, render the surfaced context with "
                 "a '(bicameral surfaced)' attribution before continuing with the implementation. "
-                "Slash alias: /bicameral:preflight"
+                "Slash alias: /bicameral-preflight"
             ),
             inputSchema={
                 "type": "object",
@@ -388,7 +389,7 @@ async def list_tools() -> list[Tool]:
                 "standalone. Rubric categories: missing_acceptance_criteria, "
                 "underdefined_edge_cases, infrastructure_gap, underspecified_integration, "
                 "missing_data_requirements. "
-                "Slash alias: /bicameral:judge_gaps"
+                "Slash alias: /bicameral-judge_gaps"
             ),
             inputSchema={
                 "type": "object",
@@ -426,7 +427,7 @@ async def list_tools() -> list[Tool]:
                 "decision/region IDs are returned as structured rejections (not "
                 "exceptions) so the caller can retry the accepted subset. The server "
                 "never calls an LLM — every semantic judgment lives in the caller's "
-                "session. Slash alias: /bicameral:resolve_compliance"
+                "session. Slash alias: /bicameral-resolve_compliance"
             ),
             inputSchema={
                 "type": "object",
@@ -505,7 +506,7 @@ async def list_tools() -> list[Tool]:
                 "as a negative signal; agents consult it to avoid implementing what the team rejected. "
                 "Both actions are idempotent (was_new=false if already in that state). "
                 "The signer field identifies the human or agent; the optional note captures the rationale. "
-                "Slash alias: /bicameral:ratify"
+                "Slash alias: /bicameral-ratify"
             ),
             inputSchema={
                 "type": "object",
@@ -553,7 +554,7 @@ async def list_tools() -> list[Tool]:
                 "Writes an input_span→context_for→decision edge (confirmed or rejected). "
                 "Context-pending decisions with ≥1 confirmed context_for edge become eligible "
                 "for bicameral.ratify. "
-                "Slash alias: /bicameral:resolve-collision"
+                "Slash alias: /bicameral-resolve-collision"
             ),
             inputSchema={
                 "type": "object",
@@ -596,7 +597,7 @@ async def list_tools() -> list[Tool]:
                 "Capped at 50 features; use feature_filter to drill in when truncated=True. "
                 "Does NOT fire on implementation, ingest, or drift-specific queries — use "
                 "bicameral.preflight or bicameral.ingest for those. "
-                "Slash alias: /bicameral:history"
+                "Slash alias: /bicameral-history"
             ),
             inputSchema={
                 "type": "object",
@@ -628,7 +629,7 @@ async def list_tools() -> list[Tool]:
                 "Subsequent calls return the existing URL immediately — the server "
                 "is a singleton and stays running for the session. "
                 "Fires on: 'open dashboard', 'show live history', 'launch dashboard'. "
-                "Slash alias: /bicameral:dashboard"
+                "Slash alias: /bicameral-dashboard"
             ),
             inputSchema={
                 "type": "object",
@@ -1339,88 +1340,92 @@ async def serve_stdio() -> None:
     except Exception:
         pass
 
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name=SERVER_NAME,
-                server_version=SERVER_VERSION,
-                capabilities=server.get_capabilities(
-                    notification_options=_notification_options(),
-                    experimental_capabilities={},
+    # Team-server event consumer — opt-in via BICAMERAL_TEAM_SERVER_URL env.
+    # Closes the v0 pull→dispatch wiring gap (issue #160). Periodically
+    # pulls events from the team-server's /events endpoint, bridges to
+    # IngestPayload, and invokes the inner adapter's ingest_payload.
+    from adapters.ledger import get_ledger
+    from events.team_server_consumer import start_team_server_consumer_if_configured
+
+    team_consumer_task = start_team_server_consumer_if_configured(get_ledger())
+
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name=SERVER_NAME,
+                    server_version=SERVER_VERSION,
+                    capabilities=server.get_capabilities(
+                        notification_options=_notification_options(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+    finally:
+        if team_consumer_task is not None:
+            team_consumer_task.cancel()
+            try:
+                await team_consumer_task
+            except asyncio.CancelledError:
+                pass
 
 
 def cli_main(argv: list[str] | None = None) -> int:
+    """Entry point — orchestrates parser build, registration, parsing, dispatch.
+
+    Decomposed from a 92-LOC monolith (#124) into _register_subparsers
+    (subparser wiring) + _dispatch (command routing). Each piece stays
+    well under the 40-LOC razor cap; new subcommands add a single line
+    to each helper.
+    """
     parser = ArgumentParser(description="Bicameral MCP server")
     subparsers = parser.add_subparsers(dest="command")
-
-    # config subcommand
-    subparsers.add_parser(
-        "config",
-        help="interactive config editor — update mode, guided, and telemetry settings",
-    )
-
-    # reset subcommand
-    subparsers.add_parser(
-        "reset",
-        help="interactive ledger reset — wipes state with confirmation",
-    )
-
-    # setup subcommand
-    setup_parser = subparsers.add_parser(
-        "setup",
-        help="interactive setup — configure MCP client to use this server",
-    )
-    setup_parser.add_argument(
-        "repo_path",
-        nargs="?",
-        default=None,
-        help="path to the repo to analyze (auto-detected if omitted)",
-    )
-    setup_parser.add_argument(
-        "--history-path",
-        default=None,
-        metavar="PATH",
-        help="separate directory for .bicameral/ history storage (default: same as repo)",
-    )
-    setup_parser.add_argument(
-        "--with-push-hook",
-        action="store_true",
-        help="also install a git pre-push hook that surfaces drift before push (#48)",
-    )
-
-    # branch-scan subcommand (#48): terminal drift summary used by pre-push hook.
-    subparsers.add_parser(
-        "branch-scan",
-        help="surface bicameral drift for HEAD (used by the pre-push git hook)",
-    )
-
-    parser.add_argument(
-        "--smoke-test",
-        action="store_true",
-        help="validate package wiring and print the registered MCP tools, then exit",
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {SERVER_VERSION}",
-    )
+    _register_subparsers(parser, subparsers)
     args = parser.parse_args(argv)
+    return _dispatch(args)
 
+
+def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
+    """Wire all subparser definitions + top-level flags onto parser."""
+    subparsers.add_parser("config", help="interactive config editor")
+    subparsers.add_parser("reset", help="interactive ledger reset — wipes state with confirmation")
+    setup = subparsers.add_parser("setup", help="interactive setup — configure MCP client")
+    setup.add_argument("repo_path", nargs="?", default=None, help="repo path (auto-detected)")
+    setup.add_argument(
+        "--history-path", default=None, metavar="PATH", help="separate .bicameral/ dir"
+    )
+    setup.add_argument(
+        "--with-push-hook", action="store_true", help="also install pre-push drift hook (#48)"
+    )
+    subparsers.add_parser("branch-scan", help="surface bicameral drift for HEAD (pre-push hook)")
+    link = subparsers.add_parser(
+        "link_commit",
+        help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
+    )
+    link.add_argument(
+        "commit_hash", nargs="?", default="HEAD", help="commit hash to link (default: HEAD)"
+    )
+    link.add_argument(
+        "--quiet", action="store_true", help="suppress JSON output (still exits 0 on success)"
+    )
+    parser.add_argument(
+        "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {SERVER_VERSION}")
+
+
+def _dispatch(args: Any) -> int:
+    """Route parsed args to the appropriate handler. Returns exit code."""
     if args.command == "config":
         from setup_wizard import run_config_wizard
 
         return run_config_wizard()
-
     if args.command == "reset":
         from setup_wizard import run_reset_wizard
 
         return run_reset_wizard()
-
     if args.command == "setup":
         from setup_wizard import run_setup
 
@@ -1429,19 +1434,20 @@ def cli_main(argv: list[str] | None = None) -> int:
             args.history_path,
             with_push_hook=args.with_push_hook,
         )
-
     if args.command == "branch-scan":
         from cli.branch_scan import main as branch_scan_main
 
         return branch_scan_main([])
+    if args.command == "link_commit":
+        from cli.link_commit_cli import main as link_commit_main
 
+        return link_commit_main(args.commit_hash, quiet=args.quiet)
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
         for tool_name in result["tool_names"]:
             print(tool_name)
         return 0
-
     asyncio.run(serve_stdio())
     return 0
 
