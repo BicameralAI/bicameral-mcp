@@ -5,6 +5,36 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
+## v0.13.8 — Triage: `/bicameral:report-bug` skill
+
+Triage release per [DEV_CYCLE.md §10.5](docs/DEV_CYCLE.md). Adds a single new
+agent skill that lowers the bar to file actionable bug reports against
+`BicameralAI/bicameral-mcp` from inside the user's coding agent.
+
+### Added
+
+- `skills/bicameral-report-bug/SKILL.md` — `/bicameral:report-bug` slash
+  command. Bundles environment (bicameral-mcp version, Python, OS, IDE
+  detection), recent tool calls, and the most recent error trace into a
+  prefilled GitHub issue URL on `BicameralAI/bicameral-mcp` with `dev,bug`
+  labels, then opens it in the user's browser. Ships a Step 3.5
+  transparency preview gate modeled on
+  `setup_wizard._select_telemetry()` — concrete body preview, explicit
+  redaction count, explicit non-collection list, three-option
+  Yes / Edit / Cancel prompt — so the trust register matches the existing
+  telemetry consent flow. The skill never auto-submits; the user reviews
+  and clicks Submit on GitHub. Auto-discovered by
+  `setup_wizard._install_skills`, no wizard or handler changes needed.
+  Cherry-picked from dev `77d2a6a` (PR #183).
+
+### Schema
+
+No changes (still v11).
+
+### Breaking changes
+
+None.
+
 ## v0.13.7 — Triage: preflight graph expansion + auto-fire fix + e2e CI carry-over
 
 Triage release per [DEV_CYCLE.md §10.5](docs/DEV_CYCLE.md). Bundles preflight
