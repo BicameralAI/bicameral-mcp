@@ -132,7 +132,6 @@ MCP_CONFIG_PATH = materialize_mcp_config(
 )
 SETTINGS_PATH = materialize_settings_with_hooks(
     out_dir=RESULTS_DIR,
-    mcp_config_path=MCP_CONFIG_PATH,
     mcp_root=_MCP_ROOT,
 )
 
@@ -1168,14 +1167,15 @@ FLOW_PLAN: list[FlowSpec] = [
             "Flow 4 captures an emerging constraint via correction markers "
             '("wait", "shouldn\'t") — no collision-detection involved. NOT '
             "the same gap as #154 (which is Flow 2a / contradiction-with-"
-            "prior-decision specific). The substrate fixes in this PR "
-            "(.bicameral/ bootstrap + --mcp-config passthrough) close real "
-            "drift, but path-X-(b) still won't fire end-to-end because the "
-            "canonical SessionEnd hook command can't pass the parent "
-            "transcript to the spawned subprocess AND --auto-ingest is the "
-            "wrong shape for background capture. Both tracked as P1 — see "
-            "BicameralAI/bicameral-mcp#156 for the design pivot to "
-            "next-session surfacing via a transcript queue."
+            "prior-decision specific). #156 (PR A) has landed: the "
+            "SessionEnd hook now writes the parent transcript into "
+            ".bicameral/pending-transcripts/<session_id>.jsonl and the "
+            "capture-corrections SKILL.md adds Step 0 to drain the queue "
+            "in the next session. In-flow assertions in this asserter "
+            "remain valid; cross-flow ledger validation via the queue "
+            "drain (PR B) will add the next-session preflight Step 3.5 "
+            "integration that ingests drained corrections into the "
+            "harness's test ledger."
         ),
     ),
     FlowSpec(

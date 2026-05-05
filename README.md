@@ -194,7 +194,7 @@ Running `bicameral-mcp setup` writes these files to your repo:
 | `.bicameral/ledger.db` | SurrealDB decision ledger (solo mode) | Auto-created on first tool call |
 | `.gitignore` entry | Ignores `.bicameral/` in solo mode | Recommended |
 | `.claude/settings.json` | PostToolUse hook: auto-calls `bicameral.link_commit` after git commits | Optional — improves sync |
-| `.claude/settings.json` | SessionEnd hook: runs `bicameral-capture-corrections` to catch uningested mid-session decisions | Optional — closes correction capture gap |
+| `.claude/settings.json` | SessionEnd hook: writes the session transcript to `.bicameral/pending-transcripts/`; next session drains the queue to surface uningested mid-session decisions | Optional — closes correction capture gap |
 | `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral-ingest`, `/bicameral-preflight`, `/bicameral-capture-corrections`, etc.) | Recommended |
 
 ### Removing Bicameral

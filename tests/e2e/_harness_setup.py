@@ -50,7 +50,6 @@ def materialize_mcp_config(
 
 def materialize_settings_with_hooks(
     out_dir: pathlib.Path,
-    mcp_config_path: pathlib.Path,
     mcp_root: pathlib.Path,
 ) -> pathlib.Path:
     """Write a project-style ``settings.json`` carrying the four hooks
@@ -59,13 +58,13 @@ def materialize_settings_with_hooks(
     ``setup_wizard`` — single source of truth, no drift.
 
     The SessionEnd command is built via ``setup_wizard._build_session_end_command``
-    with ``mcp_config_path`` set. Production end-users have ``bicameral``
-    registered in their default Claude Code MCP config so the spawned
-    subprocess inherits it without an explicit flag; test harnesses
-    override ``SURREAL_URL`` via the materialized MCP config to point at
-    a test-results ledger, so we MUST pass that config explicitly to the
-    subprocess or its ``capture-corrections`` writes land in the user's
-    default ledger and post-hoc validators find zero rows.
+    (#156). Post-pivot, the SessionEnd hook is a path-style Python script
+    that copies the parent transcript to ``.bicameral/pending-transcripts/``
+    inside the test repo — no subprocess, no MCP config inheritance needed.
+    Ledger redirection in the e2e harness now flows through the next-flow
+    ``claude -p`` invocation in ``run_e2e_flows.py``, which already inherits
+    ``--mcp-config <materialized>``; the SessionEnd hook itself no longer
+    touches the ledger.
 
     Hooks installed:
       - PostToolUse/Bash: bicameral-sync listens for "new commit detected"
@@ -74,10 +73,11 @@ def materialize_settings_with_hooks(
         when preflight surfaces ≥1 decision, templating the Step 5.6
         ingest(agent_session) + resolve_collision call so the agent
         captures user refinements that contradict surfaced decisions.
-      - SessionEnd: spawns a subprocess running
-        ``/bicameral-capture-corrections --auto-ingest`` (with the test
-        MCP config) to scan the just-ended session for uningested
-        mid-session corrections.
+      - SessionEnd: writes the just-ended session's transcript into
+        ``<repo>/.bicameral/pending-transcripts/<session_id>.jsonl``;
+        capture-corrections drains the queue at next-session preflight
+        Step 3.5 / Step 0 and surfaces uningested corrections with full
+        ledger context.
       - UserPromptSubmit: deterministic verb-list classifier injects a
         <system-reminder> elevating bicameral.preflight above the agent's
         default tool-selection priority on code-implementation prompts.
@@ -92,7 +92,7 @@ def materialize_settings_with_hooks(
         _build_session_end_command,
     )
 
-    session_end_command = _build_session_end_command(mcp_config_path=str(mcp_config_path))
+    session_end_command = _build_session_end_command()
 
     settings = {
         "hooks": {
@@ -233,7 +233,7 @@ def setup_all(
     mcp_config_path = materialize_mcp_config(
         mcp_config_template, results_dir, desktop_repo_path, ledger_dir
     )
-    settings_path = materialize_settings_with_hooks(results_dir, mcp_config_path, mcp_root)
+    settings_path = materialize_settings_with_hooks(results_dir, mcp_root)
     return {"mcp_config": mcp_config_path, "settings": settings_path, "ledger": ledger_dir}
 
 

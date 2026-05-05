@@ -246,3 +246,9 @@ Closes the v0 dormant-Slack-worker gap (v0 plan claimed an active worker; v0 cod
 - [x] `team_server/workers/notion_runner.py` — `run_notion_iteration(db_client, token, extractor)` thin wrapper for symmetry with slack_runner
 - [x] `team_server/app.py` — Notion task registration via the same `worker_loop` helper; opt-in on `notion_client.load_token` success
 - [x] `tests/test_team_server_notion_lifecycle.py` — 4 functionality tests
+
+---
+
+## Known Issues — to investigate
+
+- [ ] **Install: `ModuleNotFoundError: No module named 'setup_wizard'`** — surfaced when running install. Reproduction context TBD (need exact install command + traceback). Possible causes: `setup_wizard.py` is at repo root rather than packaged under `bicameral_mcp/`, so `pip install`'d wheels can't import it; or the install entrypoint shells out to `python -m setup_wizard` from a CWD that isn't repo root. Investigate which install path was hit and whether the fix is to (a) move setup_wizard into the package, (b) ship it as a console-script entrypoint via pyproject.toml `[project.scripts]`, or (c) document that install must run from a clone, not a wheel.

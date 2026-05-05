@@ -1,16 +1,21 @@
-"""Functionality tests for SessionEnd hook drift fix per
-plan-147-flow4-ledger-validation.md Phase 2.
+"""Functionality tests for the SessionEnd hook canonical command shape.
+
+History:
+  - Originally (plan-147-flow4-ledger-validation.md Phase 2) verified the
+    `claude -p '/bicameral-capture-corrections --auto-ingest'` invocation
+    landed identically in .claude/settings.json and
+    setup_wizard._BICAMERAL_SESSION_END_COMMAND.
+  - Reshaped per plan-156-sessionend-queue-pivot.md Phase 3: the prior
+    canonical command spawned an empty subprocess that couldn't access the
+    parent transcript. The new shape pipes the SessionEnd JSON envelope
+    into a Python script that writes the transcript to a per-session
+    pending queue; capture-corrections drains the queue at next-session
+    preflight Step 3.5 / Step 0.
 
 Verifies the canonical hook command shape lands in:
   - .claude/settings.json (the deployed hook)
   - setup_wizard._BICAMERAL_SESSION_END_COMMAND (the source of truth for
     fresh installs)
-
-The canonical command per skills/bicameral-capture-corrections/SKILL.md:207:
-
-  [ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && \
-    BICAMERAL_SESSION_END_RUNNING=1 \
-    claude -p '/bicameral-capture-corrections --auto-ingest' || true
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 CANONICAL_COMMAND = (
     '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
     "BICAMERAL_SESSION_END_RUNNING=1 "
-    "claude -p '/bicameral-capture-corrections --auto-ingest' || true"
+    "python3 scripts/hooks/session_end_queue_writer.py || true"
 )
 
 
@@ -44,10 +49,17 @@ def test_settings_json_session_end_has_reentrancy_guard():
     assert "BICAMERAL_SESSION_END_RUNNING=1" in cmd
 
 
-def test_settings_json_session_end_passes_auto_ingest_flag():
-    """Behavior: deployed SessionEnd hook invokes capture-corrections in batch (auto-ingest) mode."""
+def test_settings_json_session_end_invokes_queue_writer():
+    """Behavior: deployed SessionEnd hook invokes the queue writer (#156).
+
+    Replaces the prior `--auto-ingest` flag assertion. The queue writer
+    copies the parent transcript into `.bicameral/pending-transcripts/`
+    so the next session's capture-corrections drain can surface
+    corrections with full ledger context."""
     cmd = _extract_session_end_command()
-    assert "--auto-ingest" in cmd
+    assert "scripts/hooks/session_end_queue_writer.py" in cmd
+    assert "--auto-ingest" not in cmd
+    assert "claude -p" not in cmd
 
 
 def test_setup_wizard_renders_canonical_session_end_hook():
@@ -68,20 +80,18 @@ def test_build_session_end_command_no_args_matches_canonical():
     assert setup_wizard._build_session_end_command() == CANONICAL_COMMAND
 
 
-def test_build_session_end_command_with_mcp_config_inserts_flags():
-    """Behavior: passing ``mcp_config_path`` inserts ``--mcp-config <path>``
-    + ``--strict-mcp-config`` after the prompt, before the ``|| true``
-    fallback. This is the test-harness path: spawned subprocess writes
-    to the harness's test ledger instead of the user's default
-    (~/.bicameral/ledger.db)."""
+def test_build_session_end_command_ignores_mcp_config_path():
+    """Behavior: post #156, the new SessionEnd hook is a path-style Python
+    script that writes a transcript-queue file; it does not spawn a
+    `claude -p` subprocess and therefore does not need MCP config
+    inheritance. The `mcp_config_path` parameter is retained for caller
+    signature stability (e.g. the e2e harness's prior call site) but is
+    documented as ignored. This test locks the documented contract: the
+    function returns the canonical command regardless of the argument."""
     import setup_wizard
 
-    cmd = setup_wizard._build_session_end_command(mcp_config_path="/tmp/x/mcp.json")
-    assert "--mcp-config /tmp/x/mcp.json" in cmd
-    assert "--strict-mcp-config" in cmd
-    # Re-entrancy guard and --auto-ingest preserved.
-    assert '[ -z "$BICAMERAL_SESSION_END_RUNNING" ]' in cmd
-    assert "--auto-ingest" in cmd
-    # Path with shell metachar still safe (shlex.quote applied).
-    cmd2 = setup_wizard._build_session_end_command(mcp_config_path="/tmp/with space/mcp.json")
-    assert "'/tmp/with space/mcp.json'" in cmd2
+    assert (
+        setup_wizard._build_session_end_command(mcp_config_path="/tmp/x/mcp.json")
+        == CANONICAL_COMMAND
+    )
+    assert setup_wizard._build_session_end_command(mcp_config_path=None) == CANONICAL_COMMAND
