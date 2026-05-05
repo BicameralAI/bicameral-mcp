@@ -109,10 +109,11 @@ All v0 ledger writes that affect cross-team-shareable state emit a JSONL event l
 | `link_commit.completed` | After `link_commit` advances HEAD and re-evaluates regions |
 | `decision_ratified.completed` | After `ratify` flips signoff |
 | `decision_superseded.completed` | After `resolve_collision` writes a `supersedes` edge |
+| `compliance_check.completed` | After `resolve_compliance` writes a verdict (one event per accepted `ComplianceVerdict`) |
 
-**Naming convention**: `<domain>.completed`. The original Notion page used `decision_X` past-tense names (e.g. `decision_ingested`); the code emits `<domain>.completed`. The code names are what wire-level integrators must match.
+**Naming convention**: `<domain>.completed`. The original Notion page used `decision_X` past-tense names (e.g. `decision_ingested`); the code emits `<domain>.completed`. The code names are what wire-level integrators must match. The Notion page's `compliance_checked` is the same event, renamed under the new convention to `compliance_check.completed`.
 
-**Known gap (tracked separately)**: `compliance_checked` is named in the Notion page but is **not currently emitted**. When `resolve_compliance` flips a region from `pending` to `reflected` / `drifted`, that transition is not in the team-sync stream. Filed as a follow-up under the team-mode-correctness umbrella; see #178's open-issues survey for context. Until fixed, teammate replays infer compliance state from `link_commit.completed` effects rather than from explicit verdict events.
+**Cross-author payload**: events that mutate per-DB rows carry a stable cross-author key — `canonical_id` for decisions, and a region descriptor (`repo` + `file_path` + `symbol_name` + line range) for `code_region`. The materializer resolves these to local ids on replay; missing local rows produce a logged warning + skip, consistent across all replay branches.
 
 **Invariant**: the JSONL log is **append-only**. The `events/writer.py` API cannot rewrite or delete; replay is the only way to rebuild state.
 
@@ -152,5 +153,5 @@ These can be removed without breaking any v0 invariant. They exist because they 
 | *"7 node types, 6 edge types"* | 13 tables, 10 edges in `ledger/schema.py`. v0 core is 6+5; the rest is operational infrastructure or v1 CodeGenome. |
 | *"8 flows; 5 visible, 3 internal"* | 23 MCP tools, no internal/external split. Discipline lives in skills, not at the tool boundary. |
 | *"`LedgerEvent` graph node + `event_targets` edge"* | Events live in JSONL files at `.bicameral/events/{git-email}/`. Choice was deliberate to enable git-committed CRDT-mergeable team sync. |
-| *"Events emitted: `decision_ingested`, `decision_bound`, `compliance_checked`, `decision_ratified`, `decision_superseded`"* | Code emits `ingest.completed`, `bind_decision.completed`, `link_commit.completed`, `decision_ratified.completed`, `decision_superseded.completed`. `compliance_checked` is missing — known gap. `link_commit.completed` is extra. Naming convention shifted to `<domain>.completed`. |
+| *"Events emitted: `decision_ingested`, `decision_bound`, `compliance_checked`, `decision_ratified`, `decision_superseded`"* | Code emits `ingest.completed`, `bind_decision.completed`, `link_commit.completed`, `decision_ratified.completed`, `decision_superseded.completed`, `compliance_check.completed`. Naming convention shifted to `<domain>.completed`; `compliance_checked` is the same event under the new name. `link_commit.completed` is extra (re-evaluation runs at link time). |
 | *"150 lines of declarative spec vs ~2,500 lines of Python"* | Schema declarations in `ledger/schema.py` are ~400 lines. Python supporting them is much larger. The "150 lines" promise was tied to `SPEC.bql`, which doesn't exist. |

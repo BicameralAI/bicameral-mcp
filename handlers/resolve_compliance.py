@@ -36,6 +36,8 @@ from contracts import (
 from ledger.queries import (
     decision_exists,
     delete_binds_to_edge,
+    get_canonical_id,
+    get_region_descriptor,
     project_decision_status,
     promote_ephemeral_verdict,
     region_exists,
@@ -178,6 +180,50 @@ async def handle_resolve_compliance(
             await delete_binds_to_edge(client, v.decision_id, v.region_id)
 
         affected_decision_ids.add(v.decision_id)
+
+        # Team-mode event emission (#190): the verdict is now part of the
+        # team JSONL stream alongside ingest / bind / link_commit / ratify /
+        # supersede. Resolves the §5 gap called out in
+        # docs/v0-architecture-current.md. Skipped silently in single-mode
+        # (the bare ledger does not expose emit_compliance_check_event).
+        if hasattr(ledger, "emit_compliance_check_event"):
+            canonical_decision_id = ""
+            region_descriptor: dict | None = None
+            try:
+                canonical_decision_id = await get_canonical_id(client, v.decision_id)
+                region_descriptor = await get_region_descriptor(client, v.region_id)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning(
+                    "[resolve_compliance] failed to gather event payload for %s: %s",
+                    v.decision_id,
+                    exc,
+                )
+            if canonical_decision_id and region_descriptor:
+                await ledger.emit_compliance_check_event(
+                    {
+                        "canonical_decision_id": canonical_decision_id,
+                        "decision_id": v.decision_id,
+                        "region_id": v.region_id,
+                        "region_descriptor": region_descriptor,
+                        "content_hash": v.content_hash,
+                        "verdict": v.verdict,
+                        "confidence": v.confidence,
+                        "explanation": v.explanation,
+                        "phase": phase,
+                        "commit_hash": commit_hash or "",
+                        "pruned": is_pruned,
+                        "ephemeral": is_ephemeral,
+                        "semantic_status": getattr(v, "semantic_status", None),
+                        "evidence_refs": list(getattr(v, "evidence_refs", []) or []),
+                    }
+                )
+            else:
+                logger.warning(
+                    "[resolve_compliance] skipping event emit for decision=%s region=%s — "
+                    "missing canonical_id or region descriptor",
+                    v.decision_id,
+                    v.region_id,
+                )
 
         accepted.append(
             ResolveComplianceAccepted(

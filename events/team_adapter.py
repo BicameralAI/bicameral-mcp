@@ -199,6 +199,25 @@ class TeamWriteAdapter:
             session_id=session_id,
         )
 
+    async def emit_compliance_check_event(self, payload: dict) -> None:
+        """Append a ``compliance_check.completed`` event to the team JSONL stream.
+
+        Closes the gap called out in
+        ``docs/v0-architecture-current.md`` §5: ``resolve_compliance`` writes
+        the verdict row + re-projects status, but had no event in the
+        team-sync stream until now. Without this event, teammate replays
+        had to re-derive compliance state from ``link_commit.completed``
+        side effects rather than from the explicit verdict — breaking the
+        §5 promise that "event streams from two engineers can be CRDT-merged".
+
+        The handler builds the cross-author payload (canonical_decision_id +
+        region descriptor + verdict fields) and calls this method per-verdict;
+        the materializer's replay branch resolves the descriptor to a local
+        ``code_region`` row.
+        """
+        await self._ensure_ready()
+        self._writer.write("compliance_check.completed", payload)
+
     async def wipe_all_rows(self, repo: str) -> None:
         """Wipe the DB then reset the event watermark.
 

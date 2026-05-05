@@ -879,6 +879,63 @@ async def region_exists(client: LedgerClient, region_id: str) -> bool:
     return bool(rows)
 
 
+async def get_region_descriptor(
+    client: LedgerClient,
+    region_id: str,
+) -> dict | None:
+    """Return the cross-author descriptor for ``region_id`` or None.
+
+    The descriptor (``repo`` + ``file_path`` + ``symbol_name`` + line range)
+    is the stable identity used by team-mode event payloads; SurrealDB-generated
+    record ids are per-DB and not portable across teammates.
+    """
+    rows = await client.query(
+        f"SELECT repo, file_path, symbol_name, start_line, end_line "
+        f"FROM {region_id} LIMIT 1"
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "repo": row.get("repo", "") or "",
+        "file_path": row.get("file_path", "") or "",
+        "symbol_name": row.get("symbol_name", "") or "",
+        "start_line": int(row.get("start_line") or 0),
+        "end_line": int(row.get("end_line") or 0),
+    }
+
+
+async def find_region_by_descriptor(
+    client: LedgerClient,
+    repo: str,
+    file_path: str,
+    symbol_name: str,
+    start_line: int,
+    end_line: int,
+) -> str | None:
+    """Resolve a cross-author region descriptor to a local code_region id.
+
+    Match is by ``(repo, file_path, symbol_name)`` first (mirrors
+    ``upsert_code_region``'s WHERE clause); ``start_line`` / ``end_line`` are
+    tie-breakers for the rare case of multiple regions on the same symbol.
+    Returns ``None`` if no local row matches — the caller logs and skips,
+    consistent with ``find_decision_by_canonical_id`` semantics.
+    """
+    rows = await client.query(
+        "SELECT id, start_line, end_line FROM code_region "
+        "WHERE repo = $repo AND file_path = $fp AND symbol_name = $sn",
+        {"repo": repo, "fp": file_path, "sn": symbol_name},
+    )
+    if not rows:
+        return None
+    for row in rows:
+        if int(row.get("start_line") or 0) == start_line and int(
+            row.get("end_line") or 0
+        ) == end_line:
+            return str(row.get("id", ""))
+    return str(rows[0].get("id", ""))
+
+
 async def get_compliance_verdict(
     client: LedgerClient,
     decision_id: str,

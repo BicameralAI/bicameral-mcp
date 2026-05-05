@@ -145,6 +145,90 @@ class EventMaterializer:
                             session_id=payload.get("session_id", ""),
                         )
                         replayed += 1
+                    elif etype == "compliance_check.completed":
+                        # #190: replay the peer's verdict locally so teammate
+                        # state matches without depending on per-DB ids.
+                        # Cross-author key = canonical_decision_id + region
+                        # descriptor. Skipped (with a warning) when either
+                        # side fails to resolve — the verdict will be
+                        # re-derived on the next link_commit replay.
+                        from ledger.queries import (
+                            delete_binds_to_edge,
+                            find_decision_by_canonical_id,
+                            find_region_by_descriptor,
+                            project_decision_status,
+                            update_decision_status,
+                            update_region_hash,
+                            upsert_compliance_check,
+                        )
+
+                        local_decision_id = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("canonical_decision_id", ""),
+                        )
+                        descriptor = payload.get("region_descriptor") or {}
+                        local_region_id = None
+                        if descriptor:
+                            local_region_id = await find_region_by_descriptor(
+                                inner_adapter._client,
+                                repo=descriptor.get("repo", "") or "",
+                                file_path=descriptor.get("file_path", "") or "",
+                                symbol_name=descriptor.get("symbol_name", "") or "",
+                                start_line=int(descriptor.get("start_line") or 0),
+                                end_line=int(descriptor.get("end_line") or 0),
+                            )
+                        if not local_decision_id or not local_region_id:
+                            logger.warning(
+                                "[materializer] skipping compliance_check — "
+                                "decision=%r region_descriptor=%r did not resolve "
+                                "(decision_local=%r region_local=%r); will be "
+                                "re-derived on next link_commit replay",
+                                payload.get("canonical_decision_id"),
+                                descriptor,
+                                local_decision_id,
+                                local_region_id,
+                            )
+                            continue
+                        verdict = payload.get("verdict") or "compliant"
+                        is_pruned = bool(payload.get("pruned")) or verdict == "not_relevant"
+                        content_hash = payload.get("content_hash", "") or ""
+                        await upsert_compliance_check(
+                            inner_adapter._client,
+                            decision_id=local_decision_id,
+                            region_id=local_region_id,
+                            content_hash=content_hash,
+                            verdict=verdict,
+                            confidence=payload.get("confidence", "low") or "low",
+                            explanation=payload.get("explanation", "") or "",
+                            phase=payload.get("phase", "drift") or "drift",
+                            commit_hash=payload.get("commit_hash", "") or "",
+                            pruned=is_pruned,
+                            ephemeral=bool(payload.get("ephemeral")),
+                            semantic_status=payload.get("semantic_status"),
+                            evidence_refs=list(payload.get("evidence_refs") or []),
+                        )
+                        if is_pruned:
+                            await delete_binds_to_edge(
+                                inner_adapter._client, local_decision_id, local_region_id
+                            )
+                        if content_hash:
+                            try:
+                                await update_region_hash(
+                                    inner_adapter._client, local_region_id, content_hash
+                                )
+                            except Exception as exc:  # pragma: no cover - defensive
+                                logger.warning(
+                                    "[materializer] update_region_hash failed for %s: %s",
+                                    local_region_id,
+                                    exc,
+                                )
+                        projected = await project_decision_status(
+                            inner_adapter._client, local_decision_id
+                        )
+                        await update_decision_status(
+                            inner_adapter._client, local_decision_id, projected
+                        )
+                        replayed += 1
                 new_offsets[author] = f.tell()
 
         if new_offsets != offsets:
