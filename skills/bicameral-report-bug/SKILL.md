@@ -1,11 +1,11 @@
 ---
 name: bicameral-report-bug
-description: File a bug against bicameral-mcp with auto-bundled context. Fires on "/bicameral:report-bug", "file a bicameral bug", "report this bicameral bug", "bicameral broke", "bicameral isn't working", "something's wrong with bicameral", "this is a bicameral bug". Bundles environment + recent calls + error trace into a prefilled GitHub issue URL on BicameralAI/bicameral-mcp with the `dev` label, and opens it in the browser. Skill DOES NOT submit — the user reviews and clicks submit on GitHub.
+description: File a bug against bicameral-mcp with auto-bundled context. Fires on "/bicameral-report-bug", "file a bicameral bug", "report this bicameral bug", "bicameral broke", "bicameral isn't working", "something's wrong with bicameral", "this is a bicameral bug". Bundles environment + recent calls + error trace into a prefilled GitHub issue URL on BicameralAI/bicameral-mcp with the `dev` label, and opens it in the browser. Skill DOES NOT submit — the user reviews and clicks submit on GitHub.
 ---
 
-# /bicameral:report-bug — File a bug with context
+# /bicameral-report-bug — File a bug with context
 
-**Trigger**: `/bicameral:report-bug`, or natural-language phrasing like
+**Trigger**: `/bicameral-report-bug`, or natural-language phrasing like
 "file a bicameral bug", "this bicameral thing broke", "report this issue".
 
 The skill collects environment + recent tool activity + the suspected
@@ -139,7 +139,7 @@ Format as markdown:
 <environment + repo state + config blocks from Step 2>
 
 ---
-_Reported via `/bicameral:report-bug`._
+_Reported via `/bicameral-report-bug`._
 ```
 
 If the assembled body exceeds **6500 characters**, drop sections in
