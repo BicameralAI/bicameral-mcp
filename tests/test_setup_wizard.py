@@ -72,13 +72,20 @@ def test_detect_runner_raises_when_no_runner_available():
             setup_wizard._detect_runner()
 
 
-def test_session_end_command_uses_hyphen_slash_command():
-    """Regression guard: the SessionEnd hook command must invoke
-    /bicameral-capture-corrections (folder-name match), not the broken
-    plugin-namespace form /bicameral:capture-corrections. See issue #177."""
+def test_session_end_command_invokes_queue_writer():
+    """Regression guard (post #156): the SessionEnd hook is now a path-style
+    Python invocation of the transcript-queue writer, not a `claude -p`
+    spawn of the capture-corrections slash command. The prior shape
+    couldn't see the parent transcript; the queue-write defers correction
+    surfacing to the next session.
+
+    Replaces the prior issue-#177 hyphen-vs-colon slash-command guard,
+    which is moot now that the hook does not invoke a slash command at
+    all."""
     cmd = setup_wizard._BICAMERAL_SESSION_END_COMMAND
-    assert "/bicameral-capture-corrections" in cmd
-    assert "/bicameral:capture-corrections" not in cmd
+    assert "scripts/hooks/session_end_queue_writer.py" in cmd
+    assert "/bicameral-capture-corrections" not in cmd
+    assert "claude -p" not in cmd
 
 
 def test_detect_runner_does_not_return_broken_module_fallback():

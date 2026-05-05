@@ -367,32 +367,28 @@ def _install_for_agent(
 
 
 def _build_session_end_command(mcp_config_path: str | None = None) -> str:
-    """Build the SessionEnd hook command, optionally with `--mcp-config` flags.
+    """Canonical SessionEnd hook command (#156 pivot).
 
-    Production end-users have ``bicameral`` registered in their default
-    Claude Code MCP config (via the setup wizard's `claude mcp add`), so
-    the spawned subprocess inherits it without an explicit flag. Test
-    harnesses that drive ``claude -p`` against a non-default ledger
-    (e.g. ``tests/e2e/run_e2e_flows.py`` pointing SURREAL_URL at a
-    test-results path) must pass ``--mcp-config`` so the spawned
-    subprocess writes to the same ledger that the parent session and
-    post-hoc validators use; otherwise capture-corrections lands its
-    ``source=agent_session`` decisions in ``~/.bicameral/ledger.db``
-    instead of the harness's test ledger.
+    Replaces the prior ``claude -p '/bicameral-capture-corrections
+    --auto-ingest'`` invocation, which spawned an empty subprocess that
+    couldn't access the parent session's transcript — corrections
+    silently failed to surface.
 
-    The no-args call returns the canonical command prescribed by
-    ``skills/bicameral-capture-corrections/SKILL.md:207`` byte-exact —
-    that's what end-user installs ship.
+    The new shape pipes Claude Code's stdin envelope into a Python
+    script that extracts ``transcript_path`` and copies it to the
+    pending-transcripts queue at
+    ``<repo>/.bicameral/pending-transcripts/<session_id>.jsonl``. The
+    next session's preflight Step 3.5 (or capture-corrections Step 0)
+    drains the queue and surfaces corrections with full ledger context.
+
+    ``mcp_config_path`` is retained for signature stability with
+    consumers that pass it through; the new hook doesn't use it (no
+    claude subprocess to configure).
     """
-    import shlex
-
-    extra_flags = ""
-    if mcp_config_path:
-        extra_flags = f" --mcp-config {shlex.quote(str(mcp_config_path))} --strict-mcp-config"
     return (
         '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
         "BICAMERAL_SESSION_END_RUNNING=1 "
-        f"claude -p '/bicameral-capture-corrections --auto-ingest'{extra_flags} || true"
+        "python3 scripts/hooks/session_end_queue_writer.py || true"
     )
 
 
@@ -445,8 +441,11 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     - PostToolUse/bicameral_preflight: reminds the agent to capture
       refinements via ingest(agent_session) + resolve_collision when
       preflight surfaces decisions that the user's prompt contradicts.
-    - SessionEnd: runs bicameral-capture-corrections to catch uningested
-      mid-session corrections (only fires when .bicameral/ exists).
+    - SessionEnd: writes the parent session's transcript to
+      .bicameral/pending-transcripts/<session_id>.jsonl; the next session's
+      preflight Step 3.5 / capture-corrections Step 0 drains the queue and
+      surfaces uningested corrections (#156). Only fires when .bicameral/
+      exists.
     - UserPromptSubmit: deterministic verb-list classifier injects a
       <system-reminder> elevating bicameral.preflight above the agent's
       default tool-selection priority on code-implementation prompts.
