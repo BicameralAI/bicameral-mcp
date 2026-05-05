@@ -734,14 +734,17 @@ the boxes. Two intensities, controlled by `guided: bool`:
 
 When `brief` is `null` (no derivable topic or chain failed), skip silently.
 
-### 6. Apply the gap-judge rubric (v0.4.16+)
+### 6. Apply the gap-judge rubric (v0.4.16+; unified brief shape from #187)
 
-When the ingest response contains a non-null `judgment_payload`, apply the
+When `IngestResponse.brief.gaps` is non-empty, apply the
 `bicameral-judge-gaps` rubric using the visual format from
-`skills/gap_visualization/SKILL.md`. Full contract is in
+`skills/gap_visualization/SKILL.md`. The rubric itself lives at
+`response.brief.rubric` (5 fixed v0.4.19 categories). Full contract is in
 `skills/bicameral-judge-gaps/SKILL.md`.
 
 **Key rendering rules for this flow:**
+- Iterate `response.brief.gaps[]` (a list of `BriefGap`) — each entry
+  corresponds to one finding the rubric should apply to.
 - Render each ask-gap as its corresponding box template (templates #1–#5).
 - **Skip empty categories entirely** — no header, no `✓ no gaps found`.
   The user only sees boxes for actual findings.
@@ -750,7 +753,14 @@ When the ingest response contains a non-null `judgment_payload`, apply the
 - Max 3 boxes per category; if more exist, surface the batched gate from
   `bicameral-judge-gaps` for the remainder.
 
-When `judgment_payload` is `null` (no decisions or chain failed), skip silently.
+When `response.brief` is `null` OR `response.brief.gaps` is empty (no
+decisions or chain failed), skip silently.
+
+**Migration note (#187)**: the legacy `IngestResponse.judgment_payload` and
+`IngestResponse.judgment_payloads` fields were removed. Gap findings now
+live at `response.brief.gaps[]` and the rubric reference at
+`response.brief.rubric`. Older callers asserting on `judgment_payload`
+must migrate.
 
 ### 7. Ratify proposals (v0.7.0+)
 
