@@ -199,6 +199,50 @@ class TeamWriteAdapter:
             session_id=session_id,
         )
 
+    async def apply_resolve_compliance(
+        self,
+        *,
+        canonical_decision_id: str,
+        repo: str,
+        file_path: str,
+        symbol_name: str,
+        content_hash: str,
+        verdict: str,
+        pinned_commit: str,
+        evidence: str = "",
+    ) -> None:
+        """Emit compliance_check.completed to the team-sync JSONL stream.
+
+        Fires once per accepted ComplianceVerdict (called from
+        ``handle_resolve_compliance`` after each successful
+        ``upsert_compliance_check``). Receiver replays via the materializer's
+        content-addressable lookup; idempotent on receiver side because
+        ``upsert_compliance_check`` first-write-wins on
+        ``(decision_id, region_id, content_hash)`` (see ``ledger/schema.py``
+        idx_cc_cache_key).
+
+        Unlike ``apply_ratify`` / ``apply_supersede``, this method does NOT
+        delegate to the inner adapter — the local DB write was already
+        performed by the handler's direct ``upsert_compliance_check`` call.
+        Emit-only, by design.
+        """
+        await self._ensure_ready()
+        self._writer.write(
+            "compliance_check.completed",
+            {
+                "canonical_decision_id": canonical_decision_id,
+                "region": {
+                    "repo": repo,
+                    "file_path": file_path,
+                    "symbol_name": symbol_name,
+                    "content_hash": content_hash,
+                },
+                "verdict": verdict,
+                "pinned_commit": pinned_commit,
+                "evidence": evidence,
+            },
+        )
+
     async def wipe_all_rows(self, repo: str) -> None:
         """Wipe the DB then reset the event watermark.
 

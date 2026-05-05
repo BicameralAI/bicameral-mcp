@@ -47,6 +47,7 @@ from .queries import (
     update_region_hash,
     upsert_code_region,
     upsert_code_subject,
+    upsert_compliance_check,
     upsert_decision,
     upsert_input_span,
     upsert_source_cursor,
@@ -1283,6 +1284,44 @@ class SurrealDBLedgerAdapter:
     # Both methods are idempotent so the materializer can replay them
     # safely. Handlers do their own pre-write idempotency / collision
     # checks; the adapter just performs the write and re-projects status.
+
+    async def apply_compliance_verdict_from_event(
+        self,
+        *,
+        decision_id: str,
+        region_id: str,
+        content_hash: str,
+        verdict: str,
+        pinned_commit: str = "",
+        evidence: str = "",
+    ) -> None:
+        """Receiver-side replay of a compliance_check.completed event (#190).
+
+        Called by ``EventMaterializer`` after resolving the cross-author keys
+        (canonical_decision_id → local decision_id; content-addressable region
+        descriptor → local region_id). Idempotent via the existing UNIQUE
+        index on ``(decision_id, region_id, content_hash)`` —
+        ``upsert_compliance_check`` is a no-op if the row already exists.
+
+        Confidence is fixed to ``"high"`` and phase to ``"drift"`` on replay
+        because peer-attested verdicts arrive without the local
+        confidence/phase context. The verdict and explanation are
+        authoritative.
+        """
+        await self._ensure_connected()
+        await upsert_compliance_check(
+            self._client,
+            decision_id=decision_id,
+            region_id=region_id,
+            content_hash=content_hash,
+            verdict=verdict,
+            confidence="high",
+            explanation=evidence,
+            phase="drift",
+            commit_hash=pinned_commit,
+            pruned=(verdict == "not_relevant"),
+            ephemeral=False,
+        )
 
     async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
         """Write a ratify/reject signoff and re-project the decision's status.
