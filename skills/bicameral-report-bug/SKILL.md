@@ -78,8 +78,12 @@ straight into the issue body — do not surface raw output to the user.
   echo "## Repo state"
   echo
   echo '```'
-  git -C "$(pwd)" rev-parse --abbrev-ref HEAD 2>/dev/null && \
-    git -C "$(pwd)" log --oneline -3 2>/dev/null
+  # Branch name and commit subjects often leak business context (initiative names,
+  # vendor partners, unannounced features). Redact by default; print only the shape
+  # of the state, not the content.
+  COMMIT_COUNT=$(git -C "$(pwd)" log --oneline -3 2>/dev/null | wc -l | tr -d ' ')
+  echo "branch: <REDACTED>"
+  echo "$COMMIT_COUNT recent commit(s) (titles redacted)"
   echo '```'
   echo
   if [ -f .bicameral/config.yaml ]; then
@@ -101,9 +105,15 @@ Then assemble in your head (do NOT print to user yet):
   available — that's the highest-signal piece. If no error, describe
   the unexpected output.
 - **Reproduction**: the last 3-5 bicameral tool calls in this session,
-  in order. Just the call signatures (tool name + key args), no
-  full bodies. Redact any obvious secrets (`ANTHROPIC_API_KEY=...`,
-  long bearer tokens, etc.).
+  in order. Just the call signatures (tool name + parameter *names*) —
+  **redact the parameter VALUES by default**. Replace `query="…"`,
+  `feature_filter="…"`, `topic="…"`, `intent="…"`, `description="…"`,
+  `text="…"`, `excerpt="…"`, `title="…"`, etc. with `<REDACTED>` or
+  short placeholders (`<feature_area_a>`, `<feature_area_b>`). The
+  diagnostic signal is which tool was called with which parameter
+  *names*, not the verbatim payload — payloads almost always leak
+  business context (feature names, vendor names, internal codenames).
+  Also redact obvious secrets (`ANTHROPIC_API_KEY=…`, bearer tokens).
 - **Environment** + **Repo state** + **config.yaml**: from the Bash
   block above.
 
@@ -165,6 +175,10 @@ your machine.
   ─────────────────────────────────────────────────────────────
 
 Auto-redacted in this body:
+  - Tool-call argument *values* in the Reproduction section (query, feature_filter,
+    topic, intent, description, text, excerpt, title — parameter names kept,
+    values replaced with <REDACTED>)
+  - Branch name and commit subject lines in the Repo state block
   - API keys, bearer tokens, secrets, passwords (regex-matched)
   - <N> redaction(s) applied   ← print actual count, or "none detected"
 
@@ -264,6 +278,16 @@ the GitHub page. Posting it again is noise.
 - **Redact obvious secrets** before placing them in the body: anything
   matching `(api[_-]?key|token|secret|password|bearer)\s*[=:]\s*\S+`
   → replace value with `***REDACTED***`.
+- **Redact business context by default**, even though it isn't a "secret":
+  - Tool-call argument values in the Reproduction section. Preserve parameter
+    names (so the maintainer sees which fields were used), but replace values
+    with `<REDACTED>` or `<feature_area_a>` placeholders.
+  - The current branch name and recent commit subject lines. These routinely
+    name initiatives, vendor partners, and unannounced features. Print only
+    the shape (`branch: <REDACTED>`, `N recent commit(s) (titles redacted)`).
+  - If the user explicitly wants the verbose context for a specific bug, they
+    can paste it back in during the "Edit the body first" branch of Step 3.5.
+    Default off — leak less, ask more.
 - **Do not include file contents** unless the user explicitly pastes
   them in their description. Recent tool calls and error traces are OK
   — file dumps are not.
