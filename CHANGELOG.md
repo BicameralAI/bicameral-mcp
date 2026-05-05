@@ -7,6 +7,25 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ### Added
 
+- **CI grounding lint for plan files and PR bodies (#114).** Two new
+  checkers ship together:
+  - `scripts/lint_plan_grounding.py` — walks `plan-*.md` files for
+    backtick-wrapped path tokens and verifies each resolves on the
+    working tree. Marks `**new**` / `(planned)` / `(future)` /
+    `(v2)` / `(nonexistent)` / `(example)` as exempt. Folded into
+    the existing `lint-and-typecheck.yml` workflow as a blocking
+    gate; only runs against plans modified in the current PR.
+    Closes the SG-PLAN-GROUNDING-DRIFT loop after three instances
+    in the v0.13/v0.16 development window.
+  - `.github/scripts/lint_pr_body_refs.py` + new
+    `.github/workflows/pr-body-refs-lint.yml` advisory workflow —
+    warns on bare `#NUMBER` mentions in PR bodies that aren't
+    wrapped by `Closes`/`Fixes`/`Resolves`/`Refs`/`Related`/`See`
+    keywords or under a `## Linked issues` heading. Reads PR body
+    via `--from-env PR_BODY` (direct `os.environ` read, no shell
+    interpolation; OWASP A03 mitigation caught at audit v1).
+  - Documentation: `DEV_CYCLE.md` §2.1 (plan-grounding lint
+    callout) + §4.3 (PR-body keyword discipline). Issue #114.
 - `handlers/preflight.py` — `_region_anchored_preflight` now expands caller-supplied `file_paths` by 1 hop along the code-locator graph's **import edges** before the `binds_to` lookup. Lifts the strict exact-match recall ceiling so a decision bound to `app/src/lib/git/reorder.ts` surfaces when the caller passes the structurally-near `app/src/ui/multi-commit-operation/reorder.tsx`. Decisions reached only via expansion carry `confidence=0.7` (vs `0.9` for direct pins). `sources_chained` includes `"graph"` (alongside `"region"`) when expansion contributed at least one hit. Bounded per #64: ≤10 input seeds × `max_neighbors_per_result` neighbors per seed. Closes #173 (and supersedes #64).
 - `adapters/code_locator.py::RealCodeLocatorAdapter.expand_file_paths_via_graph` — public method backing the expansion. Filters to ``imports`` edges only (file-level structural dependency); ``invokes`` / ``inherits`` / ``contains`` are symbol-level edges that over-broaden the file-level expansion. Returns `(expanded, added)` so callers can mark provenance.
 - `skills/bicameral-preflight/SKILL.md` Step 2 — documents the imports-only expansion + caller-side `confidence` and `sources_chained` semantics.
@@ -17,8 +36,6 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 - `skills/bicameral-preflight/SKILL.md` Step 5.6 — judgment for contradiction-capture moves from the agent to the user via `AskUserQuestion` (Step 5.6.1). The agent no longer infers whether the prompt contradicts a surfaced decision; it asks the user (`supersede` / `keep_both` / `unrelated`) and acts mechanically on the answer (Step 5.6.2 — ingest + resolve_collision). The PostToolUse hook reminder now templates the disambiguation question rather than the bare ingest+resolve_collision sequence. Closes #175.
 - `tests/e2e/run_e2e_flows.py::assert_flow_2a` — pass criterion changed from "ingest+resolve_collision fired" to "`AskUserQuestion` invoked with disambiguation shape after preflight surfaced ≥1 decision." The user-side response can't be driven in headless `claude -p`, so the testable signal is the question invocation. The mechanical capture (Step 5.6.2) only fires after a human answers and is exercised in interactive Claude Code sessions, not CI.
-
-### Changed
 
 ### Fixed
 
