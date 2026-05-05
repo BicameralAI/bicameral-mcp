@@ -5,6 +5,55 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
+## v0.13.9 — Triage: scrub retired `bicameral.search` references + auto-redact business context in `/bicameral:report-bug`
+
+Triage release per [DEV_CYCLE.md §10.5](docs/DEV_CYCLE.md). Forwards three
+small, self-contained skill-doc fixes from `dev` (PR #188) addressing two
+user-filed bugs against `BicameralAI/bicameral-mcp`. No code paths changed;
+no schema migration; no breaking changes.
+
+### Fixed
+
+- **`bicameral-ingest` Step 0.5 referenced retired `bicameral.search` tool**
+  (#185) — the pre-ingest context pull instructed callers to invoke
+  `bicameral.search(query=..., top_k=10)`, which was removed in v0.7.x and
+  now returns `Error: No such tool available`. Switched to the live
+  equivalent: `bicameral.history(feature_filter=<feature_area>)`. Inline
+  note documents the API delta (no `top_k` / `min_confidence` knobs;
+  substring filter over feature/decision text). Cherry-picked from dev
+  `b67195d` (PR #188).
+
+- **`bicameral-capture-corrections` referenced retired `bicameral.search`
+  tool** (#185) — the Step C dedup check and Rule #4 both invoked
+  `bicameral.search(query=..., top_k=3, min_confidence=0.4)`. Same root
+  cause as above; switched to `bicameral.history(feature_filter=...)`.
+  Note explicitly that `history` does not return scores, so the existing
+  "never gate on a numeric score value" rule is naturally satisfied by
+  the live tool. Cherry-picked from dev `5255e93` (PR #188).
+
+- **`/bicameral:report-bug` only redacted secrets, leaking business
+  context by default** (#186) — Step 3.5's transparency contract
+  advertised auto-redaction of "secrets" but only matched API-key-shape
+  strings. Tool-call argument values (`query=`, `feature_filter=`,
+  `topic=`, `intent=`, `description=`, etc.), the current branch name,
+  and recent commit subject lines were forwarded verbatim — routinely
+  naming initiatives, vendor partners, and unannounced features. Step 2
+  now redacts argument *values* by default (parameter *names* preserved
+  for diagnostic signal); the Step 2 bash block prints branch + commit
+  shape only (`branch: <REDACTED>`, `N recent commit(s) (titles
+  redacted)`); Step 3.5's preview enumerates the new redaction
+  categories; Privacy & safety rules add an explicit "redact business
+  context by default" clause with opt-in guidance for verbose context.
+  Cherry-picked from dev `1dc9f14` (PR #188).
+
+### Schema
+
+No changes (still v11).
+
+### Breaking changes
+
+None.
+
 ## v0.13.8 — Triage: `/bicameral:report-bug` skill
 
 Triage release per [DEV_CYCLE.md §10.5](docs/DEV_CYCLE.md). Adds a single new
