@@ -879,6 +879,63 @@ async def region_exists(client: LedgerClient, region_id: str) -> bool:
     return bool(rows)
 
 
+async def get_region_descriptor(
+    client: LedgerClient,
+    region_id: str,
+) -> dict | None:
+    """Return the cross-author region descriptor for a local code_region.
+
+    Used by ``handle_resolve_compliance`` (#190) to build the
+    ``compliance_check.completed`` event payload. Returns repo / file_path /
+    symbol_name / content_hash from the local row — these together are the
+    content-addressable key the receiver uses to find a matching region in
+    its own DB. Returns None if the row doesn't exist.
+
+    Line numbers (start_line / end_line) are deliberately excluded — they
+    shift across replays and would make cross-author matching brittle.
+    """
+    rows = await client.query(
+        f"SELECT repo, file_path, symbol_name, content_hash FROM {region_id} LIMIT 1"
+    )
+    if not rows or not isinstance(rows[0], dict):
+        return None
+    row = rows[0]
+    return {
+        "repo": str(row.get("repo", "")),
+        "file_path": str(row.get("file_path", "")),
+        "symbol_name": str(row.get("symbol_name", "")),
+        "content_hash": str(row.get("content_hash", "")),
+    }
+
+
+async def find_code_region_by_content(
+    client: LedgerClient,
+    *,
+    repo: str,
+    file_path: str,
+    symbol_name: str,
+    content_hash: str,
+) -> str | None:
+    """Resolve a code_region by content-addressable key. Returns the local
+    region id, or None if no matching row exists yet on this DB.
+
+    Used by ``events/materializer.py`` (#190) on receiver-side replay of
+    ``compliance_check.completed`` events: peers may have different
+    SurrealDB-generated region ids for the same code shape, so we look up
+    by ``(repo, file_path, symbol_name, content_hash)`` instead of by id.
+    """
+    rows = await client.query(
+        "SELECT id FROM code_region "
+        "WHERE repo = $r AND file_path = $fp AND symbol_name = $s "
+        "AND content_hash = $h LIMIT 1",
+        {"r": repo, "fp": file_path, "s": symbol_name, "h": content_hash},
+    )
+    if rows and isinstance(rows[0], dict):
+        rid = rows[0].get("id")
+        return str(rid) if rid else None
+    return None
+
+
 async def get_compliance_verdict(
     client: LedgerClient,
     decision_id: str,
