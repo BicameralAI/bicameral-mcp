@@ -1,3 +1,3 @@
-Doing a Friday review across the ledger. Walk me through everything we're tracking — grouped by feature, with both axes for each one (code-compliance status and signoff state).
+Doing a Friday review across all the things we're tracking. Walk me through them grouped by feature — for each one, where it stands on the implementation side and whether it's been signed off.
 
-Anything still in `proposed` that's been sitting around — flag those, talk me through them in a sentence each, and pick whichever one looks most ready (clear scope, supporting context, no unresolved conflicts) and ratify it. Then show me the table again so I can scan what changed.
+Anything still on the to-do pile that hasn't moved — flag those, give me a one-sentence read on each, and pick whichever one looks most ready (clear scope, supporting context, no open questions) and sign it off. Then show me the updated view.

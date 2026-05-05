@@ -229,16 +229,26 @@ def _check_dedup(ctx, topic: str) -> bool:
 async def _region_anchored_preflight(
     ctx,
     file_paths: list[str],
-) -> list[DecisionMatch]:
+) -> tuple[list[DecisionMatch], bool]:
     """file_paths (caller-supplied) → decisions pinned to those regions.
 
     The caller LLM is responsible for resolving which files a proposed change
     will touch — preflight then looks up decisions pinned to those files in
-    the ledger. Returns DecisionMatch objects with confidence=0.9 (direct
-    pin, not keyword match).
+    the ledger. Before the lookup, run a 1-hop code-graph expansion via the
+    code-locator adapter (#173): caller-LLM discovery is imprecise, and a
+    decision bound to ``app/src/lib/git/reorder.ts`` should still surface
+    when the caller passes the structurally-near ``app/src/ui/multi-commit-
+    operation/reorder.tsx``. Expansion is deterministic, no LLM in the path,
+    bounded by ``code_locator/config.py::max_neighbors_per_result``.
+
+    Returns ``(matches, expanded)`` where ``expanded`` is True iff the graph
+    expansion produced extra paths beyond the caller-supplied set, so the
+    caller can record ``"graph"`` in ``sources_chained``. Direct-pin matches
+    carry ``confidence=0.9``; matches surfaced only via expanded paths carry
+    ``confidence=0.7``.
     """
     if not file_paths:
-        return []
+        return [], False
 
     # Dedup + normalize while preserving caller-supplied order.
     seen_paths: set[str] = set()
@@ -249,16 +259,34 @@ async def _region_anchored_preflight(
             seen_paths.add(fp)
             ordered.append(fp)
     if not ordered:
-        return []
+        return [], False
+
+    # Graph expansion. Defensive: code_graph may be absent (mock contexts) or
+    # the adapter may not implement the method (older deployments). Either
+    # case falls back to direct file_paths only.
+    direct_paths: set[str] = set(ordered)
+    expanded_paths = list(ordered)
+    expanded_only_paths: set[str] = set()
+    code_graph = getattr(ctx, "code_graph", None)
+    expander = getattr(code_graph, "expand_file_paths_via_graph", None) if code_graph else None
+    if expander is not None:
+        try:
+            expanded_paths, added_paths = expander(ordered, hops=1)
+            expanded_only_paths = set(added_paths)
+        except Exception as exc:
+            logger.debug("[preflight:region] graph expansion failed: %s", exc)
+            expanded_paths = list(ordered)
+            expanded_only_paths = set()
 
     try:
-        raw = await ctx.ledger.get_decisions_for_files(ordered)
+        raw = await ctx.ledger.get_decisions_for_files(expanded_paths)
     except Exception as exc:
         logger.debug("[preflight:region] ledger region lookup failed: %s", exc)
-        return []
+        return [], False
 
     matches: list[DecisionMatch] = []
     seen_ids: set[str] = set()
+    surfaced_via_expansion = False
     for d in raw:
         did = d.get("decision_id", "")
         if did in seen_ids:
@@ -280,6 +308,23 @@ async def _region_anchored_preflight(
         if status not in ("reflected", "drifted", "pending", "ungrounded"):
             status = "ungrounded" if not regions else "pending"
 
+        # Provenance: a decision is "directly pinned" if any of its bound
+        # code_regions live in a caller-supplied path; otherwise it was only
+        # reached via 1-hop graph expansion. Caller can de-prioritize the
+        # latter (lower confidence) without losing recall.
+        bound_paths = {
+            (r.get("file_path") or "").strip()
+            for r in (d.get("code_regions") or [])
+            if r and (r.get("file_path") or "").strip()
+        }
+        # Single-region decisions also have a top-level ``code_region`` (used
+        # above); include it in the provenance check.
+        if region_dict and (region_dict.get("file_path") or "").strip():
+            bound_paths.add(region_dict["file_path"].strip())
+        is_direct = bool(bound_paths & direct_paths) if bound_paths else not expanded_only_paths
+        if not is_direct:
+            surfaced_via_expansion = True
+
         _sf = d.get("signoff") or {}
         matches.append(
             DecisionMatch(
@@ -287,7 +332,7 @@ async def _region_anchored_preflight(
                 description=d.get("description", ""),
                 status=status,
                 signoff_state=(_sf.get("state") if isinstance(_sf, dict) else None),
-                confidence=0.9,
+                confidence=0.9 if is_direct else 0.7,
                 source_ref=d.get("source_ref", ""),
                 code_regions=regions,
                 drift_evidence="",
@@ -298,7 +343,7 @@ async def _region_anchored_preflight(
             )
         )
 
-    return matches
+    return matches, surfaced_via_expansion
 
 
 async def handle_preflight(
@@ -380,9 +425,11 @@ async def handle_preflight(
     region_matches: list[DecisionMatch] = []
     if file_paths:
         try:
-            region_matches = await _region_anchored_preflight(ctx, file_paths)
+            region_matches, used_graph_expansion = await _region_anchored_preflight(ctx, file_paths)
             if region_matches:
                 sources_chained.append("region")
+                if used_graph_expansion:
+                    sources_chained.append("graph")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 

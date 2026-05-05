@@ -103,13 +103,17 @@ Only `user` turns qualify. Claude's own responses are never corrections.
 For each **ask** correction:
 
 ```
-bicameral.search(query=<one-line paraphrase of correction>, top_k=3, min_confidence=0.4)
+bicameral.history(feature_filter=<short keyword from the correction>)
 ```
 
-If any result is returned → treat as already ingested, skip.
-`bicameral.search` uses full-text scoring; `min_confidence=0.4` sets the
-floor. Presence in the result set (not a score value) is the dedup signal.
-All corrections with no results → queue as `uningested_corrections`.
+(`bicameral.search` was retired — `history` with a substring `feature_filter`
+is the live equivalent. There is no `top_k` or `min_confidence`; the filter
+is a substring match over feature/decision text.)
+
+If any decision in the response describes the same correction → treat as
+already ingested, skip. Presence in the result set (not a score value) is
+the dedup signal. All corrections with no matching decision → queue as
+`uningested_corrections`.
 
 For **mechanical** corrections: skip the ledger check, auto-ingest directly.
 
@@ -146,7 +150,7 @@ capture-corrections output.
 ## SessionEnd batch mode
 
 Fires via the `SessionEnd` hook in `.claude/settings.json`. Also invocable
-manually as `/bicameral:capture-corrections`.
+manually as `/bicameral-capture-corrections`.
 
 ### Steps
 
@@ -224,10 +228,11 @@ gate at the end of every session.
 2. **Only user turns.** Claude's own text is never a correction source.
 3. **No double-ask.** If preflight already surfaced a correction this
    session, do not surface it again in the SessionEnd batch.
-4. **Dedup by presence, not score.** Call `bicameral.search` with
-   `min_confidence=0.4`. If any result is returned, treat the correction
-   as already ingested. Search scores are corpus-dependent and unbounded —
-   never gate on a numeric score value.
+4. **Dedup by presence, not score.** Call `bicameral.history` with a
+   short `feature_filter`. If any decision in the response describes the
+   same correction, treat it as already ingested. Never gate on a numeric
+   score value (the retired `bicameral.search` returned scores; `history`
+   does not).
 5. **Ingest as proposals.** Captured corrections enter as `proposed`
    and need explicit ratification — same as all other ingests.
 6. **Guard on `.bicameral/`.** Never run in repos without a bicameral
@@ -242,7 +247,7 @@ user's project `.claude/settings.json`. No manual configuration needed.
 
 Command written by the setup wizard:
 ```
-[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral:capture-corrections --auto-ingest' || true
+[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral-capture-corrections --auto-ingest' || true
 ```
 
 Two guards:

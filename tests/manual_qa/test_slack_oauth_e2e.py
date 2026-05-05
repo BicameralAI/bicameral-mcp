@@ -16,9 +16,11 @@ from __future__ import annotations
 
 from urllib.parse import urlparse
 
-import httpx
 import pytest
-from playwright.sync_api import Page, expect, sync_playwright
+
+httpx = pytest.importorskip("httpx")
+pytest.importorskip("playwright")
+from playwright.sync_api import Page, expect, sync_playwright  # noqa: E402
 
 
 def test_health(public_url: str) -> None:

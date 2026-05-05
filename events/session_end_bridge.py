@@ -23,7 +23,7 @@ from pathlib import Path
 
 GUARD_ENV = "BICAMERAL_SESSION_END_RUNNING"
 TRANSCRIPT_ENV = "BICAMERAL_PARENT_TRANSCRIPT_PATH"
-CHILD_CLAUDE_CMD = ["claude", "-p", "/bicameral:capture-corrections --auto-ingest"]
+CHILD_CLAUDE_CMD = ["claude", "-p", "/bicameral-capture-corrections --auto-ingest"]
 
 
 def read_hook_stdin(stdin_text: str) -> dict:

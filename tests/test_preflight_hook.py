@@ -96,3 +96,27 @@ def test_handles_natural_contradiction_prompt():
     inner = _hook_output(json.loads(out))
     assert "additionalContext" in inner
     assert "bicameral.preflight" in inner["additionalContext"]
+
+
+def test_reminder_gates_writes_not_discovery():
+    """The reminder must allow Read/Grep/Glob discovery before preflight,
+    and gate preflight against WRITE ops only. An earlier shape ("call
+    preflight before any file-inspection tool") short-circuited the
+    caller-LLM discovery the rest of the contract depends on (the agent
+    needs to map "the X feature" → concrete file paths via Read/Grep/Glob
+    before calling preflight). Lock the new posture in so future edits
+    don't quietly regress it.
+    """
+    payload = {"prompt": "refactor the reorder feature to a text-editor flow"}
+    rc, out, _ = _run_hook(json.dumps(payload))
+    assert rc == 0
+    ctx = _hook_output(json.loads(out))["additionalContext"]
+    # Affirmative: discovery comes first, write op is the gate.
+    assert "Read-only discovery FIRST" in ctx
+    assert "BEFORE any write op" in ctx
+    assert "Edit, Write" in ctx
+    # The reminder should explicitly tell the agent to populate file_paths.
+    assert "file_paths" in ctx
+    # Negative: must NOT forbid file-inspection tools (the old shape).
+    assert "before any file-inspection tool" not in ctx
+    assert "Before invoking any file-inspection tool" not in ctx

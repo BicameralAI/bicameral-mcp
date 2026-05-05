@@ -63,6 +63,7 @@ class RealCodeLocatorAdapter:
             )
 
         self._db = db
+        self._config = config
         self._validate_tool = ValidateSymbolsTool(db, config)
         self._neighbors_tool = GetNeighborsTool(db, config)
         self._initialized = True
@@ -89,6 +90,115 @@ class RealCodeLocatorAdapter:
         self._ensure_initialized()
         results = self._neighbors_tool.execute({"symbol_id": symbol_id})
         return [r.model_dump() for r in results]
+
+    # Hard cap on the number of caller-supplied seeds we expand. Mirrors the
+    # contract documented in #64: ≤10 input seeds × ≤max_neighbors_per_result
+    # neighbors per seed, so the worst-case response is still bounded even
+    # when the caller passes a large file_paths list. Tightens the cost
+    # envelope vs the per-config-only cap. Tunable via the PR's #64 lineage
+    # if telemetry shows we're losing recall.
+    _MAX_EXPANSION_SEEDS = 10
+
+    def expand_file_paths_via_graph(
+        self,
+        file_paths: list[str],
+        hops: int = 1,
+    ) -> tuple[list[str], list[str]]:
+        """Expand caller-supplied file paths to include 1-hop *import* graph
+        neighbors.
+
+        For each input file, look up its indexed symbols, fetch each
+        symbol's 1-hop ego graph filtered to **import edges only**, and
+        collect the file paths those neighbor symbols live in. The expanded
+        set is the union of inputs and neighbor files.
+
+        **Why imports only** (per #64): import is a *file-level* structural
+        dependency edge ("module A's contract is referenced by module B"),
+        which matches the granularity of the region-anchored decision
+        lookup. ``invokes`` / ``inherits`` / ``contains`` are *symbol-level*
+        edges that broaden the expansion to "any file whose symbols are
+        used by my file's symbols," which over-fires for the recall
+        contract this method backs. If telemetry surfaces real-world
+        contradictions that imports-only misses, widen the filter then —
+        not preemptively.
+
+        Returns ``(expanded, added)`` where ``expanded`` is the deduped
+        union (preserving caller order for inputs, then appending
+        newly-discovered neighbor files) and ``added`` is the list of file
+        paths NOT in the original input — the caller uses this to mark
+        expanded matches with lower confidence than direct pins.
+
+        Bounds (mirrors #64's spec):
+          - At most ``_MAX_EXPANSION_SEEDS`` (=10) input seeds are walked.
+          - For each seed, at most ``max_neighbors_per_result`` symbols are
+            walked; for each symbol, at most ``max_neighbors_per_result``
+            neighbors are inspected.
+          - Global cap on the added set is the product so the worst-case
+            response is still bounded for hub seeds.
+        Falls back gracefully (returns input unchanged + empty added list)
+        on any exception or if the symbol index is unavailable.
+
+        Used by ``handlers/preflight.py::_region_anchored_preflight`` to
+        lift the strict ``WHERE file_path IN $fps`` recall ceiling so the
+        contradiction-capture loop fires even when the caller picks a
+        structurally-near-but-not-exact file. See issue #173 (and the
+        superseded #64 for the imports-only design rationale).
+        """
+        if not file_paths or hops < 1:
+            return list(file_paths), []
+        try:
+            self._ensure_initialized()
+        except Exception:
+            return list(file_paths), []
+
+        per_symbol_cap = self._config.max_neighbors_per_result
+        # Cap total NEW paths added by expansion. With ≤10 seeds and
+        # ≤per_symbol_cap neighbors each, the worst case is bounded.
+        global_cap = max(per_symbol_cap, per_symbol_cap * self._MAX_EXPANSION_SEEDS)
+
+        # Cap the number of input seeds we expand from. Caller can still pass
+        # more file_paths to the underlying ledger lookup — we just don't
+        # blow up the graph walk.
+        seeds = [fp for fp in file_paths if fp][: self._MAX_EXPANSION_SEEDS]
+
+        original_set = {fp for fp in file_paths if fp}
+        added_paths: list[str] = []
+        added_set: set[str] = set()
+
+        for fp in seeds:
+            try:
+                symbols = self._db.lookup_by_file(fp) or []
+            except Exception:
+                continue
+            for sym in symbols[:per_symbol_cap]:
+                if len(added_paths) >= global_cap:
+                    break
+                sym_id = sym["id"]
+                try:
+                    neighbors = self._db.get_ego_graph(sym_id, hops=hops) or []
+                except Exception:
+                    continue
+                for n in neighbors[:per_symbol_cap]:
+                    if len(added_paths) >= global_cap:
+                        break
+                    if (n.get("edge_type") or "") != "imports":
+                        continue
+                    nfp = (n.get("file_path") or "").strip()
+                    if not nfp or nfp in original_set or nfp in added_set:
+                        continue
+                    added_set.add(nfp)
+                    added_paths.append(nfp)
+            if len(added_paths) >= global_cap:
+                break
+
+        # Preserve caller order for the input prefix; append newly-added in
+        # discovery order.
+        expanded: list[str] = []
+        for fp in file_paths:
+            if fp and fp not in expanded:
+                expanded.append(fp)
+        expanded.extend(added_paths)
+        return expanded, added_paths
 
     def neighbors_for(
         self,

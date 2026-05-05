@@ -50,12 +50,15 @@ test = [
   "tiktoken>=0.7.0,<1.0.0",
   "ruff>=0.5.0",
   "mypy>=1.10.0",
+  "build>=1.0.0",
 ]
 
 [project.scripts]
 bicameral-mcp = "server:cli_main"
 bicameral-mcp-classify = "cli.classify:main"
 bicameral-mcp-preflight-reminder = "scripts.hooks.preflight_reminder:main"
+bicameral-mcp-post-commit-sync-reminder = "scripts.hooks.post_commit_sync_reminder:main"
+bicameral-mcp-collision-capture-reminder = "scripts.hooks.post_preflight_capture_reminder:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
@@ -67,6 +70,13 @@ exclude = [
   "docs/demos/**/*.mp4",
 ]
 artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
+
+# `force-include` ships skill source unconditionally, regardless of Hatchling's
+# package-discovery rules. Required because `skills/` has no `__init__.py` and
+# `artifacts` alone does not bundle these files into the wheel (verified empty
+# pre-fix). Locked by tests/test_installer_packaging.py.
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "skills"
 
 [tool.ruff]
 line-length = 100
