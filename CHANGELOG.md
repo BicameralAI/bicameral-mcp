@@ -3,8 +3,45 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-<<<<<<< triage-from-dev
 ## [Unreleased]
+
+## v0.13.8 — Triage: `/bicameral:report-bug` skill
+
+Triage release per [DEV_CYCLE.md §10.5](docs/DEV_CYCLE.md). Adds a single new
+agent skill that lowers the bar to file actionable bug reports against
+`BicameralAI/bicameral-mcp` from inside the user's coding agent.
+
+### Added
+
+- `skills/bicameral-report-bug/SKILL.md` — `/bicameral:report-bug` slash
+  command. Bundles environment (bicameral-mcp version, Python, OS, IDE
+  detection), recent tool calls, and the most recent error trace into a
+  prefilled GitHub issue URL on `BicameralAI/bicameral-mcp` with `dev,bug`
+  labels, then opens it in the user's browser. Ships a Step 3.5
+  transparency preview gate modeled on
+  `setup_wizard._select_telemetry()` — concrete body preview, explicit
+  redaction count, explicit non-collection list, three-option
+  Yes / Edit / Cancel prompt — so the trust register matches the existing
+  telemetry consent flow. The skill never auto-submits; the user reviews
+  and clicks Submit on GitHub. Auto-discovered by
+  `setup_wizard._install_skills`, no wizard or handler changes needed.
+  Cherry-picked from dev `77d2a6a` (PR #183).
+
+### Schema
+
+No changes (still v11).
+
+### Breaking changes
+
+None.
+
+## v0.13.7 — Triage: preflight graph expansion + auto-fire fix + e2e CI carry-over
+
+Triage release per [DEV_CYCLE.md §10.5](docs/DEV_CYCLE.md). Bundles preflight
+recall improvements, the contradiction-capture flow, several hook fixes, and
+the v0 e2e + demo recording CI carried over from `dev`. The v0.13.6 bump on
+`main` was never tagged or published — v0.13.7 is the first release that
+ships this content.
 
 ### Added
 
@@ -13,20 +50,35 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 - `skills/bicameral-preflight/SKILL.md` Step 2 — documents the imports-only expansion + caller-side `confidence` and `sources_chained` semantics.
 - `tests/eval/preflight_dataset.jsonl` — M6 row flipped from XFAIL → live. Setup updated to specify graph-neighbor topology (`graph_neighbors`) and pinned-decision targets (`region_decisions_pinned_to`); the asserter now tests true graph-expansion semantics rather than mock-returns-decision-regardless-of-input.
 - `tests/eval/run_preflight_eval.py` — `_apply_setup` extended with `region_decisions_pinned_to` (path-aware decision lookup) and `graph_neighbors` (stub code_graph) so M6-style scenarios can be expressed in the dataset.
+- `.github/workflows/v0-user-flow-e2e.yml` — v0 user flow e2e workflow carried over from `dev` (PR #165). Two-stage: `assertions` (auto on PR) + `recording` (manual approval). First time this workflow exists on `main`; future `main`-bound PRs will trigger it.
+- `.github/workflows/lint-and-typecheck.yml` — wired ruff + mypy into CI's `[test]` extra and added the matching `[tool.ruff]` / `[tool.mypy]` config sections to `pyproject.toml`.
 
 ### Changed
 
 - `skills/bicameral-preflight/SKILL.md` Step 5.6 — judgment for contradiction-capture moves from the agent to the user via `AskUserQuestion` (Step 5.6.1). The agent no longer infers whether the prompt contradicts a surfaced decision; it asks the user (`supersede` / `keep_both` / `unrelated`) and acts mechanically on the answer (Step 5.6.2 — ingest + resolve_collision). The PostToolUse hook reminder now templates the disambiguation question rather than the bare ingest+resolve_collision sequence. Closes #175.
 - `tests/e2e/run_e2e_flows.py::assert_flow_2a` — pass criterion changed from "ingest+resolve_collision fired" to "`AskUserQuestion` invoked with disambiguation shape after preflight surfaced ≥1 decision." The user-side response can't be driven in headless `claude -p`, so the testable signal is the question invocation. The mechanical capture (Step 5.6.2) only fires after a human answers and is exercised in interactive Claude Code sessions, not CI.
+- Repo-wide ruff format pass (105 files) so the new lint job runs clean. No behavior changes; whitespace + import ordering only.
 
 ### Fixed
 
+- `skills/bicameral-preflight/SKILL.md` — preflight skill auto-fires on natural refactor prompts again. Previously the trigger phrase set was too narrow and missed common phrasings. Closes #146.
+- `scripts/hooks/session_end.py` — re-entrancy guard + `--auto-ingest` flag so the SessionEnd hook stops drifting when an ingest is already in flight (#147).
+- `scripts/hooks/post_preflight_capture_reminder.py` — captures refinements when the user's prompt contradicts a surfaced decision instead of silently dropping them (#154).
+- `scripts/hooks/preflight_intent.py` — `UserPromptSubmit` hook now installed for end users via the setup wizard, not just the dev environment.
+- `handlers/update.py` — `Path` was used without importing it; added `from pathlib import Path` so the update handler doesn't blow up at runtime.
+- `local_counters.py` — `_open_for_append_secure` re-typed as `IO[bytes]` (matches `dev`); the triage-cherry-pick had regressed to `os.PathLike`, which doesn't match `os.fdopen`.
+- `cli/__init__.py` — restored so `cli/_link_commit_runner.py` is unambiguously a package member; without it mypy bailed before checking anything.
+
 ### Schema
+
+No changes.
 
 ### Security
 
-=======
->>>>>>> main
+No changes.
+
+---
+
 ## v0.13.6 — Triage: dashboard tooltip + capture-corrections source fix + #108 sim — built via [QorLogic SDLC](https://github.com/MythologIQ-Labs-LLC/qor-logic)
 
 Triage release per [DEV_CYCLE.md §10.5](DEV_CYCLE.md). Forwards three
