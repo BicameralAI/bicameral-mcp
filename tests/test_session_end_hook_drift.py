@@ -31,7 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 CANONICAL_POSIX_COMMAND = (
     '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
     "BICAMERAL_SESSION_END_RUNNING=1 "
-    "python scripts/hooks/session_end_queue_writer.py || true"
+    "python3 scripts/hooks/session_end_queue_writer.py || true"
 )
 
 CANONICAL_WIN32_COMMAND = (

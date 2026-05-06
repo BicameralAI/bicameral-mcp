@@ -20,10 +20,13 @@ import sys
 import setup_wizard
 
 
-def test_session_end_command_posix_uses_python_not_python3() -> None:
+def test_session_end_command_posix_uses_python3_not_python() -> None:
+    """POSIX (Linux/macOS) uses python3 — Ubuntu/Debian/RHEL/Fedora
+    install python3 by default; `python` is NOT a default symlink and
+    requires `python-is-python3` (Ubuntu) or equivalent. python3 is
+    the only reliable cross-distro POSIX choice."""
     cmd = setup_wizard._build_session_end_command(platform="linux")
-    assert "python scripts/hooks/session_end_queue_writer.py" in cmd
-    assert "python3 scripts/hooks/" not in cmd
+    assert "python3 scripts/hooks/session_end_queue_writer.py" in cmd
 
 
 def test_session_end_command_darwin_matches_posix_shape() -> None:

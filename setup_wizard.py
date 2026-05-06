@@ -371,16 +371,16 @@ def _session_end_command_for_platform(platform: str) -> str:
     """Return the SessionEnd hook command rendered for the target platform.
 
     POSIX shape (linux, darwin, anything not win32) uses bash conditional
-    chaining with the ``[ -d ]`` / ``[ -z ]`` test idiom and the
-    ``BICAMERAL_SESSION_END_RUNNING`` re-entrancy guard.
+    chaining with the ``[ -d ]`` / ``[ -z ]`` test idiom, the
+    ``BICAMERAL_SESSION_END_RUNNING`` re-entrancy guard, and the
+    ``python3`` interpreter (Ubuntu/Debian/RHEL/Fedora install
+    ``python3`` by default; ``python`` is NOT a default symlink and
+    requires ``python-is-python3`` or equivalent — so ``python3`` is
+    the only reliable cross-distro choice).
 
     Windows shape uses cmd.exe ``if exist`` / ``if not defined``
-    conditional with the same re-entrancy guard via ``set``. Windows
-    installers don't symlink ``python3``, only ``python`` — so both
-    branches use ``python`` (which on modern Linux distros is also
-    Python 3 by default; older distros that retain a python2 link
-    typically symlink ``python`` → ``python3`` when Python 3 is
-    installed).
+    conditional and the ``python`` interpreter (Windows installers
+    expose ``python`` and ``py`` but not ``python3``).
     """
     if platform == "win32":
         return (
@@ -391,7 +391,7 @@ def _session_end_command_for_platform(platform: str) -> str:
     return (
         '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
         "BICAMERAL_SESSION_END_RUNNING=1 "
-        "python scripts/hooks/session_end_queue_writer.py || true"
+        "python3 scripts/hooks/session_end_queue_writer.py || true"
     )
 
 
