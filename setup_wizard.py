@@ -960,7 +960,7 @@ def _write_collaboration_config(
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
         "signer_email_fallback: local-part-only\n"
-        "render_source_attribution: full\n"
+        "render_source_attribution: redacted\n"  # #209: privacy-positive default (was "full")
         "preflight_bypass_tracking: enabled\n",
         encoding="utf-8",
     )
@@ -969,8 +969,9 @@ def _write_collaboration_config(
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
     print("  Signer-email fallback: local-part-only (privacy-positive default)")
     print(
-        "  Source-attribution rendering: full (legacy verbatim — flip to "
-        "`redacted` or `hidden` in config.yaml to opt into privacy-positive shape)"
+        "  Source-attribution rendering: redacted (privacy-positive default — "
+        "names + dates replaced with placeholders; flip to `full` or `hidden` "
+        "in config.yaml to change)"
     )
     print("  Preflight bypass tracking: enabled (writes ~/.bicameral/preflight_events.jsonl)")
 
