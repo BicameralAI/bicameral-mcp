@@ -77,11 +77,24 @@ _PRODUCT_STAGE_MSG = (
 _ONBOARDED_MARKER = Path.home() / ".bicameral" / "onboarded"
 
 
-# #200 Phase 3: render_source_attribution policy patterns. The redacted
-# mode preserves structural shape (so the operator can see "this is from
-# a meeting on a date" without seeing who or when).
-_NAME_PATTERN = re.compile(r"\b[A-Z][a-z]+\b")
+# #200 Phase 3 / #209 refinement: render_source_attribution policy patterns.
+# The redacted mode preserves structural shape (so the operator can see
+# "this is from a meeting on a date" without seeing who or when) while
+# leaving capitalized context tokens (Sprint, Linear, GitHub, etc.) intact.
+#
+# v1 used a broad `\b[A-Z][a-z]+\b` that redacted every capitalized lowercase
+# token — including platform/tool names — and broke the agent's structural
+# parsing of source_refs (#209). v2 uses four POSITIONAL-cue patterns: a name
+# only matches when it follows an explicit cue (`· `, `, ` adjacent to a date,
+# `^Speaker:\s`, `^From:\s`). Context tokens never follow these cues by
+# construction, so no allowlist is needed.
 _DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_NAME_AFTER_BULLET = re.compile(r"(?<=· )[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*")
+_NAME_AFTER_COMMA = re.compile(
+    r"(?<=, )[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*(?=,?\s+\d{4}-\d{2}-\d{2})"
+)
+_SPEAKER_NAME = re.compile(r"(?<=^Speaker:\s)[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*", re.MULTILINE)
+_FROM_NAME = re.compile(r"(?<=^From:\s)[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*", re.MULTILINE)
 
 
 def _apply_attribution_policy(matches: list, mode: str) -> list:
@@ -89,9 +102,10 @@ def _apply_attribution_policy(matches: list, mode: str) -> list:
 
     Modes (from `.bicameral/config.yaml: render_source_attribution`):
       - `full`: pass through verbatim (legacy)
-      - `redacted` (default): replace name + date patterns with placeholders;
-        preserves structural shape so the operator sees "Source: <NAME_REDACTED>
-        review · <NAME_REDACTED>, <DATE_REDACTED>" instead of full attribution
+      - `redacted` (default since #209): replace name + date patterns with
+        placeholders. Names match only after explicit positional cues (`· `,
+        `, ` adjacent to a date, `Speaker:`, `From:`); context tokens like
+        Sprint/Linear/GitHub survive because they never follow these cues.
       - `hidden`: blank source_ref entirely
 
     Returns a new list of DecisionMatch instances (Pydantic copies via
@@ -105,8 +119,12 @@ def _apply_attribution_policy(matches: list, mode: str) -> list:
         if mode == "hidden":
             new_source_ref = ""
         else:  # redacted
-            stripped = _DATE_PATTERN.sub("<DATE_REDACTED>", m.source_ref)
-            new_source_ref = _NAME_PATTERN.sub("<NAME_REDACTED>", stripped)
+            redacted = _DATE_PATTERN.sub("<DATE_REDACTED>", m.source_ref)
+            redacted = _NAME_AFTER_BULLET.sub("<NAME_REDACTED>", redacted)
+            redacted = _NAME_AFTER_COMMA.sub("<NAME_REDACTED>", redacted)
+            redacted = _SPEAKER_NAME.sub("<NAME_REDACTED>", redacted)
+            redacted = _FROM_NAME.sub("<NAME_REDACTED>", redacted)
+            new_source_ref = redacted
         transformed.append(m.model_copy(update={"source_ref": new_source_ref}))
     return transformed
 

@@ -43,9 +43,13 @@ def test_full_mode_passes_through_verbatim() -> None:
 
 
 def test_redacted_mode_replaces_name_and_date_patterns() -> None:
-    matches = [_make_match("Brian 2026-03-22")]
+    # #209 refinement: name redaction now requires a positional cue
+    # (`· `, `, ` adjacent to a date, `Speaker:`, `From:`). Bare names
+    # like "Brian 2026-03-22" without any cue pass through unchanged
+    # (modulo the date, which is unambiguous and doesn't need a cue).
+    # Use the canonical attribution shape so the name redaction fires.
+    matches = [_make_match("Sprint review · Brian, 2026-03-22")]
     result = _apply_attribution_policy(matches, mode="redacted")
-    # "Brian" → <NAME_REDACTED>, "2026-03-22" → <DATE_REDACTED>
     assert "Brian" not in result[0].source_ref
     assert "2026-03-22" not in result[0].source_ref
     assert "<NAME_REDACTED>" in result[0].source_ref
