@@ -13,6 +13,10 @@ This document is **operator-consumed prose**, not LLM-consumed agent-instruction
 
 > **Codex reviewer note:** Overall, this is a strong code-grounded brief: the component inventory is concrete, the gap IDs are stable, and the repeated distinction between instruction-only guidance and deterministic gates is exactly the right central thesis. My comments below are mainly about audit defensibility: tighten product-vs-operator obligations, avoid overstating local-only risks as hosted/team risks, and make sure every high-priority finding has a reproducible evidence pointer.
 
+## Review-history inputs
+
+The Codex, Kilo, and Gemini sections below are raw review inputs preserved for audit trail. Some comments describe earlier unresolved states; the authoritative resolution is the **Reviewer disposition pass** immediately after them.
+
 ## Codex review comments
 
 1. **Deployment-mode severity needs one more axis.** Several findings are clearly severe for a hosted, team-server, or shared deployment, but less severe for a single-user local stdio MCP process. SOC2-01 is the clearest example: "no auth on local stdio" is mostly a boundary statement, while "no auth on shared/team service" is audit-blocking. Consider adding a `Deployment` or `Trigger` column to the gap table so P0 findings remain defensible.
@@ -120,11 +124,11 @@ Per Codex-2 #1: a single disposition table reconciling all four review layers, a
 | Codex-2 | 1 | Reviewer-disposition pass | **applied** (this section) | This table |
 | Codex-2 | 2 | Three-column deployment-profile matrix | **defer** | Single-column trigger from Codex-1 #1 is the compromise; full matrix tracked for follow-up |
 | Codex-2 | 3 | Consent revocation semantics | **applied** (this commit) | Folded into new gap GDPR-09 |
-| Codex-2 | 4 | Deterministic gates as testable control requirements | **applied** (this commit) | New § 6.1 "Control-acceptance criteria template" applies to every DG-typed gap; will land on issue bodies via comments |
+| Codex-2 | 4 | Deterministic gates as testable control requirements | **applied** (this commit) | New § 6.2 "Control-acceptance criteria template" applies to every DG-typed gap; will land on issue bodies via comments |
 | Codex-2 | 5 | Configuration precedence + fail-closed behavior | **applied** (this commit) | New short § 1.11 "Configuration precedence + fail-closed model" subsection |
 | Codex-2 | 6 | MCP host UX as external dependency | **applied** (this commit) | § 1.1 trust boundary extended; new gap **MCP-01** |
 
-**Net new gap IDs introduced in this pass**: GDPR-08, GDPR-09, LLM-11, MCP-01. Existing reclassification: LLM-06 P0/M → P1/M (narrowed scope). Updated counts in § 5 below.
+**Net new gap IDs introduced in this pass**: CFG-01, GDPR-08, GDPR-09, LLM-11, MCP-01. Existing reclassification: LLM-06 P0/M → P1/M (narrowed scope). Updated counts in § 5 below.
 
 **Filed issues affected**:
 - **#214 (LLM-06)**: relabel `P0` → `P1`, update title + body to reflect narrowed scope.
@@ -541,10 +545,10 @@ For each: **apply?** / **stance** / **deterministic gate (now)** / **gap IDs**.
 
 | Standard | Apply? | Stance | Deterministic gate (now) | Gap IDs |
 |---|---|---|---|---|
-| GDPR | Yes | Operator-side controller; bicameral-mcp helps with data minimization by default | telemetry.py allowlist; preflight_telemetry hashing; signer_email_fallback; consent.py | GDPR-01..07 |
+| GDPR | Yes | Operator-side controller; bicameral-mcp helps with data minimization by default | telemetry.py allowlist; preflight_telemetry hashing; signer_email_fallback; consent.py | GDPR-01..09 |
 | SOC 2 | Yes (B2B sales) | Local-install posture; team deployments need extra controls | qor-logic gate chain; Merkle ledger; CI regression suite | SOC2-01..06 |
-| OWASP Top 10 | Yes | Mostly clean except A04 (instruction-only defaults) and A06 (no SBOM) | list-form subprocess; parameter-bound queries; HTTPS-only outbound | OWASP-01..06 |
-| OWASP LLM Top 10 | Yes — high novelty | Highest concentration of unmitigated risk | render-source-attribution gate (#200 P3); preflight HITL (#175); record_bypass tracking | LLM-01..09 |
+| OWASP Top 10 | Yes | Mostly clean except A04 (instruction-only defaults), A05 (config fail-closed model), and A06 (no SBOM) | list-form subprocess; parameter-bound queries; HTTPS-only outbound | OWASP-01..06, CFG-01 |
+| OWASP LLM Top 10 | Yes — high novelty | Highest concentration of unmitigated risk | render-source-attribution gate (#200 P3); preflight HITL (#175); record_bypass tracking | LLM-01..11, MCP-01 |
 | NIST AI RMF | Yes | Plan-time gates strong; production-time MEASURE absent | qor-logic plan/audit/implement/substantiate | NIST-RMF-01..04 |
 | EU AI Act | Yes — limited risk | Limited-risk classification undeclared in repo | qor-logic Art. 9 contract for high-risk-target operations | AI-ACT-01..03 |
 | NIST CSF 2.0 | Conditional | Maps onto SOC 2 + OWASP | (covered) | (covered above) |
@@ -553,7 +557,7 @@ For each: **apply?** / **stance** / **deterministic gate (now)** / **gap IDs**.
 | HIPAA | Conditional | No PHI processing | (no detect-and-refuse today) | HIPAA-01 |
 | PCI DSS | Conditional | No cardholder data | (no detect-and-refuse today) | PCI-01 |
 | ISO 27001 / 27701 | Conditional | Convertible from SOC 2 | (overlap) | ISO-01 |
-| CCPA / CPRA | Yes | Parallels GDPR | (covered) | (GDPR-* coverage) |
+| CCPA / CPRA | Yes | Parallels GDPR | (covered) | (GDPR-* coverage, including GDPR-08/09) |
 | BIPA / state-specific | No | No biometric ingestion path | structural scope-out | (none) |
 
 ---
@@ -617,7 +621,7 @@ Type: **DG** deterministic-gate / **BS** boundary-statement / **DOC** documentat
 | FIPS-01 | FIPS 140-3 | (cross) | No documented FIPS stance | P3 | L | all | DOC |
 | ISO-01 | ISO 27001/27701 | (cross) | No ISO control-mapping doc | P3 | L | hosted | DOC |
 
-**Gap counts (post-disposition)**: 5 P0 (was 5; LLM-06 downgraded to P1; LLM-11 added as P0), 19 P1 (was 18; LLM-06 added scope-narrowed; MCP-01 added), 16 P2 (was 13; +CFG-01, GDPR-08, GDPR-09), 5 P3 unchanged. Total **45 gap IDs** (up from 41), of which 7 are explicit folds.
+**Gap counts (post-disposition)**: 5 P0 (was 5; LLM-06 downgraded to P1; LLM-11 added as P0), 20 P1 (was 18; LLM-06 added scope-narrowed; MCP-01 added), 16 P2 (was 13; +CFG-01, GDPR-08, GDPR-09), 5 P3 unchanged. Total **46 gap IDs** (up from 41), of which 7 are explicit folds.
 
 ---
 
@@ -638,10 +642,10 @@ Several P1 gaps share an implementation epic. Filing them as separate issues wit
 
 - **Ingest boundary guardrails epic** — covers LLM-02 (size limit), LLM-08 (rate limit), LLM-04 (PII/secret/PHI/PAN — already filed as #213), LLM-01 (prompt-injection canary — already filed as #212). One design surface (`handlers/ingest.py` middleware), one set of acceptance criteria, four sub-tasks.
 - **Per-tool authority gradation epic** — covers LLM-05 (per-tool authority class), LLM-09 (HITL on ratify/link_commit/set_decision_level). Both want the same out-of-band-confirmation primitive; building it twice is wasteful.
-- **Supply-chain signing epic** — covers OWASP-01 (SBOM), SOC2-03 (signed releases), SSDF-01 (signed artifacts), OWASP-05 (RECOMMENDED_VERSION pinning), LLM-11 (signed hooks-manifest), LLM-06 (signed skills-manifest, scope-narrowed). One signing pipeline, multiple consumers.
+- **Supply-chain and release-integrity epic** — covers OWASP-01 (SBOM), OWASP-03 (lockfile or floor-only stance), SOC2-03 (signed releases), SSDF-01 (signed artifacts), OWASP-05 (RECOMMENDED_VERSION pinning), LLM-11 (signed hooks-manifest), LLM-06 (signed skills-manifest, scope-narrowed). One release-integrity design, multiple consumers.
 - **Telemetry & consent epic** — covers GDPR-04 (retention), GDPR-09 (versioning + revocation), NIST-RMF-02 (production MEASURE).
 
-The remaining P1s (GDPR-01, GDPR-02, LLM-03, LLM-07, NIST-RMF-01, SOC2-02, SOC2-06) are individually scoped and don't fold into an epic.
+The remaining P1s (MCP-01, GDPR-01, GDPR-02, GDPR-05, LLM-03, LLM-07, NIST-RMF-01, SOC2-02, SOC2-06) are individually scoped and don't fold cleanly into an epic.
 
 ### § 6.2 Control-acceptance criteria template (per Codex-2 #4)
 
@@ -660,7 +664,7 @@ Issue bodies for every DG gap should adopt this template as their acceptance cri
 
 ## § 7. Filed issues
 
-P0 gaps filed individually (4 new issues + #205 covering OWASP-04). P1 individual issues + P2/P3 rollups deferred pending operator review of this brief; tracking entries below remain `TBD` until the operator's call.
+Initial P0 gaps were filed individually (4 new issues + #205 covering OWASP-04). Post-disposition added **LLM-11** as a new P0 that still needs filing or folding into the supply-chain signing epic. P1 individual issues + P2/P3 rollups remain deferred pending operator review of this brief; tracking entries below remain `TBD` until the operator's call.
 
 | Gap ID(s) | Issue # | Title (short) |
 |---|---|---|
@@ -668,6 +672,8 @@ P0 gaps filed individually (4 new issues + #205 covering OWASP-04). P1 individua
 | LLM-01 | #212 | LLM01 prompt-injection canary scan on bicameral.ingest |
 | LLM-04 + HIPAA-01 + PCI-01 (fold) | #213 | LLM06 PII/secret/PHI/PAN detect-and-refuse on ingest |
 | LLM-06 | #214 | LLM05 supply chain — sign skills/ payload |
+| LLM-11 | TBD | LLM05 supply chain — signed hook/config manifest for host config writes |
+| MCP-01 | TBD | LLM07 — MCP host UX is not a security gate |
 | SOC2-01 | #215 | SOC2 CC1/CC6 — declare MCP trust boundary + auth shim plan |
 | GDPR-01 | TBD | GDPR Art. 17 — right-to-erasure procedure for Merkle ledger |
 | GDPR-02 | TBD | GDPR Art. 15 — data-subject-access CLI |
@@ -685,7 +691,7 @@ P0 gaps filed individually (4 new issues + #205 covering OWASP-04). P1 individua
 | SOC2-06 + OWASP-06 | TBD | SOC2 CC + OWASP A09 — structured audit log emission |
 | NIST-RMF-01 + AI-ACT-02 | TBD | NIST AI RMF MAP-3.1 + EU AI Act — prohibited-uses declaration |
 | NIST-RMF-02 | TBD | NIST AI RMF MEASURE — production AI-risk telemetry |
-| (P2 rollup) | TBD | compliance audit P2 backlog (13 IDs) |
+| (P2 rollup incl. CFG-01, GDPR-08, GDPR-09) | TBD | compliance audit P2 backlog (16 IDs) |
 | (P3 rollup) | TBD | compliance audit P3 backlog (5 IDs) |
 
 ---
