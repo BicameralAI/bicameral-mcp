@@ -633,6 +633,138 @@ def _install_git_pre_push_hook(repo_path: Path) -> bool:
     return True
 
 
+# Authoritative list of bicameral MCP tools the wizard offers to
+# pre-approve at install time. Excludes bicameral_reset (destructive —
+# always prompts) and extract_symbols (no longer exposed as an MCP tool).
+_BICAMERAL_ALLOW_TOOLS: list[str] = sorted(
+    [
+        "mcp__bicameral__bicameral_bind",
+        "mcp__bicameral__bicameral_dashboard",
+        "mcp__bicameral__bicameral_feedback",
+        "mcp__bicameral__bicameral_history",
+        "mcp__bicameral__bicameral_ingest",
+        "mcp__bicameral__bicameral_judge_gaps",
+        "mcp__bicameral__bicameral_link_commit",
+        "mcp__bicameral__bicameral_preflight",
+        "mcp__bicameral__bicameral_ratify",
+        "mcp__bicameral__bicameral_resolve_collision",
+        "mcp__bicameral__bicameral_resolve_compliance",
+        "mcp__bicameral__bicameral_skill_begin",
+        "mcp__bicameral__bicameral_skill_end",
+        "mcp__bicameral__bicameral_update",
+        "mcp__bicameral__bicameral_usage_summary",
+        "mcp__bicameral__get_neighbors",
+        "mcp__bicameral__validate_symbols",
+    ]
+)
+_BICAMERAL_DENY_TOOLS: list[str] = ["mcp__bicameral__bicameral_reset"]
+
+
+def _confirm_permissions_diff(
+    settings_path: Path, new_allow: list[str], new_deny: list[str]
+) -> bool:
+    """Show the diff that would be written and ask y/N.
+
+    Non-interactive runs (CI, scripted setup) auto-approve. Interactive
+    runs default to "no" — explicit consent is required to write the
+    allowlist, since it persists across every Claude Code session on the
+    machine.
+    """
+    print()
+    print("  Pre-approve bicameral MCP tools — about to write:")
+    print(f"    {settings_path}")
+    print()
+    print("    permissions.allow += [")
+    for t in new_allow:
+        print(f'        "{t}",')
+    print("    ]")
+    if new_deny:
+        print("    permissions.deny += [")
+        for t in new_deny:
+            print(f'        "{t}",')
+        print("    ]")
+    print()
+    print("  Only the bicameral MCP tools above are pre-approved.")
+    print("  Bash, Edit, Write, and every non-bicameral tool still prompt")
+    print("  for permission every time — this wizard does not auto-approve")
+    print("  any shell call or file write.")
+    print()
+    print("  This writes to your *user-level* ~/.claude/settings.json —")
+    print("  the project .claude/settings.json is never touched, and you")
+    print("  can revoke any line by editing the file above.")
+    print()
+
+    if not _is_interactive():
+        return True
+
+    raw = input("  Pre-approve these bicameral MCP tools? [y/N] ").strip().lower()
+    return raw in ("y", "yes")
+
+
+def _install_user_permissions_allowlist() -> bool:
+    """Pre-approve bicameral MCP tools in ~/.claude/settings.json.
+
+    Implements §1 of the v0 productization plan — moves the permission
+    friction to install time so catch-up flows (pure-read ledger queries
+    fired from a SessionStart brief) don't pop a prompt for every tool
+    call. The user explicitly consents once; after that, only writes
+    (Bash, Edit, Write) prompt.
+
+    Scope discipline:
+      - User-level only. Never writes to project .claude/settings.json —
+        that file gets committed and dragging permission state into the
+        repo pollutes every clone.
+      - Bicameral MCP tools only. No Bash, no Read/Grep/Glob, no
+        non-bicameral tools. Shell calls keep their per-invocation
+        permission prompt.
+      - bicameral_reset is deny-listed, not allow-listed. It wipes the
+        ledger and must always prompt.
+
+    Idempotent — re-running adds only entries the user is missing.
+    Returns True if anything was written.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    permissions = existing.setdefault("permissions", {})
+    allow_list = permissions.get("allow")
+    if not isinstance(allow_list, list):
+        allow_list = []
+        permissions["allow"] = allow_list
+    deny_list = permissions.get("deny")
+    if not isinstance(deny_list, list):
+        deny_list = []
+        permissions["deny"] = deny_list
+
+    new_allow = [t for t in _BICAMERAL_ALLOW_TOOLS if t not in allow_list]
+    new_deny = [t for t in _BICAMERAL_DENY_TOOLS if t not in deny_list]
+    if not new_allow and not new_deny:
+        print("  Permissions: bicameral MCP tools already pre-approved — no change")
+        return False
+
+    if not _confirm_permissions_diff(settings_path, new_allow, new_deny):
+        print("  Permissions: skipped — settings.json untouched")
+        return False
+
+    allow_list.extend(new_allow)
+    deny_list.extend(new_deny)
+    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    print(f"  Permissions: pre-approved {len(new_allow)} bicameral MCP tool(s) in {settings_path}")
+    if new_deny:
+        print(
+            f"               deny-listed {len(new_deny)} destructive tool(s) "
+            "(reset will always prompt)"
+        )
+    return True
+
+
 def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
     skills_src = Path(__file__).parent / "skills"
@@ -909,6 +1041,10 @@ def run_setup(
             print(
                 "  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end"
             )
+        # Step 6b — pre-approve bicameral MCP tools at user-level so
+        # catch-up flows do not spam the user with permission prompts.
+        # Only bicameral MCP tools; shell calls remain prompted.
+        _install_user_permissions_allowlist()
 
     # Step 7: Git post-commit hook (Guided mode only)
     if guided:
