@@ -29,10 +29,7 @@ def _bundled_manifest_paths() -> tuple[Path, Path, Path] | None:
     """
     candidates = [
         Path(sys.prefix) / "share" / "bicameral-mcp" / "hooks-manifest.json",
-        Path(__file__).parent.parent
-        / "share"
-        / "bicameral-mcp"
-        / "hooks-manifest.json",
+        Path(__file__).parent.parent / "share" / "bicameral-mcp" / "hooks-manifest.json",
     ]
     for c in candidates:
         if c.exists():
@@ -51,10 +48,7 @@ def _verify_intended_writes(*event_types: str) -> None:
     from release import hooks_source, manifest_verify
 
     by_event = {h["event_type"]: h["command"] for h in hooks_source.BICAMERAL_HOOKS}
-    expected = {
-        et: hashlib.sha256(by_event[et].encode("utf-8")).hexdigest()
-        for et in event_types
-    }
+    expected = {et: hashlib.sha256(by_event[et].encode("utf-8")).hexdigest() for et in event_types}
     manifest_verify.verify_hooks_or_bypass(*paths, expected)
 
 
