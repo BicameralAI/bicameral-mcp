@@ -41,6 +41,7 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 ### Fixed
 
 - `bicameral-report-bug` skill: `.bicameral/config.yaml` now defaults to keys-only inclusion in bug-report bodies (#200 finding A4). Workspace IDs, tokens, allowlists, and env-specific values are stripped by default; an explicit "include verbatim" toggle in the Step 3.5 transparency preview lets the operator opt in when the bug genuinely needs the values (e.g. a YAML parser regression). Defense-in-depth: the secret-redaction regex still runs on verbatim contents. Closes A4 in #200; A1 + A6 + partial A7 closed by #201.
+- Flow 3 e2e prompt clarified to use imperative shell phrasing for `git add` + `git commit` (#197). Resolves the "agent did NOT commit" flake observed on PR #194 + #195 e2e runs where the agent interpreted "stage and commit" as a non-shell verb. Adds a "Debugging Flow 3 fails" subsection to `tests/e2e/README.md` capturing the investigation order so the next maintainer has a starting checklist.
 
 ### Schema
 
