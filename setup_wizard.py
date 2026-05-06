@@ -938,7 +938,7 @@ def _write_collaboration_config(
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
         "signer_email_fallback: local-part-only\n"
-        "render_source_attribution: redacted\n"
+        "render_source_attribution: full\n"
         "preflight_bypass_tracking: enabled\n",
         encoding="utf-8",
     )
@@ -946,7 +946,10 @@ def _write_collaboration_config(
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
     print("  Signer-email fallback: local-part-only (privacy-positive default)")
-    print("  Source-attribution rendering: redacted (names + dates stripped from preflight output)")
+    print(
+        "  Source-attribution rendering: full (legacy verbatim — flip to "
+        "`redacted` or `hidden` in config.yaml to opt into privacy-positive shape)"
+    )
     print("  Preflight bypass tracking: enabled (writes ~/.bicameral/preflight_events.jsonl)")
 
 

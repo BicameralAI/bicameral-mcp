@@ -18,7 +18,14 @@ _SIGNER_FALLBACK_MODES = frozenset({"redact", "local-part-only", "full"})
 _DEFAULT_SIGNER_FALLBACK_MODE = "local-part-only"
 
 _RENDER_ATTRIBUTION_MODES = frozenset({"full", "redacted", "hidden"})
-_DEFAULT_RENDER_ATTRIBUTION_MODE = "redacted"
+# v1 default is `full` (legacy verbatim) for backward-compat with the e2e
+# harness's agent-parsing of source_refs. The current `redacted` regex is
+# overbroad — it replaces all `[A-Z][a-z]+` patterns including meaningful
+# tokens like "Sprint", "Linear", "Slack", which strips the source_ref of
+# agent-parseable structure. Default flips to `redacted` once the regex
+# is refined to match only true name/date patterns. Tracked separately;
+# config field already exposes the privacy-positive options for opt-in.
+_DEFAULT_RENDER_ATTRIBUTION_MODE = "full"
 
 _BYPASS_TRACKING_MODES = frozenset({"enabled", "disabled"})
 _DEFAULT_BYPASS_TRACKING_MODE = "enabled"
