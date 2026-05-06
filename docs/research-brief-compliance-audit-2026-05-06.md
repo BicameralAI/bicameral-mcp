@@ -483,15 +483,15 @@ Two rollups + one issue per P0/P1 (after folding) = manageable triage queue.
 
 ## § 7. Filed issues
 
-(Populated by the issue-filing step. Each row maps a gap ID to a filed `BicameralAI/bicameral-mcp` issue.)
+P0 gaps filed individually (4 new issues + #205 covering OWASP-04). P1 individual issues + P2/P3 rollups deferred pending operator review of this brief; tracking entries below remain `TBD` until the operator's call.
 
 | Gap ID(s) | Issue # | Title (short) |
 |---|---|---|
-| OWASP-04 | (#205 already exists — this gap IS issue #205) | doctrine: deterministic privacy/security boundaries |
-| LLM-01 | TBD | LLM01 prompt-injection canary scan on bicameral.ingest |
-| LLM-04 + HIPAA-01 + PCI-01 + (fold) | TBD | LLM06 PII/secret/PHI/PAN detect-and-refuse on ingest |
-| LLM-06 | TBD | LLM05 supply chain — sign skills/ payload |
-| SOC2-01 | TBD | SOC2 CC1/CC6 — declare MCP trust boundary + auth shim plan |
+| OWASP-04 | #205 (already exists — this gap IS issue #205) | doctrine: deterministic privacy/security boundaries |
+| LLM-01 | #212 | LLM01 prompt-injection canary scan on bicameral.ingest |
+| LLM-04 + HIPAA-01 + PCI-01 (fold) | #213 | LLM06 PII/secret/PHI/PAN detect-and-refuse on ingest |
+| LLM-06 | #214 | LLM05 supply chain — sign skills/ payload |
+| SOC2-01 | #215 | SOC2 CC1/CC6 — declare MCP trust boundary + auth shim plan |
 | GDPR-01 | TBD | GDPR Art. 17 — right-to-erasure procedure for Merkle ledger |
 | GDPR-02 | TBD | GDPR Art. 15 — data-subject-access CLI |
 | GDPR-05 | TBD | GDPR Art. 5(1)(c) — signer-email default review |
