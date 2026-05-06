@@ -11,11 +11,51 @@ Usage: bicameral-mcp setup
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _bundled_manifest_paths() -> tuple[Path, Path, Path] | None:
+    """Locate bundled ``hooks-manifest.json`` + ``.sig`` + ``.crt``.
+
+    Returns ``None`` when no artifacts are bundled (dev install from
+    source checkout — no production wheel context, so no LLM-11 threat
+    surface). Returns the triple when artifacts are found alongside the
+    installed package via hatch ``shared-data``.
+    """
+    candidates = [
+        Path(sys.prefix) / "share" / "bicameral-mcp" / "hooks-manifest.json",
+        Path(__file__).parent.parent
+        / "share"
+        / "bicameral-mcp"
+        / "hooks-manifest.json",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c, Path(str(c) + ".sig"), Path(str(c) + ".crt")
+    return None
+
+
+def _verify_intended_writes(*event_types: str) -> None:
+    """Verify the signed manifest carries the SHA-256s of the commands the
+    caller is about to write. No-op when no bundled manifest exists
+    (dev install). Honors ``BICAMERAL_HOOKS_VERIFY_DISABLE=1`` bypass.
+    """
+    paths = _bundled_manifest_paths()
+    if paths is None:
+        return
+    from release import hooks_source, manifest_verify
+
+    by_event = {h["event_type"]: h["command"] for h in hooks_source.BICAMERAL_HOOKS}
+    expected = {
+        et: hashlib.sha256(by_event[et].encode("utf-8")).hexdigest()
+        for et in event_types
+    }
+    manifest_verify.verify_hooks_or_bypass(*paths, expected)
 
 
 def _ensure_utf8_stdout(platform: str | None = None) -> None:
@@ -509,6 +549,12 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     Idempotent — safe to call on every setup run. Returns True if any new
     entry was written, False if all four were already present.
     """
+    _verify_intended_writes(
+        "claude:PostToolUse:Bash",
+        "claude:PostToolUse:bicameral_preflight",
+        "claude:SessionEnd",
+        "claude:UserPromptSubmit",
+    )
     settings_path = repo_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -618,6 +664,7 @@ def _install_git_post_commit_hook(repo_path: Path) -> bool:
 
     Returns True if anything was written.
     """
+    _verify_intended_writes("git:post-commit")
     git_root = _find_git_root(repo_path)
     if git_root is None:
         return False
@@ -670,6 +717,7 @@ def _install_git_pre_push_hook(repo_path: Path) -> bool:
 
     Returns True if anything was written.
     """
+    _verify_intended_writes("git:pre-push")
     git_root = _find_git_root(repo_path)
     if git_root is None:
         return False
