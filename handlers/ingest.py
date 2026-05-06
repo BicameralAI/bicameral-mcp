@@ -2,6 +2,19 @@
 
 Thin orchestration: validate payload, resolve symbols, ingest into ledger, then sync.
 Auto-grounding removed in caller-LLM binding flow (v0.5.1+).
+
+Limitations — aggregate-rate worst case (#230 Finding 2):
+  The token-bucket rate gate slows BURST consumption per session but does
+  not bound aggregate throughput across time. Default config (burst=10,
+  refill=1/s, size cap=1 MiB) admits ~70 ingests in any 60-second window
+  and 1 MiB/s sustained, which works out to ~86 GiB/day in the worst case
+  (runaway agent loop, model regression producing infinite tool calls,
+  prompt-injection-hijacked re-ingest cycle, dev-time infinite-loop bug).
+  Not a security crisis — the size cap bounds per-payload damage and the
+  in-process registry is reset on server restart — but it IS an operator-
+  side disaster (ledger writer churn + disk pressure). Stricter aggregate
+  enforcement (sliding-window cross-session bound) is deferred to the
+  team-server-activation track.
 """
 
 from __future__ import annotations
@@ -14,6 +27,13 @@ import time
 from datetime import UTC
 
 import preflight_telemetry
+
+# #232 Finding 1: cross-module use of context.py's private truthy frozenset
+# is intentional — it's the canonical vocabulary for BICAMERAL_* env-var
+# toggles (1/true/yes/on, case-insensitive). Renaming to a public alias is
+# out of scope here; #232 acceptance only requires vocabulary parity across
+# the existing toggle reads.
+from context import _GUIDED_MODE_TRUTHY
 from contracts import (
     BriefEnvelope,
     BriefGap,
@@ -62,8 +82,21 @@ def _check_payload_size(payload: dict, max_bytes: int) -> None:
     every field the agent might supply, language-agnostic, single
     comparison. Pure: no telemetry side-effect; the wrapping try/except
     in ``handle_ingest`` records the refusal event before re-raising.
+
+    #232 Finding 2: a payload that is not JSON-serializable (circular ref,
+    deeply nested object, opaque type whose ``__str__`` raises) would
+    previously leak ``ValueError`` / ``TypeError`` / ``RecursionError``
+    past the gate to the MCP boundary's generic exception handler.
+    Translate to ``_IngestRefused('malformed_payload', ...)`` at the same
+    boundary as the other refusals — closes the fail-open path.
     """
-    size = len(json.dumps(payload, default=str).encode("utf-8"))
+    try:
+        size = len(json.dumps(payload, default=str).encode("utf-8"))
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise _IngestRefused(
+            "malformed_payload",
+            detail=f"payload is not JSON-serializable: {type(exc).__name__}",
+        ) from exc
     if size > max_bytes:
         raise _IngestRefused(
             "size_limit_exceeded",
@@ -109,9 +142,19 @@ _RATE_LIMIT_REGISTRY_LOCK = threading.Lock()
 def _check_rate_limit(session_id: str, burst: int, refill_per_sec: float) -> None:
     """Raise ``_IngestRefused('rate_limit_exceeded', ...)`` when the bucket
     for ``session_id`` has no tokens. Disabled entirely by setting
-    ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1`` (local debugging knob).
+    ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE`` to a truthy value (1/true/yes/on,
+    case-insensitive — see ``context._GUIDED_MODE_TRUTHY``).
+
+    #230 Finding 1: the refusal detail does NOT include ``session_id``. The
+    raw session UUID is process-fingerprinting state that surrounding
+    telemetry writers hash via per-install salt; emitting it raw at the
+    MCP boundary (which the agent then relays into operator-visible context)
+    is inconsistent with that posture. Operators get the bucket params
+    they need to tune ``.bicameral/config.yaml``; the session UUID is not
+    action-relevant here.
     """
-    if os.getenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", "").strip() == "1":
+    env_val = os.getenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", "").strip().lower()
+    if env_val in _GUIDED_MODE_TRUTHY:
         return
     with _RATE_LIMIT_REGISTRY_LOCK:
         bucket = _RATE_LIMIT_REGISTRY.get(session_id)
@@ -121,9 +164,7 @@ def _check_rate_limit(session_id: str, burst: int, refill_per_sec: float) -> Non
     if not bucket.take():
         raise _IngestRefused(
             "rate_limit_exceeded",
-            detail=(
-                f"session {session_id} bucket empty (burst={burst}, refill={refill_per_sec}/s)"
-            ),
+            detail=f"bucket empty (burst={burst}, refill={refill_per_sec}/s)",
         )
 
 
