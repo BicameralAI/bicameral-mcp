@@ -43,6 +43,9 @@ bicameral.skill_end(skill_name="bicameral-capture-corrections", session_id=<stor
     g11_corrections_classified_not: N,
     g11_corrections_dedup_removed: N,
     g11_user_overrode: N,   # ask corrections user declined — labeled precision signal
+    g11_queue_drained: N,   # pending files fully processed and archived (#156 PR B)
+    g11_queue_remaining: N, # pending files left after drain (>0 when cap was hit OR partial processing left files for next preflight)
+    g11_queue_cap_hit: <bool>, # true if accumulated ask-corrections reached 4 mid-drain
   })
 ```
 
@@ -153,6 +156,17 @@ re-examine the same turns repeatedly).
 
 ### Steps
 
+**0. Drain the pending-transcripts queue (#156 PR B).**
+Before scanning recent in-session turns, drain the pending-transcripts queue per the canonical "Step 0 — drain the pending-transcripts queue (#156)" rubric above. In in-session mode the drain is bounded:
+
+- Process pending files in mtime-order (oldest first), applying Steps A/B/C to each file's user turns.
+- Track accumulated ask-corrections across all processed files.
+- When accumulated ask-corrections reach 4 (the preflight ≤4-question cap), stop processing further pending files and surface a final note: "N more pending transcript(s) — invoke `/bicameral-capture-corrections` directly to drain manually." Remaining files stay in `.bicameral/pending-transcripts/` for the next preflight.
+- Archive each fully-processed file via `python3 scripts/hooks/transcript_archive.py <basename>.jsonl`. Do NOT archive partially-processed files (the cap was hit mid-scan); the file stays pending and the next preflight resumes from its first un-surfaced correction.
+- If `<repo>/.bicameral/pending-transcripts/` doesn't exist or is empty, skip Step 0 silently — same shape as the canonical rubric's empty path.
+
+The 4-cap is shared with the in-session turn-scan that runs in step 1 below: queue-drained ask-corrections + in-session ask-corrections ≤ 4 total. If the queue alone fills the cap, the in-session turn scan still runs (its mechanical corrections still auto-ingest silently) but its ask-corrections are dropped (not surfaced) to preserve the cap.
+
 **1. Run the canonical rubric** (Steps A → B → C above) on the last ~10
 user messages.
 
@@ -166,7 +180,7 @@ Preflight merges them into its stop-and-ask queue (one question max,
 priority slot 3: after drift, before open questions).
 
 **4. Silent empty path.**
-If no corrections found, return nothing. Preflight continues without any
+If no corrections found (across both the queue drain and the in-session scan), return nothing. Preflight continues without any
 capture-corrections output.
 
 ---

@@ -1103,6 +1103,63 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
     )
 
 
+def assert_flow_4b(calls: list[dict]) -> tuple[bool, str]:
+    """Flow 4b: cross-flow ledger assertion via queue drain (#156 PR B).
+
+    Validates the SessionEnd-write -> next-preflight-drain -> ingest pipeline
+    end-to-end. The prior flow (Flow 4) plants a correction in its single
+    user prompt; the SessionEnd hook (post #156 PR A) writes the transcript
+    to ``.bicameral/pending-transcripts/<session_id>.jsonl``; Flow 4b's
+    auto-fired preflight invokes capture-corrections in-session mode, which
+    (post #156 PR B) drains the queue, surfaces the correction, and ingests
+    it once the user-confirmation flow accepts.
+
+    Three assertions:
+      1. ``<repo>/.bicameral/pending-transcripts/`` is empty after Flow 4b
+         (drain completed).
+      2. ``<repo>/.bicameral/processed-transcripts/`` contains the archived
+         transcript file (archive_processed via transcript_archive.py CLI).
+      3. Ledger contains >=1 ``source_type=agent_session`` decision.
+    """
+    repo = pathlib.Path(DESKTOP_REPO_PATH)
+    pending = repo / ".bicameral" / "pending-transcripts"
+    processed = repo / ".bicameral" / "processed-transcripts"
+
+    if pending.is_dir() and any(pending.glob("*.jsonl")):
+        leftover = sorted(p.name for p in pending.glob("*.jsonl"))
+        return False, f"pending-transcripts not drained; leftover: {leftover}"
+
+    if not processed.is_dir() or not list(processed.glob("*.jsonl")):
+        return False, "processed-transcripts is empty; archive_processed never ran"
+
+    snapshot = _snapshot_ledger()
+    count = _count_agent_session_decisions(snapshot)
+    if count is None:
+        return False, f"ledger query failed: {snapshot.get('error')}"
+    if count == 0:
+        return False, "no source=agent_session decisions in ledger; ingest never landed"
+
+    archived = sorted(p.name for p in processed.glob("*.jsonl"))
+    return True, (
+        f"queue drain pipeline validated: pending=empty, processed={archived}, "
+        f"ledger has {count} agent_session decision(s)"
+    )
+
+
+def _filter_flow_plan(plan: list[FlowSpec], pattern: str | None) -> list[FlowSpec]:
+    """Filter FLOW_PLAN by substring match on ``flow_id``. Pure function.
+
+    When ``pattern`` is None, returns ``plan`` unchanged (CI default — run
+    every flow). When ``pattern`` is given, returns the FlowSpecs whose
+    ``flow_id`` contains ``pattern`` as a case-sensitive substring; order
+    preserved from the source list. Empty result is the caller's signal
+    to exit non-zero (typo in --flow argument).
+    """
+    if pattern is None:
+        return plan
+    return [s for s in plan if pattern in s.flow_id]
+
+
 FLOW_PLAN: list[FlowSpec] = [
     FlowSpec(
         flow_id="Flow 1",
@@ -1167,15 +1224,28 @@ FLOW_PLAN: list[FlowSpec] = [
             "Flow 4 captures an emerging constraint via correction markers "
             '("wait", "shouldn\'t") — no collision-detection involved. NOT '
             "the same gap as #154 (which is Flow 2a / contradiction-with-"
-            "prior-decision specific). #156 (PR A) has landed: the "
-            "SessionEnd hook now writes the parent transcript into "
-            ".bicameral/pending-transcripts/<session_id>.jsonl and the "
-            "capture-corrections SKILL.md adds Step 0 to drain the queue "
-            "in the next session. In-flow assertions in this asserter "
-            "remain valid; cross-flow ledger validation via the queue "
-            "drain (PR B) will add the next-session preflight Step 3.5 "
-            "integration that ingests drained corrections into the "
-            "harness's test ledger."
+            "prior-decision specific). #156 (PR A) shipped the queue-write; "
+            "#156 (PR B) shipped the preflight Step 3.5 queue-drain "
+            "integration — see Flow 4b for the cross-flow ledger assertion "
+            "that validates the full session_end → next-preflight → ingest "
+            "pipeline end-to-end."
+        ),
+    ),
+    FlowSpec(
+        flow_id="Flow 4b",
+        prompt_file="flow-4b-queue-drain.md",
+        asserter=assert_flow_4b,
+        category="agentic_layer",
+        session_group="dev_session",
+        advisory=(
+            "Flow 4b validates the cross-flow path closed by #156 PR B: "
+            "the prior flow's SessionEnd hook wrote a transcript into "
+            ".bicameral/pending-transcripts/; Flow 4b's auto-fired "
+            "preflight (UserPromptSubmit hook) invokes capture-corrections "
+            "in-session mode, which now drains the queue per #156 PR B's "
+            "Step 0 integration. Asserter checks the test ledger contains "
+            "a source=agent_session decision describing the prior flow's "
+            "correction — proving the cross-flow capture path closed."
         ),
     ),
     FlowSpec(
@@ -1191,12 +1261,35 @@ FLOW_PLAN: list[FlowSpec] = [
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="v0 user flow e2e harness")
+    parser.add_argument(
+        "--flow",
+        metavar="PATTERN",
+        default=None,
+        help="run only flows whose flow_id contains PATTERN (substring, case-sensitive)",
+    )
+    args = parser.parse_args()
+
+    selected_plan = _filter_flow_plan(FLOW_PLAN, args.flow)
+    if args.flow is not None and not selected_plan:
+        sys.stderr.write(
+            f"ERROR: --flow={args.flow!r} matched zero flows. Available: "
+            f"{[s.flow_id for s in FLOW_PLAN]}\n"
+        )
+        return 2
+
     print("=== v0 user flow e2e — Claude Code CLI sessions ===")
     print(f"DESKTOP_REPO_PATH:  {DESKTOP_REPO_PATH}")
     print(f"MCP config:         {MCP_CONFIG_PATH}")
     print(f"Ledger (persisted): {LEDGER_DIR}")
     print(f"Transcripts:        {RESULTS_DIR}")
-    print(f"Flows:              {len(FLOW_PLAN)}\n")
+    if args.flow is not None:
+        print(
+            f"Filter --flow={args.flow!r}: {len(selected_plan)} of {len(FLOW_PLAN)} flows selected"
+        )
+    print(f"Flows:              {len(selected_plan)}\n")
 
     _clean_ledger()
     _clean_claude_memory()
@@ -1210,7 +1303,7 @@ def main() -> int:
 
     group_session_ids: dict[str, str] = {}
     group_seen: set[str] = set()
-    chained_groups = sorted({s.session_group for s in FLOW_PLAN if s.session_group})
+    chained_groups = sorted({s.session_group for s in selected_plan if s.session_group})
     if chained_groups:
         print("Chained session groups:")
         for g in chained_groups:
@@ -1218,7 +1311,7 @@ def main() -> int:
             group_session_ids[g] = sid
             members = [
                 s.flow_id
-                for s in FLOW_PLAN
+                for s in selected_plan
                 if s.session_group == g and not s.skip and not s.reuses_flow
             ]
             print(f"  {g}: {sid[:8]}…  → {' → '.join(members)}")
@@ -1229,7 +1322,7 @@ def main() -> int:
     # taken just before the first dev_session flow runs.
     dev_session_baseline: dict | None = None
 
-    for spec in FLOW_PLAN:
+    for spec in selected_plan:
         # Snapshot baseline once, immediately before the first dev_session
         # flow. This means Flow 1's effects are baked in but Flow 2/3/4's
         # effects (the ones we want to measure) are not.

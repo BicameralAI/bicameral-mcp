@@ -261,6 +261,8 @@ into the stop-and-ask queue below.
 - Ask corrections → add as `uningested_corrections` category (priority
   slot 3: after drift, before open questions). One question max.
 
+**Queue drain (#156 PR B):** in-session mode also drains the pending-transcripts queue at `<repo>/.bicameral/pending-transcripts/` — transcripts from prior sessions whose corrections never surfaced (because that session ended without a follow-up preflight). Drained ask-corrections share the same ≤4-cap as in-session corrections; remaining pending files stay queued for the next preflight to pick up. The canonical drain rubric lives in `skills/bicameral-capture-corrections/SKILL.md` (Step 0 of the scan-and-classify rubric); preflight delegates to it via the in-session mode invocation.
+
 ### 4. Classify findings before surfacing
 
 Before rendering anything, classify each finding as **mechanical** or
