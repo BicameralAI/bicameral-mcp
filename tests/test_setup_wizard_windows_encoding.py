@@ -38,8 +38,9 @@ def test_ensure_utf8_stdout_reconfigures_on_win32() -> None:
     errors='replace') on both stdout and stderr."""
     fake_out = _FakeStream()
     fake_err = _FakeStream()
-    with patch.object(setup_wizard.sys, "stdout", fake_out), patch.object(
-        setup_wizard.sys, "stderr", fake_err
+    with (
+        patch.object(setup_wizard.sys, "stdout", fake_out),
+        patch.object(setup_wizard.sys, "stderr", fake_err),
     ):
         setup_wizard._ensure_utf8_stdout(platform="win32")
     assert fake_out.reconfigure_calls == [{"encoding": "utf-8", "errors": "replace"}]
@@ -51,8 +52,9 @@ def test_ensure_utf8_stdout_noop_on_posix(platform: str) -> None:
     """POSIX platforms inherit utf-8 from locale; no reconfigure call."""
     fake_out = _FakeStream()
     fake_err = _FakeStream()
-    with patch.object(setup_wizard.sys, "stdout", fake_out), patch.object(
-        setup_wizard.sys, "stderr", fake_err
+    with (
+        patch.object(setup_wizard.sys, "stdout", fake_out),
+        patch.object(setup_wizard.sys, "stderr", fake_err),
     ):
         setup_wizard._ensure_utf8_stdout(platform=platform)
     assert fake_out.reconfigure_calls == []
@@ -64,8 +66,9 @@ def test_ensure_utf8_stdout_silent_when_reconfigure_missing() -> None:
     captured-output streams in some test runners)."""
     fake_out = _FakeStream(has_reconfigure=False)
     fake_err = _FakeStream(has_reconfigure=False)
-    with patch.object(setup_wizard.sys, "stdout", fake_out), patch.object(
-        setup_wizard.sys, "stderr", fake_err
+    with (
+        patch.object(setup_wizard.sys, "stdout", fake_out),
+        patch.object(setup_wizard.sys, "stderr", fake_err),
     ):
         setup_wizard._ensure_utf8_stdout(platform="win32")  # must not raise
 
@@ -74,8 +77,9 @@ def test_ensure_utf8_stdout_silent_on_oserror() -> None:
     """Helper must swallow OSError from reconfigure (no-op fallback)."""
     fake_out = _FakeStream(raise_on_reconfigure=OSError("not seekable"))
     fake_err = _FakeStream(raise_on_reconfigure=OSError("not seekable"))
-    with patch.object(setup_wizard.sys, "stdout", fake_out), patch.object(
-        setup_wizard.sys, "stderr", fake_err
+    with (
+        patch.object(setup_wizard.sys, "stdout", fake_out),
+        patch.object(setup_wizard.sys, "stderr", fake_err),
     ):
         setup_wizard._ensure_utf8_stdout(platform="win32")  # must not raise
 
@@ -84,8 +88,9 @@ def test_ensure_utf8_stdout_silent_on_valueerror() -> None:
     """Helper must swallow ValueError from reconfigure too."""
     fake_out = _FakeStream(raise_on_reconfigure=ValueError("bad encoding"))
     fake_err = _FakeStream(raise_on_reconfigure=ValueError("bad encoding"))
-    with patch.object(setup_wizard.sys, "stdout", fake_out), patch.object(
-        setup_wizard.sys, "stderr", fake_err
+    with (
+        patch.object(setup_wizard.sys, "stdout", fake_out),
+        patch.object(setup_wizard.sys, "stderr", fake_err),
     ):
         setup_wizard._ensure_utf8_stdout(platform="win32")  # must not raise
 
@@ -94,8 +99,10 @@ def test_ensure_utf8_stdout_default_platform_reads_sys_platform() -> None:
     """When platform=None (production callers), helper reads sys.platform."""
     fake_out = _FakeStream()
     fake_err = _FakeStream()
-    with patch.object(setup_wizard.sys, "stdout", fake_out), patch.object(
-        setup_wizard.sys, "stderr", fake_err
-    ), patch.object(setup_wizard.sys, "platform", "win32"):
+    with (
+        patch.object(setup_wizard.sys, "stdout", fake_out),
+        patch.object(setup_wizard.sys, "stderr", fake_err),
+        patch.object(setup_wizard.sys, "platform", "win32"),
+    ):
         setup_wizard._ensure_utf8_stdout()
     assert fake_out.reconfigure_calls == [{"encoding": "utf-8", "errors": "replace"}]
