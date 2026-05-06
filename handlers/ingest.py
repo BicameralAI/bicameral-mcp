@@ -127,6 +127,40 @@ def _check_rate_limit(session_id: str, burst: int, refill_per_sec: float) -> Non
         )
 
 
+def _check_canary(payload: dict) -> None:
+    """Raise ``_IngestRefused('injection_canary_match', ...)`` if the
+    serialized payload contains any catalog-pattern hit (#212 LLM-01).
+
+    Detector dispatches via the module-level pointer
+    ``handlers.canary_patterns._canary_detect`` so a v2 classifier-backed
+    implementation can take effect with a single-line module-level swap.
+
+    Disabled by setting ``BICAMERAL_INGEST_CANARY_DISABLE=1`` — operator
+    escape for known-false-positive workflows or controlled tests. The
+    env-disable shortcuts the detector cost (does not even serialize the
+    payload).
+    """
+    if os.getenv("BICAMERAL_INGEST_CANARY_DISABLE", "").strip() == "1":
+        return
+    from handlers import canary_patterns
+
+    serialized = json.dumps(payload, default=str)
+    hits = canary_patterns._canary_detect(serialized)
+    if not hits:
+        return
+    first = hits[0]
+    raise _IngestRefused(
+        "injection_canary_match",
+        detail=(
+            f"category={first.category}; "
+            f"pattern_id={first.pattern_id}; "
+            f"excerpt={first.match_excerpt!r}; "
+            f"catalog={canary_patterns._CANARY_CATALOG_VERSION}; "
+            f"total_hits={len(hits)}"
+        ),
+    )
+
+
 def _normalize_payload(payload: dict) -> dict:
     """Validate and normalize ingest payload using Pydantic contracts.
 
@@ -342,6 +376,8 @@ async def handle_ingest(
     # deployment shape declared in plan-216 boundaries; team-server
     # activation will need a per-agent session-id source for true
     # per-agent isolation. Documented in plan-216 § Open Questions.
+    # Cheapest-first ordering: size (O(1) byte count) → rate (O(1) bucket
+    # take) → canary (O(n) regex over serialized content). #212 LLM-01.
     try:
         _check_payload_size(payload, ctx.ingest_max_bytes)
         _check_rate_limit(
@@ -349,6 +385,7 @@ async def handle_ingest(
             ctx.ingest_rate_limit_burst,
             ctx.ingest_rate_limit_refill_per_sec,
         )
+        _check_canary(payload)
     except _IngestRefused as exc:
         _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
         raise

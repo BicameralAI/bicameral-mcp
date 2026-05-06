@@ -75,6 +75,12 @@ _ACTION_FOR_REFUSAL_REASON: dict[str, str] = {
         "ingest_rate_limit_refill_per_sec in .bicameral/config.yaml, or set "
         "BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1 for local debugging"
     ),
+    "injection_canary_match": (
+        "content matched a known prompt-injection canary pattern. Review "
+        "the rejected payload, edit out the suspect content, and retry. "
+        "Set BICAMERAL_INGEST_CANARY_DISABLE=1 only for known-false-positive "
+        "workflows or controlled tests."
+    ),
 }
 
 
