@@ -82,6 +82,26 @@ When you build with an AI coding assistant, this disconnect accelerates:
 
 ## Quickstart
 
+The fastest path is **uv**. If you don't have uv yet, the official installer is one line:
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then:
+
+```bash
+uv tool install bicameral-mcp
+bicameral-mcp setup
+```
+
+Prefer pipx? That works too:
+
 ```bash
 pipx install bicameral-mcp
 bicameral-mcp setup

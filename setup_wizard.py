@@ -17,6 +17,28 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def _ensure_utf8_stdout(platform: str | None = None) -> None:
+    """Reconfigure stdout/stderr to UTF-8 on Windows so banner box-drawing
+    chars (┌─┐│└┘) printed by run_setup / run_config_wizard / run_reset_wizard
+    don't crash under cp1252. No-op on POSIX. Silent on environments where
+    `.reconfigure` is missing or fails. ``platform`` arg is for test isolation;
+    production callers pass None and the helper reads ``sys.platform``. (#199)
+    """
+    target = platform if platform is not None else sys.platform
+    if target != "win32":
+        return
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
+
 AGENTS = {
     "claude": {
         "name": "Claude Code",
@@ -1039,6 +1061,7 @@ def run_setup(
     ``.git/hooks/pre-push`` that surfaces drift warnings via
     ``bicameral-mcp branch-scan`` before push completes. Idempotent.
     """
+    _ensure_utf8_stdout()
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Setup                   │")
@@ -1153,6 +1176,7 @@ def run_config_wizard() -> int:
     except ImportError:
         import json as yaml  # fallback: won't write yaml but will read
 
+    _ensure_utf8_stdout()
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Config                  │")
@@ -1294,6 +1318,7 @@ def run_reset_wizard() -> int:
 
     import questionary
 
+    _ensure_utf8_stdout()
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Reset                   │")
