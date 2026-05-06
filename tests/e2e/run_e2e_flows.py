@@ -654,6 +654,7 @@ _COMMIT_HISTORY_AREA_PATHS: tuple[str, ...] = (
     "/git/reorder.ts",
     "/git/squash.ts",
     "/git/commit.ts",
+    "/git/rebase.ts",  # rebase IS commit-history manipulation (drag-to-squash, amend, reorder all rebase under the hood)
     # ui-layer (legitimate when the decision is framed as a UX feature)
     "/history/commit-list.tsx",
     "/history/commit-list-item.tsx",
