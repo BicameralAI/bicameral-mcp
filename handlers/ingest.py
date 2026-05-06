@@ -409,14 +409,16 @@ async def handle_ingest(
     # on refusal then re-raise so the MCP boundary translates to a
     # structured TextContent error.
     #
-    # Per-session bucket scoping note: ``ctx.session_id`` defaults to the
-    # module-level ``_SESSION_ID`` (one UUID per server process). The rate
-    # gate is therefore effectively per-server-process under the current
-    # runtime — multiple concurrent agents over one MCP transport share
-    # one bucket. This is acceptable for the single-user-developer-tool
-    # deployment shape declared in plan-216 boundaries; team-server
-    # activation will need a per-agent session-id source for true
-    # per-agent isolation. Documented in plan-216 § Open Questions.
+    # Per-session bucket scoping note: ``ctx.session_id`` is resolved by
+    # ``context._resolve_agent_identity`` (#231 v1) to a per-developer
+    # salted email-hash (16-char hex) when ``git config user.email`` is
+    # available — gives per-developer rate-limit bucket isolation in
+    # team-server installs. Falls back to the process-wide ``_SESSION_ID``
+    # UUID when git config is unreadable (test/CI runs, no email set);
+    # in that mode the rate gate is per-server-process and concurrent
+    # callers share a bucket — acceptable for the test shape, not for
+    # production. Option (β) per-MCP-session granularity is the v2 upgrade
+    # path gated on team-server protocol activation; documented in plan-231.
     # Cheapest-first ordering: size (O(1) byte count) → rate (O(1) bucket
     # take) → canary (O(n) regex) → sensitive (O(n) regex + Luhn).
     # Canary first because injection is upstream of leakage — block the
