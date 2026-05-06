@@ -40,6 +40,8 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ### Fixed
 
+- Flow 3 e2e prompt clarified to use imperative shell phrasing for `git add` + `git commit` (#197). Resolves the "agent did NOT commit" flake observed on PR #194 + #195 e2e runs where the agent interpreted "stage and commit" as a non-shell verb. Adds a "Debugging Flow 3 fails" subsection to `tests/e2e/README.md` capturing the investigation order so the next maintainer has a starting checklist.
+
 ### Schema
 
 ### Security
