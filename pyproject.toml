@@ -36,6 +36,7 @@ dependencies = [
   "python-dotenv",
   "surrealdb>=2.0.0",
   "questionary>=2.0.0",
+  "sigstore>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -52,6 +53,9 @@ test = [
   "mypy>=1.10.0",
   "build>=1.0.0",
 ]
+release = [
+  "cyclonedx-bom>=4.0",
+]
 
 [project.scripts]
 bicameral-mcp = "server:cli_main"
@@ -67,6 +71,7 @@ exclude = [
   "mocks",
   "test-results",
   "docs/demos/**/*.mp4",
+  "share",
 ]
 artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
 
@@ -76,6 +81,15 @@ artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
 # pre-fix). Locked by tests/test_installer_packaging.py.
 [tool.hatch.build.targets.wheel.force-include]
 "skills" = "skills"
+
+# Build hook generates `share/bicameral-mcp/hooks-manifest.json` before
+# the wheel is packaged (#218 Phase 1). The shared-data table below then
+# bundles it into the wheel at `<sys.prefix>/share/bicameral-mcp/...`.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "scripts/hooks_manifest_build_hook.py"
+
+[tool.hatch.build.targets.wheel.shared-data]
+"share/bicameral-mcp/hooks-manifest.json" = "share/bicameral-mcp/hooks-manifest.json"
 
 [tool.ruff]
 line-length = 100
