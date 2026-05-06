@@ -30,6 +30,13 @@ _DEFAULT_RENDER_ATTRIBUTION_MODE = "full"
 _BYPASS_TRACKING_MODES = frozenset({"enabled", "disabled"})
 _DEFAULT_BYPASS_TRACKING_MODE = "enabled"
 
+# #216 LLM-02: payload-size guardrail. 1 MiB cap is loose enough for
+# any legitimate transcript / decision dump but bounds DoS shape
+# (single oversized payload can't blow out the ledger writer).
+_DEFAULT_INGEST_MAX_BYTES = 1024 * 1024  # 1 MiB
+_INGEST_MAX_BYTES_MIN = 1024  # 1 KiB; below this is meaningless / config error
+_INGEST_MAX_BYTES_MAX = 64 * 1024 * 1024  # 64 MiB; above this is operator footgun
+
 
 def _read_yaml_string_field(repo_path: str, key: str, valid: frozenset[str], default: str) -> str:
     """Generic reader for a `.bicameral/config.yaml` string field with a
@@ -92,6 +99,31 @@ def _read_preflight_bypass_tracking(repo_path: str) -> str:
         _BYPASS_TRACKING_MODES,
         _DEFAULT_BYPASS_TRACKING_MODE,
     )
+
+
+def _read_ingest_max_bytes(repo_path: str) -> int:
+    """Resolve ``ingest_max_bytes`` from ``.bicameral/config.yaml``.
+
+    Default 1 MiB. Clamped to ``[_INGEST_MAX_BYTES_MIN, _INGEST_MAX_BYTES_MAX]``;
+    out-of-range values (negative, non-integer, beyond clamp) fall back
+    to the default with no silent acceptance. Read by
+    ``handlers.ingest._check_payload_size``.
+    """
+    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    if not config_path.exists():
+        return _DEFAULT_INGEST_MAX_BYTES
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        val = config.get("ingest_max_bytes", _DEFAULT_INGEST_MAX_BYTES)
+    except Exception:
+        return _DEFAULT_INGEST_MAX_BYTES
+    if not isinstance(val, int) or isinstance(val, bool):
+        return _DEFAULT_INGEST_MAX_BYTES
+    if val < _INGEST_MAX_BYTES_MIN or val > _INGEST_MAX_BYTES_MAX:
+        return _DEFAULT_INGEST_MAX_BYTES
+    return val
 
 
 def _read_guided_mode(repo_path: str) -> bool:
@@ -180,6 +212,12 @@ class BicameralContext:
     # with reason="tracking_disabled"). Operator privacy choice; deterministic
     # at config-load time.
     preflight_bypass_tracking: str = _DEFAULT_BYPASS_TRACKING_MODE
+    # #216 LLM-02: max serialized-JSON byte size for an inbound ingest
+    # payload. 1 MiB default. Clamped to [1 KiB, 64 MiB]. Enforced by
+    # ``handlers.ingest._check_payload_size`` before payload normalization;
+    # over-cap payloads raise ``_IngestRefused`` and are translated to a
+    # structured TextContent error at the MCP boundary.
+    ingest_max_bytes: int = _DEFAULT_INGEST_MAX_BYTES
     # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
@@ -221,6 +259,7 @@ class BicameralContext:
         signer_email_fallback = _read_signer_email_fallback(repo_path)
         render_source_attribution = _read_render_source_attribution(repo_path)
         preflight_bypass_tracking = _read_preflight_bypass_tracking(repo_path)
+        ingest_max_bytes = _read_ingest_max_bytes(repo_path)
 
         return cls(
             repo_path=repo_path,
@@ -236,4 +275,5 @@ class BicameralContext:
             signer_email_fallback=signer_email_fallback,
             render_source_attribution=render_source_attribution,
             preflight_bypass_tracking=preflight_bypass_tracking,
+            ingest_max_bytes=ingest_max_bytes,
         )

@@ -52,6 +52,22 @@ def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
     preflight_telemetry.write_ingest_refusal_event(reason=reason, session_id=session_id)
 
 
+def _check_payload_size(payload: dict, max_bytes: int) -> None:
+    """Raise ``_IngestRefused`` if the serialized payload exceeds ``max_bytes``.
+
+    Measurement is ``len(json.dumps(payload).encode("utf-8"))`` — captures
+    every field the agent might supply, language-agnostic, single
+    comparison. Pure: no telemetry side-effect; the wrapping try/except
+    in ``handle_ingest`` records the refusal event before re-raising.
+    """
+    size = len(json.dumps(payload, default=str).encode("utf-8"))
+    if size > max_bytes:
+        raise _IngestRefused(
+            "size_limit_exceeded",
+            detail=f"{size} bytes > {max_bytes} cap",
+        )
+
+
 def _normalize_payload(payload: dict) -> dict:
     """Validate and normalize ingest payload using Pydantic contracts.
 
@@ -254,6 +270,15 @@ async def handle_ingest(
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
+
+    # #216 LLM-02: enforce serialized-byte cap before any ledger work.
+    # Telemetry-emit on refusal then re-raise; MCP boundary translates
+    # ``_IngestRefused`` to a structured TextContent error.
+    try:
+        _check_payload_size(payload, ctx.ingest_max_bytes)
+    except _IngestRefused as exc:
+        _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
+        raise
 
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
