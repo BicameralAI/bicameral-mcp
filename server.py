@@ -43,7 +43,7 @@ from handlers.bind import handle_bind
 from handlers.evaluate_governance import handle_evaluate_governance
 from handlers.gap_judge import handle_judge_gaps
 from handlers.history import handle_history
-from handlers.ingest import handle_ingest
+from handlers.ingest import _IngestRefused, handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.list_unclassified_decisions import handle_list_unclassified_decisions
 from handlers.preflight import handle_preflight
@@ -61,6 +61,21 @@ SERVER_NAME = "bicameral-mcp"
 # In-process map of session_id → {t0} for skill timing.
 # Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
 _skill_sessions: dict[str, dict] = {}
+
+# #216: operator-actionable guidance per ingest-refusal reason. Read by
+# the ``except _IngestRefused`` arm in ``call_tool`` to populate the
+# ``action`` field of the returned TextContent. Default falls back to a
+# generic "review .bicameral/config.yaml limits and retry" message.
+_ACTION_FOR_REFUSAL_REASON: dict[str, str] = {
+    "size_limit_exceeded": (
+        "split the payload into smaller ingests or raise ingest_max_bytes in .bicameral/config.yaml"
+    ),
+    "rate_limit_exceeded": (
+        "slow ingest cadence or raise ingest_rate_limit_burst / "
+        "ingest_rate_limit_refill_per_sec in .bicameral/config.yaml, or set "
+        "BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1 for local debugging"
+    ),
+}
 
 
 def _resolve_server_version() -> str:
@@ -1247,6 +1262,27 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
+    except _IngestRefused as exc:
+        # #216: translate entry-time ingest guardrail refusals (size +
+        # rate limits) into a structured TextContent error. No
+        # IngestResponse schema change — refusals propagate via
+        # exception and surface here only.
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "error": exc.reason,
+                        "detail": exc.detail,
+                        "action": _ACTION_FOR_REFUSAL_REASON.get(
+                            exc.reason,
+                            "review .bicameral/config.yaml limits and retry",
+                        ),
+                    },
+                    indent=2,
+                ),
+            )
+        ]
     except (DestructiveMigrationRequired, SchemaVersionTooNew) as exc:
         action = (
             "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
