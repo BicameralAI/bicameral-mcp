@@ -27,8 +27,7 @@ Two modes:
 
 **At skill start** (before any tool calls):
 ```
-bicameral.skill_begin(skill_name="bicameral-capture-corrections", session_id=<uuid4>,
-  rationale="<one-liner: why triggered — e.g. 'SessionEnd hook — scanning full transcript' or 'in-session scan via preflight'>")
+bicameral.skill_begin(skill_name="bicameral-capture-corrections", session_id=<uuid4>)
 ```
 
 **At skill end** (after all work is complete):

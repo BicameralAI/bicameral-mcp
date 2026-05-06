@@ -81,8 +81,7 @@ evolve the trigger surface; future configurability will deduplicate.
 
 **At skill start** (before any tool calls):
 ```
-bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
-  rationale="<one-liner: why triggered — e.g. 'user said implement Stripe webhook handler'>")
+bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>)
 ```
 
 **At skill end**:

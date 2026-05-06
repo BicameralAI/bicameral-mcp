@@ -28,8 +28,7 @@ directly.
 
 **At skill start**:
 ```
-bicameral.skill_begin(skill_name="bicameral-history", session_id=<uuid4>,
-  rationale="<one-liner: e.g. 'user asked to show full decision ledger'>")
+bicameral.skill_begin(skill_name="bicameral-history", session_id=<uuid4>)
 ```
 
 **At skill end**:

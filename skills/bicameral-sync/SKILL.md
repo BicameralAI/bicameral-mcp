@@ -27,8 +27,7 @@ upgrade requests; use `/bicameral-update` instead.
 
 **At skill start**:
 ```
-bicameral.skill_begin(skill_name="bicameral-sync", session_id=<uuid4>,
-  rationale="<one-liner: e.g. 'user committed and asked to sync decisions'>")
+bicameral.skill_begin(skill_name="bicameral-sync", session_id=<uuid4>)
 ```
 
 **At skill end**:

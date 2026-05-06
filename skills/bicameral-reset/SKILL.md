@@ -97,8 +97,7 @@ If `wiped=false` with a `replay_errors` entry, the wipe failed before persisting
 
 **At skill start**:
 ```
-bicameral.skill_begin(skill_name="bicameral-reset", session_id=<uuid4>,
-  rationale="<one-liner: e.g. 'user said ledger looks wrong start over'>")
+bicameral.skill_begin(skill_name="bicameral-reset", session_id=<uuid4>)
 ```
 
 **At skill end** (after confirm or after user cancels at dry-run):
