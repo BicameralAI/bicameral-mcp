@@ -332,6 +332,10 @@ or more decisions with an unresolved `signoff_state`. Each prompt
 already carries the question, the trigger label, and a closed option
 list. Render them via `AskUserQuestion`.
 
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g9_*` / `g10_*` / `g11_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
+
+**Source attribution rendering (#200 Phase 3)**: every `source_ref` field on surfaced decisions is already pre-filtered server-side per the operator's `render_source_attribution` setting in `.bicameral/config.yaml`. Modes: `full` (verbatim legacy), `redacted` (default — names + dates replaced with placeholders, structural shape preserved), `hidden` (blank). Render whatever the server returned verbatim — no further redaction needed at the skill layer, and do NOT attempt to recover original values from redacted forms. The deterministic gate is the config field, not this instruction.
+
 **Trigger conditions** — a prompt is emitted whenever a surfaced
 decision's `signoff_state` is one of:
 
@@ -379,6 +383,14 @@ for prompt in response.hitl_prompts:
   bypass writes to persist; otherwise `record_bypass` returns
   `recorded=false, deduped=false, reason="telemetry_disabled"` and the
   engine sees no recency.
+- **`preflight_bypass_tracking` config gate (#200 Phase 3)**: when
+  `.bicameral/config.yaml: preflight_bypass_tracking: disabled`, the
+  handler short-circuits BEFORE the JSONL write and returns
+  `recorded=false, deduped=false, reason="tracking_disabled"`. Operator
+  privacy choice; deterministic at config-load time. Default is
+  `enabled` (pre-#200 behavior). When disabled, the engine's recency
+  read sees no events → no escalation drop, which matches the user's
+  privacy choice (resurfacing happens at full intensity until ratified).
 
 ### 5.5 Confirm finding relevance (ground truth for calibration)
 

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -74,6 +75,40 @@ _PRODUCT_STAGE_MSG = (
     "Always keep bicameral-mcp up to date (`bicameral.update`) for the fastest experience."
 )
 _ONBOARDED_MARKER = Path.home() / ".bicameral" / "onboarded"
+
+
+# #200 Phase 3: render_source_attribution policy patterns. The redacted
+# mode preserves structural shape (so the operator can see "this is from
+# a meeting on a date" without seeing who or when).
+_NAME_PATTERN = re.compile(r"\b[A-Z][a-z]+\b")
+_DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+
+
+def _apply_attribution_policy(matches: list, mode: str) -> list:
+    """Apply `render_source_attribution` policy to DecisionMatch.source_ref.
+
+    Modes (from `.bicameral/config.yaml: render_source_attribution`):
+      - `full`: pass through verbatim (legacy)
+      - `redacted` (default): replace name + date patterns with placeholders;
+        preserves structural shape so the operator sees "Source: <NAME_REDACTED>
+        review · <NAME_REDACTED>, <DATE_REDACTED>" instead of full attribution
+      - `hidden`: blank source_ref entirely
+
+    Returns a new list of DecisionMatch instances (Pydantic copies via
+    model_copy) with source_ref transformed; never mutates the inputs.
+    The function is pure: same inputs → same outputs, no I/O, no state.
+    """
+    if mode == "full":
+        return matches
+    transformed = []
+    for m in matches:
+        if mode == "hidden":
+            new_source_ref = ""
+        else:  # redacted
+            stripped = _DATE_PATTERN.sub("<DATE_REDACTED>", m.source_ref)
+            new_source_ref = _NAME_PATTERN.sub("<NAME_REDACTED>", stripped)
+        transformed.append(m.model_copy(update={"source_ref": new_source_ref}))
+    return transformed
 
 
 def _should_show_product_stage() -> bool:
@@ -432,6 +467,15 @@ async def handle_preflight(
                     sources_chained.append("graph")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
+
+    # #200 Phase 3: apply render_source_attribution policy server-side.
+    # Default `redacted` strips name + date patterns from source_ref so
+    # attribution detail doesn't leak into shared screens / pair sessions.
+    # Mode read from `.bicameral/config.yaml: render_source_attribution`
+    # at config load via context.py.
+    region_matches = _apply_attribution_policy(
+        region_matches, getattr(ctx, "render_source_attribution", "redacted")
+    )
 
     decisions = [_to_brief_decision(m) for m in region_matches]
     drift_candidates = [_to_brief_decision(m) for m in region_matches if m.status == "drifted"]

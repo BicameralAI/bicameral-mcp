@@ -42,13 +42,22 @@ async def handle_record_bypass(
     skills can rely on ``recorded`` to distinguish a fresh bypass from
     a within-window repeat.
     """
-    del ctx  # unused — bypass storage is local JSONL, not the ledger.
-
     if not decision_id or not isinstance(decision_id, str):
         return RecordBypassResponse(
             recorded=False,
             deduped=False,
             reason="invalid_decision_id",
+        )
+
+    # #200 Phase 3: deterministic config gate. When operator sets
+    # `preflight_bypass_tracking: disabled` in `.bicameral/config.yaml`,
+    # short-circuit BEFORE the JSONL write so no event lands on disk.
+    # Default is `enabled` — pre-#200 behavior preserved.
+    if getattr(ctx, "preflight_bypass_tracking", "enabled") == "disabled":
+        return RecordBypassResponse(
+            recorded=False,
+            deduped=False,
+            reason="tracking_disabled",
         )
 
     # Imported lazily so tests that monkeypatch ``preflight_telemetry``
