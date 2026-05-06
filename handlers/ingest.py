@@ -161,6 +161,47 @@ def _check_canary(payload: dict) -> None:
     )
 
 
+def _check_sensitive(payload: dict) -> None:
+    """Raise ``_IngestRefused('sensitive_data:<cls>', ...)`` when the
+    serialized payload contains any secret / PHI / PAN hit (#213
+    LLM-04 + HIPAA-01 + PCI-01 fold).
+
+    Refusal class is the FIRST hit's class; ``detail`` carries the
+    full ``by_class`` count so the operator sees the full picture
+    even when multiple classes triggered. Detector dispatches via
+    the module-level pointer
+    ``handlers.sensitive_patterns._sensitive_detect`` for v2 swap.
+
+    Disabled by ``BICAMERAL_INGEST_SECRET_DISABLE=1`` (single master
+    env disable covers all three classes; YAGNI on per-class
+    disables in v1). The env disable shortcuts the detector cost
+    (does not even serialize the payload).
+    """
+    if os.getenv("BICAMERAL_INGEST_SECRET_DISABLE", "").strip() == "1":
+        return
+    from handlers import sensitive_patterns
+
+    serialized = json.dumps(payload, default=str)
+    hits = sensitive_patterns._sensitive_detect(serialized)
+    if not hits:
+        return
+    first = hits[0]
+    counts: dict[str, int] = {}
+    for h in hits:
+        counts[h.cls] = counts.get(h.cls, 0) + 1
+    raise _IngestRefused(
+        f"sensitive_data:{first.cls}",
+        detail=(
+            f"class={first.cls}; "
+            f"pattern_id={first.pattern_id}; "
+            f"excerpt={first.match_excerpt!r}; "
+            f"catalog={sensitive_patterns._SENSITIVE_CATALOG_VERSION}; "
+            f"total_hits={len(hits)}; "
+            f"by_class={counts}"
+        ),
+    )
+
+
 def _normalize_payload(payload: dict) -> dict:
     """Validate and normalize ingest payload using Pydantic contracts.
 
@@ -377,7 +418,10 @@ async def handle_ingest(
     # activation will need a per-agent session-id source for true
     # per-agent isolation. Documented in plan-216 § Open Questions.
     # Cheapest-first ordering: size (O(1) byte count) → rate (O(1) bucket
-    # take) → canary (O(n) regex over serialized content). #212 LLM-01.
+    # take) → canary (O(n) regex) → sensitive (O(n) regex + Luhn).
+    # Canary first because injection is upstream of leakage — block the
+    # manipulation attempt before scanning for leaks. #212 LLM-01,
+    # #213 LLM-04 + HIPAA-01 + PCI-01 fold.
     try:
         _check_payload_size(payload, ctx.ingest_max_bytes)
         _check_rate_limit(
@@ -386,6 +430,7 @@ async def handle_ingest(
             ctx.ingest_rate_limit_refill_per_sec,
         )
         _check_canary(payload)
+        _check_sensitive(payload)
     except _IngestRefused as exc:
         _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
         raise
