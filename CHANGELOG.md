@@ -7,6 +7,7 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ### Added
 
+- **Preflight Step 3.5 queue-drain integration (#156 PR B).** Closes the cross-flow correction-capture path opened by PR A. Capture-corrections in-session mode (invoked by preflight Step 3.5) now drains `<repo>/.bicameral/pending-transcripts/` before scanning recent in-session turns. Drained ask-corrections share the existing preflight ≤4-question cap; remaining pending files stay queued for the next preflight. New telemetry fields `g11_queue_drained` / `g11_queue_remaining` / `g11_queue_cap_hit` quantify how often the cap binds. New e2e flow `Flow 4b` (`tests/e2e/prompts/flow-4b-queue-drain.md`) validates the full SessionEnd-write → next-preflight-drain → ingest pipeline end-to-end. New `--flow PATTERN` argparse filter on `tests/e2e/run_e2e_flows.py:main()` plus `_filter_flow_plan` helper (3 unit tests in `tests/test_run_e2e_flows_filter.py`) enables targeted CI invocations like `--flow "Flow 4"` (runs both Flow 4 and Flow 4b together — the canonical cross-flow validation command).
 - **CI grounding lint for plan files and PR bodies (#114).** Two new
   checkers ship together:
   - `scripts/lint_plan_grounding.py` — walks `plan-*.md` files for
