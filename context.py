@@ -187,6 +187,15 @@ def _read_ingest_rate_limit_refill_per_sec(repo_path: str) -> float:
     if isinstance(val, bool) or not isinstance(val, (int, float)):
         return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
     val_f = float(val)
+    # NaN evades both `< MIN` and `> MAX` (every comparison with NaN is
+    # False), so an operator who writes ``refill: .nan`` would land NaN
+    # in the bucket and lock ingest forever (`min(burst, x + dt*nan) =
+    # nan`, and ``nan >= 1.0`` is False — bucket is permanently empty).
+    # ``math.isfinite()`` rejects NaN + inf in one check.
+    import math
+
+    if not math.isfinite(val_f):
+        return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
     if val_f < _INGEST_RATE_LIMIT_REFILL_MIN or val_f > _INGEST_RATE_LIMIT_REFILL_MAX:
         return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
     return val_f

@@ -109,6 +109,10 @@ async def test_handle_ingest_raises_ingest_refused_on_size_excess() -> None:
     assert str(cap) in exc_info.value.detail
     # No ledger write should have happened — the gate ran before connect.
     ledger_mock.ingest_payload.assert_not_called()
+    # Per-216 ordering invariant (devil's-advocate finding): a refused payload
+    # must NOT pay the ledger-connect handshake either. Locks the gate-before-
+    # connect ordering against drift.
+    ledger_mock.connect.assert_not_called()
 
 
 @pytest.mark.asyncio

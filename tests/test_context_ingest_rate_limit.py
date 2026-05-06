@@ -79,3 +79,32 @@ def test_read_ingest_rate_limit_refill_clamps_out_of_range(tmp_path: Path) -> No
         _read_ingest_rate_limit_refill_per_sec(repo_high)
         == _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
     )
+
+
+def test_read_ingest_rate_limit_refill_rejects_nan(tmp_path: Path) -> None:
+    """NaN evades min/max comparisons (every NaN comparison returns False),
+    so without an `isfinite()` guard NaN would slip past the clamp and lock
+    the bucket forever (`min(burst, x + dt*nan) = nan`, and `nan >= 1.0` is
+    False — bucket is permanently empty). Regression test for the
+    devil's-advocate-found bypass."""
+    nan_dir = tmp_path / "nan"
+    nan_dir.mkdir()
+    repo_nan = _write_config(nan_dir, "ingest_rate_limit_refill_per_sec: .nan\n")
+    assert (
+        _read_ingest_rate_limit_refill_per_sec(repo_nan)
+        == _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    )
+
+
+def test_read_ingest_rate_limit_refill_rejects_inf(tmp_path: Path) -> None:
+    """Same bypass shape as NaN — inf > MAX is True so the existing clamp
+    would actually catch positive infinity, but `-inf < MIN` would also
+    be caught. Lock the regression test on `+inf` for completeness; the
+    `isfinite` guard is the load-bearing check."""
+    inf_dir = tmp_path / "inf"
+    inf_dir.mkdir()
+    repo_inf = _write_config(inf_dir, "ingest_rate_limit_refill_per_sec: .inf\n")
+    assert (
+        _read_ingest_rate_limit_refill_per_sec(repo_inf)
+        == _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    )

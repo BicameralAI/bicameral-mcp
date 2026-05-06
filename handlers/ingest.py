@@ -326,16 +326,22 @@ async def handle_ingest(
     source_scope: str = "",
     cursor: str = "",
 ) -> IngestResponse:
-    ledger = ctx.ledger
-    if hasattr(ledger, "connect"):
-        await ledger.connect()
-
-    # #216: enforce entry-time guardrails before any ledger work.
-    # LLM-02 size check first (cheaper short-circuit on oversized
-    # payloads); LLM-08 rate check second. Both raise ``_IngestRefused``
-    # with distinct ``reason`` strings; telemetry-emit on refusal then
-    # re-raise so the MCP boundary translates to a structured
-    # TextContent error.
+    # #216: enforce entry-time guardrails BEFORE any ledger work, including
+    # the SurrealDB connection handshake. A refused payload should cost zero
+    # downstream resources. LLM-02 size check first (cheaper short-circuit
+    # on oversized payloads); LLM-08 rate check second. Both raise
+    # ``_IngestRefused`` with distinct ``reason`` strings; telemetry-emit
+    # on refusal then re-raise so the MCP boundary translates to a
+    # structured TextContent error.
+    #
+    # Per-session bucket scoping note: ``ctx.session_id`` defaults to the
+    # module-level ``_SESSION_ID`` (one UUID per server process). The rate
+    # gate is therefore effectively per-server-process under the current
+    # runtime — multiple concurrent agents over one MCP transport share
+    # one bucket. This is acceptable for the single-user-developer-tool
+    # deployment shape declared in plan-216 boundaries; team-server
+    # activation will need a per-agent session-id source for true
+    # per-agent isolation. Documented in plan-216 § Open Questions.
     try:
         _check_payload_size(payload, ctx.ingest_max_bytes)
         _check_rate_limit(
@@ -346,6 +352,10 @@ async def handle_ingest(
     except _IngestRefused as exc:
         _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
         raise
+
+    ledger = ctx.ledger
+    if hasattr(ledger, "connect"):
+        await ledger.connect()
 
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
