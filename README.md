@@ -18,6 +18,18 @@ Bicameral is a local-first [MCP server](https://spec.modelcontextprotocol.io/) t
 
 ---
 
+## Compliance posture
+
+bicameral-mcp's compliance stance is documented in three policy files:
+
+- [`docs/policies/host-trust-model.md`](docs/policies/host-trust-model.md) — MCP host UX dependency declaration (closes OWASP LLM-07 / MCP-01 gap)
+- [`docs/policies/acceptable-use.md`](docs/policies/acceptable-use.md) — intended purpose + prohibited uses (NIST AI RMF MAP-3.1 + EU AI Act Annex III)
+- [`docs/sla.md`](docs/sla.md) — availability stance (operator-run-only; no hosted SLA)
+
+The full compliance audit is at [`docs/research-brief-compliance-audit-2026-05-06.md`](docs/research-brief-compliance-audit-2026-05-06.md).
+
+---
+
 ## The Problem
 
 Engineering teams make hundreds of product decisions per week. A tiny fraction end up in tickets. None are linked to the code that implements them.
