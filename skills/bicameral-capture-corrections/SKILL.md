@@ -79,7 +79,7 @@ For each pending file, in mtime-order (oldest first):
 3. After processing, archive the file by invoking the queue module via the dedicated helper:
 
    ```
-   python3 scripts/hooks/transcript_archive.py <basename>.jsonl
+   python scripts/hooks/transcript_archive.py <basename>.jsonl
    ```
 
    `<basename>.jsonl` is the filename only (e.g. `abc-1234.jsonl`), not the full path. The helper resolves it to `<repo>/.bicameral/pending-transcripts/<basename>` itself, calls `events.transcript_queue.archive_processed`, and ensures idempotent overwrite + cross-platform behavior. Exit code `0` on success, `2` on usage error (unsafe basename), `1` on missing file.
@@ -161,7 +161,7 @@ Before scanning recent in-session turns, drain the pending-transcripts queue per
 - Process pending files in mtime-order (oldest first), applying Steps A/B/C to each file's user turns.
 - Track accumulated ask-corrections across all processed files.
 - When accumulated ask-corrections reach 4 (the preflight ≤4-question cap), stop processing further pending files and surface a final note: "N more pending transcript(s) — invoke `/bicameral-capture-corrections` directly to drain manually." Remaining files stay in `.bicameral/pending-transcripts/` for the next preflight.
-- Archive each fully-processed file via `python3 scripts/hooks/transcript_archive.py <basename>.jsonl`. Do NOT archive partially-processed files (the cap was hit mid-scan); the file stays pending and the next preflight resumes from its first un-surfaced correction.
+- Archive each fully-processed file via `python scripts/hooks/transcript_archive.py <basename>.jsonl`. Do NOT archive partially-processed files (the cap was hit mid-scan); the file stays pending and the next preflight resumes from its first un-surfaced correction.
 - If `<repo>/.bicameral/pending-transcripts/` doesn't exist or is empty, skip Step 0 silently — same shape as the canonical rubric's empty path.
 
 The 4-cap is shared with the in-session turn-scan that runs in step 1 below: queue-drained ask-corrections + in-session ask-corrections ≤ 4 total. If the queue alone fills the cap, the in-session turn scan still runs (its mechanical corrections still auto-ingest silently) but its ask-corrections are dropped (not surfaced) to preserve the cap.
@@ -216,6 +216,8 @@ Exit silently. No output. The empty path is always silent.
 
 **6. Surface corrections via `AskUserQuestion`.**
 Regardless of count, batch into groups of ≤ 4. For each batch call:
+
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g11_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
 
 ```python
 AskUserQuestion({

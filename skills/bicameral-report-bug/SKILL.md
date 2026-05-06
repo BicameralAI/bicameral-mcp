@@ -214,6 +214,8 @@ you can edit anything in the body, delete sections, or close the tab
 to abandon. The issue is only filed when you click Submit on GitHub.
 ```
 
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events on every invocation (skill name only, no body content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
+
 Then call `AskUserQuestion`:
 
 ```

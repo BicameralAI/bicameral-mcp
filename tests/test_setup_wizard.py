@@ -84,7 +84,11 @@ def test_session_end_command_invokes_queue_writer():
     which is moot now that the hook does not invoke a slash command at
     all."""
     cmd = setup_wizard._BICAMERAL_SESSION_END_COMMAND
-    assert "scripts/hooks/session_end_queue_writer.py" in cmd
+    # Post #200 Phase 1: command is rendered per sys.platform — POSIX uses
+    # forward slashes, Windows uses backslashes. Substring check the path
+    # in a separator-agnostic way.
+    assert "session_end_queue_writer.py" in cmd
+    assert "scripts" in cmd and "hooks" in cmd
     assert "/bicameral-capture-corrections" not in cmd
     assert "claude -p" not in cmd
 

@@ -28,11 +28,21 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 
-CANONICAL_COMMAND = (
+CANONICAL_POSIX_COMMAND = (
     '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
     "BICAMERAL_SESSION_END_RUNNING=1 "
-    "python3 scripts/hooks/session_end_queue_writer.py || true"
+    "python scripts/hooks/session_end_queue_writer.py || true"
 )
+
+CANONICAL_WIN32_COMMAND = (
+    "if exist .bicameral if not defined BICAMERAL_SESSION_END_RUNNING "
+    "(set BICAMERAL_SESSION_END_RUNNING=1 && "
+    "python scripts\\hooks\\session_end_queue_writer.py)"
+)
+
+
+def _canonical_for_current_platform() -> str:
+    return CANONICAL_WIN32_COMMAND if sys.platform == "win32" else CANONICAL_POSIX_COMMAND
 
 
 def _extract_session_end_command() -> str:
@@ -64,20 +74,27 @@ def test_settings_json_session_end_invokes_queue_writer():
 
 def test_setup_wizard_renders_canonical_session_end_hook():
     """Behavior: setup_wizard's source-of-truth constant matches the
-    canonical command verbatim. Drift between this constant and the
-    SKILL.md prescription is the failure mode this test exists to catch."""
+    canonical command for the current platform verbatim. Drift between
+    this constant and the SKILL.md prescription is the failure mode
+    this test exists to catch.
+
+    Post #200 Phase 1: the constant is rendered per `sys.platform` —
+    bash shape on linux/darwin, cmd.exe shape on win32. Both shapes
+    invoke `python scripts/hooks/session_end_queue_writer.py` (no
+    `python3` literal — Windows lacks it, modern Linux symlinks it)."""
     import setup_wizard
 
-    assert setup_wizard._BICAMERAL_SESSION_END_COMMAND == CANONICAL_COMMAND
+    assert setup_wizard._BICAMERAL_SESSION_END_COMMAND == _canonical_for_current_platform()
 
 
-def test_build_session_end_command_no_args_matches_canonical():
+def test_build_session_end_command_no_args_matches_current_platform():
     """Behavior: the parameterized helper, when called with no args,
-    produces the same string as the no-args constant — i.e. end-user
-    installs are unchanged by the helper's existence."""
+    produces the same string as the no-args constant for the current
+    platform — i.e. end-user installs see the OS-correct shape from
+    the moment the wizard writes settings.json."""
     import setup_wizard
 
-    assert setup_wizard._build_session_end_command() == CANONICAL_COMMAND
+    assert setup_wizard._build_session_end_command() == _canonical_for_current_platform()
 
 
 def test_build_session_end_command_ignores_mcp_config_path():
@@ -90,8 +107,6 @@ def test_build_session_end_command_ignores_mcp_config_path():
     function returns the canonical command regardless of the argument."""
     import setup_wizard
 
-    assert (
-        setup_wizard._build_session_end_command(mcp_config_path="/tmp/x/mcp.json")
-        == CANONICAL_COMMAND
-    )
-    assert setup_wizard._build_session_end_command(mcp_config_path=None) == CANONICAL_COMMAND
+    expected = _canonical_for_current_platform()
+    assert setup_wizard._build_session_end_command(mcp_config_path="/tmp/x/mcp.json") == expected
+    assert setup_wizard._build_session_end_command(mcp_config_path=None) == expected
