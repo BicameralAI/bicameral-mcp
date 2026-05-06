@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
+import time
 from datetime import UTC
 
 import preflight_telemetry
@@ -65,6 +68,62 @@ def _check_payload_size(payload: dict, max_bytes: int) -> None:
         raise _IngestRefused(
             "size_limit_exceeded",
             detail=f"{size} bytes > {max_bytes} cap",
+        )
+
+
+class _TokenBucket:
+    """Lazy-refill token bucket — single counter, single timestamp.
+
+    ``take()`` returns True when a token is available (and consumes it),
+    False when the bucket is empty. Refill is computed on access, no
+    background timer. Thread-safe via internal lock for concurrent
+    handler dispatches in the same process.
+    """
+
+    def __init__(self, burst: int, refill_per_sec: float) -> None:
+        self._burst = float(burst)
+        self._refill = refill_per_sec
+        self._tokens = float(burst)
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last
+            self._tokens = min(self._burst, self._tokens + elapsed * self._refill)
+            self._last = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
+
+
+# Module-level registry: one bucket per session_id. Reset on server
+# restart by design — rate-limit state is in-process only (LLM-08
+# threat model is agent loops, not malicious restart-loops).
+_RATE_LIMIT_REGISTRY: dict[str, _TokenBucket] = {}
+_RATE_LIMIT_REGISTRY_LOCK = threading.Lock()
+
+
+def _check_rate_limit(session_id: str, burst: int, refill_per_sec: float) -> None:
+    """Raise ``_IngestRefused('rate_limit_exceeded', ...)`` when the bucket
+    for ``session_id`` has no tokens. Disabled entirely by setting
+    ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1`` (local debugging knob).
+    """
+    if os.getenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", "").strip() == "1":
+        return
+    with _RATE_LIMIT_REGISTRY_LOCK:
+        bucket = _RATE_LIMIT_REGISTRY.get(session_id)
+        if bucket is None:
+            bucket = _TokenBucket(burst, refill_per_sec)
+            _RATE_LIMIT_REGISTRY[session_id] = bucket
+    if not bucket.take():
+        raise _IngestRefused(
+            "rate_limit_exceeded",
+            detail=(
+                f"session {session_id} bucket empty (burst={burst}, refill={refill_per_sec}/s)"
+            ),
         )
 
 
@@ -271,11 +330,19 @@ async def handle_ingest(
     if hasattr(ledger, "connect"):
         await ledger.connect()
 
-    # #216 LLM-02: enforce serialized-byte cap before any ledger work.
-    # Telemetry-emit on refusal then re-raise; MCP boundary translates
-    # ``_IngestRefused`` to a structured TextContent error.
+    # #216: enforce entry-time guardrails before any ledger work.
+    # LLM-02 size check first (cheaper short-circuit on oversized
+    # payloads); LLM-08 rate check second. Both raise ``_IngestRefused``
+    # with distinct ``reason`` strings; telemetry-emit on refusal then
+    # re-raise so the MCP boundary translates to a structured
+    # TextContent error.
     try:
         _check_payload_size(payload, ctx.ingest_max_bytes)
+        _check_rate_limit(
+            getattr(ctx, "session_id", ""),
+            ctx.ingest_rate_limit_burst,
+            ctx.ingest_rate_limit_refill_per_sec,
+        )
     except _IngestRefused as exc:
         _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
         raise
