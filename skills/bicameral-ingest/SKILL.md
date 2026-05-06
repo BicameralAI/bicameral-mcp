@@ -23,8 +23,7 @@ Ingest **implementation-relevant** decisions from a source document into the dec
 
 **At skill start** (before any other tool calls):
 ```
-bicameral.skill_begin(skill_name="bicameral-ingest", session_id=<uuid4>,
-  rationale="<one-liner: why this triggered — e.g. 'user pasted sprint notes and said track this'>")
+bicameral.skill_begin(skill_name="bicameral-ingest", session_id=<uuid4>)
 ```
 
 **At skill end** (after all work is complete, including ratification):
