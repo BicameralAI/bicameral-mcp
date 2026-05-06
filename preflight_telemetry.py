@@ -319,6 +319,29 @@ def write_engagement(
     _append(_ENGAGEMENTS_FILE, record)
 
 
+# ── #216: ingest-boundary refusal events ─────────────────────────────
+
+
+def write_ingest_refusal_event(reason: str, session_id: str) -> None:
+    """Append an ingest-refusal event to ``~/.bicameral/preflight_events.jsonl``.
+
+    Reason-agnostic: handles ``size_limit_exceeded`` (LLM-02),
+    ``rate_limit_exceeded`` (LLM-08), and any future entry-time
+    guardrail that raises ``_IngestRefused``. No-op when telemetry is
+    disabled. Written into the same JSONL file as preflight + bypass
+    events so operator triage joins on a single substrate.
+    """
+    if not telemetry_enabled():
+        return
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event_type": "ingest_refused",
+        "reason": reason,
+        "session_id": session_id,
+    }
+    _append(_EVENTS_FILE, record)
+
+
 # ── Phase 4: #112 HITL bypass flow ───────────────────────────────────
 
 

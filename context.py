@@ -30,6 +30,25 @@ _DEFAULT_RENDER_ATTRIBUTION_MODE = "full"
 _BYPASS_TRACKING_MODES = frozenset({"enabled", "disabled"})
 _DEFAULT_BYPASS_TRACKING_MODE = "enabled"
 
+# #216 LLM-02: payload-size guardrail. 1 MiB cap is loose enough for
+# any legitimate transcript / decision dump but bounds DoS shape
+# (single oversized payload can't blow out the ledger writer).
+_DEFAULT_INGEST_MAX_BYTES = 1024 * 1024  # 1 MiB
+_INGEST_MAX_BYTES_MIN = 1024  # 1 KiB; below this is meaningless / config error
+_INGEST_MAX_BYTES_MAX = 64 * 1024 * 1024  # 64 MiB; above this is operator footgun
+
+# #216 LLM-08: token-bucket rate limit per session_id.
+# Default 10-token burst with 1 token/sec refill: an agent can fire 10
+# ingests instantly, then sustain 1/sec. Tuned for single-user
+# developer-tool workflow shape; stricter sliding-window enforcement
+# is a team-server activation concern (revisit then).
+_DEFAULT_INGEST_RATE_LIMIT_BURST = 10
+_DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC = 1.0
+_INGEST_RATE_LIMIT_BURST_MIN = 1
+_INGEST_RATE_LIMIT_BURST_MAX = 1000
+_INGEST_RATE_LIMIT_REFILL_MIN = 0.01
+_INGEST_RATE_LIMIT_REFILL_MAX = 100.0
+
 
 def _read_yaml_string_field(repo_path: str, key: str, valid: frozenset[str], default: str) -> str:
     """Generic reader for a `.bicameral/config.yaml` string field with a
@@ -92,6 +111,94 @@ def _read_preflight_bypass_tracking(repo_path: str) -> str:
         _BYPASS_TRACKING_MODES,
         _DEFAULT_BYPASS_TRACKING_MODE,
     )
+
+
+def _read_ingest_max_bytes(repo_path: str) -> int:
+    """Resolve ``ingest_max_bytes`` from ``.bicameral/config.yaml``.
+
+    Default 1 MiB. Clamped to ``[_INGEST_MAX_BYTES_MIN, _INGEST_MAX_BYTES_MAX]``;
+    out-of-range values (negative, non-integer, beyond clamp) fall back
+    to the default with no silent acceptance. Read by
+    ``handlers.ingest._check_payload_size``.
+    """
+    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    if not config_path.exists():
+        return _DEFAULT_INGEST_MAX_BYTES
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        val = config.get("ingest_max_bytes", _DEFAULT_INGEST_MAX_BYTES)
+    except Exception:
+        return _DEFAULT_INGEST_MAX_BYTES
+    if not isinstance(val, int) or isinstance(val, bool):
+        return _DEFAULT_INGEST_MAX_BYTES
+    if val < _INGEST_MAX_BYTES_MIN or val > _INGEST_MAX_BYTES_MAX:
+        return _DEFAULT_INGEST_MAX_BYTES
+    return val
+
+
+def _read_ingest_rate_limit_burst(repo_path: str) -> int:
+    """Resolve ``ingest_rate_limit_burst`` from ``.bicameral/config.yaml``.
+
+    Default 10. Clamped to ``[_INGEST_RATE_LIMIT_BURST_MIN,
+    _INGEST_RATE_LIMIT_BURST_MAX]``. Out-of-range / non-int / malformed
+    yaml all fall back to default (no silent acceptance).
+    """
+    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    if not config_path.exists():
+        return _DEFAULT_INGEST_RATE_LIMIT_BURST
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        val = config.get("ingest_rate_limit_burst", _DEFAULT_INGEST_RATE_LIMIT_BURST)
+    except Exception:
+        return _DEFAULT_INGEST_RATE_LIMIT_BURST
+    if not isinstance(val, int) or isinstance(val, bool):
+        return _DEFAULT_INGEST_RATE_LIMIT_BURST
+    if val < _INGEST_RATE_LIMIT_BURST_MIN or val > _INGEST_RATE_LIMIT_BURST_MAX:
+        return _DEFAULT_INGEST_RATE_LIMIT_BURST
+    return val
+
+
+def _read_ingest_rate_limit_refill_per_sec(repo_path: str) -> float:
+    """Resolve ``ingest_rate_limit_refill_per_sec`` from ``.bicameral/config.yaml``.
+
+    Default 1.0. Clamped to ``[_INGEST_RATE_LIMIT_REFILL_MIN,
+    _INGEST_RATE_LIMIT_REFILL_MAX]``. ``0.0`` would lock the bucket
+    forever after first burst — treated as malformed and falls back
+    to default. Out-of-range / non-numeric / malformed yaml all fall
+    back to default.
+    """
+    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    if not config_path.exists():
+        return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        val = config.get(
+            "ingest_rate_limit_refill_per_sec",
+            _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC,
+        )
+    except Exception:
+        return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    val_f = float(val)
+    # NaN evades both `< MIN` and `> MAX` (every comparison with NaN is
+    # False), so an operator who writes ``refill: .nan`` would land NaN
+    # in the bucket and lock ingest forever (`min(burst, x + dt*nan) =
+    # nan`, and ``nan >= 1.0`` is False — bucket is permanently empty).
+    # ``math.isfinite()`` rejects NaN + inf in one check.
+    import math
+
+    if not math.isfinite(val_f):
+        return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    if val_f < _INGEST_RATE_LIMIT_REFILL_MIN or val_f > _INGEST_RATE_LIMIT_REFILL_MAX:
+        return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    return val_f
 
 
 def _read_guided_mode(repo_path: str) -> bool:
@@ -180,6 +287,19 @@ class BicameralContext:
     # with reason="tracking_disabled"). Operator privacy choice; deterministic
     # at config-load time.
     preflight_bypass_tracking: str = _DEFAULT_BYPASS_TRACKING_MODE
+    # #216 LLM-02: max serialized-JSON byte size for an inbound ingest
+    # payload. 1 MiB default. Clamped to [1 KiB, 64 MiB]. Enforced by
+    # ``handlers.ingest._check_payload_size`` before payload normalization;
+    # over-cap payloads raise ``_IngestRefused`` and are translated to a
+    # structured TextContent error at the MCP boundary.
+    ingest_max_bytes: int = _DEFAULT_INGEST_MAX_BYTES
+    # #216 LLM-08: per-session token-bucket rate limit. ``burst`` is the
+    # initial / max-cap token count; ``refill_per_sec`` is the lazy refill
+    # rate. Enforced by ``handlers.ingest._check_rate_limit`` after the
+    # size-check passes. ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1`` env
+    # bypasses the gate entirely (local debugging knob).
+    ingest_rate_limit_burst: int = _DEFAULT_INGEST_RATE_LIMIT_BURST
+    ingest_rate_limit_refill_per_sec: float = _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
     # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
@@ -221,6 +341,9 @@ class BicameralContext:
         signer_email_fallback = _read_signer_email_fallback(repo_path)
         render_source_attribution = _read_render_source_attribution(repo_path)
         preflight_bypass_tracking = _read_preflight_bypass_tracking(repo_path)
+        ingest_max_bytes = _read_ingest_max_bytes(repo_path)
+        ingest_rate_limit_burst = _read_ingest_rate_limit_burst(repo_path)
+        ingest_rate_limit_refill_per_sec = _read_ingest_rate_limit_refill_per_sec(repo_path)
 
         return cls(
             repo_path=repo_path,
@@ -236,4 +359,7 @@ class BicameralContext:
             signer_email_fallback=signer_email_fallback,
             render_source_attribution=render_source_attribution,
             preflight_bypass_tracking=preflight_bypass_tracking,
+            ingest_max_bytes=ingest_max_bytes,
+            ingest_rate_limit_burst=ingest_rate_limit_burst,
+            ingest_rate_limit_refill_per_sec=ingest_rate_limit_refill_per_sec,
         )

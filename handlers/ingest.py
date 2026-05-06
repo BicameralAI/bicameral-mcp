@@ -6,9 +6,14 @@ Auto-grounding removed in caller-LLM binding flow (v0.5.1+).
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
+import time
 from datetime import UTC
 
+import preflight_telemetry
 from contracts import (
     BriefEnvelope,
     BriefGap,
@@ -21,6 +26,105 @@ from contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _IngestRefused(Exception):
+    """Raised when an ingest is rejected by an entry-time guardrail.
+
+    Carries a structured ``reason`` string for the MCP-boundary response
+    translation and an optional human-readable ``detail`` describing the
+    specific cause (byte counts, bucket state, etc.). Caught at the
+    ``server.call_tool`` boundary; never bubbles to the agent as a raw
+    exception.
+    """
+
+    def __init__(self, reason: str, *, detail: str = "") -> None:
+        self.reason = reason
+        self.detail = detail
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
+def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
+    """Append a refusal event to ``~/.bicameral/preflight_events.jsonl``.
+
+    Side-effect-only helper invoked by ``handle_ingest`` after a guard
+    raises ``_IngestRefused`` and before the exception re-propagates to
+    the MCP boundary. Kept out of the gate helpers themselves so those
+    stay pure (raise on fail; reusable in non-ingest contexts).
+    """
+    preflight_telemetry.write_ingest_refusal_event(reason=reason, session_id=session_id)
+
+
+def _check_payload_size(payload: dict, max_bytes: int) -> None:
+    """Raise ``_IngestRefused`` if the serialized payload exceeds ``max_bytes``.
+
+    Measurement is ``len(json.dumps(payload).encode("utf-8"))`` — captures
+    every field the agent might supply, language-agnostic, single
+    comparison. Pure: no telemetry side-effect; the wrapping try/except
+    in ``handle_ingest`` records the refusal event before re-raising.
+    """
+    size = len(json.dumps(payload, default=str).encode("utf-8"))
+    if size > max_bytes:
+        raise _IngestRefused(
+            "size_limit_exceeded",
+            detail=f"{size} bytes > {max_bytes} cap",
+        )
+
+
+class _TokenBucket:
+    """Lazy-refill token bucket — single counter, single timestamp.
+
+    ``take()`` returns True when a token is available (and consumes it),
+    False when the bucket is empty. Refill is computed on access, no
+    background timer. Thread-safe via internal lock for concurrent
+    handler dispatches in the same process.
+    """
+
+    def __init__(self, burst: int, refill_per_sec: float) -> None:
+        self._burst = float(burst)
+        self._refill = refill_per_sec
+        self._tokens = float(burst)
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last
+            self._tokens = min(self._burst, self._tokens + elapsed * self._refill)
+            self._last = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
+
+
+# Module-level registry: one bucket per session_id. Reset on server
+# restart by design — rate-limit state is in-process only (LLM-08
+# threat model is agent loops, not malicious restart-loops).
+_RATE_LIMIT_REGISTRY: dict[str, _TokenBucket] = {}
+_RATE_LIMIT_REGISTRY_LOCK = threading.Lock()
+
+
+def _check_rate_limit(session_id: str, burst: int, refill_per_sec: float) -> None:
+    """Raise ``_IngestRefused('rate_limit_exceeded', ...)`` when the bucket
+    for ``session_id`` has no tokens. Disabled entirely by setting
+    ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1`` (local debugging knob).
+    """
+    if os.getenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", "").strip() == "1":
+        return
+    with _RATE_LIMIT_REGISTRY_LOCK:
+        bucket = _RATE_LIMIT_REGISTRY.get(session_id)
+        if bucket is None:
+            bucket = _TokenBucket(burst, refill_per_sec)
+            _RATE_LIMIT_REGISTRY[session_id] = bucket
+    if not bucket.take():
+        raise _IngestRefused(
+            "rate_limit_exceeded",
+            detail=(
+                f"session {session_id} bucket empty (burst={burst}, refill={refill_per_sec}/s)"
+            ),
+        )
 
 
 def _normalize_payload(payload: dict) -> dict:
@@ -222,6 +326,33 @@ async def handle_ingest(
     source_scope: str = "",
     cursor: str = "",
 ) -> IngestResponse:
+    # #216: enforce entry-time guardrails BEFORE any ledger work, including
+    # the SurrealDB connection handshake. A refused payload should cost zero
+    # downstream resources. LLM-02 size check first (cheaper short-circuit
+    # on oversized payloads); LLM-08 rate check second. Both raise
+    # ``_IngestRefused`` with distinct ``reason`` strings; telemetry-emit
+    # on refusal then re-raise so the MCP boundary translates to a
+    # structured TextContent error.
+    #
+    # Per-session bucket scoping note: ``ctx.session_id`` defaults to the
+    # module-level ``_SESSION_ID`` (one UUID per server process). The rate
+    # gate is therefore effectively per-server-process under the current
+    # runtime — multiple concurrent agents over one MCP transport share
+    # one bucket. This is acceptable for the single-user-developer-tool
+    # deployment shape declared in plan-216 boundaries; team-server
+    # activation will need a per-agent session-id source for true
+    # per-agent isolation. Documented in plan-216 § Open Questions.
+    try:
+        _check_payload_size(payload, ctx.ingest_max_bytes)
+        _check_rate_limit(
+            getattr(ctx, "session_id", ""),
+            ctx.ingest_rate_limit_burst,
+            ctx.ingest_rate_limit_refill_per_sec,
+        )
+    except _IngestRefused as exc:
+        _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
+        raise
+
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
