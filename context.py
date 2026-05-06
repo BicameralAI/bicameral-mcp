@@ -113,6 +113,56 @@ def _read_preflight_bypass_tracking(repo_path: str) -> str:
     )
 
 
+def _resolve_agent_identity(repo_path: str) -> str:
+    """Resolve a stable, opaque agent-identity for ``BicameralContext.session_id``.
+
+    Returns a 16-char hex hash derived from ``git config user.email`` salted
+    with the per-install ``preflight_telemetry`` salt. Single-developer
+    installs get one stable identifier across server restarts; team-server
+    installs get one identifier per developer (per-developer rate-limit
+    bucket isolation). Cross-install correlation broken by the per-install
+    salt; cross-session-within-one-install correlation preserved (useful
+    for ledger-side attribution).
+
+    Falls back to the process-wide ``_SESSION_ID`` UUID when git config
+    is unreadable (no git, no user.email, subprocess failure). Falls back
+    to ``_SESSION_ID`` also when the salt file is unreadable / unwriteable
+    (filesystem-locked or test/CI sandbox).
+
+    **Side effect**: ``_get_or_create_salt()`` creates ``~/.bicameral/salt``
+    on first call across the entire bicameral-mcp install (not just this
+    handler). The first invocation of ``_resolve_agent_identity`` may
+    therefore initialize the salt file ahead of any preflight-telemetry
+    call. This is acceptable — the salt file is per-install state that
+    needs to exist regardless of which subsystem first reads it; both
+    consumers see the same value via the file's idempotent creation
+    semantics (race-safe via ``os.O_EXCL`` per the existing implementation
+    at ``preflight_telemetry.py:97-118``).
+
+    #231 v1 option (α): email-derived identity. Option (β) per-MCP-session
+    granularity is deferred until team-server protocol activation surfaces
+    a per-conversation session-id from the agent host.
+    """
+    try:
+        from events.writer import _get_git_email
+        from preflight_telemetry import _get_or_create_salt
+    except Exception:
+        return _SESSION_ID
+    try:
+        email = _get_git_email(repo_path)
+    except Exception:
+        return _SESSION_ID
+    if email == "unknown" or not email:
+        return _SESSION_ID
+    try:
+        salt = _get_or_create_salt()
+    except Exception:
+        return _SESSION_ID
+    import hashlib
+
+    return hashlib.sha256(salt + email.encode("utf-8")).hexdigest()[:16]
+
+
 def _read_ingest_max_bytes(repo_path: str) -> int:
     """Resolve ``ingest_max_bytes`` from ``.bicameral/config.yaml``.
 
@@ -266,8 +316,18 @@ class BicameralContext:
     # setting lives in ``.bicameral/config.yaml`` (chosen at setup time);
     # env var ``BICAMERAL_GUIDED_MODE`` is a one-off override.
     guided_mode: bool = False
-    # v0.7.0: server-session UUID — same for all tool calls in one server process.
-    # Used to tag proposed/ratified signoff objects with their originating session.
+    # v0.7.0 + #231 v1: agent-identity field — populated by `from_env()` via
+    # `_resolve_agent_identity(repo_path)` to a per-developer salted email-hash
+    # (16-char hex). Same developer across server restarts gets the same
+    # identifier (useful for ledger-side attribution); different developers on
+    # the same install get different identifiers (per-developer rate-limit
+    # bucket isolation in `handlers/ingest.py:_RATE_LIMIT_REGISTRY`). Falls
+    # back to the process-wide ``_SESSION_ID`` UUID when git config is
+    # unreadable. Field default factory still returns ``_SESSION_ID`` for
+    # tests that construct ``BicameralContext`` directly without going through
+    # ``from_env`` — that path keeps the v0.7.0 single-UUID-per-process
+    # semantic. Option (β) per-MCP-session granularity is the v2 upgrade
+    # path, gated on team-server protocol activation; documented in plan-231.
     session_id: str = field(default_factory=lambda: _SESSION_ID)
     # #200 Phase 2: signer-email fallback policy. Read at server start from
     # `.bicameral/config.yaml: signer_email_fallback`. Applied by
@@ -344,6 +404,9 @@ class BicameralContext:
         ingest_max_bytes = _read_ingest_max_bytes(repo_path)
         ingest_rate_limit_burst = _read_ingest_rate_limit_burst(repo_path)
         ingest_rate_limit_refill_per_sec = _read_ingest_rate_limit_refill_per_sec(repo_path)
+        # #231: per-developer agent identity (salted email-hash); falls back
+        # to _SESSION_ID UUID on git/salt failure.
+        session_id = _resolve_agent_identity(repo_path)
 
         return cls(
             repo_path=repo_path,
@@ -356,6 +419,7 @@ class BicameralContext:
             authoritative_ref=authoritative_ref,
             authoritative_sha=authoritative_sha,
             guided_mode=guided_mode,
+            session_id=session_id,
             signer_email_fallback=signer_email_fallback,
             render_source_attribution=render_source_attribution,
             preflight_bypass_tracking=preflight_bypass_tracking,
