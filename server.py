@@ -81,6 +81,29 @@ _ACTION_FOR_REFUSAL_REASON: dict[str, str] = {
         "Set BICAMERAL_INGEST_CANARY_DISABLE=1 only for known-false-positive "
         "workflows or controlled tests."
     ),
+    "sensitive_data:secret": (
+        "credential or secret detected in the payload. Remove it from the "
+        "ingested content and retry. **Rotate the credential immediately** — "
+        "assume it has been logged elsewhere in the agent's context. "
+        "Set BICAMERAL_INGEST_SECRET_DISABLE=1 only for known-test-credential "
+        "workflows."
+    ),
+    "sensitive_data:phi": (
+        "Protected Health Information (PHI) detected. PHI is out of scope "
+        "for bicameral-mcp; do not ingest clinical content. Use a "
+        "HIPAA-compliant tooling channel for medical data. If this is a "
+        "false positive on non-PHI content (e.g. test data with a 'mrn:' "
+        "label), set BICAMERAL_INGEST_SECRET_DISABLE=1 for the controlled "
+        "test."
+    ),
+    "sensitive_data:pan": (
+        "cardholder data (PAN) detected — Luhn-valid 13-19 digit sequence "
+        "not preceded by an ID-class label. PAN is out of scope for "
+        "bicameral-mcp; do not ingest cardholder data. Use a PCI-DSS-"
+        "compliant system. If this is a false positive (test card outside "
+        "an obvious order_id context), set BICAMERAL_INGEST_SECRET_DISABLE=1 "
+        "for the controlled test."
+    ),
 }
 
 
