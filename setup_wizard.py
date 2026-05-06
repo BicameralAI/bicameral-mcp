@@ -937,13 +937,17 @@ def _write_collaboration_config(
         f"mode: {mode}\n"
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
-        "signer_email_fallback: local-part-only\n",
+        "signer_email_fallback: local-part-only\n"
+        "render_source_attribution: redacted\n"
+        "preflight_bypass_tracking: enabled\n",
         encoding="utf-8",
     )
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
     print("  Signer-email fallback: local-part-only (privacy-positive default)")
+    print("  Source-attribution rendering: redacted (names + dates stripped from preflight output)")
+    print("  Preflight bypass tracking: enabled (writes ~/.bicameral/preflight_events.jsonl)")
 
 
 def _patch_gitignore(path: Path, entries: list[str], comment: str) -> None:

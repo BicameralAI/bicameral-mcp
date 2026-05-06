@@ -17,28 +17,74 @@ _GUIDED_MODE_FALSY = frozenset({"0", "false", "no", "off", ""})
 _SIGNER_FALLBACK_MODES = frozenset({"redact", "local-part-only", "full"})
 _DEFAULT_SIGNER_FALLBACK_MODE = "local-part-only"
 
+_RENDER_ATTRIBUTION_MODES = frozenset({"full", "redacted", "hidden"})
+_DEFAULT_RENDER_ATTRIBUTION_MODE = "redacted"
 
-def _read_signer_email_fallback(repo_path: str) -> str:
-    """Resolve `signer_email_fallback` from `.bicameral/config.yaml`.
+_BYPASS_TRACKING_MODES = frozenset({"enabled", "disabled"})
+_DEFAULT_BYPASS_TRACKING_MODE = "enabled"
 
-    Default: ``"local-part-only"`` (privacy-positive). Returns the
-    raw config value if it's one of the three valid modes; falls
-    back to default on missing file, malformed yaml, missing key,
-    or invalid value (logs nothing — fail-soft).
-    """
+
+def _read_yaml_string_field(repo_path: str, key: str, valid: frozenset[str], default: str) -> str:
+    """Generic reader for a `.bicameral/config.yaml` string field with a
+    fixed valid-set and fail-soft default. Returns the raw config value
+    if it's in the valid set; falls back to default on missing file,
+    malformed yaml, missing key, or invalid value."""
     config_path = Path(repo_path) / ".bicameral" / "config.yaml"
     if not config_path.exists():
-        return _DEFAULT_SIGNER_FALLBACK_MODE
+        return default
     try:
         import yaml
 
         config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        val = config.get("signer_email_fallback", _DEFAULT_SIGNER_FALLBACK_MODE)
-        if val in _SIGNER_FALLBACK_MODES:
+        val = config.get(key, default)
+        if val in valid:
             return val
     except Exception:
         pass
-    return _DEFAULT_SIGNER_FALLBACK_MODE
+    return default
+
+
+def _read_signer_email_fallback(repo_path: str) -> str:
+    """Resolve `signer_email_fallback` from `.bicameral/config.yaml`.
+
+    Default: ``"local-part-only"`` (privacy-positive). Modes: ``redact``,
+    ``local-part-only``, ``full``."""
+    return _read_yaml_string_field(
+        repo_path,
+        "signer_email_fallback",
+        _SIGNER_FALLBACK_MODES,
+        _DEFAULT_SIGNER_FALLBACK_MODE,
+    )
+
+
+def _read_render_source_attribution(repo_path: str) -> str:
+    """Resolve `render_source_attribution` from `.bicameral/config.yaml`.
+
+    Default: ``"redacted"`` (privacy-positive — replaces names + dates
+    with placeholders, preserves structural shape). Modes: ``full``,
+    ``redacted``, ``hidden``. Read by ``handlers.preflight._apply_attribution_policy``
+    to filter ``DecisionMatch.source_ref`` before it returns to the agent."""
+    return _read_yaml_string_field(
+        repo_path,
+        "render_source_attribution",
+        _RENDER_ATTRIBUTION_MODES,
+        _DEFAULT_RENDER_ATTRIBUTION_MODE,
+    )
+
+
+def _read_preflight_bypass_tracking(repo_path: str) -> str:
+    """Resolve `preflight_bypass_tracking` from `.bicameral/config.yaml`.
+
+    Default: ``"enabled"`` (backward-compat with pre-#200 behavior; lift
+    candidate for a later deprecation cycle). Modes: ``enabled``,
+    ``disabled``. When disabled, ``handlers.record_bypass.handle_record_bypass``
+    short-circuits before the JSONL write to ``~/.bicameral/preflight_events.jsonl``."""
+    return _read_yaml_string_field(
+        repo_path,
+        "preflight_bypass_tracking",
+        _BYPASS_TRACKING_MODES,
+        _DEFAULT_BYPASS_TRACKING_MODE,
+    )
 
 
 def _read_guided_mode(repo_path: str) -> bool:
@@ -116,6 +162,17 @@ class BicameralContext:
     # (`local-part-only`) preserves attribution prefix without leaking a
     # directly-mailable address. Modes: `redact`, `local-part-only`, `full`.
     signer_email_fallback: str = _DEFAULT_SIGNER_FALLBACK_MODE
+    # #200 Phase 3: render_source_attribution gates how DecisionMatch.source_ref
+    # lines render to the agent. Default `redacted` strips name + date patterns
+    # while preserving structural shape. Modes: `full` (legacy verbatim),
+    # `redacted` (default), `hidden` (blank source_ref entirely).
+    render_source_attribution: str = _DEFAULT_RENDER_ATTRIBUTION_MODE
+    # #200 Phase 3: preflight_bypass_tracking gates the JSONL write to
+    # ~/.bicameral/preflight_events.jsonl. Default `enabled` matches pre-#200
+    # behavior; `disabled` makes record_bypass a no-op (returns recorded=False
+    # with reason="tracking_disabled"). Operator privacy choice; deterministic
+    # at config-load time.
+    preflight_bypass_tracking: str = _DEFAULT_BYPASS_TRACKING_MODE
     # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
@@ -155,6 +212,8 @@ class BicameralContext:
         authoritative_sha = resolve_ref_sha(repo_path, authoritative_ref) or ""
         guided_mode = _read_guided_mode(repo_path)
         signer_email_fallback = _read_signer_email_fallback(repo_path)
+        render_source_attribution = _read_render_source_attribution(repo_path)
+        preflight_bypass_tracking = _read_preflight_bypass_tracking(repo_path)
 
         return cls(
             repo_path=repo_path,
@@ -168,4 +227,6 @@ class BicameralContext:
             authoritative_sha=authoritative_sha,
             guided_mode=guided_mode,
             signer_email_fallback=signer_email_fallback,
+            render_source_attribution=render_source_attribution,
+            preflight_bypass_tracking=preflight_bypass_tracking,
         )
