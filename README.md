@@ -270,7 +270,6 @@ symbol names back to the server.
 |---|---|
 | `validate_symbols` | Fuzzy-match symbol name hypotheses against the code index |
 | `get_neighbors` | 1-hop structural graph traversal (callers, callees, imports) |
-| `extract_symbols` | Tree-sitter symbol extraction from a source file |
 
 </details>
 

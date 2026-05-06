@@ -82,7 +82,7 @@ Canonical type: `contracts.py` (see `DecisionStatus = Literal["reflected", "drif
 - `bicameral.list_unclassified_decisions` / `bicameral.set_decision_level` / `bicameral.evaluate_governance` — decision-tier classification surface
 
 **Code locator** (deterministic primitives, no LLM in path):
-- `validate_symbols`, `search_code`, `get_neighbors`, `extract_symbols`
+- `validate_symbols`, `get_neighbors`
 
 There is **no internal/external split** at the MCP boundary — every tool is callable from any client. Discipline lives in the skill layer (`skills/*/SKILL.md`), not in the tool surface.
 
