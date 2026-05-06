@@ -6,9 +6,11 @@ Auto-grounding removed in caller-LLM binding flow (v0.5.1+).
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import UTC
 
+import preflight_telemetry
 from contracts import (
     BriefEnvelope,
     BriefGap,
@@ -21,6 +23,33 @@ from contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _IngestRefused(Exception):
+    """Raised when an ingest is rejected by an entry-time guardrail.
+
+    Carries a structured ``reason`` string for the MCP-boundary response
+    translation and an optional human-readable ``detail`` describing the
+    specific cause (byte counts, bucket state, etc.). Caught at the
+    ``server.call_tool`` boundary; never bubbles to the agent as a raw
+    exception.
+    """
+
+    def __init__(self, reason: str, *, detail: str = "") -> None:
+        self.reason = reason
+        self.detail = detail
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
+def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
+    """Append a refusal event to ``~/.bicameral/preflight_events.jsonl``.
+
+    Side-effect-only helper invoked by ``handle_ingest`` after a guard
+    raises ``_IngestRefused`` and before the exception re-propagates to
+    the MCP boundary. Kept out of the gate helpers themselves so those
+    stay pure (raise on fail; reusable in non-ingest contexts).
+    """
+    preflight_telemetry.write_ingest_refusal_event(reason=reason, session_id=session_id)
 
 
 def _normalize_payload(payload: dict) -> dict:
