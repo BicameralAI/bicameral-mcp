@@ -125,6 +125,36 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
 - Using semantic clustering as the first move when structural signals exist (wastes tokens)
 - Fabricating topic titles or decision estimates you aren't confident in — if uncertain, mark as `?` in the preview and let the user decide
 
+### 0.6. Pre-ingest leak warning (#200 Phase 2)
+
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g2_*` / `g3_*` / `g6_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
+
+Before the first `bicameral.ingest` call of the current session, fire an `AskUserQuestion` warning the operator that ingested `source_excerpt` / `span.text` quotes persist verbatim to the ledger and (in team mode) commit to git via the JSONL event substrate. Skip this step if `bicameral.context()` reports `seen_ingest_warning=true` for the current session.
+
+```python
+AskUserQuestion({
+  questions: [{
+    question: "Bicameral will record verbatim source quotes from your transcripts/PRDs/Slack threads to the ledger. In team mode, these quotes are committed to git via the JSONL event substrate, making them visible to every collaborator with repo access. Continue?",
+    header: "Ingest leak warning",
+    multiSelect: false,
+    options: [
+      { label: "Yes — proceed, don't ask again this session",
+        description: "Default for repeated ingests in the same workflow. Sets seen_ingest_warning for the rest of this server session." },
+      { label: "Yes — proceed, warn me before each ingest",
+        description: "Highest visibility. The flag is reset on the next ingest call so the warning fires again." },
+      { label: "Cancel this ingest",
+        description: "Stop. Nothing is sent to the ledger." }
+    ]
+  }]
+})
+```
+
+When the operator picks the first option, set `seen_ingest_warning=true` for the rest of the session. When they pick the second, leave the flag unset so the next ingest re-fires the warning. Cancel exits the skill with `errored=False, error_class="user_cancelled"`.
+
+Defense-in-depth: even with the operator's consent, ingested payloads still pass the existing secret-redaction regex (`(api[_-]?key|token|secret|password|bearer)\s*[=:]\s*\S+` → `***REDACTED***`) before landing in the ledger.
+
+The `signer_email_fallback` config field in `.bicameral/config.yaml` (default `local-part-only`; see "Signer fallback chain" below for the deterministic gate) further constrains what email-shaped data reaches team-mode JSONL.
+
 ### 0.5. Pre-ingest context pull (v0.7.3+)
 
 **Before extracting any candidates**, query the ledger for existing decisions in the same feature area. This gives you domain priors that inform the business-tie filter and fork test in Step 1.
@@ -838,7 +868,11 @@ proposals; run `bicameral.ratify` when ready to start drift tracking.").
 **Signer resolution order:**
 1. First named speaker in the source document's `participants` / `speakers` field
 2. Meeting organizer if named in the transcript
-3. Git user email (`git config user.email`) as final fallback
+3. Git user email (`git config user.email`) — but the deterministic `signer_email_fallback` config gate from `.bicameral/config.yaml` is applied to this final-fallback path before the value lands in the ledger. Modes (#200 Phase 2):
+   - `redact` — replaces email with literal `<REDACTED>`. Strongest privacy posture; loses attribution entirely.
+   - `local-part-only` (default) — strips the email host. Preserves who-proposed-this attribution prefix without leaking a directly-mailable address.
+   - `full` — verbatim email. Legacy / explicit-opt-in path for operators who deliberately want full-email signers in their team-mode JSONL substrate.
+   The policy is enforced server-side in `events.writer._resolve_signer_email`; this skill description points at the config but does not implement the gate (the config field IS the gate).
 
 ## Arguments
 

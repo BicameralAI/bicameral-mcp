@@ -14,6 +14,32 @@ _SESSION_ID: str = str(uuid.uuid4())
 _GUIDED_MODE_TRUTHY = frozenset({"1", "true", "yes", "on"})
 _GUIDED_MODE_FALSY = frozenset({"0", "false", "no", "off", ""})
 
+_SIGNER_FALLBACK_MODES = frozenset({"redact", "local-part-only", "full"})
+_DEFAULT_SIGNER_FALLBACK_MODE = "local-part-only"
+
+
+def _read_signer_email_fallback(repo_path: str) -> str:
+    """Resolve `signer_email_fallback` from `.bicameral/config.yaml`.
+
+    Default: ``"local-part-only"`` (privacy-positive). Returns the
+    raw config value if it's one of the three valid modes; falls
+    back to default on missing file, malformed yaml, missing key,
+    or invalid value (logs nothing — fail-soft).
+    """
+    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    if not config_path.exists():
+        return _DEFAULT_SIGNER_FALLBACK_MODE
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        val = config.get("signer_email_fallback", _DEFAULT_SIGNER_FALLBACK_MODE)
+        if val in _SIGNER_FALLBACK_MODES:
+            return val
+    except Exception:
+        pass
+    return _DEFAULT_SIGNER_FALLBACK_MODE
+
 
 def _read_guided_mode(repo_path: str) -> bool:
     """Resolve guided-mode flag for this MCP call.
@@ -83,11 +109,33 @@ class BicameralContext:
     # v0.7.0: server-session UUID — same for all tool calls in one server process.
     # Used to tag proposed/ratified signoff objects with their originating session.
     session_id: str = field(default_factory=lambda: _SESSION_ID)
+    # #200 Phase 2: signer-email fallback policy. Read at server start from
+    # `.bicameral/config.yaml: signer_email_fallback`. Applied by
+    # `events.writer._resolve_signer_email` to raw git user.email values
+    # before they land in the ledger. Privacy-positive default
+    # (`local-part-only`) preserves attribution prefix without leaking a
+    # directly-mailable address. Modes: `redact`, `local-part-only`, `full`.
+    signer_email_fallback: str = _DEFAULT_SIGNER_FALLBACK_MODE
     # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
     # repo-state expectations before chaining downstream tools.
+    # #200 Phase 2: also stores the session-scoped `seen_ingest_warning`
+    # flag (set by `bicameral-ingest` Step 0.6 after the first pre-ingest
+    # leak warning is shown; gates re-display on subsequent ingests in the
+    # same session). Read via `seen_ingest_warning` property; set via
+    # `set_seen_ingest_warning(bool)`.
     _sync_state: dict = field(default_factory=dict)
+
+    @property
+    def seen_ingest_warning(self) -> bool:
+        """True if the pre-ingest leak warning has been shown this session."""
+        return bool(self._sync_state.get("seen_ingest_warning", False))
+
+    def set_seen_ingest_warning(self, value: bool) -> None:
+        """Set the session-scoped flag. Frozen-dataclass-safe — mutates
+        the `_sync_state` dict's contents, not the dataclass field."""
+        self._sync_state["seen_ingest_warning"] = bool(value)
 
     @classmethod
     def from_env(cls) -> BicameralContext:
@@ -106,6 +154,7 @@ class BicameralContext:
         authoritative_ref = detect_authoritative_ref(repo_path)
         authoritative_sha = resolve_ref_sha(repo_path, authoritative_ref) or ""
         guided_mode = _read_guided_mode(repo_path)
+        signer_email_fallback = _read_signer_email_fallback(repo_path)
 
         return cls(
             repo_path=repo_path,
@@ -118,4 +167,5 @@ class BicameralContext:
             authoritative_ref=authoritative_ref,
             authoritative_sha=authoritative_sha,
             guided_mode=guided_mode,
+            signer_email_fallback=signer_email_fallback,
         )
