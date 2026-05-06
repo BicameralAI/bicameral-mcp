@@ -127,3 +127,54 @@ async def test_handle_ingest_emits_refusal_telemetry_before_reraise_on_size_exce
         telemetry_mock.write_ingest_refusal_event.assert_called_once_with(
             reason="size_limit_exceeded", session_id="sid-abc"
         )
+
+
+# ── #232 Finding 2: malformed_payload (circular-ref / non-serializable) ──
+
+
+def test_check_payload_size_handles_circular_ref_payload() -> None:
+    """#232 Finding 2: a circular-reference dict raises ValueError from
+    json.dumps; the gate must translate to _IngestRefused('malformed_payload')
+    at the same MCP boundary as the other refusals — no fail-open path."""
+    circular: dict = {"k": "v"}
+    circular["self"] = circular  # circular reference
+
+    with pytest.raises(_IngestRefused) as exc_info:
+        _check_payload_size(circular, max_bytes=1024)
+    assert exc_info.value.reason == "malformed_payload"
+    assert "JSON-serializable" in exc_info.value.detail
+    # Surface the underlying exception type so operators can diagnose.
+    assert "ValueError" in exc_info.value.detail
+
+
+def test_check_payload_size_handles_recursion_error_payload() -> None:
+    """A payload whose serialization raises RecursionError (e.g., deeply
+    nested object) is also translated to malformed_payload, not leaked as
+    an unhandled exception past the gate. Patches ``json.dumps`` to raise
+    RecursionError unconditionally — tests the gate's exception-handling
+    contract, not a specific input shape."""
+    payload = {"k": "v"}
+
+    def raise_recursion_error(*_args, **_kwargs):
+        raise RecursionError("simulated deep nesting")
+
+    with patch("handlers.ingest.json.dumps", side_effect=raise_recursion_error):
+        with pytest.raises(_IngestRefused) as exc_info:
+            _check_payload_size(payload, max_bytes=1024)
+    assert exc_info.value.reason == "malformed_payload"
+    assert "RecursionError" in exc_info.value.detail
+
+
+def test_check_payload_size_handles_typeerror_payload() -> None:
+    """Non-JSON-serializable object that ALSO can't be coerced via default=str
+    raises TypeError; same translation."""
+
+    class NonSerializableObject:
+        def __str__(self):
+            raise TypeError("intentional: cannot stringify")
+
+    payload = {"opaque": NonSerializableObject()}
+    with pytest.raises(_IngestRefused) as exc_info:
+        _check_payload_size(payload, max_bytes=1024)
+    assert exc_info.value.reason == "malformed_payload"
+    assert "TypeError" in exc_info.value.detail

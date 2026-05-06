@@ -26,21 +26,6 @@ from handlers.ingest import (
 )
 
 
-@pytest.fixture(autouse=True)
-def _reset_rate_limit_registry():
-    """Tests share module state; clear it between cases."""
-    _RATE_LIMIT_REGISTRY.clear()
-    yield
-    _RATE_LIMIT_REGISTRY.clear()
-
-
-@pytest.fixture(autouse=True)
-def _ensure_rate_limit_enabled(monkeypatch):
-    """Default to enabled so individual tests don't have to fight the
-    debug-disable env var if it leaks in from the shell."""
-    monkeypatch.delenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", raising=False)
-
-
 def _ctx_with_rate_limit(
     burst: int = 10,
     refill: float = 1.0,
@@ -122,7 +107,22 @@ def test_check_rate_limit_raises_when_session_bucket_empty() -> None:
     with pytest.raises(_IngestRefused) as exc_info:
         _check_rate_limit("sid-empty", burst=1, refill_per_sec=0.0)
     assert exc_info.value.reason == "rate_limit_exceeded"
-    assert "sid-empty" in exc_info.value.detail
+    # #230 Finding 1: detail must NOT leak the session UUID; emit only the
+    # bucket-config shape so operators can tune .bicameral/config.yaml.
+    assert "sid-empty" not in exc_info.value.detail
+    assert "session " not in exc_info.value.detail
+    assert exc_info.value.detail == "bucket empty (burst=1, refill=0.0/s)"
+
+
+@pytest.mark.parametrize("truthy", ["1", "true", "yes", "on", "TRUE", "Yes", "ON"])
+def test_check_rate_limit_disabled_via_truthy_variants(monkeypatch, truthy: str) -> None:
+    """#232 Finding 1: env-var disable accepts the canonical
+    ``_GUIDED_MODE_TRUTHY`` vocabulary (1/true/yes/on, case-insensitive)."""
+    monkeypatch.setenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", truthy)
+    # burst=0/refill=0 would exhaust on first call; the env disable must
+    # short-circuit before bucket allocation.
+    for _ in range(5):
+        _check_rate_limit("sid-truthy", burst=0, refill_per_sec=0.0)
 
 
 def test_check_rate_limit_isolates_sessions() -> None:
@@ -156,7 +156,8 @@ async def test_handle_ingest_raises_ingest_refused_on_rate_limit() -> None:
         with pytest.raises(_IngestRefused) as exc_info:
             await handle_ingest(ctx, payload)
     assert exc_info.value.reason == "rate_limit_exceeded"
-    assert "sid-drive" in exc_info.value.detail
+    # #230 Finding 1: detail no longer leaks session UUID at the boundary.
+    assert "sid-drive" not in exc_info.value.detail
     assert "bucket empty" in exc_info.value.detail
 
 
@@ -208,7 +209,7 @@ async def test_handle_ingest_size_check_runs_before_rate_check() -> None:
 async def test_call_tool_translates_rate_limit_refusal_to_text_content_error() -> None:
     raised = _IngestRefused(
         "rate_limit_exceeded",
-        detail="session sid-x bucket empty (burst=1, refill=1.0/s)",
+        detail="bucket empty (burst=1, refill=1.0/s)",
     )
     sync_stub = AsyncMock(return_value=None)
     handle_stub = AsyncMock(side_effect=raised)

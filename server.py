@@ -104,6 +104,11 @@ _ACTION_FOR_REFUSAL_REASON: dict[str, str] = {
         "an obvious order_id context), set BICAMERAL_INGEST_SECRET_DISABLE=1 "
         "for the controlled test."
     ),
+    "malformed_payload": (
+        "the payload could not be JSON-serialized. Verify the request body "
+        "is a plain dict of JSON-compatible primitives — no circular refs, "
+        "no opaque objects, no non-serializable types. Re-serialize and retry."
+    ),
 }
 
 
