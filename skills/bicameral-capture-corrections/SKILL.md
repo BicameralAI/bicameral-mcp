@@ -217,6 +217,8 @@ Exit silently. No output. The empty path is always silent.
 **6. Surface corrections via `AskUserQuestion`.**
 Regardless of count, batch into groups of ≤ 4. For each batch call:
 
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g11_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
+
 ```python
 AskUserQuestion({
   question: "Bicameral found N uningested decision(s) from this session — ingest any? (batch M of K)",

@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 AGENTS = {
@@ -366,8 +367,39 @@ def _install_for_agent(
     return True
 
 
-def _build_session_end_command(mcp_config_path: str | None = None) -> str:
-    """Canonical SessionEnd hook command (#156 pivot).
+def _session_end_command_for_platform(platform: str) -> str:
+    """Return the SessionEnd hook command rendered for the target platform.
+
+    POSIX shape (linux, darwin, anything not win32) uses bash conditional
+    chaining with the ``[ -d ]`` / ``[ -z ]`` test idiom, the
+    ``BICAMERAL_SESSION_END_RUNNING`` re-entrancy guard, and the
+    ``python3`` interpreter (Ubuntu/Debian/RHEL/Fedora install
+    ``python3`` by default; ``python`` is NOT a default symlink and
+    requires ``python-is-python3`` or equivalent — so ``python3`` is
+    the only reliable cross-distro choice).
+
+    Windows shape uses cmd.exe ``if exist`` / ``if not defined``
+    conditional and the ``python`` interpreter (Windows installers
+    expose ``python`` and ``py`` but not ``python3``).
+    """
+    if platform == "win32":
+        return (
+            "if exist .bicameral if not defined BICAMERAL_SESSION_END_RUNNING "
+            "(set BICAMERAL_SESSION_END_RUNNING=1 && "
+            "python scripts\\hooks\\session_end_queue_writer.py)"
+        )
+    return (
+        '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
+        "BICAMERAL_SESSION_END_RUNNING=1 "
+        "python3 scripts/hooks/session_end_queue_writer.py || true"
+    )
+
+
+def _build_session_end_command(
+    mcp_config_path: str | None = None,
+    platform: str | None = None,
+) -> str:
+    """Canonical SessionEnd hook command (#156 pivot, #200 Phase 1 OS-aware).
 
     Replaces the prior ``claude -p '/bicameral-capture-corrections
     --auto-ingest'`` invocation, which spawned an empty subprocess that
@@ -384,12 +416,14 @@ def _build_session_end_command(mcp_config_path: str | None = None) -> str:
     ``mcp_config_path`` is retained for signature stability with
     consumers that pass it through; the new hook doesn't use it (no
     claude subprocess to configure).
+
+    ``platform`` defaults to ``sys.platform`` and selects between POSIX
+    bash shape (linux/darwin) and cmd.exe shape (win32). Explicit
+    ``platform`` arg is for test isolation and cross-platform install
+    rendering when the wizard runs on a different host than the target.
     """
-    return (
-        '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
-        "BICAMERAL_SESSION_END_RUNNING=1 "
-        "python3 scripts/hooks/session_end_queue_writer.py || true"
-    )
+    target = platform if platform is not None else sys.platform
+    return _session_end_command_for_platform(target)
 
 
 # Canonical no-args form — what `_install_claude_hooks` writes to a fresh
