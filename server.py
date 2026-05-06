@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-15 tools:
+14 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -15,7 +15,6 @@
   bicameral.set_decision_level — set decision_level (L1/L2/L3) on a single decision (#77)
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   get_neighbors               — 1-hop structural graph traversal around a symbol
-  extract_symbols             — tree-sitter symbol extraction from a source file
 
 Run with: bicameral-mcp (or python server.py) for stdio transport.
 
@@ -59,7 +58,7 @@ from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
 
-# In-process map of session_id → {t0, rationale} for skill timing.
+# In-process map of session_id → {t0} for skill timing.
 # Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
 _skill_sessions: dict[str, dict] = {}
 
@@ -114,7 +113,6 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.record_bypass",
     "validate_symbols",
     "get_neighbors",
-    "extract_symbols",
 ]
 
 server = Server(SERVER_NAME)
@@ -662,10 +660,6 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "description": "Caller-generated UUID that correlates this begin with the matching skill_end",
                     },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-liner for why this skill was triggered (e.g. 'user pasted transcript and said track this'). Used for quality feedback analysis.",
-                    },
                 },
                 "required": ["skill_name", "session_id"],
             },
@@ -931,23 +925,6 @@ async def list_tools() -> list[Tool]:
                 "required": ["symbol_id"],
             },
         ),
-        Tool(
-            name="extract_symbols",
-            description=(
-                "Extract all symbols (functions, classes) from a source file via static parsing. "
-                "Returns symbol names, types, and line ranges. No index required."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Absolute or repo-relative path to the source file",
-                    },
-                },
-                "required": ["file_path"],
-            },
-        ),
     ]
 
 
@@ -963,7 +940,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         session_id = arguments["session_id"]
         _skill_sessions[session_id] = {
             "t0": time.monotonic(),
-            "rationale": arguments.get("rationale", ""),
         }
         return [
             TextContent(
@@ -991,7 +967,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         raw_diagnostic = arguments.get("diagnostic") or {}
         session_data = _skill_sessions.pop(session_id, None)
         t0 = session_data["t0"] if session_data else None
-        rationale = session_data.get("rationale") if session_data else None
         duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
 
         # Validate diagnostic against the per-skill Pydantic model.
@@ -1025,7 +1000,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             SERVER_VERSION,
             diagnostic=diagnostic,
             error_class=error_class,
-            rationale=rationale,
         )
         response: dict = {
             "session_id": session_id,
@@ -1228,9 +1202,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         elif name == "get_neighbors":
             data = await asyncio.to_thread(ctx.code_graph.get_neighbors, arguments["symbol_id"])
-            return [TextContent(type="text", text=json.dumps(data, indent=2))]
-        elif name == "extract_symbols":
-            data = await ctx.code_graph.extract_symbols(arguments["file_path"])
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         else:
             raise ValueError(f"Unknown tool: {name}")

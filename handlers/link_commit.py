@@ -69,9 +69,9 @@ _VERIFICATION_INSTRUCTION_BASE = (
 
 _GROUNDING_INSTRUCTION_UNGROUNDED = (
     " For pending_grounding_checks with reason='ungrounded': use your own "
-    "code search (Grep/Read), then validate_symbols / extract_symbols to "
-    "confirm the target, then call bicameral.bind with decision_id, "
-    "file_path, symbol_name, and optionally start_line/end_line."
+    "code search (Grep/Read), then validate_symbols to confirm the target, "
+    "then call bicameral.bind with decision_id, file_path, symbol_name, "
+    "and optionally start_line/end_line."
 )
 
 # V1 D1 / Codex pass-12 finding #2: relocation cases (symbol_disappeared)

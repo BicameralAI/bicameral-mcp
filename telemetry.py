@@ -155,7 +155,6 @@ def record_skill_event(
     version: str,
     diagnostic: dict | None = None,
     error_class: str | None = None,
-    rationale: str | None = None,
 ) -> None:
     """Convenience wrapper for skill-level timing events."""
     kwargs: dict = dict(
@@ -166,6 +165,4 @@ def record_skill_event(
     )
     if error_class:
         kwargs["error_class"] = error_class
-    if rationale:
-        kwargs["rationale"] = rationale
     send_event(version, diagnostic=diagnostic, **kwargs)

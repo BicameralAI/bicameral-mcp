@@ -14,8 +14,7 @@ with git commits, ledger sync, or compliance checks — those are `/bicameral-sy
 
 **At skill start**:
 ```
-bicameral.skill_begin(skill_name="bicameral-update", session_id=<uuid4>,
-  rationale="<one-liner: e.g. 'user asked to update to latest version'>")
+bicameral.skill_begin(skill_name="bicameral-update", session_id=<uuid4>)
 ```
 
 **At skill end**:
