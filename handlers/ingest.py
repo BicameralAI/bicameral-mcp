@@ -243,13 +243,20 @@ async def handle_ingest(
     # session-originated spans lack an author and need this backfill.
     _SESSION_SOURCE_TYPES = {"agent_session", "manual"}
     _git_email_cache: str | None = None
+    _fallback_mode = getattr(ctx, "signer_email_fallback", "local-part-only")
     for mapping in payload.get("mappings") or []:
         span = mapping.get("span") or {}
         if span.get("source_type") in _SESSION_SOURCE_TYPES and not span.get("speakers"):
             if _git_email_cache is None:
-                from events.writer import _get_git_email
+                from events.writer import _get_git_email, _resolve_signer_email
 
-                _git_email_cache = _get_git_email(ctx.repo_path)
+                _raw_email = _get_git_email(ctx.repo_path)
+                # #200 Phase 2: apply signer-email fallback policy from
+                # `.bicameral/config.yaml: signer_email_fallback`. Privacy-
+                # positive default (`local-part-only`) strips the email
+                # host before the value lands in the ledger / team-mode
+                # JSONL substrate.
+                _git_email_cache = _resolve_signer_email(_raw_email, mode=_fallback_mode)
             if _git_email_cache and _git_email_cache != "unknown":
                 span["speakers"] = [_git_email_cache]
 

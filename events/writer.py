@@ -97,6 +97,32 @@ def _get_git_email(repo_path: str | Path) -> str:
     return "unknown"
 
 
+def _resolve_signer_email(email: str, mode: str = "local-part-only") -> str:
+    """Apply the signer-email fallback policy to a raw git user.email.
+
+    Modes (from ``.bicameral/config.yaml: signer_email_fallback``):
+      - ``redact``: returns the literal ``"<REDACTED>"`` — strongest
+        privacy posture; loses attribution entirely.
+      - ``local-part-only``: returns the part before ``@`` (default).
+        Privacy-positive: preserves who-proposed-this attribution
+        prefix without leaking a directly-mailable address.
+      - ``full``: returns the email verbatim (legacy behavior; the
+        explicit-opt-in path for operators who deliberately want
+        full-email signers in their team-mode JSONL substrate).
+
+    Inputs containing ``"unknown"`` (the git-config-failed sentinel)
+    or no ``@`` pass through unchanged in any mode — the policy only
+    applies when there's a real email to redact.
+    """
+    if email == "unknown" or "@" not in email:
+        return email
+    if mode == "redact":
+        return "<REDACTED>"
+    if mode == "local-part-only":
+        return email.split("@", 1)[0]
+    return email
+
+
 class EventFileWriter:
     """Appends events to ``.bicameral/events/{author}.jsonl``."""
 

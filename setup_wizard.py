@@ -921,19 +921,29 @@ def _write_collaboration_config(
     guided: bool = False,
     telemetry: bool = False,
 ) -> None:
-    """Write .bicameral/config.yaml with collaboration mode, guided-mode, and telemetry flags."""
+    """Write .bicameral/config.yaml with collaboration mode, guided-mode, telemetry,
+    and signer-email fallback flags.
+
+    `signer_email_fallback` (#200 Phase 2) defaults to `local-part-only` —
+    privacy-positive: preserves attribution prefix on session-originated
+    ingests without leaking the full git user.email to the ledger / team-
+    mode JSONL substrate. Modes: `redact` (strongest, no attribution),
+    `local-part-only` (default), `full` (legacy verbatim email).
+    """
     config_path = data_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         "# Bicameral configuration\n"
         f"mode: {mode}\n"
         f"guided: {'true' if guided else 'false'}\n"
-        f"telemetry: {'true' if telemetry else 'false'}\n",
+        f"telemetry: {'true' if telemetry else 'false'}\n"
+        "signer_email_fallback: local-part-only\n",
         encoding="utf-8",
     )
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
+    print("  Signer-email fallback: local-part-only (privacy-positive default)")
 
 
 def _patch_gitignore(path: Path, entries: list[str], comment: str) -> None:
