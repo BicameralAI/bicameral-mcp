@@ -80,7 +80,17 @@ Sources (in order of preference, all read-only / non-bash):
   they leak business context. Record only the shape:
   `branch: <REDACTED>` and `recent commits: titles redacted`.
 - **`.bicameral/config.yaml`**: use `Read` on `.bicameral/config.yaml`
-  if it exists. If `Read` errors (file missing), skip the section.
+  if it exists. **Extract ONLY the top-level key structure by default** —
+  every YAML key whose line doesn't start with whitespace, one per
+  line, sorted alphabetically. Do NOT include values, nested keys,
+  comments, or any other content. Default-shape rationale: top-level
+  keys are sufficient diagnostic signal for *"is this bug in the
+  config loader?"* questions while leaking zero workspace IDs, tokens,
+  allowlists, or environment-specific settings. If the operator's bug
+  genuinely needs the verbatim contents (e.g. a YAML parser regression),
+  Step 3.5's transparency preview offers an explicit opt-in toggle —
+  see "Step 3.5 — Transparency preview" below. If `Read` errors (file
+  missing), skip the section entirely.
 
 Then assemble in your head (do NOT print to user yet):
 
@@ -119,9 +129,10 @@ Then assemble in your head (do NOT print to user yet):
 
   ## .bicameral/config.yaml   ← only if Read succeeded
 
-  ```yaml
-  <contents>
   ```
+  <sorted top-level key list, one per line, no values>
+  ```
+  *(values redacted by default — opt in via Step 3.5 transparency preview to include verbatim)*
   ```
 
 ---
@@ -186,6 +197,9 @@ Auto-redacted in this body:
     topic, intent, description, text, excerpt, title — parameter names kept,
     values replaced with <REDACTED>)
   - Branch name and commit subject lines in the Repo state block
+  - .bicameral/config.yaml: keys only by default (workspace IDs, tokens,
+    allowlists, env-specific values stripped — toggle below to include verbatim
+    if the bug requires inspecting config values)
   - API keys, bearer tokens, secrets, passwords (regex-matched)
   - <N> redaction(s) applied   ← print actual count, or "none detected"
 
@@ -209,8 +223,10 @@ AskUserQuestion({
     header: "Open issue",
     multiSelect: false,
     options: [
-      { label: "Yes, open it",
-        description: "Browser opens to a GitHub draft — you review and submit there" },
+      { label: "Yes, open it (config.yaml: keys only)",
+        description: "Default — config.yaml top-level keys included, values redacted" },
+      { label: "Yes, but include config.yaml verbatim",
+        description: "Use only when the bug requires inspecting config values (e.g. YAML parser regression). Values still pass the secret-redaction regex but workspace IDs / allowlists / env settings are exposed." },
       { label: "Edit the body first",
         description: "I want to revise the body in chat before opening" },
       { label: "Cancel",
@@ -220,7 +236,8 @@ AskUserQuestion({
 })
 ```
 
-- **Yes** → proceed to Step 4.
+- **Yes, open it (config.yaml: keys only)** → proceed to Step 4 with the keys-only body as already previewed.
+- **Yes, but include config.yaml verbatim** → regenerate the body, replacing the keys-only block in the `## .bicameral/config.yaml` section with the verbatim ```yaml <contents> ``` shape. Re-run the Auto-redacted summary on the new body (the secret-redaction regex still applies — defense-in-depth, not a substitute for the keys-only default). Re-display the transparency preview with the verbatim contents and re-ask the open-issue question one more time so the operator sees what's actually being shipped before clicking through. Then proceed to Step 4 once the operator confirms the verbatim shape.
 - **Edit the body first** → ask the user what to change, regenerate
   the body, return to this step.
 - **Cancel** → stop. Tell the user "Cancelled. Nothing was sent." and
