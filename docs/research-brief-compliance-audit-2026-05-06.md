@@ -85,6 +85,51 @@ This document is **operator-consumed prose**, not LLM-consumed agent-instruction
 
 6. **Account for MCP host/tool-approval semantics as an external dependency.** Claude Code, Cursor, and Codex may differ in how they display tool calls, confirmations, stdio servers, and destructive actions. The server should not rely on host UX for security, but the brief should list MCP host behavior as a dependency that can change the effective risk posture.
 
+## Reviewer disposition pass (2026-05-06)
+
+Per Codex-2 #1: a single disposition table reconciling all four review layers, applied before downstream P1 issue-filing so the tracker carries the post-review consensus rather than stale per-layer rankings. Decisions: **apply** (folded into this PR) / **defer** (tracked for follow-up) / **note** (acknowledged, no action).
+
+| Source | # | One-line | Decision | Reason / Gap-ID changes |
+|---|---|---|---|---|
+| Codex-1 | 1 | Add deployment-mode severity column | **applied** (1d82658) | New `Deployment trigger` column on § 5 table |
+| Codex-1 | 2 | Ingest durable-feedback-loop framing | **applied** (1d82658) | § 1.4 "Risk amplification" paragraph |
+| Codex-1 | 3 | Worked instruction-only vs deterministic example | **applied** (1d82658) | § 1.8 `bicameral-report-bug` worked example |
+| Codex-1 | 4 | Product vs operator obligations split | **defer** | Substantive standards-table restructure; tracked for follow-up |
+| Codex-1 | 5 | GDPR-02 search broader than email | **applied** (this commit) | GDPR-02 remediation extended; spec carried into eventual filed issue |
+| Codex-1 | 6 | Detection controls are guardrails not classifiers | **applied** (this commit) | LLM-01 + LLM-04 remediation framing extended; comments to issues #212 + #213 |
+| Codex-1 | 7 | EU AI Act classification softening | **applied** (1d82658) | § 2.6(b) + AI-ACT-01 reworded |
+| Codex-1 | 8 | Team-server table mismatch | **applied** (1d82658) | § 1.9 rewritten |
+| Codex-1 | 9 | Evidence pointers | **partial** (softened 1d82658) | Method-notes claim softened; full evidence appendix deferred |
+| Codex-1 | 10 | Issue grouping around foundation work | **applied** (this commit) | § 6 triage updated to flag "ingest boundary guardrails" epic for the deferred P1 batch |
+| Kilo | 1 | TEAM-NN dangling promise | **applied** (1d82658) | (same as Codex-1 #8) |
+| Kilo | 2 | LLM-06 P0/M overstated | **applied** (this commit) | LLM-06 downgraded P0→P1, scope narrowed to remote-skill-loading future. Issue #214 relabeled + body updated. |
+| Kilo | 3 | `bicameral.reset confirm=True` is agent-supplied, not HITL | **applied** (this commit) | § 2.4 LLM-05 + LLM-09 explicit callout; agent-supplied confirm parameters are not security gates |
+| Kilo | 4 | GDPR-05 P1/H inflated for local-only | **applied** (1d82658) | Deployment trigger column captures team/hosted P1 vs local single-user P2 |
+| Kilo | 5 | Force-multiplier framing for ingest→ledger→preflight | **applied** (1d82658) | (same as Codex-1 #2) |
+| Kilo | 6 | OWASP-03 P1/M is likely P2 | **applied** (1d82658) | Deployment trigger column captures hosted P1 vs local P2 |
+| Kilo | 7 | Ephemeral data surfaces | **applied** (this commit) | New gap **GDPR-08** (Python tempfiles, OS swap, SurrealDB WAL, crash dumps) |
+| Kilo | 8 | Consent versioning + re-consent | **applied** (this commit) | New gap **GDPR-09** (covers Codex-2 #3 — consent revocation semantics) |
+| Kilo | 9 | `setup_wizard.py` → `.claude/settings.json` cross-tool surface | **applied** (this commit) | New gap **LLM-11** (cross-tool config-file surface as supply-chain vector distinct from skill content) |
+| Kilo | 10 | Gap count validation passes | **note** | No edit |
+| Kilo | 11 | SurrealDB version pinning supply-chain callout | **applied** (this commit) | One-line note in OWASP-03 + § 1.2 trust boundary |
+| Kilo | 12 | Merkle rebuild witness for GDPR-01 | **applied** (this commit) | One-line note in GDPR-01 remediation; full spec in eventual filed issue |
+| Kilo | 13 | LLM02 mapping note | **applied** (this commit) | One-line in § 2.4(a) clarifying LLM02 is folded into LLM-07 + OWASP-04 |
+| Gemini | 1 | GDPR-01 crypto-shredding alternative | **applied** (this commit) | Listed as alternative in GDPR-01 remediation |
+| Gemini | 2 | LLM-01/LLM-04 extensible classifier | **applied** (this commit) | Remediation prose updated to allow regex catalog OR small classifier; comments on #212, #213 |
+| Gemini | 3 | LLM-03 timeouts configurable | **applied** (this commit) | LLM-03 remediation prose calls out `.bicameral/config.yaml` knobs |
+| Codex-2 | 1 | Reviewer-disposition pass | **applied** (this section) | This table |
+| Codex-2 | 2 | Three-column deployment-profile matrix | **defer** | Single-column trigger from Codex-1 #1 is the compromise; full matrix tracked for follow-up |
+| Codex-2 | 3 | Consent revocation semantics | **applied** (this commit) | Folded into new gap GDPR-09 |
+| Codex-2 | 4 | Deterministic gates as testable control requirements | **applied** (this commit) | New § 6.1 "Control-acceptance criteria template" applies to every DG-typed gap; will land on issue bodies via comments |
+| Codex-2 | 5 | Configuration precedence + fail-closed behavior | **applied** (this commit) | New short § 1.11 "Configuration precedence + fail-closed model" subsection |
+| Codex-2 | 6 | MCP host UX as external dependency | **applied** (this commit) | § 1.1 trust boundary extended; new gap **MCP-01** |
+
+**Net new gap IDs introduced in this pass**: GDPR-08, GDPR-09, LLM-11, MCP-01. Existing reclassification: LLM-06 P0/M → P1/M (narrowed scope). Updated counts in § 5 below.
+
+**Filed issues affected**:
+- **#214 (LLM-06)**: relabel `P0` → `P1`, update title + body to reflect narrowed scope.
+- **#212 (LLM-01)** + **#213 (LLM-04)**: comment threads added per Codex-1 #6 + Gemini #2 + Codex-2 #4.
+
 ## § 1. Surface inventory
 
 The 10 components in scope. For each: location, what it does, data it touches, external surfaces, trust boundary.
@@ -96,6 +141,7 @@ The 10 components in scope. For each: location, what it does, data it touches, e
 - **Data touched**: tool arguments (agent-supplied JSON), repo-relative paths, ledger payloads, transcript text on `bicameral.ingest`, decision IDs, file paths on `bicameral.preflight`.
 - **External surfaces**: stdio (MCP transport), filesystem (repo path, `~/.bicameral/`), embedded SurrealDB process, sqlite (code locator), git subprocess.
 - **Trust boundary**: MCP transport is local stdio; the *agent* is operator-installed but executes model-generated tool calls. Inputs to handlers are **agent-controlled**, not operator-controlled. There is **no authentication, authorization, or rate-limiting** on the MCP boundary — the server trusts whoever can talk to its stdio.
+- **MCP host UX is an external dependency, not a security gate** (Codex-2 #6 / new gap MCP-01): Claude Code, Cursor, Codex, and other MCP hosts differ in how they display tool calls, ask for confirmations, present stdio-server output, and surface destructive actions to the operator. The bicameral-mcp server **must not** rely on host UX for security — a host that auto-approves tool calls (or fails to surface them) silently bypasses any "the operator will see this" assumption. Track host-UX behavior as a per-host risk factor; document the assumption set in `docs/` for any deployment claim that depends on host-side confirmation surfaces.
 
 ### 1.2 Ledger persistence
 
@@ -103,7 +149,7 @@ The 10 components in scope. For each: location, what it does, data it touches, e
 - **What it does**: append-mostly decision ledger backed by embedded SurrealDB v2.x. Decisions, signoffs, code-region bindings, compliance check rows. SHA-256 Merkle hashing for chain integrity.
 - **Data touched**: decision descriptions (free-form text from ingested transcripts), signer email (subject to `signer_email_fallback` policy from #200 Phase 2), classifier_version, decision_level, source_ref strings, file paths, region anchors, ratification state. Persisted indefinitely.
 - **External surfaces**: filesystem (`surrealkv://~/.bicameral/ledger.db` by default; configurable via `SURREAL_URL`).
-- **Trust boundary**: storage is **operator-local** unless team-mode is engaged. Append semantics make right-to-erasure non-trivial (see § 2.1.4).
+- **Trust boundary**: storage is **operator-local** unless team-mode is engaged. Append semantics make right-to-erasure non-trivial (see § 2.1.4). `pyproject.toml` pins `surrealdb>=2.0.0` (floor only); a malicious or breaking SurrealDB release would be installed automatically by the upgrade path. SurrealDB version pinning is a non-trivial supply-chain surface given the persistence layer holds the entire ledger including the Merkle chain (folds into OWASP-03; called out separately because the criticality is higher than a generic dependency).
 
 ### 1.3 Code locator
 
@@ -148,6 +194,7 @@ The 10 components in scope. For each: location, what it does, data it touches, e
 - **Data touched**: repo path, `~/.bicameral/update-check.json` (1h TTL cache), package-version strings.
 - **External surfaces**: HTTPS to `raw.githubusercontent.com/BicameralAI/bicameral-mcp/main/RECOMMENDED_VERSION`; subprocess (`uv tool install` / `pipx install` / `pip install`).
 - **Trust boundary**: installer runs as the operator. Subprocess install commands use list-form argv (per #199 implementation). The version-check URL is fixed and HTTPS — no MITM-resistant pinning beyond TLS.
+- **Cross-tool config-file surface** (new gap LLM-11 from Kilo #9): `setup_wizard._install_hooks` modifies `.claude/settings.json` (Claude Code's config file, not bicameral-mcp's) and the analogous Cursor/Codex config files. A compromised bicameral-mcp install can therefore inject arbitrary Claude Code hooks — a supply-chain vector that is **distinct from the LLM-06 skill-content surface**: LLM-06 is about modified SKILL.md, LLM-11 is about modified host-config that runs operator-side commands at hook-fire-time. The two need separate gates (signed hook payloads vs signed skill manifests).
 
 ### 1.8 Skills (the agent-instruction surface)
 
@@ -167,6 +214,23 @@ Team-server plumbing exists in code (`events/team_adapter.py`, `events/team_serv
 ### 1.10 CI/e2e scope-out
 
 `tests/e2e/` and `.github/workflows/` are out of scope for this brief. The e2e harness ingests real-transcript fixtures and runs Claude Code in headless mode — that's a real attack surface (prompt injection in CI, supply-chain considerations) but a different threat-model shape than runtime. Bundling dilutes both. Tracked for separate audit.
+
+### 1.11 Configuration precedence + fail-closed model (per Codex-2 #5)
+
+The brief names several env vars and config knobs across components: `BICAMERAL_TELEMETRY`, `BICAMERAL_PREFLIGHT_TELEMETRY`, `BICAMERAL_PREFLIGHT_TELEMETRY_RAW`, `BICAMERAL_GUIDED_MODE`, `BICAMERAL_SKIP_CONSENT_NOTICE`, plus `.bicameral/config.yaml` fields `signer_email_fallback`, `render_source_attribution`, `preflight_bypass_tracking`, `guided`. The brief does **not** today define a single precedence rule or a fail-closed default for missing/malformed config. That is an audit-defensibility gap on its own.
+
+**Proposed precedence model** (apply uniformly across all knobs):
+
+1. **Explicit env-var override** (one-off operator action) wins.
+2. **`.bicameral/config.yaml` field** (durable per-repo setting) is read when env is unset.
+3. **Hardcoded default in `context.py`** — privacy-positive defaults (e.g. `signer_email_fallback="local-part-only"`, `preflight_bypass_tracking="enabled"`) when both env and config are silent.
+
+**Fail-closed behavior**:
+- Missing config file: use defaults. Log at INFO. Do not refuse to start.
+- **Malformed config file** (yaml parse error, invalid value not in the field's `valid` set): use defaults, log at WARN, **do not silently accept the malformed value as opt-in**. This matters for privacy knobs where "default-on" is the safe answer (`render_source_attribution`) and for telemetry knobs where "default-off when uncertain" is safe (`BICAMERAL_PREFLIGHT_TELEMETRY` is already opt-in by design).
+- **Contradictory config** (env says one thing, config says another): env wins per the precedence rule above; log at INFO with the chosen value.
+
+This subsection is **descriptive of the intended model**; the actual code in `context.py` partially implements it but doesn't centralize the policy. New gap **CFG-01** [P2] tracks the gap between intent and implementation.
 
 ---
 
@@ -202,13 +266,18 @@ For each full-depth standard: **(a) what it requires (relevant intersections onl
 
 #### (c) Gaps
 
-- **GDPR-01** [P1] — **Right-to-erasure procedure undefined for ledger entries.** Append-mostly Merkle chain conflicts with Art. 17. Remediation: document a tombstone-and-rebuild procedure (mark erased rows, recompute the chain from a designated seal, document the data-loss boundary), OR scope the ledger as "no personal data" by deterministic gate (PII-detect-and-refuse on ingest), OR explicitly exempt under Art. 17(3) overriding-legitimate-interests claim.
-- **GDPR-02** [P1] — **No data-subject access endpoint.** A self-hosted operator can't honor an Art. 15 request without a CLI/MCP tool that emits all rows containing a given email or identifier. Remediation: `bicameral-mcp data-subject-access --email <addr>` CLI that emits matching ledger rows + telemetry-events file, with a documented procedure.
+- **GDPR-01** [P1] — **Right-to-erasure procedure undefined for ledger entries.** Append-mostly Merkle chain conflicts with Art. 17. Three candidate remediations (operator picks one based on data-controller stance):
+  - **(i) Tombstone-and-rebuild**: mark erased rows, recompute the chain from a designated seal, emit a signed rebuild-manifest (input seal hash, output seal hash, tombstone list, timestamp — per Kilo #12, the manifest is what gives the rebuild audit defensibility) and document the data-loss boundary.
+  - **(ii) Crypto-shredding** (per Gemini #1): store sensitive fields encrypted with a per-row or per-subject key; the Merkle hash covers only ciphertext. Erasure becomes "delete the key" — chain stays intact, ciphertext is unrecoverable, and there's no rebuild step to attest. This is operationally lighter than tombstone-and-rebuild.
+  - **(iii) Scope-out**: gate the ledger as "no personal data" via the LLM-04 PII-detect-and-refuse, OR explicitly exempt under Art. 17(3) overriding-legitimate-interests. Lowest engineering cost but the strongest claim to defend.
+- **GDPR-02** [P1] — **No data-subject access endpoint.** A self-hosted operator can't honor an Art. 15 request without a CLI/MCP tool that emits all rows containing a given email or identifier. Remediation: `bicameral-mcp data-subject-access --identifier <value>` CLI that searches **the full identifier surface** (per Codex-1 #5) — not only `signer_email`, but also free-form `decision.description`, `source_ref`, `topic`, file-path strings, and any future user/session identifiers — and emits matching ledger rows + matching `~/.bicameral/preflight_events.jsonl` entries + matching `~/.bicameral/engagements.jsonl` entries. Email-only search would miss the bulk of the identifier-bearing surface, which lives in transcript content, not in audit metadata.
 - **GDPR-03** [P2] — **Cross-border transfer documentation gap for anonymous relay.** Cloudflare Worker is global; PostHog tenant location undeclared. Remediation: declare the data flow in `docs/`, identify the PostHog tenant region, declare adequacy basis (likely SCCs / EU tenant choice).
 - **GDPR-04** [P2] — **No documented retention boundary for anonymous relay data.** Client-side controls send-side; server-side retention is implicit. Remediation: document PostHog retention setting in the `consent.py` policy text.
 - **GDPR-05** [P1] — **Signer-email fallback default leaks local-part.** `local-part-only` mode emits `kevin` from `kevin@example.com` — that's a pseudonym, but a recoverable one in many orgs. Remediation: change default to `redact`, OR document why `local-part-only` is the better tradeoff (audit traceability vs. PII), OR add a per-team config knob with `redact` recommended for ≥10-person teams.
 - **GDPR-06** [P3] — **No Art. 30 records of processing template.** Operator-side gap for self-hosted deployments crossing the headcount/risk threshold. Remediation: ship a `docs/gdpr-records-of-processing.md` template.
 - **GDPR-07** [P3] — **No incident-response runbook.** Remediation: ship `docs/incident-response.md` with the 72-hour Art. 33 timeline and operator decision tree.
+- **GDPR-08** [P2] — **Ephemeral-data surfaces unaddressed** (per Kilo #7). The brief covers persistent storage (SurrealKV, JSONL, sqlite) but doesn't account for ephemeral copies that may contain ledger contents: Python tempfile usage during ingest, OS swap / page file under memory pressure, SurrealDB WAL segments before compaction, crash dumps. For Art. 17 right-to-erasure and the HIPAA / PCI boundary statements, these copies are in scope. Remediation: document ephemeral-data posture (`docs/ephemeral-data.md`) — what bicameral-mcp writes to tempfiles, what gets cleaned up on graceful shutdown, what survives crash; declare which OS-level mitigations (encrypted swap, secure tmpfs) the operator is responsible for.
+- **GDPR-09** [P2] — **Consent versioning + revocation semantics undefined** (per Kilo #8 + Codex-2 #3). `consent.py` stores a `policy_version` at `~/.bicameral/consent.json`, but the brief doesn't state: (a) does a policy-version bump trigger re-consent on next boot if the telemetry allowlist changed, or does the existing marker still cover it (Art. 7 conditions for consent); (b) what happens when an operator revokes consent — stop future sends only, delete local `device_id`, delete/rotate the consent marker, request deletion from the relay/PostHog side. Remediation: define both flows explicitly in `consent.py` (re-consent fires on `POLICY_VERSION` bump if allowlist materially changed; revocation deletes `device_id` + marker locally and triggers a relay-side delete request if implementable).
 
 ---
 
@@ -291,6 +360,7 @@ This is **the highest-novelty surface for bicameral-mcp.** The system is an LLM 
 
 - **LLM01 Prompt Injection** — direct or indirect manipulation of the LLM via untrusted content.
 - **LLM02 Insecure Output Handling** — downstream systems trust LLM output without validation.
+- **LLM02 Insecure Output Handling** — folded into LLM-07 (`render_source_attribution` redaction) and the broader OWASP-04 instruction-only surface; no separate gap ID. Reader tracking by number: LLM02's preflight→agent path is the primary surface, governed by gaps LLM-07 + OWASP-04.
 - **LLM03 Training Data Poisoning** — N/A (bicameral-mcp does not train).
 - **LLM04 Model Denial of Service** — resource exhaustion via crafted inputs.
 - **LLM05 Supply Chain Vulnerabilities** — model + plugin + data-source chain.
@@ -322,7 +392,7 @@ This is **the highest-novelty surface for bicameral-mcp.** The system is an LLM 
   - **`telemetry.py`'s allowlist** (skill name, duration, version, numeric diagnostics ONLY) is direct evidence of LLM06 control on the outbound surface.
   - **`signer_email_fallback`** (#200 Phase 2) controls one specific PII surface.
 - **LLM07 Insecure Plugin Design**:
-  - The MCP tool surface (13 tools) has no per-tool authority gradation. `bicameral.reset` (destructive, wipes data) requires a `confirm=True` parameter that the agent supplies. There's no operator approval for destructive tools — the agent can call any tool any time.
+  - The MCP tool surface (13 tools) has no per-tool authority gradation. `bicameral.reset` (destructive, wipes data) takes a `confirm=True` parameter — but **the agent fills in that parameter**. `confirm=True` is a prompt to the agent's reasoning, **not a security gate**. There's no out-of-band operator approval for destructive tools (no stdin ack, no interactive terminal prompt) — the agent can call any tool, including destructive ones, at any time. Calling this "requires confirmation" in a security context would be misleading.
   - `bicameral.ingest` has no rate limit.
 - **LLM08 Excessive Agency**:
   - `AskUserQuestion` from #175 is a deterministic gate that pulls operator into the loop for `supersede` / `keep_both` / `unrelated` calls.
@@ -334,15 +404,16 @@ This is **the highest-novelty surface for bicameral-mcp.** The system is an LLM 
 
 #### (c) Gaps
 
-- **LLM-01** [P0] — **No prompt-injection canary scan on `bicameral.ingest` content.** A poisoned transcript can plant a "decision" the agent later acts on. Remediation: ship a server-side canary regex/heuristic check in `handlers/ingest.py` that flags content matching known-injection patterns (override-instruction, role-impersonation, exfiltration-request shapes); on hit, refuse-or-quarantine with operator notification. Track in `qor.scripts.prompt_injection_canaries` (qor-logic ships this for governance markdown; bicameral-mcp needs the runtime equivalent on user content).
+- **LLM-01** [P0] — **No prompt-injection canary scan on `bicameral.ingest` content.** A poisoned transcript can plant a "decision" the agent later acts on. Remediation: ship a server-side check in `handlers/ingest.py` that flags content matching known-injection patterns (override-instruction, role-impersonation, exfiltration-request shapes). The detector should be **extensible**: ship the regex catalog as v0, but allow operators to plug in a small local classifier model (per Gemini #2) tuned for prompt-injection detection — regexes will miss novel injections. Frame as a **guardrail, not a perfect classifier** (Codex-1 #6): on hit, **quarantine** rather than silently refuse, give the operator an override path, ship test fixtures (positive + negative + bypass cases), and emit measurement counters (refused / overridden / suspected-missed) into preflight telemetry. Track regex catalog versioned alongside classifier_version. Reference: `qor.scripts.prompt_injection_canaries` (qor-logic ships this for governance markdown; bicameral-mcp needs the runtime equivalent on user content).
 - **LLM-02** [P1] — **No size limit on `bicameral.ingest`.** Remediation: add a `max_bytes` config knob at `.bicameral/config.yaml: ingest_max_bytes` with a 1 MiB default; refuse-with-reason on excess. Ship a deterministic gate at the ingest handler entry.
-- **LLM-03** [P1] — **No SurrealDB query timeout.** Embedded queries can run unbounded. Remediation: wrap SurrealDB calls with a per-query timeout (5s default for read paths; 30s for full-tree drift detection).
-- **LLM-04** [P0] — **No PII / secret detect-and-refuse on ingest.** Ingested content lands in the ledger as-is. Remediation: ship a server-side scan in `handlers/ingest.py` for common secret shapes (API key prefixes, AWS/GCP/Azure access keys, `.pem`-shaped private-key blocks, JWT shapes); on hit, refuse-with-reason and emit a low-noise warning. Track regex catalog separately from the bicameral-report-bug skill's existing redactor (which redacts AT REPORT TIME, not at ingest time).
-- **LLM-05** [P1] — **No per-tool authority gradation on MCP boundary.** Destructive tools (`bicameral.reset`, `bicameral.ingest` with overwrite semantics) are equally callable as read tools. Remediation: declare an authority class on each MCP tool (`read` / `write` / `destructive`); `destructive` calls require operator confirmation via `AskUserQuestion`-style flow before the handler dispatches. Server-side enforced.
-- **LLM-06** [P0] — **Skill-installed-by-malicious-source-repo supply-chain risk.** `setup_wizard.py` copies skills from the repo's `skills/` directory into `.claude/skills/`; a typosquatted fork or compromised mirror could ship modified SKILL.md. Remediation: pin skills via cosign-signed manifests; verify signatures in `setup_wizard._install_skills`.
+- **LLM-03** [P1] — **No SurrealDB query timeout.** Embedded queries can run unbounded. Remediation: wrap SurrealDB calls with a per-query timeout (5s default for read paths; 30s for full-tree drift detection). **Surface both as `.bicameral/config.yaml` knobs** (per Gemini #3) — operators with slower local machines or large ledgers will hit hardcoded timeouts as spurious failures otherwise.
+- **LLM-04** [P0] — **No PII / secret detect-and-refuse on ingest.** Ingested content lands in the ledger as-is. Remediation: ship a server-side scan in `handlers/ingest.py` for common secret shapes (API key prefixes, AWS/GCP/Azure access keys, `.pem`-shaped private-key blocks, JWT shapes). Same shape as LLM-01: **extensible** (regex catalog v0; small classifier model as v1 per Gemini #2), framed as a **guardrail not a perfect classifier** (per Codex-1 #6) with quarantine + operator override + test fixtures + measurement counters. Track regex catalog separately from the `bicameral-report-bug` skill's existing redactor (which redacts at report-generation time, not at ingest time).
+- **LLM-05** [P1] — **No per-tool authority gradation on MCP boundary.** Destructive tools (`bicameral.reset`, `bicameral.ingest` with overwrite semantics) are equally callable as read tools, and **agent-supplied `confirm=True` parameters do not constitute a security gate** (per Kilo #3): `confirm=True` is a prompt to the agent's reasoning, not an operator action. Remediation: declare an authority class on each MCP tool (`read` / `write` / `destructive`); `destructive` calls require **out-of-band operator confirmation** before the handler dispatches — the host `AskUserQuestion` flow when available, falling back to an interactive terminal prompt or stdin ack so a host that auto-approves still triggers a real operator action. Server-side enforced.
+- **LLM-06** [P1 — narrowed scope] — **Skill content drift between server release and a future remote-skill-loading channel.** Original P0 framing was overstated (per Kilo #2): in the current install model, the operator already trusted the supply chain at `pip install` / `uv tool install` / `pipx install` time, and skills ship co-located with server code in the same wheel — there's no separate channel to compromise without compromising the wheel itself, which is covered by SOC2-03 (signed releases) and OWASP-01 (SBOM). The scenario where LLM-06 has independent value is a **future remote-skill-loading or marketplace feature** (none today): when skills could be pulled from a registry distinct from the server wheel, signing the skill payload separately becomes load-bearing. Remediation when that scope opens: cosign-signed `skills/MANIFEST.toml`, per-file SHA-256 verification at copy time. Until then, the gate is "don't ship remote skill-loading without first activating signed manifests" — a design constraint, not a runtime defect.
 - **LLM-07** [P1] — **`source_ref` redaction default is `full` (verbatim) per #209.** This is a known issue tracked separately. Remediation: ship #209 (refine regex + flip default to `redacted`).
 - **LLM-08** [P2] — **`bicameral.ingest` has no rate limit.** A runaway agent can flood the ledger. Remediation: token-bucket rate limit per session_id; declare server-side enforcement.
-- **LLM-09** [P1] — **`ratify`, `link_commit`, `set_decision_level` fire without human-in-loop on agent-initiated calls.** These are state-changing decisions. Remediation: declare each tool's HITL requirement deterministically; `AskUserQuestion`-gate the destructive ones.
+- **LLM-09** [P1] — **`ratify`, `link_commit`, `set_decision_level` fire without human-in-loop on agent-initiated calls.** These are state-changing decisions. Remediation: declare each tool's HITL requirement deterministically; gate the destructive ones with **out-of-band operator confirmation** (same shape as LLM-05 — `AskUserQuestion` when host supports it, terminal prompt fallback otherwise). Agent-supplied `confirm`-style parameters are not security gates here either.
+- **LLM-11** [P0/M, all deployments] — **Cross-tool config-file modification surface** (per Kilo #9). `setup_wizard._install_hooks` modifies `.claude/settings.json` (Claude Code's host-config) and the analogous Cursor / Codex configs. A compromised bicameral-mcp install can therefore inject arbitrary Claude Code hook commands that fire as the operator at hook-trigger-time (PreToolUse, PostToolUse, SessionEnd). This is **distinct from LLM-06** (skill content): LLM-06 is text the agent reads, LLM-11 is shell commands the host runs. A signed-skills-manifest gate doesn't cover this. Remediation: ship a signed `hooks-manifest.json` separately (cosign-signed at release); `setup_wizard` verifies the manifest before writing to `.claude/settings.json`. The manifest is the second supply-chain leg distinct from skills + wheel.
 
 ---
 
@@ -502,7 +573,12 @@ Type: **DG** deterministic-gate / **BS** boundary-statement / **DOC** documentat
 | OWASP-04 | OWASP A04, AI RMF GOVERN | 1.8 Skills | Instruction-only defaults — entire #205 doctrine surface | P0 | H | all | DG |
 | LLM-01 | OWASP-LLM-01 | 1.4 Ingest | No prompt-injection canary scan on `bicameral.ingest` content | P0 | H | all | DG |
 | LLM-04 | OWASP-LLM-06, HIPAA, PCI | 1.4 Ingest | No PII/secret detect-and-refuse on ingest | P0 | H | all | DG |
-| LLM-06 | OWASP-LLM-05 | 1.7 Install | Skill-install supply-chain — unsigned skills/ payload | P0 | M | all | DG |
+| LLM-06 | OWASP-LLM-05 | 1.7 Install | Skill content drift between server release and future remote-skill-loading channel (scope-narrowed per Kilo #2) | P1 | M | future-feature | DG (design constraint) |
+| LLM-11 | OWASP-LLM-05 | 1.7 Install | Cross-tool config-file modification surface (`setup_wizard` writes to `.claude/settings.json`) | P0 | M | all | DG |
+| MCP-01 | OWASP-LLM-07 | 1.1 MCP boundary | MCP host UX is external dependency, not security gate (host may auto-approve tool calls) | P1 | M | all | DOC + DG |
+| CFG-01 | OWASP A05 | (cross) | No centralized configuration precedence + fail-closed model | P2 | M | all | DG (centralization) |
+| GDPR-08 | GDPR Art. 5(1)(c), Art. 17 | 1.2 Ledger | Ephemeral-data surfaces (tempfiles, swap, WAL, crash dumps) unaddressed | P2 | M | all | DOC |
+| GDPR-09 | GDPR Art. 7 | 1.6 Telemetry | Consent versioning + revocation semantics undefined | P2 | M | all | DG + DOC |
 | SOC2-01 | SOC 2 CC1, CC6 | 1.1 MCP boundary | No authentication/authorization on MCP transport | P0 | H | pre-team / hosted (P3 boundary-statement for local-only) | DOC + DG |
 | GDPR-01 | GDPR Art. 17 | 1.2 Ledger | Right-to-erasure procedure undefined for append-mostly Merkle ledger | P1 | M | all | DOC + DG |
 | GDPR-02 | GDPR Art. 15 | 1.2 Ledger | No data-subject access endpoint | P1 | M | all | DG |
@@ -541,7 +617,7 @@ Type: **DG** deterministic-gate / **BS** boundary-statement / **DOC** documentat
 | FIPS-01 | FIPS 140-3 | (cross) | No documented FIPS stance | P3 | L | all | DOC |
 | ISO-01 | ISO 27001/27701 | (cross) | No ISO control-mapping doc | P3 | L | hosted | DOC |
 
-**Gap counts**: 5 P0, 18 P1, 13 P2, 5 P3. Total **41 gap IDs**, of which 7 are explicit folds (HIPAA-01 → LLM-04, OWASP-06 → SOC2-06, etc.).
+**Gap counts (post-disposition)**: 5 P0 (was 5; LLM-06 downgraded to P1; LLM-11 added as P0), 19 P1 (was 18; LLM-06 added scope-narrowed; MCP-01 added), 16 P2 (was 13; +CFG-01, GDPR-08, GDPR-09), 5 P3 unchanged. Total **45 gap IDs** (up from 41), of which 7 are explicit folds.
 
 ---
 
@@ -555,6 +631,30 @@ Issue-filing strategy:
 - **P3 gaps** — same rollup pattern as P2, separate issue.
 
 Two rollups + one issue per P0/P1 (after folding) = manageable triage queue.
+
+### § 6.1 Epic grouping for the deferred P1 batch (per Codex-1 #10)
+
+Several P1 gaps share an implementation epic. Filing them as separate issues without an epic header invites duplicate work and inconsistent design. Recommended epic grouping for the deferred P1 filing:
+
+- **Ingest boundary guardrails epic** — covers LLM-02 (size limit), LLM-08 (rate limit), LLM-04 (PII/secret/PHI/PAN — already filed as #213), LLM-01 (prompt-injection canary — already filed as #212). One design surface (`handlers/ingest.py` middleware), one set of acceptance criteria, four sub-tasks.
+- **Per-tool authority gradation epic** — covers LLM-05 (per-tool authority class), LLM-09 (HITL on ratify/link_commit/set_decision_level). Both want the same out-of-band-confirmation primitive; building it twice is wasteful.
+- **Supply-chain signing epic** — covers OWASP-01 (SBOM), SOC2-03 (signed releases), SSDF-01 (signed artifacts), OWASP-05 (RECOMMENDED_VERSION pinning), LLM-11 (signed hooks-manifest), LLM-06 (signed skills-manifest, scope-narrowed). One signing pipeline, multiple consumers.
+- **Telemetry & consent epic** — covers GDPR-04 (retention), GDPR-09 (versioning + revocation), NIST-RMF-02 (production MEASURE).
+
+The remaining P1s (GDPR-01, GDPR-02, LLM-03, LLM-07, NIST-RMF-01, SOC2-02, SOC2-06) are individually scoped and don't fold into an epic.
+
+### § 6.2 Control-acceptance criteria template (per Codex-2 #4)
+
+Every gap typed `DG` (deterministic gate) ships with the same six-section acceptance template — "implemented a gate" is not enough for audit; the control has to fail closed and produce reviewable evidence:
+
+1. **Positive test** — gate triggers correctly on the in-scope condition (e.g. canary regex hits, secret pattern matches, destructive-tool call without operator confirmation).
+2. **Negative test** — gate does not trigger on out-of-scope content (false-positive bound).
+3. **Bypass / override test** — operator-supplied override path (where defined) actually bypasses, and the bypass event is logged with reason text.
+4. **Fail-closed test** — when the gate's config is malformed or the underlying detector is unavailable, the system refuses-or-defaults rather than silently passing through.
+5. **Telemetry / audit evidence** — the gate's decisions emit into `~/.bicameral/preflight_events.jsonl` (or an equivalent local audit JSONL) with refused / overridden / suspected-missed counters.
+6. **Documentation pointer** — operator-readable doc explains the gate, its config knobs, and the override procedure.
+
+Issue bodies for every DG gap should adopt this template as their acceptance criteria. Without all six, the implementation isn't audit-ready even if the gate technically exists.
 
 ---
 
