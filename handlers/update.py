@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,28 @@ _RECOMMENDED_VERSION_URL = (
 )
 _CACHE_PATH = os.path.expanduser("~/.bicameral/update-check.json")
 _CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+def _resolve_install_command(target: str) -> list[str]:
+    """Resolve the installer command for ``target`` (e.g. ``"bicameral-mcp==1.2.3"``).
+
+    Order is deterministic and PATH-driven (no env heuristics):
+      1. ``uv tool install --force <target>`` — preferred. uv ships as a
+         single static binary, has no Python prerequisite, and ``uv tool``
+         is the canonical CLI-app installer in the uv ecosystem.
+      2. ``pipx install <target> --force`` — fallback when uv is absent.
+         Manages its own venv and handles externally-managed-environment
+         restrictions on macOS.
+      3. ``<sys.executable> -m pip install --quiet <target>`` — last-resort
+         path for venv/dev installs where neither uv nor pipx is on PATH.
+
+    (#199)
+    """
+    if shutil.which("uv"):
+        return ["uv", "tool", "install", "--force", target]
+    if shutil.which("pipx"):
+        return ["pipx", "install", target, "--force"]
+    return [sys.executable, "-m", "pip", "install", target, "--quiet"]
 
 
 def _load_cache() -> dict:
@@ -280,15 +303,7 @@ async def handle_update(
 
         target = f"bicameral-mcp=={recommended}"
         try:
-            # Prefer pipx (the standard install path) — it manages its own venv
-            # and handles externally-managed-environment restrictions on macOS.
-            # Fall back to pip for venv/dev installs.
-            import shutil
-
-            if shutil.which("pipx"):
-                cmd = ["pipx", "install", target, "--force"]
-            else:
-                cmd = [sys.executable, "-m", "pip", "install", target, "--quiet"]
+            cmd = _resolve_install_command(target)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -354,13 +369,13 @@ async def handle_update(
             else:
                 return {
                     "status": "error",
-                    "message": f"pip install failed: {result.stderr.strip()}",
+                    "message": f"{cmd[0]} install failed: {result.stderr.strip()}",
                     "preflight_id": preflight_id,
                 }
         except subprocess.TimeoutExpired:
             return {
                 "status": "error",
-                "message": "pip install timed out after 120s.",
+                "message": f"{cmd[0]} install timed out after 120s.",
                 "preflight_id": preflight_id,
             }
         except Exception as exc:
