@@ -11,6 +11,80 @@ This document is **operator-consumed prose**, not LLM-consumed agent-instruction
 
 ---
 
+> **Codex reviewer note:** Overall, this is a strong code-grounded brief: the component inventory is concrete, the gap IDs are stable, and the repeated distinction between instruction-only guidance and deterministic gates is exactly the right central thesis. My comments below are mainly about audit defensibility: tighten product-vs-operator obligations, avoid overstating local-only risks as hosted/team risks, and make sure every high-priority finding has a reproducible evidence pointer.
+
+## Codex review comments
+
+1. **Deployment-mode severity needs one more axis.** Several findings are clearly severe for a hosted, team-server, or shared deployment, but less severe for a single-user local stdio MCP process. SOC2-01 is the clearest example: "no auth on local stdio" is mostly a boundary statement, while "no auth on shared/team service" is audit-blocking. Consider adding a `Deployment` or `Trigger` column to the gap table so P0 findings remain defensible.
+
+2. **The ingest path is correctly identified as the highest-risk write path.** I would make that wording explicit in section 1.4. The risk is not only that prompt-injected content influences the model; it can become durable ledger state and later flow back into preflight. That durable-feedback-loop framing makes LLM-01 and LLM-04 much easier to justify as P0.
+
+3. **Instruction-only defaults are the strongest thesis in the brief.** Section 1.8 and OWASP-04 would benefit from one concrete before/after example: an instruction-only promise such as "redact branch names" versus a deterministic handler/config gate that redacts before returning data. That will help non-agent-systems readers understand why SKILL.md text cannot be treated as a control.
+
+4. **Product obligations and operator obligations should be separated.** GDPR, HIPAA, PCI, ISO, and CCPA rows mix product controls, customer deployment triggers, and sales-readiness requirements. Consider changing "Apply?" to "Applicability trigger" and adding a short controller/processor note: for local/self-hosted installs, the operator likely controls most ledger content; Bicameral may separately control anonymous product telemetry depending on relay retention and tenant configuration.
+
+5. **The GDPR access/erasure remediation should search more than email.** A data-subject access CLI that only searches signer email will miss the free-form transcript content that creates the risk. Include local-part, full email, source_ref, topic, decision description, file paths, and any future user/session identifiers.
+
+6. **Detection controls should be framed as guardrails, not perfect classifiers.** LLM-01 and LLM-04 are good issues, but prompt-injection canaries and secret/PII regexes will have false positives and misses. The remediation should include quarantine, override, test fixtures, and measurement of refused/overridden/missed cases.
+
+7. **The EU AI Act stance should be softened until counsel confirms classification.** "Limited risk" may be directionally right for an integrated AI-agent workflow, but bicameral-mcp alone may be better described as an AI-adjacent developer-tool component. Obligations likely attach to the integrated AI system and deployment context.
+
+8. **The team-server boundary note has a table mismatch.** Section 1.9 says `TEAM-NN` gaps are recorded in section 4, but I do not see `TEAM-*` rows in the standards summary or gap synthesis. Either add a deferred team-server mini-table or change the sentence to say those gaps are intentionally not enumerated here.
+
+9. **Evidence pointers need to match the methodology claim.** The appendix says file-path citations and line ranges were verified, but most findings currently cite components rather than exact lines. Add a small evidence appendix for P0/P1 gaps with `path:line` pointers, or adjust the methodology wording to avoid promising line-level citations.
+
+10. **Issue filing can be grouped around foundation work.** The triage strategy is sensible, but a few P1s belong to the same implementation epic. "Ingest boundary guardrails" could cover payload size, prompt-injection quarantine, secret/PII/PHI/PAN detection, and rate limiting with separate acceptance criteria.
+
+## Kilo review comments
+
+1. **TEAM-NN cross-reference is a dangling promise.** Section 1.9 (line 113) states "Documented gaps recorded as `TEAM-NN` IDs in § 4 will not block this brief." Section 4 (the standards summary table, lines 419–434) contains zero `TEAM-*` rows. Either add a deferred mini-table (even a single-row `TEAM-00 [deferred]` placeholder) or rewrite § 1.9 to say team-server gaps are intentionally not enumerated. The Codex reviewer flagged this (comment #8) but it remains unfixed — it's an audit-defensibility gap in the brief itself.
+
+2. **LLM-06 (P0/M) is overstated for the current deployment model.** The threat is "a typosquatted fork or compromised mirror could ship modified SKILL.md." But the operator already cloned or `pip install`-ed the repo — they've already trusted that supply chain. Skill files are co-located with the server code, not loaded from a separate channel. This is better classified as P1/M, or the description should be narrowed to the specific scenario where skill content diverges from server code (e.g., a future marketplace or remote-skill-loading feature that doesn't exist today).
+
+3. **`bicameral.reset` `confirm=True` is agent-supplied, not operator-supplied.** Section 2.4(b) under LLM-07 notes this briefly: "requires a `confirm=True` parameter that the agent supplies." This deserves its own gap or at minimum a stronger callout in LLM-05. The "confirm" is a parameter the model fills in — it is not a human-in-the-loop gate. Calling it "requires confirmation" in any security context is misleading. Recommend adding a sentence in LLM-05 remediation explicitly stating: `confirm=True` is not a security gate; it is a prompt to the agent. A deterministic HITL gate would require an out-of-band operator action (e.g., stdin ack, interactive prompt to the operator's terminal).
+
+4. **GDPR-05 (P1/H) severity is inflated for local-only single-user context.** The local-part of `git config user.email` is "leaked" into the operator's own local SurrealKV file on the operator's own machine. The data subject and the operator are the same person. This is P2 in a single-user local install and P1 only in a team-server context. Recommend a deployment-mode qualifier (aligning with Codex comment #1) or downgrading to P2 with a note that it upgrades to P1 when team-server activates.
+
+5. **The ingest→ledger→preflight→agent feedback loop deserves an explicit risk-amplification callout.** Section 1.5 (line 80) identifies this individually ("a manipulated decision shapes downstream code edits") and Codex comment #2 flags the durable-feedback-loop framing. But neither section calls out the compounding nature: a single poisoned ingest creates a ledger entry that is subsequently surfaced by every future preflight for that topic/region, potentially influencing dozens of code edits before detection. This is a force-multiplier, not just a single-hop risk. Recommend adding a "Risk amplification" paragraph in § 1.4 or § 2.4 explicitly quantifying the blast radius.
+
+6. **OWASP-03 (lockfile) P1/M is likely P2.** For a tool distributed via `uv tool install` / `pipx install` / `pip install`, the consuming package manager already resolves and locks dependencies at install time. The `>=` floors in `pyproject.toml` are standard Python packaging practice. The operator's environment (uv, pipx) is the lock authority, not this repo. Unless there's a specific known incompatibility, this is a posture note (P2/DOC), not a P1 gate.
+
+7. **Ephemeral data surfaces are unaddressed.** The brief covers persistent storage (SurrealKV, JSONL, sqlite) but doesn't mention ephemeral surfaces: Python tempfile usage during ingest, OS swap/page file containing ledger contents, SurrealDB WAL segments before compaction, and crash dumps. For GDPR right-to-erasure (GDPR-01) and HIPAA/PCI boundary statements, these ephemeral copies are in scope. Recommend adding a brief subsection in § 1.2 or § 2.1 noting ephemeral-data posture.
+
+8. **Consent versioning and re-consent mechanism is unclear.** `consent.py` is cited as storing a "policy version" at `~/.bicameral/consent.json`, but the brief doesn't state whether a policy-version bump triggers re-consent on next boot. If the telemetry allowlist changes (e.g., a new field is added to `telemetry.py`), does the existing consent marker still cover it? This affects GDPR Art. 7 (conditions for consent) and should be stated explicitly, either in § 2.1(b) or as a minor gap.
+
+9. **`setup_wizard.py` modifies `.claude/settings.json` — cross-tool config surface unexamined.** Section 1.7 describes the wizard installing hooks in `.claude/settings.json`, but the security implications of a package modifying another tool's configuration file aren't analyzed. A compromised bicameral-mcp install could inject arbitrary Claude Code hooks. This is a supply-chain vector closely related to LLM-06 but distinct (it targets the agent host, not skill content). Recommend adding a note in § 1.7's trust boundary.
+
+10. **Gap count validation passes.** I independently counted: 5 P0, 18 P1, 13 P2, 5 P3 = 41 total. Fold count of 7 is consistent with the table notation. The math is correct.
+
+11. **SurrealDB version pinning is an unmentioned supply-chain surface.** `pyproject.toml` specifies `surrealdb>=2.0.0` — SurrealDB is the persistence layer holding the entire ledger. A breaking or malicious SurrealDB release (unlikely but nonzero) could compromise Merkle chain integrity. This folds into the broader OWASP-03 / supply-chain discussion but deserves a one-line callout given the criticality of the persistence layer.
+
+12. **Merkle rebuild witness for GDPR-01 remediation is underspecified.** The proposed tombstone-and-rebuild procedure for right-to-erasure is architecturally sound, but who witnesses or attests the rebuild? If the operator runs the rebuild locally, there's no independent attestation that the tombstoned rows were actually excluded. For audit defensibility, the rebuild should emit a signed rebuild manifest (input seal hash, output seal hash, tombstone list, timestamp). This is a detail for the GDPR-01 remediation issue, not the brief itself, but worth noting so it isn't lost.
+
+13. **Section 2.4(a) lists LLM03 and LLM10 as N/A but omits discussion of why LLM02 is sparse.** LLM02 (Insecure Output Handling) maps primarily to the preflight→agent path, but the brief doesn't enumerate it as a standalone gap — it's folded into LLM-07 (source_ref redaction) and the broader OWASP-04 instruction-only surface. A reader tracking OWASP LLM categories by number will wonder where LLM02's explicit treatment went. Recommend adding a one-line "LLM02: addressed by LLM-07 and OWASP-04; no separate gap ID" mapping note.
+
+## Gemini CLI review comments
+
+1. **GDPR-01 (Right to erasure vs Merkle chain):** The proposed tombstone-and-rebuild procedure could be operationally heavy and risks breaking downstream references. An alternative approach to support Art. 17 without rebuilding the chain is to use "crypto-shredding": store sensitive fields encrypted with a per-row or per-subject key, and include only the ciphertext in the Merkle hash. Erasure then simply requires deleting the key, rendering the data unrecoverable while leaving the cryptographic chain intact.
+
+2. **LLM-01 & LLM-04 (Canary scans and Detect-and-Refuse):** While regexes and heuristic shapes are low-latency, they are notoriously brittle against novel prompt injection techniques. Consider specifying that the server-side scan should ideally be extensible to support a local, small-parameter classifier model specifically tuned for prompt injection detection, rather than relying purely on regex catalogs.
+
+3. **LLM-03 (SurrealDB Query Timeout):** Ensure that the 5s/30s timeouts proposed are surfaced as configurable parameters in `.bicameral/config.yaml`. For operators with slower local machines or exceptionally large ledgers, hardcoded timeouts may lead to spurious failures that block legitimate workflows.
+
+## Codex second-pass comments after Kilo/Gemini
+
+1. **Add a reviewer-disposition pass before filing the remaining issues.** The three reviews now include several severity changes and scope corrections, especially for SOC2-01, LLM-06, GDPR-05, and OWASP-03. Before creating the remaining P1/P2 issues, add a short disposition table: `Comment`, `Decision`, `Reason`, `Gap IDs changed`, `Issue impact`. Otherwise the tracker may preserve stale P0/P1 rankings after the review consensus has moved.
+
+2. **Create deployment profiles, not only deployment qualifiers.** The most useful next artifact is probably a compact matrix with `local single-user`, `team-server/shared`, and `hosted/managed` columns. Each gap can then carry the highest applicable severity per profile. This avoids repeatedly debating whether a finding is "really" P0 when the answer is profile-dependent.
+
+3. **Define consent revocation semantics separately from opt-out and re-consent.** Kilo covered re-consent on policy-version changes, but the brief should also state what happens when an operator revokes telemetry consent: stop future sends only, delete local `device_id`, delete/rotate local consent marker, or request deletion from the relay/PostHog side. That matters for GDPR/CCPA access and deletion narratives.
+
+4. **Turn deterministic gates into testable control requirements.** For each server-side gate proposed by #205/LLM-01/LLM-04/LLM-05/LLM-09, add acceptance criteria that include positive tests, negative tests, bypass/override tests, and telemetry/audit evidence. "Implemented a gate" will not be enough for audit; the control has to fail closed and produce reviewable evidence.
+
+5. **Add configuration precedence and fail-closed behavior to the threat model.** The brief names several env vars and config knobs, but does not define precedence or safe behavior when config is missing, malformed, or contradictory. A small `config security model` section would reduce ambiguity around defaults like telemetry, raw preflight telemetry, signer email fallback, render attribution, and future ingest guardrails.
+
+6. **Account for MCP host/tool-approval semantics as an external dependency.** Claude Code, Cursor, and Codex may differ in how they display tool calls, confirmations, stdio servers, and destructive actions. The server should not rely on host UX for security, but the brief should list MCP host behavior as a dependency that can change the effective risk posture.
+
 ## § 1. Surface inventory
 
 The 10 components in scope. For each: location, what it does, data it touches, external surfaces, trust boundary.
@@ -46,6 +120,7 @@ The 10 components in scope. For each: location, what it does, data it touches, e
 - **Data touched**: **arbitrary user-supplied text** (the highest-risk surface in the system). Signer email (PII). Source attribution string (potentially containing names, dates, system identifiers). Topic strings. File paths.
 - **External surfaces**: filesystem (event JSONL files, ledger DB, optional team-server append).
 - **Trust boundary**: **agent-controlled** content arrives via the MCP `bicameral.ingest` call. The agent is operating on operator-provided content (transcripts, PR bodies) but the agent itself is a model whose decisions can be steered by the content it's reading. Prompt injection in the source content can manipulate what the agent ingests, what it tags, and how it describes it.
+- **Risk amplification (durable-feedback-loop)**: ingest is the system's only **durable write surface for free-form text**. Content classified into decisions does not stay at the ingest boundary — it lands in the ledger, and every subsequent `bicameral.preflight` call for the same topic / region / file path surfaces those decisions back to the agent as authoritative context. A single poisoned ingest is therefore a **force-multiplier**: one tampered transcript can shape dozens of downstream code edits over weeks or months before detection, and is silently re-inserted into the agent's reasoning context every time the affected scope is touched. This is the core defensibility argument for treating LLM-01 (canary scan) and LLM-04 (PII/secret detect-and-refuse) as P0 — they are not single-hop ingest validators; they are gates on the long-tail propagation surface.
 
 ### 1.5 Preflight pipeline
 
@@ -81,12 +156,13 @@ The 10 components in scope. For each: location, what it does, data it touches, e
 - **Data touched**: indirect — skills shape how the agent processes ingested content, but the skill files themselves are operator-installed markdown.
 - **External surfaces**: read by the agent at session boot.
 - **Trust boundary**: **the novel #205 attack class.** A jailbroken agent, a model regression, or a prompt-injected upstream content payload can ignore SKILL.md instructions silently. The defenses must live at server-side / config-load boundaries, not in skill text.
+- **Instruction-only vs. deterministic gate (worked example)**: the `bicameral-report-bug` skill, before #200 Phase 2 + #204 landed, said in markdown: *"By default, extract only configuration keys from `.bicameral/config.yaml`; never include the values verbatim unless the operator explicitly opts in."* That is **instruction-only**: an agent that ignores the line — for any reason, including upstream prompt injection in the bug-report content itself — would emit the file verbatim including secrets. The replacement deterministic gate added in #204 is `events/writer._resolve_signer_email(email, mode)` plus the `signer_email_fallback` config reader: the *server* applies the policy at config-load time, the skill text only references the gate's existence. The skill markdown can now drift, the model can ignore it, the prompt-injection can override it — and the policy still holds because the keys-only extraction happens in Python, not in agent reasoning. Every privacy / security default in the brief should follow this shape.
 
 ### 1.9 Team-server boundary statement
 
 Team-server plumbing exists in code (`events/team_adapter.py`, `events/team_server_bridge.py`, `events/team_server_consumer.py`, `events/team_server_pull.py`, plus the parked `team_server/` plan at `plan-priority-c-team-server-slack-v0.md`). Slack ingest is plumbed but **inert** because the `channel_allowlist` table is defined and queried but never populated (#161 — merged-to-dev, awaiting activation). The materializer dispatches on `event_type='ingest.completed'` but team-server emits `'ingest'` (#160 — merged-to-dev). Consequence: Slack content is not currently ingested, but the code path exists and would activate when both blockers are addressed.
 
-**Posture for this brief**: full audit deferred until activation. Documented gaps recorded as `TEAM-NN` IDs in § 4 will not block this brief; they are waiting for the activation PR to consume them.
+**Posture for this brief**: full audit deferred until activation. Team-server gaps are **intentionally not enumerated** in § 4 / § 5 of this brief; they will be authored by the activation PR (the one that closes #161 + #160) so the audit reflects the actual activated topology rather than guesses. The activation PR is the right place to introduce `TEAM-NN` gap IDs.
 
 ### 1.10 CI/e2e scope-out
 
@@ -315,14 +391,14 @@ This is **the highest-novelty surface for bicameral-mcp.** The system is an LLM 
 
 #### (b) What bicameral-mcp does today
 
-- **Risk classification**: bicameral-mcp itself is a **developer-tool MCP server**, not a high-risk AI system per Annex III. It's most plausibly **limited risk** (an AI system intended to interact with natural persons). When operating under qor-logic with `high_risk_target: true`, the *downstream* system being supported may be high-risk; that triggers qor-logic's Art. 9 contract (`impact_assessment` block).
+- **Risk classification**: this brief does **not** make a unilateral classification claim. bicameral-mcp standalone is most accurately described as an **AI-adjacent developer-tool component** (an MCP server that surfaces decisions to an agent host); EU AI Act risk-tier classification properly attaches to the **integrated AI system + the operator's deployment context**, not to a component in isolation. A naive "limited risk" claim is directionally plausible for most bicameral-mcp deployments but is premature without legal counsel review and without knowing the integrated-system shape. When operating under qor-logic with `high_risk_target: true`, the *downstream* system being supported may be high-risk; that triggers qor-logic's Art. 9 contract (`impact_assessment` block) and the bicameral-mcp surface inherits whatever obligations the integrated-system classification imposes.
 - **Art. 50 transparency**: no end-user-facing disclosure surface; bicameral-mcp talks to the AGENT, the agent talks to the operator. Operator already knows they're using AI.
 - **Art. 14 human oversight**: `AskUserQuestion` flows from #175; preflight bypass-tracking from #200 Phase 3 (deterministic gate that records every bypass).
 - **Cybersecurity (Art. 15 if applicable)**: covered by SOC 2 + OWASP walks above.
 
 #### (c) Gaps
 
-- **AI-ACT-01** [P2] — **Risk-tier classification not declared in repo.** Remediation: add a "EU AI Act stance" section to `README.md` declaring "limited risk; not intended for high-risk Annex III uses; high-risk-target operations supported only via qor-logic plan-time impact_assessment." Maps to Art. 50 transparency obligation by giving operators a one-line stance to cite.
+- **AI-ACT-01** [P2] — **No risk-tier-classification stance declared in repo.** Remediation: add a "EU AI Act stance" section to `README.md` stating that bicameral-mcp is an AI-adjacent developer-tool component, that risk-tier classification properly attaches to the integrated AI system + deployment context, and that operators in regulated environments should obtain counsel review before claiming any specific tier on the integrated system's behalf. Cite Art. 50 transparency as the obligation that motivates the disclosure. Avoid making a unilateral "limited risk" claim — that determination is the integrator's, not the component's.
 - **AI-ACT-02** [P2] — **No prohibited-use declaration matching Annex III boundaries.** Same remediation as NIST-RMF-01.
 - **AI-ACT-03** [P3] — **Art. 9 risk-management system** is qor-logic-resident, not bicameral-mcp-resident. If the bicameral-mcp server is ever operated for high-risk use, the standalone path lacks the cycle. Remediation: cross-reference qor-logic operation requirement in the limited-risk stance from AI-ACT-01.
 
@@ -417,52 +493,53 @@ Flat table of all gaps with severity × likelihood → priority.
 
 Severity: **P0** compliance-blocking / **P1** audit-finding-class / **P2** posture-improving / **P3** deferred-or-stub.
 Likelihood: **H** default code path / **M** uncommon path / **L** only under jailbreak or injection.
+Deployment trigger: **all** applies to every shape / **local-OK** applies but local stdio default is acceptable in practice / **team/hosted** only matters when team-server activates or in a hosted product / **pre-team** must be addressed before team-mode activation. Severity is stated for the highest-applicable deployment shape; readers using the brief for a narrower shape may downgrade per the trigger column.
 Priority: derived; ordered top-to-bottom by P0→P3 then H→L within tier.
 Type: **DG** deterministic-gate / **BS** boundary-statement / **DOC** documentation / **SD** scope-defer.
 
-| ID | Standards | Component | Description (one-line) | Sev | Like | Priority | Type |
+| ID | Standards | Component | Description (one-line) | Sev | Like | Deployment trigger | Type |
 |---|---|---|---|---|---|---|---|
-| OWASP-04 | OWASP A04, AI RMF GOVERN | 1.8 Skills | Instruction-only defaults — entire #205 doctrine surface | P0 | H | P0/H | DG |
-| LLM-01 | OWASP-LLM-01 | 1.4 Ingest | No prompt-injection canary scan on `bicameral.ingest` content | P0 | H | P0/H | DG |
-| LLM-04 | OWASP-LLM-06, HIPAA, PCI | 1.4 Ingest | No PII/secret detect-and-refuse on ingest | P0 | H | P0/H | DG |
-| LLM-06 | OWASP-LLM-05 | 1.7 Install | Skill-install supply-chain — unsigned skills/ payload | P0 | M | P0/M | DG |
-| SOC2-01 | SOC 2 CC1, CC6 | 1.1 MCP boundary | No authentication/authorization on MCP transport | P0 | H | P0/H | DOC + DG |
-| GDPR-01 | GDPR Art. 17 | 1.2 Ledger | Right-to-erasure procedure undefined for append-mostly Merkle ledger | P1 | M | P1/M | DOC + DG |
-| GDPR-02 | GDPR Art. 15 | 1.2 Ledger | No data-subject access endpoint | P1 | M | P1/M | DG |
-| GDPR-05 | GDPR Art. 5(1)(c) | 1.4 Ingest | Signer-email default leaks local-part | P1 | H | P1/H | DG |
-| LLM-02 | OWASP-LLM-04 | 1.4 Ingest | No size limit on `bicameral.ingest` | P1 | H | P1/H | DG |
-| LLM-03 | OWASP-LLM-04 | 1.2 Ledger | No SurrealDB query timeout | P1 | M | P1/M | DG |
-| LLM-05 | OWASP-LLM-07 | 1.1 MCP boundary | No per-tool authority gradation on MCP boundary | P1 | M | P1/M | DG |
-| LLM-07 | OWASP-LLM-02 | 1.5 Preflight | `render_source_attribution` default is verbatim (#209) | P1 | H | P1/H | DG |
-| LLM-09 | OWASP-LLM-08 | 1.1 MCP boundary | `ratify`, `link_commit`, `set_decision_level` fire without HITL | P1 | M | P1/M | DG |
-| OWASP-01 | OWASP A06, SSDF | 1.7 Install | No SBOM in release artifacts | P1 | H | P1/H | DG |
-| OWASP-03 | OWASP A06 | 1.7 Install | No exact-pin lockfile | P1 | M | P1/M | DOC |
-| OWASP-05 | OWASP A08 | 1.7 Install | Update-check URL not pinned beyond TLS | P1 | M | P1/M | DG + DOC |
-| SOC2-02 | SOC 2 A | (cross) | No availability commitment / MTTR | P1 | M | P1/M | DOC |
-| SOC2-03 | SOC 2 CC, SSDF | 1.7 Install | No signed releases / change-control evidence | P1 | H | P1/H | DG |
-| SOC2-06 | SOC 2 CC, OWASP A09 | (cross) | System-monitoring gaps for self-hosted operators | P1 | H | P1/H | DG |
-| SSDF-01 | SSDF | 1.7 Install | No signed release artifacts (overlap with OWASP-01, SOC2-03) | P1 | H | P1/H | DG |
-| HIPAA-01 | HIPAA, OWASP-LLM-06 | 1.4 Ingest | No PHI detect-and-refuse (folds into LLM-04) | P1 | M | P1/M | DG (folds) |
-| NIST-RMF-01 | NIST AI RMF MAP-3.1 | (cross) | No "prohibited uses" declaration | P1 | M | P1/M | DOC |
-| NIST-RMF-02 | NIST AI RMF MEASURE | 1.6 Telemetry | No production MEASURE / AI-risk telemetry | P1 | H | P1/H | DG |
-| GDPR-03 | GDPR Ch. V | 1.6 Telemetry | Cross-border transfer documentation gap | P2 | M | P2/M | DOC |
-| GDPR-04 | GDPR Art. 5(1)(e) | 1.6 Telemetry | No declared retention boundary for anonymous relay | P2 | M | P2/M | DOC |
-| LLM-08 | OWASP-LLM-04 | 1.4 Ingest | No rate limit on `bicameral.ingest` | P2 | M | P2/M | DG |
-| OWASP-02 | OWASP A02 | 1.2 Ledger | Ledger at rest unencrypted | P2 | L | P2/L | DOC |
-| OWASP-06 | OWASP A09 | (cross) | No structured audit log (overlap SOC2-06) | P2 | H | P2/H | DG (folds) |
-| PCI-01 | PCI DSS | 1.4 Ingest | No PAN detect-and-refuse (folds into LLM-04) | P2 | L | P2/L | DG (folds) |
-| AI-ACT-01 | EU AI Act Art. 50 | (cross) | Risk-tier classification not declared | P2 | M | P2/M | DOC |
-| AI-ACT-02 | EU AI Act Annex III | (cross) | No prohibited-use declaration (folds into NIST-RMF-01) | P2 | M | P2/M | DOC (folds) |
-| SOC2-04 | SOC 2 A | (cross) | Backup/DR procedure for ledger undefined | P2 | M | P2/M | DOC |
-| SOC2-05 | SOC 2 PI | 1.2 Ledger | classifier_version freeze (#162) gap | P2 | M | P2/M | DG (existing) |
-| NIST-RMF-03 | NIST AI RMF MANAGE | (cross) | No documented MANAGE / incident-response runbook | P2 | M | P2/M | DOC |
-| NIST-RMF-04 | NIST AI RMF GOVERN | (cross) | GOVERN-1.4 evidence trail relies on qor-logic | P2 | M | P2/M | DOC |
-| SSDF-02 | SSDF | (cross) | No documented threat model in repo | P2 | M | P2/M | DOC |
-| AI-ACT-03 | EU AI Act Art. 9 | (cross) | Art. 9 risk-management is qor-logic-resident | P3 | L | P3/L | DOC |
-| GDPR-06 | GDPR Art. 30 | (cross) | No Records of Processing template | P3 | L | P3/L | DOC |
-| GDPR-07 | GDPR Art. 33 | (cross) | No incident-response runbook (overlap NIST-RMF-03) | P3 | L | P3/L | DOC (folds) |
-| FIPS-01 | FIPS 140-3 | (cross) | No documented FIPS stance | P3 | L | P3/L | DOC |
-| ISO-01 | ISO 27001/27701 | (cross) | No ISO control-mapping doc | P3 | L | P3/L | DOC |
+| OWASP-04 | OWASP A04, AI RMF GOVERN | 1.8 Skills | Instruction-only defaults — entire #205 doctrine surface | P0 | H | all | DG |
+| LLM-01 | OWASP-LLM-01 | 1.4 Ingest | No prompt-injection canary scan on `bicameral.ingest` content | P0 | H | all | DG |
+| LLM-04 | OWASP-LLM-06, HIPAA, PCI | 1.4 Ingest | No PII/secret detect-and-refuse on ingest | P0 | H | all | DG |
+| LLM-06 | OWASP-LLM-05 | 1.7 Install | Skill-install supply-chain — unsigned skills/ payload | P0 | M | all | DG |
+| SOC2-01 | SOC 2 CC1, CC6 | 1.1 MCP boundary | No authentication/authorization on MCP transport | P0 | H | pre-team / hosted (P3 boundary-statement for local-only) | DOC + DG |
+| GDPR-01 | GDPR Art. 17 | 1.2 Ledger | Right-to-erasure procedure undefined for append-mostly Merkle ledger | P1 | M | all | DOC + DG |
+| GDPR-02 | GDPR Art. 15 | 1.2 Ledger | No data-subject access endpoint | P1 | M | all | DG |
+| GDPR-05 | GDPR Art. 5(1)(c) | 1.4 Ingest | Signer-email default leaks local-part | P1 | H | team/hosted (P2 for local single-user) | DG |
+| LLM-02 | OWASP-LLM-04 | 1.4 Ingest | No size limit on `bicameral.ingest` | P1 | H | all | DG |
+| LLM-03 | OWASP-LLM-04 | 1.2 Ledger | No SurrealDB query timeout | P1 | M | all | DG |
+| LLM-05 | OWASP-LLM-07 | 1.1 MCP boundary | No per-tool authority gradation on MCP boundary | P1 | M | all | DG |
+| LLM-07 | OWASP-LLM-02 | 1.5 Preflight | `render_source_attribution` default is verbatim (#209) | P1 | H | all | DG |
+| LLM-09 | OWASP-LLM-08 | 1.1 MCP boundary | `ratify`, `link_commit`, `set_decision_level` fire without HITL | P1 | M | all | DG |
+| OWASP-01 | OWASP A06, SSDF | 1.7 Install | No SBOM in release artifacts | P1 | H | all | DG |
+| OWASP-03 | OWASP A06 | 1.7 Install | No exact-pin lockfile | P1 | M | hosted (P2 for local — uv/pipx provides install-time lock) | DOC |
+| OWASP-05 | OWASP A08 | 1.7 Install | Update-check URL not pinned beyond TLS | P1 | M | all | DG + DOC |
+| SOC2-02 | SOC 2 A | (cross) | No availability commitment / MTTR | P1 | M | hosted | DOC |
+| SOC2-03 | SOC 2 CC, SSDF | 1.7 Install | No signed releases / change-control evidence | P1 | H | all | DG |
+| SOC2-06 | SOC 2 CC, OWASP A09 | (cross) | System-monitoring gaps for self-hosted operators | P1 | H | all | DG |
+| SSDF-01 | SSDF | 1.7 Install | No signed release artifacts (overlap with OWASP-01, SOC2-03) | P1 | H | all | DG (folds) |
+| HIPAA-01 | HIPAA, OWASP-LLM-06 | 1.4 Ingest | No PHI detect-and-refuse (folds into LLM-04) | P1 | M | all | DG (folds) |
+| NIST-RMF-01 | NIST AI RMF MAP-3.1 | (cross) | No "prohibited uses" declaration | P1 | M | all | DOC |
+| NIST-RMF-02 | NIST AI RMF MEASURE | 1.6 Telemetry | No production MEASURE / AI-risk telemetry | P1 | H | all | DG |
+| GDPR-03 | GDPR Ch. V | 1.6 Telemetry | Cross-border transfer documentation gap | P2 | M | all | DOC |
+| GDPR-04 | GDPR Art. 5(1)(e) | 1.6 Telemetry | No declared retention boundary for anonymous relay | P2 | M | all | DOC |
+| LLM-08 | OWASP-LLM-04 | 1.4 Ingest | No rate limit on `bicameral.ingest` | P2 | M | all | DG |
+| OWASP-02 | OWASP A02 | 1.2 Ledger | Ledger at rest unencrypted | P2 | L | team/hosted | DOC |
+| OWASP-06 | OWASP A09 | (cross) | No structured audit log (overlap SOC2-06) | P2 | H | all | DG (folds) |
+| PCI-01 | PCI DSS | 1.4 Ingest | No PAN detect-and-refuse (folds into LLM-04) | P2 | L | all | DG (folds) |
+| AI-ACT-01 | EU AI Act Art. 50 | (cross) | No risk-tier-classification stance declared | P2 | M | all | DOC |
+| AI-ACT-02 | EU AI Act Annex III | (cross) | No prohibited-use declaration (folds into NIST-RMF-01) | P2 | M | all | DOC (folds) |
+| SOC2-04 | SOC 2 A | (cross) | Backup/DR procedure for ledger undefined | P2 | M | all | DOC |
+| SOC2-05 | SOC 2 PI | 1.2 Ledger | classifier_version freeze (#162) gap | P2 | M | all | DG (existing) |
+| NIST-RMF-03 | NIST AI RMF MANAGE | (cross) | No documented MANAGE / incident-response runbook | P2 | M | all | DOC |
+| NIST-RMF-04 | NIST AI RMF GOVERN | (cross) | GOVERN-1.4 evidence trail relies on qor-logic | P2 | M | all | DOC |
+| SSDF-02 | SSDF | (cross) | No documented threat model in repo | P2 | M | all | DOC |
+| AI-ACT-03 | EU AI Act Art. 9 | (cross) | Art. 9 risk-management is qor-logic-resident | P3 | L | all | DOC |
+| GDPR-06 | GDPR Art. 30 | (cross) | No Records of Processing template | P3 | L | team/hosted | DOC |
+| GDPR-07 | GDPR Art. 33 | (cross) | No incident-response runbook (overlap NIST-RMF-03) | P3 | L | all | DOC (folds) |
+| FIPS-01 | FIPS 140-3 | (cross) | No documented FIPS stance | P3 | L | all | DOC |
+| ISO-01 | ISO 27001/27701 | (cross) | No ISO control-mapping doc | P3 | L | hosted | DOC |
 
 **Gap counts**: 5 P0, 18 P1, 13 P2, 5 P3. Total **41 gap IDs**, of which 7 are explicit folds (HIPAA-01 → LLM-04, OWASP-06 → SOC2-06, etc.).
 
@@ -526,4 +603,4 @@ P0 gaps filed individually (4 new issues + #205 covering OWASP-04). P1 individua
   - #162 — classifier_version freeze; covers SOC2-05.
   - #65 — preflight failure-feedback telemetry; touches NIST-RMF-02 surface.
   - #148 — implicit-design-decision capture; expands ingest surface scope (revisit at activation).
-- **Method notes**: walk performed against `86860e9` (post-#199 merge). All file-path citations verified with `Read` against current HEAD before authoring. No external network sources consulted. The brief is reproducible: every claim should be verifiable by re-reading the cited file at the cited line range.
+- **Method notes**: walk performed against `86860e9` (post-#199 merge). File-path citations were verified with `Read` against current HEAD before authoring; **most findings cite components and module locations rather than exact `path:line` evidence pointers**. A line-level evidence appendix would strengthen audit defensibility but is deferred — the brief's findings are reproducible via grep + file inspection at the cited components, but readers seeking line-level provenance should re-walk against current HEAD rather than relying on this brief alone. No external network sources consulted.
