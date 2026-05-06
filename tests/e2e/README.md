@@ -102,3 +102,15 @@ handler logic, but it bypasses three layers we need to validate:
 This e2e suite covers all three. Together they form the spec's two-level
 validation: handler invariants (replay sim) + user-experience contract
 (this directory).
+
+## Debugging "Flow 3 ❌ FAIL: agent did NOT commit"
+
+Symptom: Flow 3 fails with `stream-json precondition: agent did NOT commit in Flow 3` and zero `compliance_check` rows in the test ledger.
+
+Investigation order (most likely first):
+
+1. **Prompt clarity.** Check `tests/e2e/prompts/flow-3-commit-sync.md`. The prompt MUST include explicit imperative shell phrasing — `Run \`git add ...\` and \`git commit -m ...\`` — not verb-y phrasing like "Stage and commit it as ..." which newer models can interpret as non-shell actions. Resolved in #197.
+2. **Allowed-tools grant.** Check `tests/e2e/run_e2e_flows.py` allowed-tools list (currently line ~474). `Bash` MUST be present alongside `mcp__bicameral,Read,Grep,Edit`. The grant is re-passed on every `claude -p` invocation including `--resume`.
+3. **Permissions gate.** Confirm `--dangerously-skip-permissions` is on the `claude -p` command list (it is, by default at line ~480). If removed, the agent stops to ask before every Bash call and the headless session times out.
+4. **Session continuation.** Flow 3 resumes the `dev_session` chain via `--resume`. The resume-session command is built in the same `cmd` list as the first-in-group invocation, so the tool grant is preserved. Verify by inspecting the cmd construction in `run_claude_session`.
+5. **Model behavior.** If 1-4 are clean and Flow 3 still flakes, it's a model-version drift — re-run with the next model release and re-evaluate prompt phrasing. The `--flow "Flow 3"` filter (shipped in #156 PR B) makes isolation testing cheap.
