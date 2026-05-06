@@ -35,42 +35,37 @@ class SignatureError(Exception):
 def _sigstore_verify(manifest_path: Path, sig_path: Path, cert_path: Path) -> None:
     """Default verifier: sigstore-python keyless verification.
 
-    Imported lazily so test environments without ``sigstore`` installed
-    can still monkeypatch ``_VERIFIER_HOOK``. Production install path
-    (real `cosign sign-blob` artifacts) requires ``sigstore>=3.0``.
-    """
-    try:
-        from sigstore.models import Bundle  # type: ignore
-        from sigstore.verify import Verifier, policy  # type: ignore
-    except ImportError as exc:  # pragma: no cover
-        raise SignatureError(
-            f"sigstore-python not installed; cannot verify keyless cosign signature: {exc}"
-        ) from exc
+    v1 stub: sigstore-python integration is a deferred follow-up.
+    The publish workflow emits cosign-signed artifacts to the GitHub
+    Release, but v1 does NOT ship them bundled in the wheel — the
+    hatch shared-data wiring carries only the unsigned manifest. As a
+    result, ``setup_wizard._bundled_manifest_paths()`` returns None for
+    all current production installs and this verifier is never invoked
+    on the production install path.
 
+    When wheel-bundling of `.sig` and `.crt` lands in a follow-up #218
+    sub-task, this stub gets replaced with a real ``Verifier.production()``
+    call against ``sigstore.models.Bundle``. Until then, raising
+    ``SignatureError`` is the honest fail-closed posture: if a bundled
+    manifest IS detected (someone manually placed artifacts under
+    ``<sys.prefix>/share/bicameral-mcp/``), refuse the install with a
+    clear "sigstore integration pending" message rather than
+    silently passing.
+
+    Tests monkeypatch ``_VERIFIER_HOOK`` to bypass this stub entirely;
+    see ``tests/test_setup_wizard_hook_verify.py``.
+    """
     if not manifest_path.exists():
         raise SignatureError(f"manifest not found: {manifest_path}")
     if not sig_path.exists():
         raise SignatureError(f"signature not found: {sig_path}")
     if not cert_path.exists():
         raise SignatureError(f"certificate not found: {cert_path}")
-
-    verifier = Verifier.production()
-    verification_policy = policy.Identity(
-        identity="https://github.com/BicameralAI/bicameral-mcp/.github/workflows/publish.yml@refs/tags/v*",
-        issuer="https://token.actions.githubusercontent.com",
+    raise SignatureError(
+        "sigstore-python keyless verification is a deferred #218 follow-up. "
+        "Set BICAMERAL_HOOKS_VERIFY_DISABLE=1 to bypass (writes severity-3 "
+        "verification_bypassed ledger event)."
     )
-    bundle_input = {
-        "cert": cert_path.read_bytes(),
-        "sig": sig_path.read_bytes(),
-        "blob": manifest_path.read_bytes(),
-    }
-    try:
-        bundle = Bundle.from_parts(**bundle_input)
-        verifier.verify_artifact(
-            input_=manifest_path.read_bytes(), bundle=bundle, policy=verification_policy
-        )
-    except Exception as exc:
-        raise SignatureError(f"cosign keyless verification failed: {exc}") from exc
 
 
 _VERIFIER_HOOK: _VERIFIER_FN = _sigstore_verify
