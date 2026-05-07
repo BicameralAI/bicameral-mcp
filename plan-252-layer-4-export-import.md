@@ -1,4 +1,4 @@
-# Plan: #252 Layer 4 — portable JSON-Lines export/import as the migration vehicle
+# Plan: #252 Layer 4 — portable JSON-Lines export/import as the migration vehicle (round 2)
 
 **change_class**: feature
 
@@ -19,7 +19,7 @@
   home: docs/policies/ledger-export.md
 
 **boundaries**:
-- limitations: Single-file JSON-Lines export/import; no incremental / partial / per-table flags in v1 (full ledger only — required for GDPR Art. 15 DSAR completeness). Operator runs `bicameral-mcp reset` separately if importing into a populated ledger; ledger-import always fail-fasts on non-empty target ledger (no `--force` shortcut in v1 — matches strategy brief's literal `export → reset → import` workflow). Two-pass import (data tables first, edge tables second) ensures referential integrity since RELATION-type edges need their `in`/`out` records to already exist. Determinism: records sorted by `(table, created_at, id)` with `created_at` as primary sort key (neutralizes non-lexicographical ULID/time-based IDs) — supports diff-able backups + GitOps workflows. Strict-mode import: validates every record's required fields before any write; fail-fast at validation phase with operator-readable summary; rejects half-imported state by construction.
+- limitations: Single-file JSON-Lines export/import; no incremental / partial / per-table flags in v1 (full ledger only — required for GDPR Art. 15 DSAR completeness). Operator runs `bicameral-mcp reset` separately if importing into a populated ledger; ledger-import always fail-fasts on non-empty target ledger (no `--force` shortcut in v1 — matches strategy brief's literal `export → reset → import` workflow). Two-pass import (data tables first, edge tables second) ensures referential integrity since RELATION-type edges need their `in`/`out` records to already exist. **Meta-table special case** (round-1 audit Path B): `bicameral_meta` and `schema_meta` are auto-populated at `adapter.connect()` time by Layer 2's `_emit_wire_format_sentinel` and `migrate()`'s `_set_schema_version` respectively, so the import logic **DELETEs both tables before writing source rows** to preserve the source's `at_first_write` provenance + recorded schema version (per the strategy brief's "migration vehicle" intent). Without this special case, the import would CREATE duplicate rows in both tables, breaking Layer 2's `SELECT ... LIMIT 1` invariant. Determinism: records sorted by `(table, created_at, id)` with `created_at` as primary sort key (neutralizes non-lexicographical ULID/time-based IDs) — supports diff-able backups + GitOps workflows. Strict-mode import: validates every record's required fields before any write; fail-fast at validation phase with operator-readable summary; rejects half-imported state by construction.
 - non_goals: do not add `--redact` or `--include-content` flags in v1 — Layer 4's role is the GDPR Art. 15 DSAR + Art. 17 erasure vehicle, which requires a complete export. Operators wanting redacted output use `bicameral-mcp diagnose` (Layer 3) instead. Do not auto-upload anywhere — operator owns the dump file lifecycle end-to-end (privacy directive). Do not ship a SurrealQL replay-script alternative format — JSONL is the v1 contract. Do not perform mid-import schema migrations — operator runs `bicameral-mcp` against the destination ledger AFTER import to apply pending migrations to the imported data. Do not implement upsert-merge import semantics — clean wipe-first per strategy brief; reduces import-state-corruption surface by construction.
 - exclusions: not modifying any DEFINE TABLE statements in `ledger/schema.py` (Layer 4 reads from the existing schema; no extension). Not modifying `ledger/queries.py` (export uses raw `client.query` for table-walk; doesn't reuse the typed query helpers because the export must be schema-walk-driven, not handler-shape-driven). Not modifying `audit_log.py` — no new event types; export/import emit existing `tool_invocation` events via `@server.call_tool()` wrapper inheritance. Not extending `bicameral-mcp reset` — operator runs reset separately per strategy brief workflow. Not adding a Python API for export/import outside of CLI invocation — v1 is CLI-only; programmatic embedding in handlers is YAGNI.
 
@@ -34,7 +34,8 @@ All resolved during /qor-plan dialogue 2026-05-07:
 - **Edge handling** (option a): export RELATION-type edges as standalone records with `in` + `out` references. Two-pass import: data tables first, edge tables second. Preserves graph + edge-side fields (e.g., `binds_to.provenance`).
 - **Field-level redaction** (option a): NO redaction — full ledger export. Operator's responsibility to redact pre-share. Layer 3 (`bicameral-mcp diagnose`) is the redacted surface; Layer 4 is the complete-export surface. Different tools for different jobs.
 - **Import strategy** (option a, no `--force`): wipe-first via separate `bicameral-mcp reset` invocation by operator; ledger-import always fail-fasts on non-empty target. Per strategy brief literal workflow.
-- **Error handling on import** (option a — strict + summary): two-phase. Phase A: validate every record's required fields against expected `_table` + `_schema_version` + `_record_version`; abort with operator-readable summary on first failure. Phase B: write data records, then edges. Phase A → Phase B is conditional on Phase A passing for every record.
+- **Error handling on import** (option a — strict + summary): two-phase. Phase A: validate every record's required fields against expected `_table` + `_schema_version` + `_record_version`; **accumulate ALL errors** before raising `ImportError_` with operator-readable summary listing every failure (not first-failure-only). Phase B: DELETE meta tables (`bicameral_meta`, `schema_meta`) → write data records → write edges. Phase A → Phase B is conditional on Phase A passing for every record.
+- **Meta-table round-trip semantics** (round-1 audit Path B): the import special-cases `bicameral_meta` and `schema_meta` via a `_DELETE_BEFORE_IMPORT = frozenset({"bicameral_meta", "schema_meta"})` constant. Phase B's first action is `DELETE FROM <table>` for each table in the set; this removes the destination's auto-populated rows from `init_schema` + `migrate` + sentinel, freeing the slot for the source's rows. Layer 2's `SELECT ... LIMIT 1` invariant survives the round-trip because each table ends with exactly one row (the source's). Path A (skip these tables on import + drop the at_first_write claim) was rejected because the strategy brief frames Layer 4 as the "migration vehicle" — provenance must round-trip.
 
 ## Phase 1: shared `cli/ledger_io.py` — canonical record shape + export/import logic
 
@@ -107,6 +108,12 @@ _EDGE_TABLES: frozenset[str] = frozenset({
 })
 
 _RESERVED_FIELD_NAMES = frozenset({"_table", "_schema_version", "_record_version"})
+
+# Round-1 audit Path B: tables that the destination auto-populates at
+# adapter.connect time (init_schema/migrate/sentinel), so the import
+# DELETEs them before writing source rows. Preserves source-provenance
+# round-trip semantics per Layer 2's drift-detection contract.
+_DELETE_BEFORE_IMPORT: frozenset[str] = frozenset({"bicameral_meta", "schema_meta"})
 
 
 class ExportError(Exception):
@@ -200,30 +207,74 @@ async def export_jsonl(adapter) -> AsyncIterator[str]:
             yield json.dumps(record, sort_keys=True, default=str)
 ```
 
-The `import_jsonl` function (~80 LOC) follows below; signature + behavior:
+The `import_jsonl` function decomposes into 4 private helpers + a ~15-LOC orchestrator (round-1 audit Razor advisory; per-function 40-LOC ceiling honored by construction):
 
 ```python
 async def import_jsonl(
     adapter, lines: Iterable[str]
 ) -> ImportSummary:
-    """Validate every line + write data records first, then edges.
+    """Two-phase import orchestrator. Validates every record first;
+    on validation success, deletes meta tables, writes data records,
+    then edges. Returns ImportSummary with per-table counts."""
+    data_recs, edge_recs = _validate_records(lines)
+    await _assert_ledger_empty(adapter)
+    await _delete_meta_tables(adapter)
+    data_counts = await _write_data_records(adapter, data_recs)
+    edge_counts = await _write_edge_records(adapter, edge_recs)
+    return ImportSummary(
+        data_records_written=data_counts,
+        edge_records_written=edge_counts,
+        total_records_written=sum(data_counts.values()) + sum(edge_counts.values()),
+    )
 
-    Phase A (validation): parses every line; checks `_table` is in
-    _DATA_TABLES ∪ _EDGE_TABLES; checks `_schema_version` matches the
-    target's SCHEMA_VERSION; checks `_record_version` is supported
-    (currently only 1); accumulates errors and raises ImportError_ with
-    operator-readable summary on first failure.
 
-    Phase B (write): wipes nothing (operator runs `bicameral-mcp reset`
-    separately). Fail-fast on non-empty ledger via pre-write SELECT
-    against each touched table — raises ImportError_ with operator
-    instruction "run bicameral-mcp reset first."
+def _validate_records(
+    lines: Iterable[str],
+) -> tuple[list[dict], list[dict]]:
+    """Phase A. Parse every line, validate `_table` ∈ _DATA_TABLES ∪ _EDGE_TABLES,
+    validate `_schema_version` ≤ target SCHEMA_VERSION, validate `_record_version
+    ≤ EXPORT_RECORD_VERSION`, validate required fields present.
 
-    Two-pass write:
-      1. Data records written via `CREATE <id> CONTENT $content`
-      2. Edge records written via `RELATE $in -> <table> -> $out CONTENT $content`
+    Accumulates ALL errors before raising — operator gets the full list once,
+    not first-error-only. Returns (data_records, edge_records) on success.
+    Raises ImportError_ with operator-readable multi-line summary on any failure.
     """
-    # ... see Implementer notes for full body shape ...
+    # ~30 LOC: parse + per-record validate + collect errors + final raise
+
+
+async def _assert_ledger_empty(adapter) -> None:
+    """Pre-write gate. Counts rows across _DATA_TABLES ∪ _EDGE_TABLES;
+    raises ImportError_ with operator instruction "run bicameral-mcp reset
+    first" if any table has rows. Skips _DELETE_BEFORE_IMPORT tables from
+    the empty check (those will be wiped in Phase B's first step)."""
+    # ~15 LOC
+
+
+async def _delete_meta_tables(adapter) -> None:
+    """Phase B step 1. DELETEs each table in _DELETE_BEFORE_IMPORT so
+    source-provenance can be written without conflicting with the
+    adapter.connect-time auto-populated rows."""
+    for table in _DELETE_BEFORE_IMPORT:
+        await adapter._client.execute(f"DELETE FROM {table}")
+
+
+async def _write_data_records(
+    adapter, records: list[dict]
+) -> dict[str, int]:
+    """Phase B step 2. CREATE <id> CONTENT $content per record.
+    Strips _table, _schema_version, _record_version from $content
+    before writing. Returns {table: count} written."""
+    # ~25 LOC
+
+
+async def _write_edge_records(
+    adapter, records: list[dict]
+) -> dict[str, int]:
+    """Phase B step 3. RELATE <in> -> <table> -> <out> CONTENT $content per
+    record. Strips _table, _schema_version, _record_version, id, in, out
+    from $content before writing (RELATE's in/out are positional, not body
+    fields). Returns {table: count} written."""
+    # ~25 LOC
 ```
 
 ### Unit Tests
@@ -259,6 +310,9 @@ async def import_jsonl(
   - `test_import_jsonl_returns_import_summary_with_per_table_counts` — happy path; assert `ImportSummary.data_records_written["decision"] == 3`, `edge_records_written["binds_to"] == 2`, `total_records_written == 5`.
   - `test_import_jsonl_validation_phase_collects_all_errors_before_aborting` — provide JSONL with 3 invalid records; assert `ImportError_` message lists all 3 (not just first); assert no records were written even though validation would have caught them all.
   - `test_import_jsonl_handles_edge_relation_via_relate_syntax` — provide one binds_to edge JSONL line; assert post-import `SELECT * FROM binds_to` returns the edge with correct in/out + side fields.
+  - `test_import_jsonl_delete_before_import_preserves_source_at_first_write_provenance` — pre-populate destination's `bicameral_meta` with `at_first_write="dest-version"` (auto-populated by Layer 2's sentinel at connect time); source JSONL has `bicameral_meta` row with `at_first_write="source-version"`; invoke import; post-import assert `SELECT surrealdb_client_version_at_first_write FROM bicameral_meta` returns `"source-version"` (NOT `"dest-version"`). Locks the round-1 audit Path B contract.
+  - `test_import_jsonl_delete_before_import_resolves_schema_meta_to_source_version` — same shape: destination's `schema_meta.version` populated to current `SCHEMA_VERSION` via migrate; source JSONL has `schema_meta.version=15` (older); post-import assert `_get_schema_version` returns `15`. Locks the source-version-wins semantic for the migration-vehicle use case.
+  - `test_import_jsonl_delete_before_import_yields_exactly_one_row_per_meta_table` — post-import assert `SELECT count() AS n FROM bicameral_meta GROUP ALL` returns `[{"n": 1}]` and same for `schema_meta`. Locks the no-duplicate-rows invariant that broke without Path B.
 
 ## Phase 2: CLI shims + server.py subparser registration
 
@@ -478,6 +532,20 @@ Mid-pass failures abort the import; the validation phase ensures every record pa
 
 Records are sorted by `(table, created_at, id)` with `created_at` as the primary sort key. This neutralizes non-lexicographical ULID/time-based record IDs and supports diff-able backups + GitOps workflows. Re-exporting an unchanged ledger produces byte-identical output (locked by `tests/test_ledger_io_export.py::test_export_jsonl_round_trip_is_deterministic`).
 
+### Meta-table special case
+
+`bicameral_meta` (Layer 2's wire-format sentinel) and `schema_meta` (the bicameral SQL schema version) are auto-populated by `adapter.connect()` time — `init_schema` + `migrate` + Layer 2's `_emit_wire_format_sentinel` write destination-side rows before the import logic runs. To preserve source-provenance round-trip (especially `surrealdb_client_version_at_first_write`), the import logic **deletes both tables** before writing source rows. Mechanism:
+
+1. Operator runs `bicameral-mcp reset` (deletes `~/.bicameral/ledger.db` entirely)
+2. Operator runs `bicameral-mcp ledger-import --from-file <path>`:
+   - `adapter.connect()` runs init_schema + migrate + sentinel → both meta tables have one destination-side row each
+   - Phase A validates every JSONL record
+   - Phase B step 1: `DELETE FROM bicameral_meta` + `DELETE FROM schema_meta` (clears the destination rows)
+   - Phase B step 2: writes data records from JSONL — the source's `bicameral_meta` row with its `at_first_write` provenance lands here
+   - Phase B step 3: writes edge records via RELATE
+
+End state: each meta table has exactly the source's row. Layer 2's drift-detection contract works on the imported ledger as if the source-binary had populated it directly.
+
 ## Privacy posture
 
 - **No auto-upload**: the dump file is written to a path of the operator's choice (stdout redirect or `--from-file <path>`); never piped through any service.
@@ -522,12 +590,13 @@ Records are sorted by `(table, created_at, id)` with `created_at` as the primary
 
 ## Implementer notes
 
-- **Module split discipline**: the round-1 audit advisory on Layer 3 recommended splitting `cli/diagnose.py` to keep it under the 250-LOC ceiling. Layer 4's `cli/ledger_io.py` is plan-estimated at ~280 LOC; implementer should monitor at write-time and split into `cli/ledger_io.py` (constants + dataclass + canonical-record helpers + sort key) + `cli/_ledger_io_engine.py` (export_jsonl + import_jsonl async functions) if the file approaches 250.
+- **Module split mandate** (round-1 audit advisory): `cli/ledger_io.py` plan-estimated at ~280 LOC (over the 250-LOC file Razor); implementer MUST split at write-time into `cli/ledger_io.py` (constants + frozensets + `Diagnosis`-shape dataclass + custom exceptions + `_canonical_record` + `_record_sort_key` ≈ 150 LOC) + `cli/_ledger_io_engine.py` (`_gather_table_rows` + `export_jsonl` + `import_jsonl` orchestrator + `_validate_records` + `_assert_ledger_empty` + `_delete_meta_tables` + `_write_data_records` + `_write_edge_records` ≈ 130 LOC). Same shape as Layer 3's `cli/_diagnose_gather.py` precedent. Both files MUST stay under 250 LOC.
+- **`import_jsonl` decomposition mandate** (round-1 audit advisory): the orchestrator MUST stay under the 40-LOC function ceiling. Implementation MUST extract the 5 private helpers documented in the Phase 1 Changes section: `_validate_records`, `_assert_ledger_empty`, `_delete_meta_tables`, `_write_data_records`, `_write_edge_records`. The orchestrator becomes a ~15-LOC sequence of helper calls. Locked at substantiate time by the per-function Razor check.
 - **Two-pass import write-order**: data records MUST land before edges. Implementation: collect all data lines first into `data_buffer`, all edge lines into `edge_buffer`; validate both; write data_buffer; write edge_buffer. Order within each buffer follows the input JSONL line order (which is sorted by the export logic, so the order survives the round-trip).
 - **`SELECT * FROM <table>` for export**: SurrealDB v2 embedded does not paginate `SELECT *` against large tables; large ledgers (>100 MiB) may exhaust memory. Documented in `docs/policies/ledger-export.md` as v1 limitation; future Layer 4 enhancement (paginated streaming export) deferred to v2 if operator telemetry shows demand.
 - **`identity_supersedes` is data-shaped despite edge semantics** — modeled as a regular table with manual `in`/`out` fields, not a SurrealDB-native RELATION. Stays in `_DATA_TABLES`. Documented in the constant's docstring.
-- **`schema_meta` row count**: `_set_schema_version` does DELETE+CREATE on every migration step, so `schema_meta` has exactly one row in steady state. The export captures that one row; import re-creates it via the data-records pass. Subsequent migrations on the destination ledger re-DELETE+CREATE the row anyway.
-- **`bicameral_meta` round-trip**: the row's `surrealdb_client_version_at_first_write` field is preserved across export/import (it's not regenerated). This is intentional — the first-write provenance survives the round-trip, supporting #252 Layer 2's drift-detection contract on the migrated ledger.
+- **`schema_meta` row count + round-trip**: `_set_schema_version` does DELETE+CREATE on every migration step, so `schema_meta` has exactly one row in steady state. The export captures that one row; the import's `_delete_meta_tables` clears the destination's auto-populated row, and the data-records pass writes the source's row. Subsequent migrations on the destination ledger re-DELETE+CREATE the row anyway, so the source's `version` field is the operative state until any future migrate() call advances it.
+- **`bicameral_meta` round-trip via DELETE-before-CREATE** (round-1 audit Path B): the row's `surrealdb_client_version_at_first_write` field is preserved across export/import via the `_DELETE_BEFORE_IMPORT` special case. Mechanism: `adapter.connect()` runs `init_schema` + `migrate` + sentinel which populate `bicameral_meta` with destination-side `at_first_write`. Phase B's first action is `_delete_meta_tables(adapter)` which `DELETE FROM bicameral_meta` and `DELETE FROM schema_meta` before any data-record writes. Then the data-records pass writes the source's rows from the JSONL — the destination ends with exactly one row per meta table, carrying the source's provenance. Layer 2's `SELECT ... LIMIT 1` invariant survives. The same mechanism preserves `schema_meta.version` from the source.
 - **Re-canonicalization migration use case**: the strategy brief frames Layer 4 as "migration happens by re-canonicalization." The export reads the source ledger via the adapter (which uses the source's surrealdb-py); the JSONL is wire-format-independent (pure JSON); the import writes via the destination's surrealdb-py. So the export/import roundtrip naturally handles surrealdb-py wire-format bumps without needing intermediate translation.
 - **Validation Phase A error accumulation**: the validation pass MUST collect all errors before raising — the operator receives the full list once, not the first error per re-run. Locked by `test_import_jsonl_validation_phase_collects_all_errors_before_aborting`.
 - **Edge `in` and `out` fields**: SurrealDB's RELATE syntax is `RELATE <in> -> table -> <out> CONTENT $body`. The body MUST NOT include `in` or `out` (they're positional in the RELATE statement). Implementation: strip `in`, `out`, `id`, and the `_*` metadata fields before passing the rest as `$content`.
