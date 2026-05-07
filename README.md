@@ -20,24 +20,22 @@ A local-first [MCP server](https://spec.modelcontextprotocol.io/) that ingests y
 ## Quickstart
 
 ```bash
-# Recommended: uv (single static binary, no Python prerequisite)
-curl -LsSf https://astral.sh/uv/install.sh | sh    # one-line install if you don't have uv
-uv tool install bicameral-mcp
-bicameral-mcp setup
-```
-
-```bash
-# Alternative: plain pip (installs into your current Python env)
-pip install bicameral-mcp
-bicameral-mcp setup
+# macOS / Linux
+curl -LsSf https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/main/scripts/install.sh | sh
 ```
 
 ```powershell
-# Windows: substitute the uv installer line with PowerShell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Windows
+irm https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/main/scripts/install.ps1 | iex
 ```
 
-The setup wizard detects your repo, registers the MCP server with Claude Code, installs a git hook that auto-syncs the ledger after every commit, and adds a session-end hook that catches mid-session decisions you didn't explicitly ingest. Restart Claude Code and you're done.
+The installer detects [uv](https://docs.astral.sh/uv/) (installing it first if missing), runs `uv tool install bicameral-mcp`, then launches the setup wizard. The wizard detects your repo, registers the MCP server with Claude Code, installs a git hook that auto-syncs the ledger after every commit, and adds a session-end hook for mid-session decisions you didn't explicitly ingest. Restart Claude Code and you're done.
+
+Upgrade later:
+
+```bash
+bicameral-mcp update
+```
 
 Verify:
 
