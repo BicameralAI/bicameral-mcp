@@ -1,9 +1,4 @@
-```
-  ▸ BICAMERAL
-  ┌───────────────────────────────────────────────┐
-  │  what your team decided  ↔  what the AI built │
-  └───────────────────────────────────────────────┘
-```
+![Bicameral — without vs with](assets/bicameral-hero.png)
 
 # Bicameral MCP
 
@@ -12,24 +7,64 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/test-mcp-regression.yml?branch=main&label=tests)](https://github.com/BicameralAI/bicameral-mcp/actions)
 
-Bicameral eliminates redundant rework in the software development lifecycle (SDLC) by building the *compliance layer* between product decisions and code output.
-
-Bicameral is a local-first [MCP server](https://spec.modelcontextprotocol.io/) that ingests your meeting transcripts, PRDs, and Slack threads, maps every decision to the code that implements it, and automatically surfaces alignment gaps — before they become bugs.
+A local-first [MCP server](https://spec.modelcontextprotocol.io/) that ingests your meeting transcripts, PRDs, and Slack threads, maps every decision to the code that implements it, and surfaces alignment gaps to your AI agent — before they become bugs.
 
 ---
 
-## Compliance posture
+## Quickstart
 
-bicameral-mcp's compliance stance is documented in six policy files:
+```bash
+# Recommended: uv (single static binary, no Python prerequisite)
+curl -LsSf https://astral.sh/uv/install.sh | sh    # one-line install if you don't have uv
+uv tool install bicameral-mcp
+bicameral-mcp setup
+```
 
-- [`docs/policies/host-trust-model.md`](docs/policies/host-trust-model.md) — MCP host UX dependency declaration (closes OWASP LLM-07 / MCP-01 gap)
-- [`docs/policies/acceptable-use.md`](docs/policies/acceptable-use.md) — intended purpose + prohibited uses (NIST AI RMF MAP-3.1 + EU AI Act Annex III)
-- [`docs/policies/install-trust-model.md`](docs/policies/install-trust-model.md) — install + update supply-chain trust model (closes OWASP-03 + OWASP-05)
-- [`docs/policies/audit-log.md`](docs/policies/audit-log.md) — structured audit-log emission for self-hosted operators (closes SOC2-06 + OWASP-06 fold)
-- [`docs/policies/diagnose-output.md`](docs/policies/diagnose-output.md) — `bicameral-mcp diagnose` output allowlist + privacy posture (#252 Layer 3)
-- [`docs/sla.md`](docs/sla.md) — availability stance (operator-run-only; no hosted SLA)
+```bash
+# Alternative: plain pip (installs into your current Python env)
+pip install bicameral-mcp
+bicameral-mcp setup
+```
 
-The full compliance audit is at [`docs/research-brief-compliance-audit-2026-05-06.md`](docs/research-brief-compliance-audit-2026-05-06.md). Per-release change-control evidence procedure: [`docs/RELEASE_EVIDENCE_PROCEDURE.md`](docs/RELEASE_EVIDENCE_PROCEDURE.md).
+```powershell
+# Windows: substitute the uv installer line with PowerShell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+The setup wizard detects your repo, registers the MCP server with Claude Code, installs a git hook that auto-syncs the ledger after every commit, and adds a session-end hook that catches mid-session decisions you didn't explicitly ingest. Restart Claude Code and you're done.
+
+Verify:
+
+```bash
+bicameral-mcp --smoke-test
+```
+
+---
+
+## How It Feels
+
+**Before implementing a feature**, your agent runs `bicameral.preflight` and surfaces:
+
+```
+(bicameral surfaced — checking Stripe webhook context)
+
+📌 3 prior decisions in scope:
+  ✓ Idempotency via Redis SETNX with 24h TTL
+    src/middleware/idempotency.ts:checkIdempotencyKey:42-67
+    Source: Sprint 14 planning · Ian, 2026-03-12
+
+  ⚠ DRIFTED: Trust Stripe event.created, not server time
+    src/handlers/webhook.ts:processEvent:80-92
+    Drift evidence: switched to Date.now() in PR #287
+
+~ 1 AI-surfaced question (no human source yet):
+  • Should we deduplicate by event.id or (account_id, event.id)?
+    Source: Slack #payments 2026-03-20
+```
+
+**At any time**, the dashboard gives you the full picture:
+
+![Bicameral Dashboard](assets/dashboard-preview.png)
 
 ---
 
@@ -65,92 +100,6 @@ When you build with an AI coding assistant, this disconnect accelerates:
        preflight fires      dashboard shows      drift detected
      before you code        full picture        at review time
 ```
-
----
-
-## How It Feels
-
-**Before implementing a feature**, your agent runs `bicameral.preflight` and surfaces:
-
-```
-(bicameral surfaced — checking Stripe webhook context)
-
-📌 3 prior decisions in scope:
-  ✓ Idempotency via Redis SETNX with 24h TTL
-    src/middleware/idempotency.ts:checkIdempotencyKey:42-67
-    Source: Sprint 14 planning · Ian, 2026-03-12
-
-  ⚠ DRIFTED: Trust Stripe event.created, not server time
-    src/handlers/webhook.ts:processEvent:80-92
-    Drift evidence: switched to Date.now() in PR #287
-
-~ 1 AI-surfaced question (no human source yet):
-  • Should we deduplicate by event.id or (account_id, event.id)?
-    Source: Slack #payments 2026-03-20
-```
-
-**At any time**, the dashboard gives you the full picture:
-
-![Bicameral Dashboard](assets/dashboard-preview.png)
-
----
-
-## Quickstart
-
-The fastest path is **uv**. If you don't have uv yet, the official installer is one line:
-
-```bash
-# macOS / Linux
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-```powershell
-# Windows (PowerShell)
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-Then:
-
-```bash
-uv tool install bicameral-mcp
-bicameral-mcp setup
-```
-
-Prefer pipx? That works too:
-
-```bash
-pipx install bicameral-mcp
-bicameral-mcp setup
-```
-
-The setup wizard detects your repo, installs the MCP server config into Claude Code, adds a git hook that automatically syncs the ledger after every commit, and adds a session-end hook that captures any design decisions you stated mid-session but didn't explicitly ingest. Restart Claude Code and you're done.
-
-Verify it works:
-
-```bash
-bicameral-mcp --smoke-test
-```
-
-### Don't have pipx?
-
-**macOS**
-```bash
-brew install pipx
-pipx ensurepath
-```
-
-**Linux**
-```bash
-python3 -m pip install --user pipx
-python3 -m pipx ensurepath
-```
-
-**Windows**
-```powershell
-python -m pip install --user pipx
-python -m pipx ensurepath
-```
-
-Then restart your terminal and re-run the install command above.
 
 ---
 
@@ -340,34 +289,21 @@ Tests use real adapters with `SURREAL_URL=memory://` — no external services re
 
 ## Telemetry
 
-Bicameral collects anonymous usage statistics to improve reliability and prioritize development. No code, decision content, file paths, or personally identifiable information is ever collected.
+Bicameral collects anonymous usage statistics — tool name, version, call duration, error flag, and integer counts (e.g. number of decisions grounded per ingest call). **Never collected**: decision content, transcript text, file paths, repo names, or any user-supplied string. Opt out at any time with `export BICAMERAL_TELEMETRY=0` or the `env` block in your `.mcp.json`.
 
-**What is collected:**
-- Tool name (e.g. `bicameral.ingest`)
-- Server version
-- Call duration (milliseconds)
-- Error flag (boolean)
-- Aggregate counts (e.g. number of decisions grounded per ingest call — integers only)
-
-**What is never collected:** decision descriptions, transcript content, search queries, file paths, repo names, or any user-supplied text.
-
-**Opt out at any time:**
-
-```bash
-export BICAMERAL_TELEMETRY=0
-```
-
-or add `BICAMERAL_TELEMETRY=0` to the `env` block in your `.mcp.json`.
-
-### Collaborator access
-
-Telemetry data is stored in a private PostHog project. If you are a design partner, contributor, or researcher who needs access to the usage dashboard, reach out directly at **jin@bicameral-ai.com**.
+For partner / contributor access to the usage dashboard, reach out at **jin@bicameral-ai.com**.
 
 ---
 
 ## Contributing
 
 Contributions welcome. Please open an issue before submitting large changes.
+
+---
+
+## Privacy & Compliance
+
+We take privacy seriously. Bicameral runs entirely on your laptop — code, decisions, and transcripts never leave the machine unless you explicitly opt into team mode (which only shares an append-only event file via your existing git remote). The full compliance posture (host-trust model, acceptable use, install-trust model, audit log, diagnose output, availability stance) is documented in [`docs/policies/`](docs/policies/), with a per-release change-control evidence procedure in [`docs/RELEASE_EVIDENCE_PROCEDURE.md`](docs/RELEASE_EVIDENCE_PROCEDURE.md).
 
 ---
 
