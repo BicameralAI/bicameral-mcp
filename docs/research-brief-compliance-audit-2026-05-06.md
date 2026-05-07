@@ -672,28 +672,37 @@ Initial P0 gaps were filed individually (4 new issues + #205 covering OWASP-04).
 | OWASP-04 | #205 (already exists — this gap IS issue #205) | doctrine: deterministic privacy/security boundaries |
 | LLM-01 | #212 | LLM01 prompt-injection canary scan on bicameral.ingest |
 | LLM-04 + HIPAA-01 + PCI-01 (fold) | #213 | LLM06 PII/secret/PHI/PAN detect-and-refuse on ingest |
-| LLM-06 | #214 | LLM05 supply chain — sign skills/ payload |
-| LLM-11 | TBD | LLM05 supply chain — signed hook/config manifest for host config writes |
-| MCP-01 | TBD | LLM07 — MCP host UX is not a security gate |
+| LLM-06 | #214 | LLM05 supply chain — sign skills/ payload (scope-narrowed P1) |
+| LLM-11 | folded into epic #218 | signed hook/config manifest for host-config writes (P0 sub-task of supply-chain epic) |
+| MCP-01 | #220 | LLM07 — MCP host UX is not a security gate |
 | SOC2-01 | #215 | SOC2 CC1/CC6 — declare MCP trust boundary + auth shim plan |
-| GDPR-01 | TBD | GDPR Art. 17 — right-to-erasure procedure for Merkle ledger |
-| GDPR-02 | TBD | GDPR Art. 15 — data-subject-access CLI |
-| GDPR-05 | TBD | GDPR Art. 5(1)(c) — signer-email default review |
-| LLM-02 | TBD | LLM04 — ingest payload size limit |
-| LLM-03 | TBD | LLM04 — SurrealDB query timeout |
-| LLM-05 | TBD | LLM07 — per-tool authority gradation |
-| LLM-07 | (#209 already exists) | refine render_source_attribution regex + flip default |
-| LLM-09 | TBD | LLM08 — ratify/link_commit/set_decision_level HITL |
-| OWASP-01 + SSDF-01 | TBD | OWASP A06 / SSDF — SBOM in release artifacts |
-| OWASP-03 | TBD | OWASP A06 — exact-pin lockfile or stance declaration |
-| OWASP-05 | TBD | OWASP A08 — sign or trust-on-first-use the RECOMMENDED_VERSION URL |
-| SOC2-02 | TBD | SOC2 A — declare availability stance |
-| SOC2-03 | TBD | SOC2 CC + SSDF — signed releases + change-control evidence |
-| SOC2-06 + OWASP-06 | TBD | SOC2 CC + OWASP A09 — structured audit log emission |
-| NIST-RMF-01 + AI-ACT-02 | TBD | NIST AI RMF MAP-3.1 + EU AI Act — prohibited-uses declaration |
-| NIST-RMF-02 | TBD | NIST AI RMF MEASURE — production AI-risk telemetry |
-| (P2 rollup incl. CFG-01, GDPR-08, GDPR-09) | TBD | compliance audit P2 backlog (16 IDs) |
+| GDPR-01 | #221 | GDPR Art. 17 — right-to-erasure procedure for Merkle ledger |
+| GDPR-02 | #222 | GDPR Art. 15 — data-subject-access CLI |
+| GDPR-05 | #223 | GDPR Art. 5(1)(c) — signer-email default review |
+| LLM-02 | folded into epic #216 | LLM04 — ingest payload size limit (sub-task of ingest-boundary-guardrails epic) |
+| LLM-03 | #224 | LLM04 — SurrealDB query timeout |
+| LLM-05 | folded into epic #217 | LLM07 — per-tool authority gradation (sub-task of authority-gradation epic) |
+| LLM-07 | #209 (already exists) | refine render_source_attribution regex + flip default |
+| LLM-08 | folded into epic #216 | ingest rate limit (P2; sub-task of ingest-boundary-guardrails epic) |
+| LLM-09 | folded into epic #217 | LLM08 — ratify/link_commit/set_decision_level HITL (sub-task of authority-gradation epic) |
+| OWASP-01 + SSDF-01 | folded into epic #218 | OWASP A06 / SSDF — SBOM in release artifacts (sub-task of supply-chain epic) |
+| OWASP-03 | folded into epic #218 | OWASP A06 — exact-pin lockfile or stance declaration |
+| OWASP-05 | folded into epic #218 | OWASP A08 — sign or trust-on-first-use the RECOMMENDED_VERSION URL |
+| SOC2-02 | #226 | SOC2 A — declare availability stance |
+| SOC2-03 | folded into epic #218 | SOC2 CC + SSDF — signed releases + change-control evidence |
+| SOC2-06 + OWASP-06 | #227 | SOC2 CC + OWASP A09 — structured audit log emission |
+| NIST-RMF-01 + AI-ACT-02 | #225 | NIST AI RMF MAP-3.1 + EU AI Act — prohibited-uses declaration |
+| GDPR-04 | folded into epic #219 | GDPR Art. 5(1)(e) — anonymous-relay retention (sub-task of telemetry-and-consent epic) |
+| GDPR-09 | folded into epic #219 | GDPR Art. 7 — consent versioning + revocation (sub-task of telemetry-and-consent epic) |
+| NIST-RMF-02 | folded into epic #219 | NIST AI RMF MEASURE — production AI-risk telemetry (sub-task of telemetry-and-consent epic) |
+| (P2 rollup incl. CFG-01, GDPR-08) | TBD | compliance audit P2 backlog (16 IDs) |
 | (P3 rollup) | TBD | compliance audit P3 backlog (5 IDs) |
+
+**Epic trackers** (filed 2026-05-06):
+- **#216** Ingest boundary guardrails (LLM-01 / LLM-02 / LLM-04 / LLM-08; sub-issues #212, #213)
+- **#217** Per-tool authority gradation (LLM-05, LLM-09)
+- **#218** Supply-chain & release-integrity (OWASP-01 / OWASP-03 / OWASP-05 / SOC2-03 / SSDF-01 / LLM-06 / LLM-11; sub-issue #214)
+- **#219** Telemetry & consent (GDPR-04, GDPR-09, NIST-RMF-02)
 
 ---
 
