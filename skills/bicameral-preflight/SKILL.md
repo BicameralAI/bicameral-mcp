@@ -379,10 +379,11 @@ for prompt in response.hitl_prompts:
   the same decision is resurfaced inside the recency window. This
   acknowledges that the user has SEEN the unresolved state without
   permanently silencing the finding.
-- Telemetry must be enabled (`BICAMERAL_PREFLIGHT_TELEMETRY=1`) for
-  bypass writes to persist; otherwise `record_bypass` returns
-  `recorded=false, deduped=false, reason="telemetry_disabled"` and the
-  engine sees no recency.
+- Preflight telemetry must be enabled (canonical:
+  `BICAMERAL_TELEMETRY=preflight`; legacy `BICAMERAL_PREFLIGHT_TELEMETRY=1`
+  still honored via #192 deprecation overlay) for bypass writes to persist;
+  otherwise `record_bypass` returns `recorded=false, deduped=false,
+  reason="telemetry_disabled"` and the engine sees no recency.
 - **`preflight_bypass_tracking` config gate (#200 Phase 3)**: when
   `.bicameral/config.yaml: preflight_bypass_tracking: disabled`, the
   handler short-circuits BEFORE the JSONL write and returns

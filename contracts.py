@@ -682,7 +682,9 @@ class PreflightResponse(BaseModel):
     sync_metrics: SyncMetrics | None = None  # V1 A3 — catch-up wall times
     product_stage: str | None = None  # shown once per device; wait-time expectation-setting
     # #65 — opaque per-call id for the preflight telemetry capture loop.
-    # None when telemetry is disabled (BICAMERAL_PREFLIGHT_TELEMETRY != 1).
+    # None when preflight telemetry is disabled (canonical: BICAMERAL_TELEMETRY
+    # csv list excludes "preflight"; legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still
+    # honored via the #192 deprecation overlay).
     preflight_id: str | None = None
     # #108-#110 — consolidated governance finding (with attached
     # policy_result) when preflight surfaced one or more drift candidates

@@ -10,7 +10,9 @@ under ``~/.bicameral/`` and never leaves the machine.
 Privacy model
 =============
 
-Default mode (``BICAMERAL_PREFLIGHT_TELEMETRY=1``): hashed-only.
+Default mode (canonical: ``BICAMERAL_TELEMETRY=preflight``; legacy
+``BICAMERAL_PREFLIGHT_TELEMETRY=1`` still honored via #192 deprecation
+overlay): hashed-only.
 
   - ``topic_hash``       : 16-hex-char SHA-256 of (per-install salt || topic).
   - ``file_paths_hash``  : 16-hex-char SHA-256 of the salt-prefixed, sorted,
@@ -23,8 +25,10 @@ Default mode (``BICAMERAL_PREFLIGHT_TELEMETRY=1``): hashed-only.
                             would defeat the only useful triage join.
   - ``fired``, ``reason``, ``attribution`` : opaque enums / booleans.
 
-Raw mode (``BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1``): adds plaintext ``topic``
-and ``file_paths`` alongside the hashed fields. User explicitly opts in.
+Raw mode (canonical: ``BICAMERAL_TELEMETRY=preflight,raw``; legacy
+``BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1`` still honored via #192 deprecation
+overlay): adds plaintext ``topic`` and ``file_paths`` alongside the hashed
+fields. User explicitly opts in.
 
 Salt (``~/.bicameral/salt``) is per-install, generated once with ``os.urandom(32)``,
 stored mode 0o600 on POSIX. Race-safe init: ``os.O_EXCL`` create with a

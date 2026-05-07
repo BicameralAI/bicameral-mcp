@@ -195,8 +195,9 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Optional opaque id from a prior bicameral.preflight call. "
                             "When supplied, the local preflight-telemetry capture loop "
-                            "(#65, opt-in via BICAMERAL_PREFLIGHT_TELEMETRY=1) attributes "
-                            "this engagement to that preflight."
+                            "(#65, opt-in via BICAMERAL_TELEMETRY=preflight — see #192; "
+                            "legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still honored via "
+                            "deprecation overlay) attributes this engagement to that preflight."
                         ),
                     },
                 },

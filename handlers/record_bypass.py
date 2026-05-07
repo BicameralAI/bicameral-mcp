@@ -9,7 +9,9 @@ handler is a thin wrapper around ``preflight_telemetry.write_bypass_event``:
     the same ``decision_id`` is still inside the recency window
     (V4 idempotent guard prevents indefinite escalation suppression).
   - Returns ``recorded=False, deduped=False, reason='telemetry_disabled'``
-    when ``BICAMERAL_PREFLIGHT_TELEMETRY`` is off.
+    when preflight telemetry is off (canonical: ``BICAMERAL_TELEMETRY`` csv
+    list excludes ``preflight``; legacy ``BICAMERAL_PREFLIGHT_TELEMETRY=0``
+    still honored via the #192 deprecation overlay).
 
 Bypass does NOT mutate decision state. The unresolved ``signoff_state``
 persists for future preflight surfaces. The governance engine reads
