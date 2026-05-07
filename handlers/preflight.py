@@ -568,4 +568,3 @@ async def handle_preflight(
         )
 
     return response
-
