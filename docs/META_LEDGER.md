@@ -1983,3 +1983,155 @@ Session is sealed. v0 release deadline (2 days) preserved with comfortable margi
 *Chain integrity: VALID (41 entries on this branch)*
 *Genesis: `29dfd085` → ... → Priority C v1.1 SEAL: `b3700366` → v0-release-blockers SEAL: `7cc405fc`*
 *Next required action: operator review and choose push/merge path (Step 9.6 menu).*
+
+---
+
+## Entry #42: #218 Phase 1 — cosign hooks-manifest signing + SBOM emission (LLM-11 + OWASP-01)
+
+**Date**: 2026-05-06
+**Phase**: IMPLEMENTATION
+**Branch**: `218-cosign-hooks-manifest-and-sbom` (off `b4fc17b` post-#236-merge dev tip)
+**Plan**: `plan-218-cosign-hooks-manifest-and-sbom.md`
+**Audit**: round 2 PASS (round 1 VETO `infrastructure-mismatch` cleared via plan-text amendment)
+
+### Files added (8)
+
+- `release/__init__.py` — package marker
+- `release/hooks_manifest_generator.py` — pure-function deterministic JSON manifest writer (73 LOC)
+- `release/hooks_source.py` — single source of truth for `BICAMERAL_HOOKS` derived from `setup_wizard` constants (44 LOC)
+- `release/sbom_emit.py` — CycloneDX 1.5 emitter wrapping `cyclonedx-bom` CLI; subprocess discipline list-form argv (71 LOC)
+- `release/manifest_verify.py` — sigstore-python keyless verifier + bypass-aware `verify_hooks_or_bypass` helper (152 LOC)
+- `scripts/hooks_manifest_build_hook.py` — hatch build hook generates `share/bicameral-mcp/hooks-manifest.json` at wheel build time (36 LOC)
+- `tests/test_hooks_manifest_generator.py` — 5 functionality tests (manifest derivation, SHA-256, determinism, ordering, missing-attr)
+- `tests/test_release_artifacts_sbom.py` — 4 functionality tests (CycloneDX 1.5 contract, subprocess failure, wrong spec version, list-form argv)
+- `tests/test_setup_wizard_hook_verify.py` — 7 functionality tests (positive verify, sig-invalid, sha256-mismatch, missing-manifest, swappable verifier hook, bypass-with-event, fail-closed)
+
+### Files modified (4)
+
+- `setup_wizard.py` — added `_bundled_manifest_paths()` discovery + `_verify_intended_writes()` helper; wired 1-LOC verify call into `_install_claude_hooks`, `_install_git_post_commit_hook`, `_install_git_pre_push_hook`
+- `pyproject.toml` — added `sigstore>=3.0` runtime dep; new `[release]` optional dep with `cyclonedx-bom>=4.0`; new `[tool.hatch.build.targets.wheel.hooks.custom]` + `[tool.hatch.build.targets.wheel.shared-data]` for build-time manifest generation; added `share` to wheel exclude
+- `.github/workflows/publish.yml` — extended build job: cosign installer, sign-blob keyless on hooks-manifest, generate SBOM, attest-blob CycloneDX to Rekor, attach all signed artifacts to GitHub Release; publish job strips share/* before PyPI upload
+- `docs/SYSTEM_STATE.md` — appended "Hook Manifest Verification" section documenting install-time verify, bypass posture, dev-install no-op, manual SBOM verification command, scope/non-goals
+
+### Plan deviation (logged)
+
+The plan specified `setup_wizard/manifest_verify.py` (subdirectory). Python module naming forbids `setup_wizard.py` and `setup_wizard/` as siblings — would require converting `setup_wizard.py` → `setup_wizard/__init__.py` (large refactor outside this PR's scope). Verifier placed at `release/manifest_verify.py` instead. The release/ package umbrella covers both build-time emission and install-time verification of release artifacts; the renaming is internal-only (no external API affected). Substrate-quality deviation; closes the same Reality=Promise contract.
+
+### Razor compliance
+
+- `release/hooks_manifest_generator.py`: 73 LOC file, longest function 25 LOC
+- `release/hooks_source.py`: 44 LOC file, no functions (module-level constant)
+- `release/sbom_emit.py`: 71 LOC file, longest function `emit_sbom` 28 LOC
+- `release/manifest_verify.py`: 152 LOC file, longest function `_sigstore_verify` 38 LOC
+- `setup_wizard.py` modifications: 3 installers each got exactly 1 new LOC (`_verify_intended_writes(...)`); helper `_verify_intended_writes` is 16 LOC, helper `_bundled_manifest_paths` is 16 LOC. Pre-existing `_install_claude_hooks` overage (~121 LOC) explicitly handed off to `/qor-refactor` per round-2 audit substrate finding 3.
+
+### Test results
+
+- Phase 1 manifest generator: 5/5 PASS
+- Phase 1 SBOM emit: 4/4 PASS
+- Phase 2 verifier: 7/7 PASS
+- Existing setup_wizard regression: 36 tests PASS, 1 skipped (pre-existing)
+- Wheel build smoke test: `python -m build --wheel` produces wheel containing `bicameral_mcp-0.13.3.data/data/share/bicameral-mcp/hooks-manifest.json` at the proper shared-data location
+- Full repo regression: 1125 PASS, 6 skipped, 1 deselected (pre-existing flake), 1 xfailed; 10 failures all in untouched modules (test_v0417_jargon_hygiene pre-existing on baseline; test_team_server_events_api passes standalone, fails only under full-suite-isolation conditions)
+
+### Next required action
+
+`/qor-substantiate` — Judge phase to verify Reality matches Promise and seal.
+
+---
+
+## Entry #43: SESSION SEAL — #218 Phase 1 substantiated (LLM-11 + OWASP-01)
+
+**Date**: 2026-05-06
+**Phase**: SUBSTANTIATE
+**Branch**: `218-cosign-hooks-manifest-and-sbom`
+**Plan**: `plan-218-cosign-hooks-manifest-and-sbom.md`
+**Audit**: round 2 PASS (`infrastructure-mismatch` round-1 VETO cleared)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `release/hooks_manifest_generator.py` | exists, 73 LOC, 5 tests pass | EXISTS |
+| `release/sbom_emit.py` | exists, 71 LOC, 4 tests pass | EXISTS |
+| `release/manifest_verify.py` (relocated from `setup_wizard/`) | exists, 152 LOC, 7 tests pass | EXISTS-w/-deviation |
+| `setup_wizard.py` modifications | `_bundled_manifest_paths()` + `_verify_intended_writes()` helpers added; 3 installers got 1 LOC each | EXISTS |
+| `.github/workflows/publish.yml` | extended with cosign install, sign-blob, SBOM emit, attest-blob, attach-to-release | EXISTS |
+| `pyproject.toml` | `sigstore>=3.0` added; `[release]` opt-dep with `cyclonedx-bom>=4.0`; hatch build hook + shared-data wired | EXISTS |
+| `docs/SYSTEM_STATE.md` | "Hook Manifest Verification" section appended | EXISTS |
+| All planned tests (16 functional) | all PASS | EXISTS |
+
+### Logged deviations
+
+1. **Path deviation**: `setup_wizard/manifest_verify.py` → `release/manifest_verify.py`. Python forbids `setup_wizard.py` and `setup_wizard/` as siblings; would require converting `.py` to `__init__.py` package — large refactor outside this PR's scope. The release/ package umbrella covers both build-time emission and install-time verification of release artifacts. No external API affected.
+
+2. **Build hook path**: planned at `scripts/build/hooks_manifest_build_hook.py`; actual at `scripts/hooks_manifest_build_hook.py`. The repo's `.gitignore` line 5 (`build/`) caught `scripts/build/` recursively. Moved one level up; pyproject.toml `[tool.hatch.build.targets.wheel.hooks.custom]` path updated accordingly. Wheel-build smoke test re-verified post-move.
+
+3. **Unplanned but necessary supporting files**:
+   - `release/__init__.py` — Python package marker; required for `from release import ...` resolution
+   - `release/hooks_source.py` — single-source-of-truth bridge between `setup_wizard` constants and the manifest generator; isolates the contract so generator stays a pure function over a `BICAMERAL_HOOKS` list
+   - `scripts/hooks_manifest_build_hook.py` — hatch BuildHookInterface that generates `share/bicameral-mcp/hooks-manifest.json` at wheel-build time; required for the planned hatch shared-data wiring to function (the plan implied build-time generation but didn't enumerate the hook module)
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `release/hooks_manifest_generator.py` | 73 | `generate_manifest` (20) | OK |
+| `release/sbom_emit.py` | 71 | `emit_sbom` (28) | OK |
+| `release/manifest_verify.py` | 152 | `_sigstore_verify` (39) | OK |
+| `release/hooks_source.py` | 44 | n/a (constant) | OK |
+| `scripts/hooks_manifest_build_hook.py` | 36 | `initialize` (11) | OK |
+| `setup_wizard.py` modifications | +33 LOC | `_verify_intended_writes` (16), `_bundled_manifest_paths` (16) | OK |
+
+All new code under Razor limits. Pre-existing `_install_claude_hooks` (~121 LOC) overage handed off to `/qor-refactor` per round-2 audit substrate finding 3.
+
+### Functional verification
+
+- 16 new tests, all PASS (5 manifest generator + 4 SBOM emit + 7 verifier)
+- Each test invokes the unit under test and asserts on returned value, raised exception, or observable side-effect (filesystem/event-write). No presence-only descriptions.
+- Setup_wizard regression suite: 52 PASS, 1 skipped (pre-existing). No regressions introduced.
+- Full repo regression: 1125 PASS; 10 failures all in untouched modules (pre-existing on baseline `b4fc17b` per stash-and-test verification: test_v0417_jargon_hygiene confirmed pre-existing; test_team_server_events_api passes standalone, fails only under full-suite test-isolation conditions outside this PR's surface).
+
+### Wheel build smoke test
+
+```
+$ python -m build --wheel
+Successfully built bicameral_mcp-0.13.3-py3-none-any.whl
+```
+
+Verified the wheel ships `bicameral_mcp-0.13.3.data/data/share/bicameral-mcp/hooks-manifest.json` at the proper hatch shared-data location. At pip install time this lands at `<sys.prefix>/share/bicameral-mcp/hooks-manifest.json` — exactly where `_bundled_manifest_paths()` looks first.
+
+### Closes / unlocks
+
+- **Closes**: #218 sub-task LLM-11 (signed `hooks-manifest.json` for host-config writes) — P0 entry on the epic
+- **Closes**: #218 sub-task OWASP-01 (SBOM in release artifacts; CycloneDX 1.5; cosign-attest to Rekor)
+- **Substrate for**: #218 remaining sub-tasks SOC2-03 (signed-tag procedure), OWASP-03 (lockfile), OWASP-05 (RECOMMENDED_VERSION URL signing), LLM-06 (skills/MANIFEST.toml — #214). Each adapts the same cosign-keyless pipeline this PR bootstrapped.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml at 0.13.3 is stale relative to v0.13.8 git tag (existing inconsistency, out of #218 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI; pre-seal gate not present locally |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal procedural-fidelity check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md`, `lifecycle.md`, `operations.md`) maintained in this repo |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here; release versioning happens at PyPI release-publish event time |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal seal-entry verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `.agent/staging/AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal dist-compile |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Operator review and choose push/merge path. Recommended: Option 2 (push + open PR) — same pattern as recent #218 epic prerequisite #236.
+
+---
+*Chain integrity: VALID (43 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #231 IMPLEMENTATION (#42) → #218 Phase 1 SEAL (#43)*

@@ -5,11 +5,12 @@ on:
     types: [published]
 
 permissions:
-  id-token: write  # Required for trusted publishing
+  id-token: write  # Required for PyPI trusted publishing + cosign keyless signing
+  contents: write  # Required to attach signed artifacts to the GitHub Release
 
 jobs:
   build:
-    name: Build distribution
+    name: Build distribution + sign supply-chain artifacts
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,10 +20,53 @@ jobs:
           python-version: '3.11'
 
       - name: Install build tools
-        run: pip install hatchling build
+        run: pip install hatchling build cyclonedx-bom
 
       - name: Build package
         run: python -m build
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Generate hooks-manifest.json
+        run: |
+          # Install the just-built wheel so release.hooks_source can import setup_wizard.
+          pip install dist/bicameral_mcp-*.whl
+          mkdir -p dist/share/bicameral-mcp
+          python -m release.hooks_manifest_generator dist/share/bicameral-mcp/hooks-manifest.json
+
+      - name: Cosign keyless sign hooks-manifest
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/share/bicameral-mcp/hooks-manifest.json.sig \
+            --output-certificate dist/share/bicameral-mcp/hooks-manifest.json.crt \
+            dist/share/bicameral-mcp/hooks-manifest.json
+
+      - name: Generate CycloneDX 1.5 SBOM
+        run: |
+          WHEEL=$(ls dist/bicameral_mcp-*.whl)
+          python -m release.sbom_emit "$WHEEL" "dist/bicameral-mcp.sbom.json"
+
+      - name: Cosign attest SBOM (Rekor transparency log)
+        run: |
+          WHEEL=$(ls dist/bicameral_mcp-*.whl)
+          cosign attest-blob --yes \
+            --predicate dist/bicameral-mcp.sbom.json \
+            --type cyclonedx \
+            --output-attestation dist/bicameral-mcp.sbom.intoto.jsonl \
+            "$WHEEL"
+
+      - name: Attach signed artifacts to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/share/bicameral-mcp/hooks-manifest.json \
+            dist/share/bicameral-mcp/hooks-manifest.json.sig \
+            dist/share/bicameral-mcp/hooks-manifest.json.crt \
+            dist/bicameral-mcp.sbom.json \
+            dist/bicameral-mcp.sbom.intoto.jsonl \
+            --clobber
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -43,6 +87,12 @@ jobs:
         with:
           name: dist
           path: dist/
+
+      - name: Strip non-PyPI artifacts before upload
+        run: |
+          # share/ holds GitHub-Release artifacts (manifest + sigs + SBOM
+          # attestation); not part of the wheel/sdist PyPI upload.
+          rm -rf dist/share dist/bicameral-mcp.sbom.json dist/bicameral-mcp.sbom.intoto.jsonl
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

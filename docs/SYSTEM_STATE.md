@@ -702,3 +702,38 @@ The catalog is the productive deposit beyond the code: each heuristic is reusabl
 
 1. SurrealQL `record<workspace>` strict type required `type::thing()` coercion in allowlist_sync.py — not anticipated in plan but matches the v1.0 migration's existing pattern at `team_server/schema.py:106-110`. Caught at first test run; fix took two minutes.
 2. Lifespan integration test originally tried pre-seeding workspace via `TeamServerDB.from_env()` then re-opening for the app — `memory://` doesn't persist across connect/close. Test rewritten to mock `sync_channel_allowlist` and assert it was invoked at startup with the correct config. Test directly exercises the lifespan→sync wiring via interception, not via DB observation.
+
+## Hook Manifest Verification (#218 Phase 1 — LLM-11 + OWASP-01)
+
+The release pipeline emits two new supply-chain artifacts on every published GitHub Release: a cosign keyless-signed `hooks-manifest.json` enumerating every shell command `setup_wizard._install_*_hooks` writes (Claude PostToolUse, SessionEnd, UserPromptSubmit + git post-commit, pre-push), and a CycloneDX 1.5 SBOM with a Rekor transparency-log attestation.
+
+### Install-time verification (automatic when wheel ships bundled manifest)
+
+When pip installs the wheel, `share/bicameral-mcp/hooks-manifest.json` lands under `<sys.prefix>/share/bicameral-mcp/`. The first call into `setup_wizard._install_claude_hooks` (or either git-hook installer) discovers the manifest, verifies its cosign keyless signature against the BicameralAI/bicameral-mcp Sigstore Fulcio identity, and cross-checks the SHA-256 of every command the installer is about to write. Mismatch → `release.manifest_verify.SignatureError`.
+
+### Bypass posture (operator escape hatch)
+
+Set `BICAMERAL_HOOKS_VERIFY_DISABLE=1` before invoking `bicameral-mcp setup` to swallow `SignatureError`. The bypass writes a severity-3 `verification_bypassed` ledger event into the operator's `.bicameral/events/<email>.jsonl` so the audit trail survives. Use cases: Sigstore Fulcio/Rekor outage; install of an unsigned dev wheel; emergency install of a known-good older version that predates this PR.
+
+### Dev install (no bundled manifest)
+
+Source-checkout installs (`pip install -e .`) do not bundle the manifest — `_bundled_manifest_paths()` returns None and verification is a no-op. The threat model for LLM-11 is wheel-distribution tampering; source-checkout installs run code the developer controls directly.
+
+### Operator command for manual SBOM verification
+
+The CycloneDX 1.5 SBOM and its Rekor attestation are attached to each GitHub Release as `bicameral-mcp.sbom.json` and `bicameral-mcp.sbom.intoto.jsonl`. To verify the SBOM is bound to the published wheel via Sigstore Rekor:
+
+```bash
+cosign verify-attestation \
+  --type cyclonedx \
+  --certificate-identity-regexp "^https://github.com/BicameralAI/bicameral-mcp/" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  bicameral_mcp-<version>-py3-none-any.whl
+```
+
+The same identity-regexp + OIDC-issuer flags work for `cosign verify-blob` against `hooks-manifest.json` if you need to verify it manually outside the install-time path.
+
+### Boundaries of this PR (#218 Phase 1)
+
+In scope: hooks-manifest signing + SBOM emission + install-time verification (with bypass).
+Out of scope (deferred to follow-up #218 sub-tasks): SOC2-03 signed-tag procedure, OWASP-03 lockfile, OWASP-05 RECOMMENDED_VERSION URL signing, LLM-06 skills/MANIFEST.toml signing (#214), wheel-bundled `.sig`/`.crt` for offline verification (currently attached to GitHub Release as separate downloads).
