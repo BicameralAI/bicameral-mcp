@@ -38,6 +38,18 @@ def test_host_trust_model_declares_required_sections() -> None:
     assert "## Per-host operator checklist" in content
 
 
+def test_host_trust_model_includes_skills_manifest_row() -> None:
+    """#218 LLM-06: the Server-side guarantees table must list the
+    skills-manifest signature verification gate alongside the existing
+    hooks-manifest verification gate. Locks the bidirectional
+    cross-reference between the policy doc and the verifier surface."""
+    content = HOST_TRUST.read_text(encoding="utf-8")
+    assert "Skills-manifest signature verification" in content
+    assert "_install_skills" in content
+    assert "skills-manifest.toml" in content
+    assert "LLM-06" in content
+
+
 def test_acceptable_use_lists_required_prohibited_categories() -> None:
     """`docs/policies/acceptable-use.md` must enumerate four prohibited-use
     categories that the framework-mapping table cross-references:
