@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.13.9"
+version = "0.14.0"
 description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,6 +36,7 @@ dependencies = [
   "python-dotenv",
   "surrealdb>=2.0.0",
   "questionary>=2.0.0",
+  "sigstore>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -50,6 +51,10 @@ test = [
   "tiktoken>=0.7.0,<1.0.0",
   "ruff>=0.5.0",
   "mypy>=1.10.0",
+  "build>=1.0.0",
+]
+release = [
+  "cyclonedx-bom>=4.0",
 ]
 
 [project.scripts]
@@ -66,8 +71,25 @@ exclude = [
   "mocks",
   "test-results",
   "docs/demos/**/*.mp4",
+  "share",
 ]
 artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
+
+# `force-include` ships skill source unconditionally, regardless of Hatchling's
+# package-discovery rules. Required because `skills/` has no `__init__.py` and
+# `artifacts` alone does not bundle these files into the wheel (verified empty
+# pre-fix). Locked by tests/test_installer_packaging.py.
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "skills"
+
+# Build hook generates `share/bicameral-mcp/hooks-manifest.json` before
+# the wheel is packaged (#218 Phase 1). The shared-data table below then
+# bundles it into the wheel at `<sys.prefix>/share/bicameral-mcp/...`.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "scripts/hooks_manifest_build_hook.py"
+
+[tool.hatch.build.targets.wheel.shared-data]
+"share/bicameral-mcp/hooks-manifest.json" = "share/bicameral-mcp/hooks-manifest.json"
 
 [tool.ruff]
 line-length = 100
@@ -124,6 +146,8 @@ module = [
   "ledger.status",
   "ledger.queries",
   "ledger.schema",
+  "codegenome.continuity",
+  "codegenome.continuity_service",
   "handlers.ratify",
   "handlers.search_decisions",
   "handlers.resolve_compliance",

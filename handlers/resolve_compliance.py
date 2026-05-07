@@ -36,6 +36,8 @@ from contracts import (
 from ledger.queries import (
     decision_exists,
     delete_binds_to_edge,
+    get_canonical_id,
+    get_region_descriptor,
     project_decision_status,
     promote_ephemeral_verdict,
     region_exists,
@@ -165,7 +167,31 @@ async def handle_resolve_compliance(
             commit_hash=commit_hash or "",
             pruned=is_pruned,
             ephemeral=is_ephemeral,
+            # Phase 4 (#61): caller's optional semantic claim +
+            # supporting evidence. Both default to None / [] when the
+            # caller doesn't supply them — fully backward-compatible.
+            semantic_status=getattr(v, "semantic_status", None),
+            evidence_refs=list(getattr(v, "evidence_refs", []) or []),
         )
+
+        # #190: emit compliance_check.completed to the team-sync JSONL stream
+        # so peer replays can re-apply the verdict without re-evaluating
+        # locally. No-op in single-mode (no apply_resolve_compliance method).
+        emit = getattr(ledger, "apply_resolve_compliance", None)
+        if emit is not None:
+            canonical_id = await get_canonical_id(client, v.decision_id)
+            descriptor = await get_region_descriptor(client, v.region_id)
+            if canonical_id and descriptor:
+                await emit(
+                    canonical_decision_id=canonical_id,
+                    repo=descriptor["repo"],
+                    file_path=descriptor["file_path"],
+                    symbol_name=descriptor["symbol_name"],
+                    content_hash=descriptor["content_hash"],
+                    verdict=v.verdict,
+                    pinned_commit=ctx.head_sha,
+                    evidence=v.explanation,
+                )
 
         # Prune the binds_to edge when the caller says "not relevant" —
         # retrieval made a mistake; remove the binding to keep the graph clean.
@@ -180,6 +206,7 @@ async def handle_resolve_compliance(
                 region_id=v.region_id,
                 phase=phase,
                 verdict=v.verdict,
+                semantic_status=getattr(v, "semantic_status", None),
             )
         )
 

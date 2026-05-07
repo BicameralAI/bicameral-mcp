@@ -16,12 +16,8 @@ from __future__ import annotations
 import re
 from argparse import ArgumentParser
 
-# triage-adapt: dropped _GIT_PRE_PUSH_HOOK import + the pre-push test
-# below — _GIT_PRE_PUSH_HOOK is a #48 prerequisite (pre-push drift hook)
-# that doesn't exist on triage. Post-commit coverage is preserved (the
-# actual #124 regression).
 from server import _register_subparsers
-from setup_wizard import _GIT_POST_COMMIT_HOOK
+from setup_wizard import _GIT_POST_COMMIT_HOOK, _GIT_PRE_PUSH_HOOK
 
 # Match `bicameral-mcp <subcommand>` where the subcommand is a
 # lower-snake-or-dash identifier. Anchors on the literal command
@@ -56,24 +52,28 @@ def test_post_commit_hook_command_is_registered() -> None:
     )
 
 
-# triage-adapt: dropped test_pre_push_hook_command_is_registered —
-# pre-push hook is from #48 (missing prerequisite on triage)
+def test_pre_push_hook_command_is_registered() -> None:
+    """The pre-push hook calls ``branch-scan``; that subcommand must
+    be registered. Locks the invariant established by #48."""
+    invoked = _extract_bicameral_mcp_commands(_GIT_PRE_PUSH_HOOK)
+    registered = _registered_subcommands()
+    missing = invoked - registered
+    assert not missing, (
+        f"Pre-push hook invokes {invoked} but only {registered} are registered. Missing: {missing}"
+    )
 
 
 def test_all_hook_commands_have_dispatch_branches() -> None:
     """Every command referenced in any installed hook script must
     appear in server._dispatch as an ``args.command == "..."``
     branch — registered-but-not-dispatched would still pass the
-    register tests above but would silently no-op at runtime.
-
-    triage-adapt: scoped to _GIT_POST_COMMIT_HOOK only — pre-push
-    hook is from #48, not on triage."""
+    register tests above but would silently no-op at runtime."""
     import inspect
 
     from server import _dispatch
 
     dispatch_src = inspect.getsource(_dispatch)
-    invoked = _extract_bicameral_mcp_commands(_GIT_POST_COMMIT_HOOK)
+    invoked = _extract_bicameral_mcp_commands(_GIT_POST_COMMIT_HOOK + "\n" + _GIT_PRE_PUSH_HOOK)
     missing = {cmd for cmd in invoked if f'args.command == "{cmd}"' not in dispatch_src}
     assert not missing, (
         f"Hook scripts invoke {invoked} but _dispatch has branches for "

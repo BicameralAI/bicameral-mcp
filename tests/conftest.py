@@ -51,6 +51,42 @@ def pytest_configure(config):
 
 
 @pytest.fixture(autouse=True)
+def _reset_rate_limit_registry():
+    """Clear the in-process rate-limit bucket registry between every
+    test (#233 hoist).
+
+    Hoisted from ``tests/test_ingest_rate_limit.py`` so any test in the
+    suite that imports ``handlers.ingest`` gets registry-clear behavior
+    automatically. Eliminates the implicit fixture dependency in
+    ``test_handle_ingest_size_check_runs_before_rate_check`` and
+    prevents future test-isolation flakes from registry leakage across
+    files. Registry is in-process module state on
+    ``handlers.ingest._RATE_LIMIT_REGISTRY``.
+    """
+    from handlers.ingest import _RATE_LIMIT_REGISTRY
+
+    _RATE_LIMIT_REGISTRY.clear()
+    yield
+    _RATE_LIMIT_REGISTRY.clear()
+
+
+@pytest.fixture(autouse=True)
+def _ensure_rate_limit_enabled(monkeypatch):
+    """Default to rate-limit enabled across every test (#233 hoist
+    companion).
+
+    Hoisted from ``tests/test_ingest_rate_limit.py`` alongside the
+    registry-clear fixture (per audit substrate observation 2). Without
+    this, a test in any file that sets ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE``
+    via the shell environment could leak the disable into a subsequent
+    ingest-touching test in another file. Tests that intentionally
+    exercise the env-disable path still work — pytest's ``monkeypatch.setenv``
+    overrides this delete on a per-test basis.
+    """
+    monkeypatch.delenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _default_authoritative_ref_to_current_branch(monkeypatch):
     """v0.4.6 pollution guard default: treat whatever branch the test
     runner is on as authoritative.

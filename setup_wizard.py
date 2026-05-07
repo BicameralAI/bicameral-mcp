@@ -11,10 +11,67 @@ Usage: bicameral-mcp setup
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
+
+
+def _bundled_manifest_paths() -> tuple[Path, Path, Path] | None:
+    """Locate bundled ``hooks-manifest.json`` + ``.sig`` + ``.crt``.
+
+    Returns ``None`` when no artifacts are bundled (dev install from
+    source checkout — no production wheel context, so no LLM-11 threat
+    surface). Returns the triple when artifacts are found alongside the
+    installed package via hatch ``shared-data``.
+    """
+    candidates = [
+        Path(sys.prefix) / "share" / "bicameral-mcp" / "hooks-manifest.json",
+        Path(__file__).parent.parent / "share" / "bicameral-mcp" / "hooks-manifest.json",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c, Path(str(c) + ".sig"), Path(str(c) + ".crt")
+    return None
+
+
+def _verify_intended_writes(*event_types: str) -> None:
+    """Verify the signed manifest carries the SHA-256s of the commands the
+    caller is about to write. No-op when no bundled manifest exists
+    (dev install). Honors ``BICAMERAL_HOOKS_VERIFY_DISABLE=1`` bypass.
+    """
+    paths = _bundled_manifest_paths()
+    if paths is None:
+        return
+    from release import hooks_source, manifest_verify
+
+    by_event = {h["event_type"]: h["command"] for h in hooks_source.BICAMERAL_HOOKS}
+    expected = {et: hashlib.sha256(by_event[et].encode("utf-8")).hexdigest() for et in event_types}
+    manifest_verify.verify_hooks_or_bypass(*paths, expected)
+
+
+def _ensure_utf8_stdout(platform: str | None = None) -> None:
+    """Reconfigure stdout/stderr to UTF-8 on Windows so banner box-drawing
+    chars (┌─┐│└┘) printed by run_setup / run_config_wizard / run_reset_wizard
+    don't crash under cp1252. No-op on POSIX. Silent on environments where
+    `.reconfigure` is missing or fails. ``platform`` arg is for test isolation;
+    production callers pass None and the helper reads ``sys.platform``. (#199)
+    """
+    target = platform if platform is not None else sys.platform
+    if target != "win32":
+        return
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
+
 
 AGENTS = {
     "claude": {
@@ -165,22 +222,30 @@ def _select_agents() -> list[str]:
     return selected
 
 
+class RunnerNotFoundError(RuntimeError):
+    """Raised when no viable runner for bicameral-mcp is on PATH.
+
+    There is no `bicameral_mcp` package — the entry point is `server:cli_main` —
+    so `python -m bicameral_mcp` is not a valid fallback.
+    """
+
+
 def _detect_runner() -> tuple[str, list[str]]:
     """Detect the best available runner for bicameral-mcp.
 
-    Preference order:
-      1. bicameral-mcp binary on PATH — uses the actual installed environment,
-         so local subpackages (dashboard/, etc.) and editable installs work.
-      2. python3 -m bicameral_mcp — fallback for source checkouts / venvs.
+    Only one runner is supported: the `bicameral-mcp` script installed by
+    `pip install bicameral-mcp` (or an editable install in a venv). pipx run
+    is intentionally NOT used: it downloads a fresh ephemeral copy from PyPI
+    on every server start, missing local-only modules and risking version skew.
 
-    pipx run is intentionally NOT used: it downloads a fresh ephemeral copy
-    from PyPI on every server start, which misses local-only modules and can
-    run a different version than what the user installed.
+    The previous `python -m bicameral_mcp` fallback was removed because there
+    is no `bicameral_mcp` package; the resulting MCP config was non-functional.
     """
     if shutil.which("bicameral-mcp"):
         return ("bicameral-mcp", [])
-    python = "python3" if shutil.which("python3") else "python"
-    return (python, ["-m", "bicameral_mcp"])
+    raise RunnerNotFoundError(
+        "No runner found for bicameral-mcp. Install with: pip install bicameral-mcp"
+    )
 
 
 def _build_config(
@@ -358,34 +423,63 @@ def _install_for_agent(
     return True
 
 
-def _build_session_end_command(mcp_config_path: str | None = None) -> str:
-    """Build the SessionEnd hook command, optionally with `--mcp-config` flags.
+def _session_end_command_for_platform(platform: str) -> str:
+    """Return the SessionEnd hook command rendered for the target platform.
 
-    Production end-users have ``bicameral`` registered in their default
-    Claude Code MCP config (via the setup wizard's `claude mcp add`), so
-    the spawned subprocess inherits it without an explicit flag. Test
-    harnesses that drive ``claude -p`` against a non-default ledger
-    (e.g. ``tests/e2e/run_e2e_flows.py`` pointing SURREAL_URL at a
-    test-results path) must pass ``--mcp-config`` so the spawned
-    subprocess writes to the same ledger that the parent session and
-    post-hoc validators use; otherwise capture-corrections lands its
-    ``source=agent_session`` decisions in ``~/.bicameral/ledger.db``
-    instead of the harness's test ledger.
+    POSIX shape (linux, darwin, anything not win32) uses bash conditional
+    chaining with the ``[ -d ]`` / ``[ -z ]`` test idiom, the
+    ``BICAMERAL_SESSION_END_RUNNING`` re-entrancy guard, and the
+    ``python3`` interpreter (Ubuntu/Debian/RHEL/Fedora install
+    ``python3`` by default; ``python`` is NOT a default symlink and
+    requires ``python-is-python3`` or equivalent — so ``python3`` is
+    the only reliable cross-distro choice).
 
-    The no-args call returns the canonical command prescribed by
-    ``skills/bicameral-capture-corrections/SKILL.md:207`` byte-exact —
-    that's what end-user installs ship.
+    Windows shape uses cmd.exe ``if exist`` / ``if not defined``
+    conditional and the ``python`` interpreter (Windows installers
+    expose ``python`` and ``py`` but not ``python3``).
     """
-    import shlex
-
-    extra_flags = ""
-    if mcp_config_path:
-        extra_flags = f" --mcp-config {shlex.quote(str(mcp_config_path))} --strict-mcp-config"
+    if platform == "win32":
+        return (
+            "if exist .bicameral if not defined BICAMERAL_SESSION_END_RUNNING "
+            "(set BICAMERAL_SESSION_END_RUNNING=1 && "
+            "python scripts\\hooks\\session_end_queue_writer.py)"
+        )
     return (
         '[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && '
         "BICAMERAL_SESSION_END_RUNNING=1 "
-        f"claude -p '/bicameral:capture-corrections --auto-ingest'{extra_flags} || true"
+        "python3 scripts/hooks/session_end_queue_writer.py || true"
     )
+
+
+def _build_session_end_command(
+    mcp_config_path: str | None = None,
+    platform: str | None = None,
+) -> str:
+    """Canonical SessionEnd hook command (#156 pivot, #200 Phase 1 OS-aware).
+
+    Replaces the prior ``claude -p '/bicameral-capture-corrections
+    --auto-ingest'`` invocation, which spawned an empty subprocess that
+    couldn't access the parent session's transcript — corrections
+    silently failed to surface.
+
+    The new shape pipes Claude Code's stdin envelope into a Python
+    script that extracts ``transcript_path`` and copies it to the
+    pending-transcripts queue at
+    ``<repo>/.bicameral/pending-transcripts/<session_id>.jsonl``. The
+    next session's preflight Step 3.5 (or capture-corrections Step 0)
+    drains the queue and surfaces corrections with full ledger context.
+
+    ``mcp_config_path`` is retained for signature stability with
+    consumers that pass it through; the new hook doesn't use it (no
+    claude subprocess to configure).
+
+    ``platform`` defaults to ``sys.platform`` and selects between POSIX
+    bash shape (linux/darwin) and cmd.exe shape (win32). Explicit
+    ``platform`` arg is for test isolation and cross-platform install
+    rendering when the wizard runs on a different host than the target.
+    """
+    target = platform if platform is not None else sys.platform
+    return _session_end_command_for_platform(target)
 
 
 # Canonical no-args form — what `_install_claude_hooks` writes to a fresh
@@ -396,7 +490,7 @@ _BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
 # Fires after every Bash tool use. When the command is a git write-op
 # (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
 # envelope whose additionalContext nudges the agent to invoke
-# /bicameral:sync — running the full link_commit → compliance check
+# /bicameral-sync — running the full link_commit → compliance check
 # flow so status is authoritative immediately.
 #
 # Was a plain-stdout python -c one-liner. Per Claude Code 2.x hook docs
@@ -437,8 +531,11 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     - PostToolUse/bicameral_preflight: reminds the agent to capture
       refinements via ingest(agent_session) + resolve_collision when
       preflight surfaces decisions that the user's prompt contradicts.
-    - SessionEnd: runs bicameral-capture-corrections to catch uningested
-      mid-session corrections (only fires when .bicameral/ exists).
+    - SessionEnd: writes the parent session's transcript to
+      .bicameral/pending-transcripts/<session_id>.jsonl; the next session's
+      preflight Step 3.5 / capture-corrections Step 0 drains the queue and
+      surfaces uningested corrections (#156). Only fires when .bicameral/
+      exists.
     - UserPromptSubmit: deterministic verb-list classifier injects a
       <system-reminder> elevating bicameral.preflight above the agent's
       default tool-selection priority on code-implementation prompts.
@@ -446,6 +543,12 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     Idempotent — safe to call on every setup run. Returns True if any new
     entry was written, False if all four were already present.
     """
+    _verify_intended_writes(
+        "claude:PostToolUse:Bash",
+        "claude:PostToolUse:bicameral_preflight",
+        "claude:SessionEnd",
+        "claude:UserPromptSubmit",
+    )
     settings_path = repo_path / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -555,6 +658,7 @@ def _install_git_post_commit_hook(repo_path: Path) -> bool:
 
     Returns True if anything was written.
     """
+    _verify_intended_writes("git:post-commit")
     git_root = _find_git_root(repo_path)
     if git_root is None:
         return False
@@ -575,10 +679,197 @@ def _install_git_post_commit_hook(repo_path: Path) -> bool:
     return True
 
 
+_GIT_PRE_PUSH_HOOK = """\
+#!/bin/sh
+# Bicameral MCP — pre-push hook (installed by bicameral-mcp setup --with-push-hook, #48)
+# Surfaces drift warnings before git push completes.
+# Skips when no .bicameral/ ledger configured. Non-blocking by default;
+# BICAMERAL_PUSH_HOOK_BLOCK=1 forces hard-block on drift.
+[ -d .bicameral ] || exit 0
+bicameral-mcp branch-scan
+status=$?
+if [ "$status" = "0" ]; then exit 0; fi
+if [ -t 0 ]; then
+    printf "Push anyway? [y/N] " >&2
+    read -r answer </dev/tty
+    case "$answer" in
+        [yY]|[yY][eE][sS]) exit 0 ;;
+        *) exit 1 ;;
+    esac
+fi
+exit "$status"
+"""
+
+
+def _install_git_pre_push_hook(repo_path: Path) -> bool:
+    """Install a git pre-push hook that calls bicameral-mcp branch-scan (#48).
+
+    Opt-in via ``bicameral-mcp setup --with-push-hook``. Idempotent — if
+    a hook already exists and already contains a bicameral call, leaves it
+    untouched. If an existing hook lacks a bicameral call, appends one
+    rather than overwriting.
+
+    Returns True if anything was written.
+    """
+    _verify_intended_writes("git:pre-push")
+    git_root = _find_git_root(repo_path)
+    if git_root is None:
+        return False
+
+    hook_path = git_root / ".git" / "hooks" / "pre-push"
+    hook_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if hook_path.exists():
+        existing = hook_path.read_text()
+        if "bicameral" in existing:
+            return False  # already present
+        hook_path.write_text(existing.rstrip("\n") + "\n" + _GIT_PRE_PUSH_HOOK)
+    else:
+        hook_path.write_text(_GIT_PRE_PUSH_HOOK)
+
+    hook_path.chmod(0o755)
+    return True
+
+
+# Authoritative list of bicameral MCP tools the wizard offers to
+# pre-approve at install time. Excludes bicameral_reset (destructive —
+# always prompts) and extract_symbols (no longer exposed as an MCP tool).
+_BICAMERAL_ALLOW_TOOLS: list[str] = sorted(
+    [
+        "mcp__bicameral__bicameral_bind",
+        "mcp__bicameral__bicameral_dashboard",
+        "mcp__bicameral__bicameral_feedback",
+        "mcp__bicameral__bicameral_history",
+        "mcp__bicameral__bicameral_ingest",
+        "mcp__bicameral__bicameral_judge_gaps",
+        "mcp__bicameral__bicameral_link_commit",
+        "mcp__bicameral__bicameral_preflight",
+        "mcp__bicameral__bicameral_ratify",
+        "mcp__bicameral__bicameral_resolve_collision",
+        "mcp__bicameral__bicameral_resolve_compliance",
+        "mcp__bicameral__bicameral_skill_begin",
+        "mcp__bicameral__bicameral_skill_end",
+        "mcp__bicameral__bicameral_update",
+        "mcp__bicameral__bicameral_usage_summary",
+        "mcp__bicameral__get_neighbors",
+        "mcp__bicameral__validate_symbols",
+    ]
+)
+_BICAMERAL_DENY_TOOLS: list[str] = ["mcp__bicameral__bicameral_reset"]
+
+
+def _confirm_permissions_diff(
+    settings_path: Path, new_allow: list[str], new_deny: list[str]
+) -> bool:
+    """Show the diff that would be written and ask y/N.
+
+    Non-interactive runs (CI, scripted setup) auto-approve. Interactive
+    runs default to "no" — explicit consent is required to write the
+    allowlist, since it persists across every Claude Code session on the
+    machine.
+    """
+    print()
+    print("  Pre-approve bicameral MCP tools — about to write:")
+    print(f"    {settings_path}")
+    print()
+    print("    permissions.allow += [")
+    for t in new_allow:
+        print(f'        "{t}",')
+    print("    ]")
+    if new_deny:
+        print("    permissions.deny += [")
+        for t in new_deny:
+            print(f'        "{t}",')
+        print("    ]")
+    print()
+    print("  Only the bicameral MCP tools above are pre-approved.")
+    print("  Bash, Edit, Write, and every non-bicameral tool still prompt")
+    print("  for permission every time — this wizard does not auto-approve")
+    print("  any shell call or file write.")
+    print()
+    print("  This writes to your *user-level* ~/.claude/settings.json —")
+    print("  the project .claude/settings.json is never touched, and you")
+    print("  can revoke any line by editing the file above.")
+    print()
+
+    if not _is_interactive():
+        return True
+
+    raw = input("  Pre-approve these bicameral MCP tools? [y/N] ").strip().lower()
+    return raw in ("y", "yes")
+
+
+def _install_user_permissions_allowlist() -> bool:
+    """Pre-approve bicameral MCP tools in ~/.claude/settings.json.
+
+    Implements §1 of the v0 productization plan — moves the permission
+    friction to install time so catch-up flows (pure-read ledger queries
+    fired from a SessionStart brief) don't pop a prompt for every tool
+    call. The user explicitly consents once; after that, only writes
+    (Bash, Edit, Write) prompt.
+
+    Scope discipline:
+      - User-level only. Never writes to project .claude/settings.json —
+        that file gets committed and dragging permission state into the
+        repo pollutes every clone.
+      - Bicameral MCP tools only. No Bash, no Read/Grep/Glob, no
+        non-bicameral tools. Shell calls keep their per-invocation
+        permission prompt.
+      - bicameral_reset is deny-listed, not allow-listed. It wipes the
+        ledger and must always prompt.
+
+    Idempotent — re-running adds only entries the user is missing.
+    Returns True if anything was written.
+    """
+    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: dict = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            existing = {}
+
+    permissions = existing.setdefault("permissions", {})
+    allow_list = permissions.get("allow")
+    if not isinstance(allow_list, list):
+        allow_list = []
+        permissions["allow"] = allow_list
+    deny_list = permissions.get("deny")
+    if not isinstance(deny_list, list):
+        deny_list = []
+        permissions["deny"] = deny_list
+
+    new_allow = [t for t in _BICAMERAL_ALLOW_TOOLS if t not in allow_list]
+    new_deny = [t for t in _BICAMERAL_DENY_TOOLS if t not in deny_list]
+    if not new_allow and not new_deny:
+        print("  Permissions: bicameral MCP tools already pre-approved — no change")
+        return False
+
+    if not _confirm_permissions_diff(settings_path, new_allow, new_deny):
+        print("  Permissions: skipped — settings.json untouched")
+        return False
+
+    allow_list.extend(new_allow)
+    deny_list.extend(new_deny)
+    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    print(f"  Permissions: pre-approved {len(new_allow)} bicameral MCP tool(s) in {settings_path}")
+    if new_deny:
+        print(
+            f"               deny-listed {len(new_deny)} destructive tool(s) "
+            "(reset will always prompt)"
+        )
+    return True
+
+
 def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
     skills_src = Path(__file__).parent / "skills"
     if not skills_src.exists():
+        print(f"  WARNING: skill source not found at {skills_src}")
+        print("  Skills were not installed. The wheel may have been built without skills/.")
+        print("  Re-install bicameral-mcp from a recent release, or report this bug.")
         return 0
 
     skills_dst = repo_path / ".claude" / "skills"
@@ -694,19 +985,36 @@ def _write_collaboration_config(
     guided: bool = False,
     telemetry: bool = False,
 ) -> None:
-    """Write .bicameral/config.yaml with collaboration mode, guided-mode, and telemetry flags."""
+    """Write .bicameral/config.yaml with collaboration mode, guided-mode, telemetry,
+    and signer-email fallback flags.
+
+    `signer_email_fallback` (#200 Phase 2) defaults to `local-part-only` —
+    privacy-positive: preserves attribution prefix on session-originated
+    ingests without leaking the full git user.email to the ledger / team-
+    mode JSONL substrate. Modes: `redact` (strongest, no attribution),
+    `local-part-only` (default), `full` (legacy verbatim email).
+    """
     config_path = data_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         "# Bicameral configuration\n"
         f"mode: {mode}\n"
         f"guided: {'true' if guided else 'false'}\n"
-        f"telemetry: {'true' if telemetry else 'false'}\n",
+        f"telemetry: {'true' if telemetry else 'false'}\n"
+        "signer_email_fallback: local-part-only\n"
+        "render_source_attribution: redacted\n",  # #209: privacy-positive default (was "full")
         encoding="utf-8",
     )
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
+    print("  Signer-email fallback: local-part-only (privacy-positive default)")
+    print(
+        "  Source-attribution rendering: redacted (privacy-positive default — "
+        "names + dates replaced with placeholders; flip to `full` or `hidden` "
+        "in config.yaml to change)"
+    )
+    print("  Preflight bypass tracking: enabled (writes ~/.bicameral/preflight_events.jsonl)")
 
 
 def _patch_gitignore(path: Path, entries: list[str], comment: str) -> None:
@@ -783,8 +1091,19 @@ def _ensure_gitignore(
         print(f"  Updated {repo_path}/.gitignore — .bicameral/ fully ignored (history in parent)")
 
 
-def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> int:
-    """Run the interactive setup wizard."""
+def run_setup(
+    repo_hint: str | None = None,
+    history_hint: str | None = None,
+    *,
+    with_push_hook: bool = False,
+) -> int:
+    """Run the interactive setup wizard.
+
+    ``with_push_hook`` (#48): when True, additionally install a
+    ``.git/hooks/pre-push`` that surfaces drift warnings via
+    ``bicameral-mcp branch-scan`` before push completes. Idempotent.
+    """
+    _ensure_utf8_stdout()
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Setup                   │")
@@ -806,11 +1125,11 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     agents = _select_agents()
 
     # Step 3: Runner check
-    command, _ = _detect_runner()
-    if command not in ("bicameral-mcp",):
-        print("\n  Note: bicameral-mcp binary not found on PATH.")
-        print(f"  Using '{command} -m bicameral_mcp' as runner.")
-        print("  Install for a cleaner setup: pip install bicameral-mcp")
+    try:
+        _detect_runner()
+    except RunnerNotFoundError as e:
+        print(f"\n  ERROR: {e}")
+        return 1
 
     # Step 4: Collaboration mode + guided intensity + telemetry + gitignore
     collab_mode = _select_collaboration_mode()
@@ -833,12 +1152,15 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
     # Step 6: Install skills + hooks (Claude Code only)
     if "claude" in agents:
         num_skills = _install_skills(repo_path)
-        if num_skills:
-            print(f"  Claude Code: installed {num_skills} slash commands")
+        print(f"  Claude Code: installed {num_skills} skill(s) at {repo_path}/.claude/skills/")
         if _install_claude_hooks(repo_path):
             print(
                 "  Claude Code: installed hooks → link_commit on commit · capture-corrections on session end"
             )
+        # Step 6b — pre-approve bicameral MCP tools at user-level so
+        # catch-up flows do not spam the user with permission prompts.
+        # Only bicameral MCP tools; shell calls remain prompted.
+        _install_user_permissions_allowlist()
 
     # Step 7: Git post-commit hook (Guided mode only)
     if guided:
@@ -848,6 +1170,13 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
             )
         else:
             print("  Git: post-commit hook already present — skipped")
+
+    # Step 7b: Git pre-push hook (#48 — opt-in via --with-push-hook flag)
+    if with_push_hook:
+        if _install_git_pre_push_hook(repo_path):
+            print("  Git: installed pre-push hook → bicameral-mcp branch-scan before every push")
+        else:
+            print("  Git: pre-push hook already present — skipped")
 
     # Summary
     agent_names = ", ".join(AGENTS[a]["name"] for a in agents)
@@ -859,11 +1188,11 @@ def run_setup(repo_hint: str | None = None, history_hint: str | None = None) -> 
 
     if "claude" in agents:
         print("  Claude Code slash commands:")
-        print("    /bicameral:ingest     — ingest a transcript, Slack thread, or PRD")
-        print("    /bicameral:preflight  — pre-flight: surface decisions before coding")
-        print("    /bicameral:history    — list all tracked decisions by feature area")
-        print("    /bicameral:dashboard  — open live decision dashboard in browser")
-        print("    /bicameral:reset      — nuke and replay the ledger (emergency)")
+        print("    /bicameral-ingest     — ingest a transcript, Slack thread, or PRD")
+        print("    /bicameral-preflight  — pre-flight: surface decisions before coding")
+        print("    /bicameral-history    — list all tracked decisions by feature area")
+        print("    /bicameral-dashboard  — open live decision dashboard in browser")
+        print("    /bicameral-reset      — nuke and replay the ledger (emergency)")
         print()
 
     print("  Or just ask naturally:")
@@ -889,6 +1218,7 @@ def run_config_wizard() -> int:
     except ImportError:
         import json as yaml  # fallback: won't write yaml but will read
 
+    _ensure_utf8_stdout()
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Config                  │")
@@ -1030,6 +1360,7 @@ def run_reset_wizard() -> int:
 
     import questionary
 
+    _ensure_utf8_stdout()
     print()
     print("  ┌─────────────────────────────────────────┐")
     print("  │  Bicameral MCP — Reset                   │")

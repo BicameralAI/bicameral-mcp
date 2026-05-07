@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .client import LedgerClient
 from .queries import (
+    create_code_region,
     decision_exists,
     find_subject_identities_for_decision,
     get_all_decisions,
@@ -23,8 +24,8 @@ from .queries import (
     get_decisions_for_file,
     get_decisions_for_files,
     get_pending_decisions_with_regions,
+    get_region_metadata,
     get_regions_for_files,
-    get_regions_with_ephemeral_verdicts,
     get_regions_without_hash,
     get_source_cursor,
     get_sync_state,
@@ -36,14 +37,17 @@ from .queries import (
     promote_ephemeral_verdict,
     relate_binds_to,
     relate_has_identity,
+    relate_has_version,
     relate_locates,
     relate_supersedes,
     relate_yields,
     search_by_bm25,
+    update_binds_to_region,
     update_decision_status,
     update_region_hash,
     upsert_code_region,
     upsert_code_subject,
+    upsert_compliance_check,
     upsert_decision,
     upsert_input_span,
     upsert_source_cursor,
@@ -51,6 +55,8 @@ from .queries import (
     upsert_symbol,
     upsert_sync_state,
     upsert_vocab_cache,
+    write_identity_supersedes,
+    write_subject_version,
 )
 from .schema import DestructiveMigrationRequired, init_schema, migrate
 from .status import (
@@ -284,7 +290,12 @@ class SurrealDBLedgerAdapter:
         )
 
     async def upsert_subject_identity(self, identity) -> str:
-        """Persist a ``codegenome.adapter.SubjectIdentity`` and return its id."""
+        """Persist a ``codegenome.adapter.SubjectIdentity`` and return its id.
+
+        ``neighbors_at_bind`` (v12, Phase 3 / #60) is forwarded when set on
+        the dataclass; existing identities written before v12 don't carry
+        the field and persist as ``NONE``.
+        """
         await self._ensure_connected()
         return await upsert_subject_identity(
             self._client,
@@ -296,6 +307,7 @@ class SurrealDBLedgerAdapter:
             content_hash=identity.content_hash,
             confidence=identity.confidence,
             model_version=identity.model_version,
+            neighbors_at_bind=getattr(identity, "neighbors_at_bind", None),
         )
 
     async def relate_has_identity(
@@ -316,15 +328,31 @@ class SurrealDBLedgerAdapter:
         self,
         decision_id: str,
         code_subject_id: str,
+        region_id: str | None = None,
         confidence: float = 0.8,
     ) -> None:
+        """decision → about → code_subject. Pass ``region_id`` to preserve
+        the originating region on the edge (PR #73 review:
+        link_decision_to_subject must carry per-region disambiguation
+        so multi-region decisions don't flatten subjects across regions).
+        """
         await self._ensure_connected()
         await link_decision_to_subject(
             self._client,
             decision_id,
             code_subject_id,
+            region_id=region_id,
             confidence=confidence,
         )
+
+    async def get_region_metadata(self, region_id: str) -> dict | None:
+        """Phase 3 (#60) — load span + linked-identity kind for a region.
+
+        See ``ledger.queries.get_region_metadata``. Returns ``None`` if
+        the region doesn't exist.
+        """
+        await self._ensure_connected()
+        return await get_region_metadata(self._client, region_id)
 
     async def find_subject_identities_for_decision(
         self,
@@ -332,6 +360,128 @@ class SurrealDBLedgerAdapter:
     ) -> list[dict]:
         await self._ensure_connected()
         return await find_subject_identities_for_decision(self._client, decision_id)
+
+    # ── Phase 3 (#60) — continuity write path ─────────────────────────
+
+    async def upsert_code_region(
+        self,
+        file_path: str,
+        symbol_name: str,
+        start_line: int,
+        end_line: int,
+        purpose: str = "",
+        repo: str = "",
+        content_hash: str = "",
+    ) -> str:
+        """Always create a NEW ``code_region`` row, return its id.
+
+        Phase 3 (#60) continuity-resolution wrapper. PR #73 review
+        (CodeRabbit MAJOR ledger/adapter.py:365): the prior implementation
+        delegated to ``queries.upsert_code_region`` which keys on
+        ``(file_path, symbol_name)`` and silently reused IDs across
+        same-file moves. That broke the redirect contract — when a
+        symbol moved within the same file, ``update_binds_to_region``
+        couldn't tell old from new because both resolved to the same
+        region id and the old span was overwritten in place.
+
+        This wrapper now calls ``create_code_region`` (create-only) so
+        every continuity redirect targets a distinct new id.
+
+        Existing direct callers (``bind_decision``, ``ingest_payload``)
+        still call ``upsert_code_region`` from the queries module
+        directly when upsert semantics are appropriate; this adapter
+        method is the continuity-flow entry point only.
+
+        Method name retained for caller stability — the name describes
+        the role in the larger flow ("ensure a region exists for the
+        new bind target"), not the underlying CRUD verb.
+        """
+        await self._ensure_connected()
+        return await create_code_region(
+            self._client,
+            file_path=file_path,
+            symbol_name=symbol_name,
+            start_line=start_line,
+            end_line=end_line,
+            purpose=purpose,
+            repo=repo,
+            content_hash=content_hash,
+        )
+
+    async def update_binds_to_region(
+        self,
+        decision_id: str,
+        old_region_id: str,
+        new_region_id: str,
+        confidence: float = 0.85,
+    ) -> None:
+        await self._ensure_connected()
+        await update_binds_to_region(
+            self._client,
+            decision_id,
+            old_region_id,
+            new_region_id,
+            confidence=confidence,
+        )
+
+    async def write_identity_supersedes(
+        self,
+        old_identity_id: str,
+        new_identity_id: str,
+        change_type: str,
+        confidence: float,
+        evidence_refs: tuple[str, ...] | list[str] = (),
+    ) -> None:
+        await self._ensure_connected()
+        await write_identity_supersedes(
+            self._client,
+            old_identity_id,
+            new_identity_id,
+            change_type,
+            confidence,
+            evidence_refs,
+        )
+
+    async def write_subject_version(
+        self,
+        code_subject_id: str,
+        repo_ref: str,
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        *,
+        symbol_name: str | None = None,
+        symbol_kind: str | None = None,
+        content_hash: str | None = None,
+        signature_hash: str | None = None,
+    ) -> str:
+        await self._ensure_connected()
+        return await write_subject_version(
+            self._client,
+            code_subject_id,
+            repo_ref,
+            file_path,
+            start_line,
+            end_line,
+            symbol_name=symbol_name,
+            symbol_kind=symbol_kind,
+            content_hash=content_hash,
+            signature_hash=signature_hash,
+        )
+
+    async def relate_has_version(
+        self,
+        code_subject_id: str,
+        subject_version_id: str,
+        confidence: float = 0.9,
+    ) -> None:
+        await self._ensure_connected()
+        await relate_has_version(
+            self._client,
+            code_subject_id,
+            subject_version_id,
+            confidence=confidence,
+        )
 
     async def lookup_vocab_cache(
         self,
@@ -418,7 +568,7 @@ class SurrealDBLedgerAdapter:
                     timeout=5,
                 )
                 current_branch = result.stdout.strip() if result.returncode == 0 else ""
-            except (subprocess.TimeoutExpired, FileNotFoundError):
+            except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError):
                 current_branch = ""
             if current_branch and current_branch != "HEAD" and current_branch != authoritative_ref:
                 is_authoritative = False
@@ -464,56 +614,11 @@ class SurrealDBLedgerAdapter:
                 logger.warning(
                     "[link_commit] could not surface pending decisions on already_synced: %s", exc
                 )
-
-            # Repair stale ephemeral hashes on authoritative branches.
-            # A feature-branch bind sets code_region.content_hash = H_branch.
-            # When we return to main without merging, already_synced fires early,
-            # leaving the stale hash and causing decisions to show "reflected" even
-            # though the implementation hasn't landed on main.
-            #
-            # Two-pass approach: pass 1 updates all stale region hashes, pass 2
-            # re-projects status for each unique affected decision (deduped).
-            # get_regions_with_ephemeral_verdicts uses idx_cc_ephemeral to return
-            # only O(M_ephemeral) regions instead of scanning all code_regions.
-            regions_repaired = 0
-            if is_authoritative:
-                try:
-                    stale_regions = await get_regions_with_ephemeral_verdicts(self._client)
-                    # Pass 1: update hashes, collect affected decisions
-                    affected_decisions: dict[str, None] = {}
-                    for region in stale_regions:
-                        region_id = region.get("region_id", "")
-                        fp = region.get("file_path", "")
-                        sl = region.get("start_line", 0)
-                        el = region.get("end_line", 0)
-                        stored_hash = region.get("content_hash", "")
-                        actual_hash = compute_content_hash(fp, sl, el, repo_path, ref=commit_hash)
-                        if not actual_hash or actual_hash == stored_hash:
-                            continue
-                        await update_region_hash(self._client, region_id, actual_hash, commit_hash)
-                        regions_repaired += 1
-                        for decision in region.get("decisions") or []:
-                            if decision is None:
-                                continue
-                            decision_id = str(decision.get("id", ""))
-                            if not decision_id:
-                                continue
-                            _signoff = decision.get("signoff") or {}
-                            if isinstance(_signoff, dict) and _signoff.get("state") == "superseded":
-                                continue
-                            affected_decisions[decision_id] = None
-                    # Pass 2: project status once per unique decision after all hashes are updated
-                    for decision_id in affected_decisions:
-                        projected = await project_decision_status(self._client, decision_id)
-                        await update_decision_status(self._client, decision_id, projected)
-                except Exception as exc:
-                    logger.warning("[link_commit] stale ephemeral hash repair failed: %s", exc)
-
             return {
                 "synced": True,
                 "commit_hash": commit_hash,
                 "reason": "already_synced",
-                "regions_updated": regions_repaired,
+                "regions_updated": 0,
                 "decisions_reflected": 0,
                 "decisions_drifted": 0,
                 "undocumented_symbols": [],
@@ -904,10 +1009,20 @@ class SurrealDBLedgerAdapter:
         """
         await self._ensure_connected()
 
-        repo = payload.get("repo", "")
+        # Issue #67: an empty ``repo`` causes ``resolve_head("")`` to call
+        # ``subprocess.run(cwd=Path("").resolve())`` which silently picks
+        # the test runner's CWD on POSIX (wrong git repo, garbage SHA)
+        # and crashes with WinError 267 on Windows. Fall back through:
+        #   payload.repo  →  ctx.repo_path  →  "" (last resort)
+        # The handler layer (handlers.ingest) already injects ctx.repo_path
+        # into the payload; this is a defensive belt for any other caller
+        # that constructs a payload directly.
+        repo = payload.get("repo", "") or (getattr(ctx, "repo_path", "") if ctx is not None else "")
         commit_hash = payload.get("commit_hash", "")
         authoritative_sha = getattr(ctx, "authoritative_sha", "") if ctx is not None else ""
-        effective_ref = commit_hash or authoritative_sha or resolve_head(repo) or "HEAD"
+        effective_ref = (
+            commit_hash or authoritative_sha or (resolve_head(repo) if repo else None) or "HEAD"
+        )
         decisions_created = 0
         symbols_mapped = 0
         regions_linked = 0
@@ -928,6 +1043,10 @@ class SurrealDBLedgerAdapter:
             feature_group = mapping.get("feature_group") or None
             decision_level = mapping.get("decision_level") or None
             parent_decision_id = mapping.get("parent_decision_id") or None
+            # #109 — optional governance metadata; threaded into the
+            # decision row's ``governance`` flexible-object field. None
+            # leaves the field at the schema default (NONE).
+            governance = mapping.get("governance") or None
 
             # Create input_span node only when verbatim text is available.
             # Per v0.5.0 contract: span.text must be non-empty; the schema
@@ -963,6 +1082,7 @@ class SurrealDBLedgerAdapter:
                 feature_group=feature_group,
                 decision_level=decision_level,
                 parent_decision_id=parent_decision_id,
+                governance=governance,
             )
             decisions_created += 1
 
@@ -1164,6 +1284,44 @@ class SurrealDBLedgerAdapter:
     # Both methods are idempotent so the materializer can replay them
     # safely. Handlers do their own pre-write idempotency / collision
     # checks; the adapter just performs the write and re-projects status.
+
+    async def apply_compliance_verdict_from_event(
+        self,
+        *,
+        decision_id: str,
+        region_id: str,
+        content_hash: str,
+        verdict: str,
+        pinned_commit: str = "",
+        evidence: str = "",
+    ) -> None:
+        """Receiver-side replay of a compliance_check.completed event (#190).
+
+        Called by ``EventMaterializer`` after resolving the cross-author keys
+        (canonical_decision_id → local decision_id; content-addressable region
+        descriptor → local region_id). Idempotent via the existing UNIQUE
+        index on ``(decision_id, region_id, content_hash)`` —
+        ``upsert_compliance_check`` is a no-op if the row already exists.
+
+        Confidence is fixed to ``"high"`` and phase to ``"drift"`` on replay
+        because peer-attested verdicts arrive without the local
+        confidence/phase context. The verdict and explanation are
+        authoritative.
+        """
+        await self._ensure_connected()
+        await upsert_compliance_check(
+            self._client,
+            decision_id=decision_id,
+            region_id=region_id,
+            content_hash=content_hash,
+            verdict=verdict,
+            confidence="high",
+            explanation=evidence,
+            phase="drift",
+            commit_hash=pinned_commit,
+            pruned=(verdict == "not_relevant"),
+            ephemeral=False,
+        )
 
     async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
         """Write a ratify/reject signoff and re-project the decision's status.

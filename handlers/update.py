@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -26,6 +27,28 @@ _RECOMMENDED_VERSION_URL = (
 )
 _CACHE_PATH = os.path.expanduser("~/.bicameral/update-check.json")
 _CACHE_TTL_SECONDS = 3600  # 1 hour
+
+
+def _resolve_install_command(target: str) -> list[str]:
+    """Resolve the installer command for ``target`` (e.g. ``"bicameral-mcp==1.2.3"``).
+
+    Order is deterministic and PATH-driven (no env heuristics):
+      1. ``uv tool install --force <target>`` — preferred. uv ships as a
+         single static binary, has no Python prerequisite, and ``uv tool``
+         is the canonical CLI-app installer in the uv ecosystem.
+      2. ``pipx install <target> --force`` — fallback when uv is absent.
+         Manages its own venv and handles externally-managed-environment
+         restrictions on macOS.
+      3. ``<sys.executable> -m pip install --quiet <target>`` — last-resort
+         path for venv/dev installs where neither uv nor pipx is on PATH.
+
+    (#199)
+    """
+    if shutil.which("uv"):
+        return ["uv", "tool", "install", "--force", target]
+    if shutil.which("pipx"):
+        return ["pipx", "install", target, "--force"]
+    return [sys.executable, "-m", "pip", "install", target, "--quiet"]
 
 
 def _load_cache() -> dict:
@@ -210,8 +233,34 @@ def _reinstall_skills(repo_path: str) -> int:
         return 0
 
 
-async def handle_update(action: str, current_version: str, repo_path: str = "") -> dict:
-    """Handle bicameral.update tool calls."""
+async def handle_update(
+    action: str,
+    current_version: str,
+    repo_path: str = "",
+    *,
+    preflight_id: str | None = None,
+) -> dict:
+    """Handle bicameral.update tool calls.
+
+    The keyword-only ``preflight_id`` is plumbed onto every return dict for
+    parity with the pydantic-model handlers (#65). This is intentionally a
+    smaller blast radius than refactoring update.py to a pydantic response.
+    """
+    # Best-effort engagement telemetry — emit once at entry.
+    try:
+        from preflight_telemetry import telemetry_enabled, write_engagement
+
+        if telemetry_enabled():
+            write_engagement(
+                session_id="unknown",  # update.py is not session-scoped
+                tool="bicameral.update",
+                decision_id=None,
+                preflight_id=preflight_id,
+                file_paths=None,
+            )
+    except Exception:
+        pass
+
     if action == "check":
         recommended = _fetch_recommended_version()
         if not recommended:
@@ -219,42 +268,42 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                 "status": "unknown",
                 "current_version": current_version,
                 "message": "Could not reach version endpoint.",
+                "preflight_id": preflight_id,
             }
         if _parse_version(recommended) <= _parse_version(current_version):
             return {
                 "status": "up_to_date",
                 "current_version": current_version,
                 "recommended_version": recommended,
+                "preflight_id": preflight_id,
             }
         return {
             "status": "update_available",
             "current_version": current_version,
             "recommended_version": recommended,
+            "preflight_id": preflight_id,
         }
 
     if action == "apply":
         recommended = _fetch_recommended_version()
         if not recommended:
-            return {"status": "error", "message": "Could not determine recommended version."}
+            return {
+                "status": "error",
+                "message": "Could not determine recommended version.",
+                "preflight_id": preflight_id,
+            }
 
         if _parse_version(recommended) <= _parse_version(current_version):
             return {
                 "status": "already_up_to_date",
                 "current_version": current_version,
                 "recommended_version": recommended,
+                "preflight_id": preflight_id,
             }
 
         target = f"bicameral-mcp=={recommended}"
         try:
-            # Prefer pipx (the standard install path) — it manages its own venv
-            # and handles externally-managed-environment restrictions on macOS.
-            # Fall back to pip for venv/dev installs.
-            import shutil
-
-            if shutil.which("pipx"):
-                cmd = ["pipx", "install", target, "--force"]
-            else:
-                cmd = [sys.executable, "-m", "pip", "install", target, "--quiet"]
+            cmd = _resolve_install_command(target)
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -295,6 +344,7 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                             f"Upgraded to v{recommended}.{skills_note}{replay_note}"
                             f" Restart the MCP server to use the new version."
                         ),
+                        "preflight_id": preflight_id,
                     }
 
                 migration_error = migration_result.get("error")
@@ -314,15 +364,29 @@ async def handle_update(action: str, current_version: str, repo_path: str = "") 
                         f"Upgraded to v{recommended}.{skills_note} "
                         f"Restart the MCP server to use the new version.{migration_warning}"
                     ),
+                    "preflight_id": preflight_id,
                 }
             else:
                 return {
                     "status": "error",
-                    "message": f"pip install failed: {result.stderr.strip()}",
+                    "message": f"{cmd[0]} install failed: {result.stderr.strip()}",
+                    "preflight_id": preflight_id,
                 }
         except subprocess.TimeoutExpired:
-            return {"status": "error", "message": "pip install timed out after 120s."}
+            return {
+                "status": "error",
+                "message": f"{cmd[0]} install timed out after 120s.",
+                "preflight_id": preflight_id,
+            }
         except Exception as exc:
-            return {"status": "error", "message": str(exc)}
+            return {
+                "status": "error",
+                "message": str(exc),
+                "preflight_id": preflight_id,
+            }
 
-    return {"status": "error", "message": f"Unknown action '{action}'. Use 'check' or 'apply'."}
+    return {
+        "status": "error",
+        "message": f"Unknown action '{action}'. Use 'check' or 'apply'.",
+        "preflight_id": preflight_id,
+    }

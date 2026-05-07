@@ -25,7 +25,7 @@ The fail-safe valve. When the ledger gets polluted — bad ingest, stale groundi
 ## When NOT to fire
 
 - **Never fire automatically.** Reset is always user-initiated.
-- Drift reports that look wrong → run `/bicameral:sync` first, escalate to reset only if that doesn't help.
+- Drift reports that look wrong → run `/bicameral-sync` first, escalate to reset only if that doesn't help.
 - If only one ingest looks bad, suggest re-running that ingest rather than wiping everything.
 
 ## The two-call pattern (always)
@@ -97,8 +97,7 @@ If `wiped=false` with a `replay_errors` entry, the wipe failed before persisting
 
 **At skill start**:
 ```
-bicameral.skill_begin(skill_name="bicameral-reset", session_id=<uuid4>,
-  rationale="<one-liner: e.g. 'user said ledger looks wrong start over'>")
+bicameral.skill_begin(skill_name="bicameral-reset", session_id=<uuid4>)
 ```
 
 **At skill end** (after confirm or after user cancels at dry-run):

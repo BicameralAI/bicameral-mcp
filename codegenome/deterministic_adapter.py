@@ -77,3 +77,39 @@ class DeterministicCodeGenomeAdapter(CodeGenomeAdapter):
             confidence=DEFAULT_CONFIDENCE_V1,
             model_version=MODEL_VERSION_V1,
         )
+
+    def compute_identity_with_neighbors(
+        self,
+        file_path: str,
+        start_line: int,
+        end_line: int,
+        *,
+        code_locator,
+        repo_ref: str = "HEAD",
+    ) -> SubjectIdentity:
+        """Compute identity and capture 1-hop call-graph neighbors.
+
+        Used by Phase 3 (continuity matcher) so the Jaccard signal has a
+        pre-rebase neighbor set to compare against. The locator's
+        ``neighbors_for(file_path, start_line, end_line)`` returns an
+        iterable of neighbor addresses; an empty iterable yields an empty
+        tuple. Passing ``code_locator=None`` is supported for callers
+        without a locator and produces an empty tuple as well.
+        """
+        base = self.compute_identity(file_path, start_line, end_line, repo_ref=repo_ref)
+        if code_locator is None:
+            neighbors: tuple[str, ...] = ()
+        else:
+            raw = code_locator.neighbors_for(file_path, start_line, end_line)
+            neighbors = tuple(sorted(str(n) for n in raw))
+        return SubjectIdentity(
+            address=base.address,
+            identity_type=base.identity_type,
+            structural_signature=base.structural_signature,
+            behavioral_signature=base.behavioral_signature,
+            signature_hash=base.signature_hash,
+            content_hash=base.content_hash,
+            confidence=base.confidence,
+            model_version=base.model_version,
+            neighbors_at_bind=neighbors,
+        )

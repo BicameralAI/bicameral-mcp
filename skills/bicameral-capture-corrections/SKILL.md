@@ -27,8 +27,7 @@ Two modes:
 
 **At skill start** (before any tool calls):
 ```
-bicameral.skill_begin(skill_name="bicameral-capture-corrections", session_id=<uuid4>,
-  rationale="<one-liner: why triggered — e.g. 'SessionEnd hook — scanning full transcript' or 'in-session scan via preflight'>")
+bicameral.skill_begin(skill_name="bicameral-capture-corrections", session_id=<uuid4>)
 ```
 
 **At skill end** (after all work is complete):
@@ -43,11 +42,14 @@ bicameral.skill_end(skill_name="bicameral-capture-corrections", session_id=<stor
     g11_corrections_classified_not: N,
     g11_corrections_dedup_removed: N,
     g11_user_overrode: N,   # ask corrections user declined — labeled precision signal
+    g11_queue_drained: N,   # pending files fully processed and archived (#156 PR B)
+    g11_queue_remaining: N, # pending files left after drain (>0 when cap was hit OR partial processing left files for next preflight)
+    g11_queue_cap_hit: <bool>, # true if accumulated ask-corrections reached 4 mid-drain
   })
 ```
 
 Pass `invocation_mode` as a top-level string kwarg (not inside `diagnostic`):
-- `invocation_mode="auto_ingest"` — fired by SessionEnd hook with `--auto-ingest`
+- `invocation_mode="queue_drain"` — invoked by next-session preflight Step 3.5 / Step 0 to drain `<repo>/.bicameral/pending-transcripts/` (the SessionEnd hook itself is now a queue writer, not a capture-corrections invoker — see #156)
 - `invocation_mode="manual"` — invoked directly by the user
 
 `error_class` values (pass only when `errored=true`): `ledger_empty`, `user_abort`, `other`.
@@ -65,6 +67,30 @@ Set `g11_user_overrode` to `0` (no batch confirmation in in-session mode).
 
 <!-- This section is the authoritative source. bicameral-preflight/SKILL.md
      step 3.5 is derived from it. Keep both in sync. -->
+
+### Step 0 — drain the pending-transcripts queue (#156)
+
+Before scanning the current session's transcript, check `<repo>/.bicameral/pending-transcripts/`. Each `*.jsonl` file there is a transcript from a prior session whose corrections never surfaced (the SessionEnd hook deferred them to next-session triage rather than running an empty `claude -p` subprocess that couldn't see the parent transcript).
+
+For each pending file, in mtime-order (oldest first):
+
+1. Read the file (it's a Claude Code transcript JSONL — same shape as the current session's, just from a prior run).
+2. Apply Steps A/B/C below to the file's user turns. Treat each correction-marker hit as a candidate for ingest, just like the in-session path.
+3. After processing, archive the file by invoking the queue module via the dedicated helper:
+
+   ```
+   python3 scripts/hooks/transcript_archive.py <basename>.jsonl
+   ```
+
+   `<basename>.jsonl` is the filename only (e.g. `abc-1234.jsonl`), not the full path. The helper resolves it to `<repo>/.bicameral/pending-transcripts/<basename>` itself, calls `events.transcript_queue.archive_processed`, and ensures idempotent overwrite + cross-platform behavior. Exit code `0` on success, `2` on usage error (unsafe basename), `1` on missing file.
+
+   Do NOT use raw `mv` shell — it bypasses the queue module's idempotent overwrite semantic and breaks on Windows.
+
+If `<repo>/.bicameral/pending-transcripts/` doesn't exist or is empty, skip Step 0 entirely.
+
+The processed-transcripts folder is kept for audit; v1 has no automatic cleanup. A future team-server config may override retention.
+
+**Why this Step 0 exists**: prior to #156, the canonical `SessionEnd` hook ran `claude -p '/bicameral-capture-corrections --auto-ingest'` which spawned an empty subprocess that couldn't see the parent transcript — corrections silently failed to surface. The new shape defers transcript handling to the next session, where the agent + user are present with full ledger context to confirm or dismiss each correction (matches the in-session path's UX).
 
 ### Step A — cheap pre-filter
 
@@ -129,6 +155,17 @@ re-examine the same turns repeatedly).
 
 ### Steps
 
+**0. Drain the pending-transcripts queue (#156 PR B).**
+Before scanning recent in-session turns, drain the pending-transcripts queue per the canonical "Step 0 — drain the pending-transcripts queue (#156)" rubric above. In in-session mode the drain is bounded:
+
+- Process pending files in mtime-order (oldest first), applying Steps A/B/C to each file's user turns.
+- Track accumulated ask-corrections across all processed files.
+- When accumulated ask-corrections reach 4 (the preflight ≤4-question cap), stop processing further pending files and surface a final note: "N more pending transcript(s) — invoke `/bicameral-capture-corrections` directly to drain manually." Remaining files stay in `.bicameral/pending-transcripts/` for the next preflight.
+- Archive each fully-processed file via `python3 scripts/hooks/transcript_archive.py <basename>.jsonl`. Do NOT archive partially-processed files (the cap was hit mid-scan); the file stays pending and the next preflight resumes from its first un-surfaced correction.
+- If `<repo>/.bicameral/pending-transcripts/` doesn't exist or is empty, skip Step 0 silently — same shape as the canonical rubric's empty path.
+
+The 4-cap is shared with the in-session turn-scan that runs in step 1 below: queue-drained ask-corrections + in-session ask-corrections ≤ 4 total. If the queue alone fills the cap, the in-session turn scan still runs (its mechanical corrections still auto-ingest silently) but its ask-corrections are dropped (not surfaced) to preserve the cap.
+
 **1. Run the canonical rubric** (Steps A → B → C above) on the last ~10
 user messages.
 
@@ -142,7 +179,7 @@ Preflight merges them into its stop-and-ask queue (one question max,
 priority slot 3: after drift, before open questions).
 
 **4. Silent empty path.**
-If no corrections found, return nothing. Preflight continues without any
+If no corrections found (across both the queue drain and the in-session scan), return nothing. Preflight continues without any
 capture-corrections output.
 
 ---
@@ -150,7 +187,7 @@ capture-corrections output.
 ## SessionEnd batch mode
 
 Fires via the `SessionEnd` hook in `.claude/settings.json`. Also invocable
-manually as `/bicameral:capture-corrections`.
+manually as `/bicameral-capture-corrections`.
 
 ### Steps
 
@@ -158,9 +195,13 @@ manually as `/bicameral:capture-corrections`.
 If not present, exit silently — this repo isn't using bicameral.
 
 **2. Determine invocation mode and transcript scope.**
-- If invoked with `--auto-ingest` (by the SessionEnd hook): scan the full
-  session and skip the user confirmation in steps 6-7 — auto-ingest all
-  found corrections immediately without prompting.
+- If invoked via next-session queue drain (Step 0 above, originating from
+  the SessionEnd hook's queue write — see #156): for each pending
+  transcript file, scan its full user turns. Surface findings through the
+  confirmation flow (steps 6-7) so the user reviews each correction with
+  full ledger context — the prior `--auto-ingest` "skip confirmation" path
+  is gone (it was unsafe in a separate-session subprocess that lacked the
+  parent transcript).
 - If invoked manually (no flag): scan the last 20 user turns as a proxy
   for the session and show the confirmation flow.
 
@@ -175,6 +216,8 @@ Exit silently. No output. The empty path is always silent.
 
 **6. Surface corrections via `AskUserQuestion`.**
 Regardless of count, batch into groups of ≤ 4. For each batch call:
+
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g11_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
 
 ```python
 AskUserQuestion({
@@ -238,18 +281,29 @@ gate at the end of every session.
 The SessionEnd hook is installed automatically by `bicameral setup` into the
 user's project `.claude/settings.json`. No manual configuration needed.
 
-Command written by the setup wizard:
+Command written by the setup wizard (post #156):
 ```
-[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 claude -p '/bicameral:capture-corrections --auto-ingest' || true
+[ -d .bicameral ] && [ -z "$BICAMERAL_SESSION_END_RUNNING" ] && BICAMERAL_SESSION_END_RUNNING=1 python3 scripts/hooks/session_end_queue_writer.py || true
 ```
+
+The hook is now a queue writer, not a capture-corrections invoker. It reads
+the SessionEnd JSON envelope from stdin (containing `session_id` and
+`transcript_path`), copies the transcript into
+`<repo>/.bicameral/pending-transcripts/<session_id>.jsonl`, and exits.
+Capture-corrections runs in the *next* session via Step 0 of this skill (or
+preflight Step 3.5), where the agent has full ledger context to surface each
+correction through the user-facing confirmation flow.
 
 Two guards:
 - `.bicameral` directory check — keeps it silent in repos that don't use bicameral.
-- `BICAMERAL_SESSION_END_RUNNING` env var — the child `claude -p` process inherits
-  the env var, so when it terminates and fires its own SessionEnd hook, the guard
-  sees the var is set and exits immediately. Prevents infinite recursion.
+- `BICAMERAL_SESSION_END_RUNNING` env var — defense-in-depth re-entrancy guard
+  preserved from the prior shape; the new hook does not spawn a subprocess so
+  recursion is no longer the threat, but the guard remains in case a parent
+  shell loops on SessionEnd events.
 
-`--auto-ingest` skips the interactive Y/n confirmation (non-interactive invocation).
+The prior shape (`claude -p '/bicameral-capture-corrections --auto-ingest'`)
+spawned an empty subprocess that couldn't see the parent transcript — corrections
+silently failed to surface. #156 replaces it with the queue-write pattern above.
 
 ---
 

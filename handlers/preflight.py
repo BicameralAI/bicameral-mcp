@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -41,6 +42,11 @@ from contracts import (
 )
 from handlers.action_hints import generate_hints_from_findings
 from handlers.analysis import _to_brief_decision
+from preflight_telemetry import (
+    new_preflight_id,
+    telemetry_enabled,
+    write_preflight_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +65,58 @@ _PRODUCT_STAGE_MSG = (
     "Always keep bicameral-mcp up to date (`bicameral.update`) for the fastest experience."
 )
 _ONBOARDED_MARKER = Path.home() / ".bicameral" / "onboarded"
+
+
+# #200 Phase 3 / #209 refinement: render_source_attribution policy patterns.
+# The redacted mode preserves structural shape (so the operator can see
+# "this is from a meeting on a date" without seeing who or when) while
+# leaving capitalized context tokens (Sprint, Linear, GitHub, etc.) intact.
+#
+# v1 used a broad `\b[A-Z][a-z]+\b` that redacted every capitalized lowercase
+# token — including platform/tool names — and broke the agent's structural
+# parsing of source_refs (#209). v2 uses four POSITIONAL-cue patterns: a name
+# only matches when it follows an explicit cue (`· `, `, ` adjacent to a date,
+# `^Speaker:\s`, `^From:\s`). Context tokens never follow these cues by
+# construction, so no allowlist is needed.
+_DATE_PATTERN = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_NAME_AFTER_BULLET = re.compile(r"(?<=· )[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*")
+_NAME_AFTER_COMMA = re.compile(
+    r"(?<=, )[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*(?=,?\s+\d{4}-\d{2}-\d{2})"
+)
+_SPEAKER_NAME = re.compile(r"(?<=^Speaker:\s)[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*", re.MULTILINE)
+_FROM_NAME = re.compile(r"(?<=^From:\s)[A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)*", re.MULTILINE)
+
+
+def _apply_attribution_policy(matches: list, mode: str) -> list:
+    """Apply `render_source_attribution` policy to DecisionMatch.source_ref.
+
+    Modes (from `.bicameral/config.yaml: render_source_attribution`):
+      - `full`: pass through verbatim (legacy)
+      - `redacted` (default since #209): replace name + date patterns with
+        placeholders. Names match only after explicit positional cues (`· `,
+        `, ` adjacent to a date, `Speaker:`, `From:`); context tokens like
+        Sprint/Linear/GitHub survive because they never follow these cues.
+      - `hidden`: blank source_ref entirely
+
+    Returns a new list of DecisionMatch instances (Pydantic copies via
+    model_copy) with source_ref transformed; never mutates the inputs.
+    The function is pure: same inputs → same outputs, no I/O, no state.
+    """
+    if mode == "full":
+        return matches
+    transformed = []
+    for m in matches:
+        if mode == "hidden":
+            new_source_ref = ""
+        else:  # redacted
+            redacted = _DATE_PATTERN.sub("<DATE_REDACTED>", m.source_ref)
+            redacted = _NAME_AFTER_BULLET.sub("<NAME_REDACTED>", redacted)
+            redacted = _NAME_AFTER_COMMA.sub("<NAME_REDACTED>", redacted)
+            redacted = _SPEAKER_NAME.sub("<NAME_REDACTED>", redacted)
+            redacted = _FROM_NAME.sub("<NAME_REDACTED>", redacted)
+            new_source_ref = redacted
+        transformed.append(m.model_copy(update={"source_ref": new_source_ref}))
+    return transformed
 
 
 def _should_show_product_stage() -> bool:
@@ -340,6 +398,11 @@ async def handle_preflight(
     """Pre-flight context check. Gates output by ``ctx.guided_mode``."""
     guided_mode = bool(getattr(ctx, "guided_mode", False))
 
+    # #65 — generate the per-call preflight_id once, when telemetry is enabled.
+    # Stable across the preflight → downstream-tool engagement chain.
+    pid: str | None = new_preflight_id() if telemetry_enabled() else None
+    session_id = str(getattr(ctx, "session_id", "unknown") or "unknown")
+
     # Explicit mute via env var — one-line off-switch for the session.
     if os.getenv("BICAMERAL_PREFLIGHT_MUTE", "").strip().lower() in (
         "1",
@@ -347,21 +410,43 @@ async def handle_preflight(
         "yes",
         "on",
     ):
+        if pid is not None:
+            write_preflight_event(
+                session_id=session_id,
+                preflight_id=pid,
+                topic=topic,
+                file_paths=file_paths or [],
+                fired=False,
+                surfaced_ids=[],
+                reason="preflight_disabled",
+            )
         return PreflightResponse(
             topic=topic,
             fired=False,
             reason="preflight_disabled",
             guided_mode=guided_mode,
+            preflight_id=pid,
         )
 
     # Per-session dedup — same topic within 5 min is silenced.
     if _check_dedup(ctx, topic):
         logger.debug("[preflight] dedup hit for topic: %r", topic[:60])
+        if pid is not None:
+            write_preflight_event(
+                session_id=session_id,
+                preflight_id=pid,
+                topic=topic,
+                file_paths=file_paths or [],
+                fired=False,
+                surfaced_ids=[],
+                reason="recently_checked",
+            )
         return PreflightResponse(
             topic=topic,
             fired=False,
             reason="recently_checked",
             guided_mode=guided_mode,
+            preflight_id=pid,
         )
 
     # V1 A3: time the call locally so the metric reflects THIS handler's catch-up.
@@ -390,6 +475,15 @@ async def handle_preflight(
                     sources_chained.append("graph")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
+
+    # #200 Phase 3: apply render_source_attribution policy server-side.
+    # Default `redacted` strips name + date patterns from source_ref so
+    # attribution detail doesn't leak into shared screens / pair sessions.
+    # Mode read from `.bicameral/config.yaml: render_source_attribution`
+    # at config load via context.py.
+    region_matches = _apply_attribution_policy(
+        region_matches, getattr(ctx, "render_source_attribution", "redacted")
+    )
 
     decisions = [_to_brief_decision(m) for m in region_matches]
     drift_candidates = [_to_brief_decision(m) for m in region_matches if m.status == "drifted"]
@@ -432,7 +526,7 @@ async def handle_preflight(
     fired = bool(region_matches or unresolved_collisions or context_pending_ready or guided_mode)
     action_hints = generate_hints_from_findings([], drift_candidates, [], guided_mode)
 
-    return PreflightResponse(
+    response = PreflightResponse(
         topic=topic,
         fired=fired,
         reason="fired" if fired else "no_matches",  # type: ignore[arg-type]
@@ -447,4 +541,30 @@ async def handle_preflight(
         context_pending_ready=context_pending_ready,
         sync_metrics=sync_metrics,
         product_stage=_PRODUCT_STAGE_MSG if _should_show_product_stage() else None,
+        preflight_id=pid,
     )
+
+    # #65 — capture-loop event. surfaced_ids is the union of decision_ids the
+    # response is steering the agent toward, used for triage joins.
+    if pid is not None:
+        surfaced_ids: list[str] = []
+        for d in decisions:
+            if d.decision_id:
+                surfaced_ids.append(d.decision_id)
+        for d in unresolved_collisions:
+            if d.decision_id and d.decision_id not in surfaced_ids:
+                surfaced_ids.append(d.decision_id)
+        for d in context_pending_ready:
+            if d.decision_id and d.decision_id not in surfaced_ids:
+                surfaced_ids.append(d.decision_id)
+        write_preflight_event(
+            session_id=session_id,
+            preflight_id=pid,
+            topic=topic,
+            file_paths=file_paths or [],
+            fired=fired,
+            surfaced_ids=surfaced_ids,
+            reason=response.reason,
+        )
+
+    return response

@@ -10,23 +10,45 @@ negatives on drift/grounding", pinned to some_module.py. The preflight topic is
 description, so ledger keyword search returns nothing. The caller passes
 file_paths=["some_module.py"]; the region-anchored arm looks up the pinned
 decision and surfaces it.
+
+Status (issue #69): the helpers ``_merge_decision_matches`` and
+``_region_anchored_preflight`` were removed in commit 12f25eb
+("v0.10.0 — hierarchical dashboard, history-based preflight, per-section
+ingest"). The preflight refactor dropped BM25 topic search entirely;
+preflight now reads ``bicameral.history()`` and uses LLM reasoning to
+identify relevant feature groups. The contracts these tests exercised
+no longer exist.
+
+The file is kept for git archaeology (the scenarios documented here
+informed the redesign) but is skipped at collection time so it doesn't
+break ``pytest`` runs. If/when an equivalent retrieval contract is
+introduced, port the relevant test bodies to exercise the new public
+API instead.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
 
-from contracts import (
+pytest.skip(
+    "Tests cover preflight contracts removed in 12f25eb (v0.10.0 — "
+    "BM25 topic search dropped; preflight now reads history()). "
+    "Kept for archaeology; rewrite against the new API if needed. "
+    "See issue #69.",
+    allow_module_level=True,
+)
+
+# Imports below intentionally retained but unreachable — they document the
+# original test file's surface area for future port-forward work.
+from types import SimpleNamespace  # noqa: E402, F401
+from unittest.mock import AsyncMock, MagicMock, patch  # noqa: E402, F401
+
+from contracts import (  # noqa: E402, F401
     DecisionMatch,
     LinkCommitResponse,
     SearchDecisionsResponse,
 )
-from handlers.preflight import (
-    _merge_decision_matches,
-    _region_anchored_preflight,
+from handlers.preflight import (  # noqa: E402, F401
     handle_preflight,
 )
 

@@ -1,6 +1,6 @@
 ---
 name: bicameral-update
-description: Check for and apply a new bicameral-mcp binary release. Upgrades the pip package, reinstalls skills and Claude hooks. NOTHING to do with git commits or ledger sync — those are handled by /bicameral:sync. Trigger on any user request containing "update", "upgrade", "new version", "latest version", or "install update".
+description: Check for and apply a new bicameral-mcp binary release. Upgrades the installed package (uv preferred, pipx fallback, pip last-resort), reinstalls skills and Claude hooks. NOTHING to do with git commits or ledger sync — those are handled by /bicameral-sync. Trigger on any user request containing "update", "upgrade", "new version", "latest version", or "install update".
 ---
 
 # Bicameral Update
@@ -8,14 +8,13 @@ description: Check for and apply a new bicameral-mcp binary release. Upgrades th
 Check for a new `bicameral-mcp` release and apply it.
 
 **This skill is about upgrading the installed binary.** It has nothing to do
-with git commits, ledger sync, or compliance checks — those are `/bicameral:sync`.
+with git commits, ledger sync, or compliance checks — those are `/bicameral-sync`.
 
 ## Telemetry
 
 **At skill start**:
 ```
-bicameral.skill_begin(skill_name="bicameral-update", session_id=<uuid4>,
-  rationale="<one-liner: e.g. 'user asked to update to latest version'>")
+bicameral.skill_begin(skill_name="bicameral-update", session_id=<uuid4>)
 ```
 
 **At skill end**:
@@ -50,7 +49,7 @@ bicameral.update(action="apply", current_version=<SERVER_VERSION>)
 ```
 
 The server will:
-1. `pip install bicameral-mcp=={recommended_version}`
+1. Reinstall the package at `=={recommended_version}`. The installer is resolved in priority order: `uv tool install --force` if `uv` is on PATH, else `pipx install --force` if `pipx` is on PATH, else `pip install` as a venv/dev fallback. The chosen path is reported in error messages.
 2. Reinstall skills into `.claude/skills/`
 3. Reinstall Claude hooks in `.claude/settings.json`
 4. Install git post-commit hook (Guided mode only)

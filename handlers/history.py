@@ -160,6 +160,10 @@ def _row_to_history_decision(
         signoff=signoff,
         decision_level=row.get("decision_level") or None,
         parent_decision_id=row.get("parent_decision_id") or None,
+        # #109 — surface governance metadata when present on the row.
+        # Pre-v15 rows carry None and fall back to derived defaults at
+        # the engine evaluation layer, not here.
+        governance=row.get("governance") or None,
     )
 
 
@@ -189,6 +193,7 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
                 feature_group,
                 decision_level,
                 parent_decision_id,
+                governance,
                 source_type,
                 source_ref,
                 meeting_date,

@@ -145,6 +145,54 @@ class EventMaterializer:
                             session_id=payload.get("session_id", ""),
                         )
                         replayed += 1
+                    elif etype == "compliance_check.completed":
+                        # #190: receiver re-applies the verdict by resolving
+                        # the cross-author key (canonical_decision_id +
+                        # content-addressable region descriptor) to local row
+                        # ids. Idempotent on the receiver via the existing
+                        # UNIQUE index on (decision_id, region_id, content_hash).
+                        from ledger.queries import (
+                            find_code_region_by_content,
+                            find_decision_by_canonical_id,
+                        )
+
+                        local_decision_id = await find_decision_by_canonical_id(
+                            inner_adapter._client,
+                            payload.get("canonical_decision_id", ""),
+                        )
+                        if local_decision_id is None:
+                            logger.warning(
+                                "[materializer] skipping compliance_check.completed — "
+                                "canonical_decision_id %r not found locally",
+                                payload.get("canonical_decision_id"),
+                            )
+                            continue
+                        region = payload.get("region") or {}
+                        local_region_id = await find_code_region_by_content(
+                            inner_adapter._client,
+                            repo=region.get("repo", ""),
+                            file_path=region.get("file_path", ""),
+                            symbol_name=region.get("symbol_name", ""),
+                            content_hash=region.get("content_hash", ""),
+                        )
+                        if local_region_id is None:
+                            logger.warning(
+                                "[materializer] skipping compliance_check.completed — "
+                                "region (%s::%s @ %s) not yet materialized locally",
+                                region.get("file_path"),
+                                region.get("symbol_name"),
+                                str(region.get("content_hash", ""))[:12],
+                            )
+                            continue
+                        await inner_adapter.apply_compliance_verdict_from_event(
+                            decision_id=local_decision_id,
+                            region_id=local_region_id,
+                            content_hash=region.get("content_hash", ""),
+                            verdict=payload.get("verdict", ""),
+                            pinned_commit=payload.get("pinned_commit", ""),
+                            evidence=payload.get("evidence", ""),
+                        )
+                        replayed += 1
                 new_offsets[author] = f.tell()
 
         if new_offsets != offsets:

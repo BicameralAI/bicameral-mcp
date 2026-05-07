@@ -43,14 +43,21 @@ MCP_CONFIG_TEMPLATE = E2E_ROOT / "bicameral.mcp.json"
 RESULTS_DIR = pathlib.Path(__file__).resolve().parents[2] / "test-results" / "e2e"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Wall-clock cap for a single `claude -p` flow invocation. Was 300s; CI
-# repeatedly tripped that limit on Flow 2 (the longest flow — chained
-# preflight → ingest(agent_session) → resolve_collision sequence after the
-# #154 hook landed). Last clean dev-branch Flow 2 measured 289.7s — only
-# ~3% headroom on the old cap. Bumped to 600s to give the post-hook
-# sequence plenty of margin without inflating the recording job's wall
-# beyond what GitHub Actions tolerates.
-CLAUDE_SESSION_TIMEOUT_S = 600
+# Wall-clock cap for a single `claude -p` flow invocation.
+#
+# History:
+#   - 300s: original cap. CI tripped it repeatedly on Flow 2 after #154's
+#     PostToolUse hook added the chained preflight → ingest(agent_session)
+#     → resolve_collision sequence.
+#   - 600s: bumped from 300s. Last clean dev-branch Flow 2 measured 289.7s
+#     against the 300s cap — only ~3% headroom — so 600s gave the post-hook
+#     sequence what looked like plenty of margin.
+#   - 900s: bumped from 600s after PR #181 run 25377562963 hit a 600s
+#     timeout on Flow 2. Root cause: #175 (AskUserQuestion disambiguation
+#     gate at preflight Step 5.6.1) added turns to Flow 2's chain that
+#     weren't in the 600s baseline. Same age-out pattern as the 300→600
+#     bump. 50% headroom over observed runtime.
+CLAUDE_SESSION_TIMEOUT_S = 900
 
 # Persistent ledger shared across the 5 flow sessions in a single run, wiped
 # at the start of each run so flow-1 seeds → flow-2 refines → flow-3 reflects
@@ -89,6 +96,7 @@ sys.path.insert(0, str(E2E_ROOT))
 # isort: off
 from _harness_setup import (  # noqa: E402,I001  # path tweak above
     bootstrap_bicameral_dir as _bootstrap_helper,
+    clean_claude_memory_for_repo as _clean_claude_memory_helper,
     clean_ledger as _clean_ledger_helper,
     materialize_mcp_config,
     materialize_settings_with_hooks,
@@ -102,6 +110,10 @@ _MCP_ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 def _clean_ledger() -> None:
     _clean_ledger_helper(LEDGER_DIR)
+
+
+def _clean_claude_memory() -> None:
+    _clean_claude_memory_helper(DESKTOP_REPO_PATH)
 
 
 def _reset_desktop_repo() -> None:
@@ -120,7 +132,6 @@ MCP_CONFIG_PATH = materialize_mcp_config(
 )
 SETTINGS_PATH = materialize_settings_with_hooks(
     out_dir=RESULTS_DIR,
-    mcp_config_path=MCP_CONFIG_PATH,
     mcp_root=_MCP_ROOT,
 )
 
@@ -643,6 +654,7 @@ _COMMIT_HISTORY_AREA_PATHS: tuple[str, ...] = (
     "/git/reorder.ts",
     "/git/squash.ts",
     "/git/commit.ts",
+    "/git/rebase.ts",  # rebase IS commit-history manipulation (drag-to-squash, amend, reorder all rebase under the hood)
     # ui-layer (legitimate when the decision is framed as a UX feature)
     "/history/commit-list.tsx",
     "/history/commit-list-item.tsx",
@@ -1003,7 +1015,7 @@ def assert_flow_4(calls: list[dict]) -> tuple[bool, str]:
          dedup (Step C ran — the rubric processed the markers and just
          classified the constraint as ``ask`` instead of mechanical).
 
-    The SessionEnd hook spawns ``/bicameral:capture-corrections`` as a
+    The SessionEnd hook spawns ``/bicameral-capture-corrections`` as a
     SEPARATE subprocess; its tool calls are NOT visible in this stream-json.
     That out-of-band path is the realistic production behaviour and is
     validated by querying the ledger after the harness completes — not
@@ -1092,6 +1104,63 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
     )
 
 
+def assert_flow_4b(calls: list[dict]) -> tuple[bool, str]:
+    """Flow 4b: cross-flow ledger assertion via queue drain (#156 PR B).
+
+    Validates the SessionEnd-write -> next-preflight-drain -> ingest pipeline
+    end-to-end. The prior flow (Flow 4) plants a correction in its single
+    user prompt; the SessionEnd hook (post #156 PR A) writes the transcript
+    to ``.bicameral/pending-transcripts/<session_id>.jsonl``; Flow 4b's
+    auto-fired preflight invokes capture-corrections in-session mode, which
+    (post #156 PR B) drains the queue, surfaces the correction, and ingests
+    it once the user-confirmation flow accepts.
+
+    Three assertions:
+      1. ``<repo>/.bicameral/pending-transcripts/`` is empty after Flow 4b
+         (drain completed).
+      2. ``<repo>/.bicameral/processed-transcripts/`` contains the archived
+         transcript file (archive_processed via transcript_archive.py CLI).
+      3. Ledger contains >=1 ``source_type=agent_session`` decision.
+    """
+    repo = pathlib.Path(DESKTOP_REPO_PATH)
+    pending = repo / ".bicameral" / "pending-transcripts"
+    processed = repo / ".bicameral" / "processed-transcripts"
+
+    if pending.is_dir() and any(pending.glob("*.jsonl")):
+        leftover = sorted(p.name for p in pending.glob("*.jsonl"))
+        return False, f"pending-transcripts not drained; leftover: {leftover}"
+
+    if not processed.is_dir() or not list(processed.glob("*.jsonl")):
+        return False, "processed-transcripts is empty; archive_processed never ran"
+
+    snapshot = _snapshot_ledger()
+    count = _count_agent_session_decisions(snapshot)
+    if count is None:
+        return False, f"ledger query failed: {snapshot.get('error')}"
+    if count == 0:
+        return False, "no source=agent_session decisions in ledger; ingest never landed"
+
+    archived = sorted(p.name for p in processed.glob("*.jsonl"))
+    return True, (
+        f"queue drain pipeline validated: pending=empty, processed={archived}, "
+        f"ledger has {count} agent_session decision(s)"
+    )
+
+
+def _filter_flow_plan(plan: list[FlowSpec], pattern: str | None) -> list[FlowSpec]:
+    """Filter FLOW_PLAN by substring match on ``flow_id``. Pure function.
+
+    When ``pattern`` is None, returns ``plan`` unchanged (CI default — run
+    every flow). When ``pattern`` is given, returns the FlowSpecs whose
+    ``flow_id`` contains ``pattern`` as a case-sensitive substring; order
+    preserved from the source list. Empty result is the caller's signal
+    to exit non-zero (typo in --flow argument).
+    """
+    if pattern is None:
+        return plan
+    return [s for s in plan if pattern in s.flow_id]
+
+
 FLOW_PLAN: list[FlowSpec] = [
     FlowSpec(
         flow_id="Flow 1",
@@ -1156,14 +1225,28 @@ FLOW_PLAN: list[FlowSpec] = [
             "Flow 4 captures an emerging constraint via correction markers "
             '("wait", "shouldn\'t") — no collision-detection involved. NOT '
             "the same gap as #154 (which is Flow 2a / contradiction-with-"
-            "prior-decision specific). The substrate fixes in this PR "
-            "(.bicameral/ bootstrap + --mcp-config passthrough) close real "
-            "drift, but path-X-(b) still won't fire end-to-end because the "
-            "canonical SessionEnd hook command can't pass the parent "
-            "transcript to the spawned subprocess AND --auto-ingest is the "
-            "wrong shape for background capture. Both tracked as P1 — see "
-            "BicameralAI/bicameral-mcp#156 for the design pivot to "
-            "next-session surfacing via a transcript queue."
+            "prior-decision specific). #156 (PR A) shipped the queue-write; "
+            "#156 (PR B) shipped the preflight Step 3.5 queue-drain "
+            "integration — see Flow 4b for the cross-flow ledger assertion "
+            "that validates the full session_end → next-preflight → ingest "
+            "pipeline end-to-end."
+        ),
+    ),
+    FlowSpec(
+        flow_id="Flow 4b",
+        prompt_file="flow-4b-queue-drain.md",
+        asserter=assert_flow_4b,
+        category="agentic_layer",
+        session_group="dev_session",
+        advisory=(
+            "Flow 4b validates the cross-flow path closed by #156 PR B: "
+            "the prior flow's SessionEnd hook wrote a transcript into "
+            ".bicameral/pending-transcripts/; Flow 4b's auto-fired "
+            "preflight (UserPromptSubmit hook) invokes capture-corrections "
+            "in-session mode, which now drains the queue per #156 PR B's "
+            "Step 0 integration. Asserter checks the test ledger contains "
+            "a source=agent_session decision describing the prior flow's "
+            "correction — proving the cross-flow capture path closed."
         ),
     ),
     FlowSpec(
@@ -1179,14 +1262,38 @@ FLOW_PLAN: list[FlowSpec] = [
 
 
 def main() -> int:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="v0 user flow e2e harness")
+    parser.add_argument(
+        "--flow",
+        metavar="PATTERN",
+        default=None,
+        help="run only flows whose flow_id contains PATTERN (substring, case-sensitive)",
+    )
+    args = parser.parse_args()
+
+    selected_plan = _filter_flow_plan(FLOW_PLAN, args.flow)
+    if args.flow is not None and not selected_plan:
+        sys.stderr.write(
+            f"ERROR: --flow={args.flow!r} matched zero flows. Available: "
+            f"{[s.flow_id for s in FLOW_PLAN]}\n"
+        )
+        return 2
+
     print("=== v0 user flow e2e — Claude Code CLI sessions ===")
     print(f"DESKTOP_REPO_PATH:  {DESKTOP_REPO_PATH}")
     print(f"MCP config:         {MCP_CONFIG_PATH}")
     print(f"Ledger (persisted): {LEDGER_DIR}")
     print(f"Transcripts:        {RESULTS_DIR}")
-    print(f"Flows:              {len(FLOW_PLAN)}\n")
+    if args.flow is not None:
+        print(
+            f"Filter --flow={args.flow!r}: {len(selected_plan)} of {len(FLOW_PLAN)} flows selected"
+        )
+    print(f"Flows:              {len(selected_plan)}\n")
 
     _clean_ledger()
+    _clean_claude_memory()
     _reset_desktop_repo()
     _bootstrap_bicameral_dir()
 
@@ -1197,7 +1304,7 @@ def main() -> int:
 
     group_session_ids: dict[str, str] = {}
     group_seen: set[str] = set()
-    chained_groups = sorted({s.session_group for s in FLOW_PLAN if s.session_group})
+    chained_groups = sorted({s.session_group for s in selected_plan if s.session_group})
     if chained_groups:
         print("Chained session groups:")
         for g in chained_groups:
@@ -1205,7 +1312,7 @@ def main() -> int:
             group_session_ids[g] = sid
             members = [
                 s.flow_id
-                for s in FLOW_PLAN
+                for s in selected_plan
                 if s.session_group == g and not s.skip and not s.reuses_flow
             ]
             print(f"  {g}: {sid[:8]}…  → {' → '.join(members)}")
@@ -1216,7 +1323,7 @@ def main() -> int:
     # taken just before the first dev_session flow runs.
     dev_session_baseline: dict | None = None
 
-    for spec in FLOW_PLAN:
+    for spec in selected_plan:
         # Snapshot baseline once, immediately before the first dev_session
         # flow. This means Flow 1's effects are baked in but Flow 2/3/4's
         # effects (the ones we want to measure) are not.

@@ -2,14 +2,41 @@
 
 Thin orchestration: validate payload, resolve symbols, ingest into ledger, then sync.
 Auto-grounding removed in caller-LLM binding flow (v0.5.1+).
+
+Limitations — aggregate-rate worst case (#230 Finding 2):
+  The token-bucket rate gate slows BURST consumption per session but does
+  not bound aggregate throughput across time. Default config (burst=10,
+  refill=1/s, size cap=1 MiB) admits ~70 ingests in any 60-second window
+  and 1 MiB/s sustained, which works out to ~86 GiB/day in the worst case
+  (runaway agent loop, model regression producing infinite tool calls,
+  prompt-injection-hijacked re-ingest cycle, dev-time infinite-loop bug).
+  Not a security crisis — the size cap bounds per-payload damage and the
+  in-process registry is reset on server restart — but it IS an operator-
+  side disaster (ledger writer churn + disk pressure). Stricter aggregate
+  enforcement (sliding-window cross-session bound) is deferred to the
+  team-server-activation track.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import threading
+import time
 from datetime import UTC
 
+import preflight_telemetry
+
+# #232 Finding 1: cross-module use of context.py's private truthy frozenset
+# is intentional — it's the canonical vocabulary for BICAMERAL_* env-var
+# toggles (1/true/yes/on, case-insensitive). Renaming to a public alias is
+# out of scope here; #232 acceptance only requires vocabulary parity across
+# the existing toggle reads.
+from context import _GUIDED_MODE_TRUTHY
 from contracts import (
+    BriefEnvelope,
+    BriefGap,
     ContextForCandidate,
     CreatedDecision,
     IngestPayload,
@@ -19,6 +46,201 @@ from contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _IngestRefused(Exception):
+    """Raised when an ingest is rejected by an entry-time guardrail.
+
+    Carries a structured ``reason`` string for the MCP-boundary response
+    translation and an optional human-readable ``detail`` describing the
+    specific cause (byte counts, bucket state, etc.). Caught at the
+    ``server.call_tool`` boundary; never bubbles to the agent as a raw
+    exception.
+    """
+
+    def __init__(self, reason: str, *, detail: str = "") -> None:
+        self.reason = reason
+        self.detail = detail
+        super().__init__(f"{reason}: {detail}" if detail else reason)
+
+
+def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
+    """Append a refusal event to ``~/.bicameral/preflight_events.jsonl``.
+
+    Side-effect-only helper invoked by ``handle_ingest`` after a guard
+    raises ``_IngestRefused`` and before the exception re-propagates to
+    the MCP boundary. Kept out of the gate helpers themselves so those
+    stay pure (raise on fail; reusable in non-ingest contexts).
+    """
+    preflight_telemetry.write_ingest_refusal_event(reason=reason, session_id=session_id)
+
+
+def _check_payload_size(payload: dict, max_bytes: int) -> None:
+    """Raise ``_IngestRefused`` if the serialized payload exceeds ``max_bytes``.
+
+    Measurement is ``len(json.dumps(payload).encode("utf-8"))`` — captures
+    every field the agent might supply, language-agnostic, single
+    comparison. Pure: no telemetry side-effect; the wrapping try/except
+    in ``handle_ingest`` records the refusal event before re-raising.
+
+    #232 Finding 2: a payload that is not JSON-serializable (circular ref,
+    deeply nested object, opaque type whose ``__str__`` raises) would
+    previously leak ``ValueError`` / ``TypeError`` / ``RecursionError``
+    past the gate to the MCP boundary's generic exception handler.
+    Translate to ``_IngestRefused('malformed_payload', ...)`` at the same
+    boundary as the other refusals — closes the fail-open path.
+    """
+    try:
+        size = len(json.dumps(payload, default=str).encode("utf-8"))
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise _IngestRefused(
+            "malformed_payload",
+            detail=f"payload is not JSON-serializable: {type(exc).__name__}",
+        ) from exc
+    if size > max_bytes:
+        raise _IngestRefused(
+            "size_limit_exceeded",
+            detail=f"{size} bytes > {max_bytes} cap",
+        )
+
+
+class _TokenBucket:
+    """Lazy-refill token bucket — single counter, single timestamp.
+
+    ``take()`` returns True when a token is available (and consumes it),
+    False when the bucket is empty. Refill is computed on access, no
+    background timer. Thread-safe via internal lock for concurrent
+    handler dispatches in the same process.
+    """
+
+    def __init__(self, burst: int, refill_per_sec: float) -> None:
+        self._burst = float(burst)
+        self._refill = refill_per_sec
+        self._tokens = float(burst)
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def take(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last
+            self._tokens = min(self._burst, self._tokens + elapsed * self._refill)
+            self._last = now
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
+
+
+# Module-level registry: one bucket per session_id. Reset on server
+# restart by design — rate-limit state is in-process only (LLM-08
+# threat model is agent loops, not malicious restart-loops).
+_RATE_LIMIT_REGISTRY: dict[str, _TokenBucket] = {}
+_RATE_LIMIT_REGISTRY_LOCK = threading.Lock()
+
+
+def _check_rate_limit(session_id: str, burst: int, refill_per_sec: float) -> None:
+    """Raise ``_IngestRefused('rate_limit_exceeded', ...)`` when the bucket
+    for ``session_id`` has no tokens. Disabled entirely by setting
+    ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE`` to a truthy value (1/true/yes/on,
+    case-insensitive — see ``context._GUIDED_MODE_TRUTHY``).
+
+    #230 Finding 1: the refusal detail does NOT include ``session_id``. The
+    raw session UUID is process-fingerprinting state that surrounding
+    telemetry writers hash via per-install salt; emitting it raw at the
+    MCP boundary (which the agent then relays into operator-visible context)
+    is inconsistent with that posture. Operators get the bucket params
+    they need to tune ``.bicameral/config.yaml``; the session UUID is not
+    action-relevant here.
+    """
+    env_val = os.getenv("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", "").strip().lower()
+    if env_val in _GUIDED_MODE_TRUTHY:
+        return
+    with _RATE_LIMIT_REGISTRY_LOCK:
+        bucket = _RATE_LIMIT_REGISTRY.get(session_id)
+        if bucket is None:
+            bucket = _TokenBucket(burst, refill_per_sec)
+            _RATE_LIMIT_REGISTRY[session_id] = bucket
+    if not bucket.take():
+        raise _IngestRefused(
+            "rate_limit_exceeded",
+            detail=f"bucket empty (burst={burst}, refill={refill_per_sec}/s)",
+        )
+
+
+def _check_canary(payload: dict) -> None:
+    """Raise ``_IngestRefused('injection_canary_match', ...)`` if the
+    serialized payload contains any catalog-pattern hit (#212 LLM-01).
+
+    Detector dispatches via the module-level pointer
+    ``handlers.canary_patterns._canary_detect`` so a v2 classifier-backed
+    implementation can take effect with a single-line module-level swap.
+
+    Disabled by setting ``BICAMERAL_INGEST_CANARY_DISABLE=1`` — operator
+    escape for known-false-positive workflows or controlled tests. The
+    env-disable shortcuts the detector cost (does not even serialize the
+    payload).
+    """
+    if os.getenv("BICAMERAL_INGEST_CANARY_DISABLE", "").strip() == "1":
+        return
+    from handlers import canary_patterns
+
+    serialized = json.dumps(payload, default=str)
+    hits = canary_patterns._canary_detect(serialized)
+    if not hits:
+        return
+    first = hits[0]
+    raise _IngestRefused(
+        "injection_canary_match",
+        detail=(
+            f"category={first.category}; "
+            f"pattern_id={first.pattern_id}; "
+            f"excerpt={first.match_excerpt!r}; "
+            f"catalog={canary_patterns._CANARY_CATALOG_VERSION}; "
+            f"total_hits={len(hits)}"
+        ),
+    )
+
+
+def _check_sensitive(payload: dict) -> None:
+    """Raise ``_IngestRefused('sensitive_data:<cls>', ...)`` when the
+    serialized payload contains any secret / PHI / PAN hit (#213
+    LLM-04 + HIPAA-01 + PCI-01 fold).
+
+    Refusal class is the FIRST hit's class; ``detail`` carries the
+    full ``by_class`` count so the operator sees the full picture
+    even when multiple classes triggered. Detector dispatches via
+    the module-level pointer
+    ``handlers.sensitive_patterns._sensitive_detect`` for v2 swap.
+
+    Disabled by ``BICAMERAL_INGEST_SECRET_DISABLE=1`` (single master
+    env disable covers all three classes; YAGNI on per-class
+    disables in v1). The env disable shortcuts the detector cost
+    (does not even serialize the payload).
+    """
+    if os.getenv("BICAMERAL_INGEST_SECRET_DISABLE", "").strip() == "1":
+        return
+    from handlers import sensitive_patterns
+
+    serialized = json.dumps(payload, default=str)
+    hits = sensitive_patterns._sensitive_detect(serialized)
+    if not hits:
+        return
+    first = hits[0]
+    counts: dict[str, int] = {}
+    for h in hits:
+        counts[h.cls] = counts.get(h.cls, 0) + 1
+    raise _IngestRefused(
+        f"sensitive_data:{first.cls}",
+        detail=(
+            f"class={first.cls}; "
+            f"pattern_id={first.pattern_id}; "
+            f"excerpt={first.match_excerpt!r}; "
+            f"catalog={sensitive_patterns._SENSITIVE_CATALOG_VERSION}; "
+            f"total_hits={len(hits)}; "
+            f"by_class={counts}"
+        ),
+    )
 
 
 def _normalize_payload(payload: dict) -> dict:
@@ -62,6 +284,10 @@ def _normalize_payload(payload: dict) -> dict:
             mapping["signoff"] = d.signoff
         if d.feature_group is not None:
             mapping["feature_group"] = d.feature_group
+        # #109 — thread optional governance metadata from IngestDecision
+        # to the per-mapping payload so the ledger write picks it up.
+        if d.governance is not None:
+            mapping["governance"] = d.governance
         mappings.append(mapping)
 
     # Action items are task assignments, not product decisions — they belong in a
@@ -216,12 +442,56 @@ async def handle_ingest(
     source_scope: str = "",
     cursor: str = "",
 ) -> IngestResponse:
+    # #216: enforce entry-time guardrails BEFORE any ledger work, including
+    # the SurrealDB connection handshake. A refused payload should cost zero
+    # downstream resources. LLM-02 size check first (cheaper short-circuit
+    # on oversized payloads); LLM-08 rate check second. Both raise
+    # ``_IngestRefused`` with distinct ``reason`` strings; telemetry-emit
+    # on refusal then re-raise so the MCP boundary translates to a
+    # structured TextContent error.
+    #
+    # Per-session bucket scoping note: ``ctx.session_id`` is resolved by
+    # ``context._resolve_agent_identity`` (#231 v1) to a per-developer
+    # salted email-hash (16-char hex) when ``git config user.email`` is
+    # available — gives per-developer rate-limit bucket isolation in
+    # team-server installs. Falls back to the process-wide ``_SESSION_ID``
+    # UUID when git config is unreadable (test/CI runs, no email set);
+    # in that mode the rate gate is per-server-process and concurrent
+    # callers share a bucket — acceptable for the test shape, not for
+    # production. Option (β) per-MCP-session granularity is the v2 upgrade
+    # path gated on team-server protocol activation; documented in plan-231.
+    # Cheapest-first ordering: size (O(1) byte count) → rate (O(1) bucket
+    # take) → canary (O(n) regex) → sensitive (O(n) regex + Luhn).
+    # Canary first because injection is upstream of leakage — block the
+    # manipulation attempt before scanning for leaks. #212 LLM-01,
+    # #213 LLM-04 + HIPAA-01 + PCI-01 fold.
+    try:
+        _check_payload_size(payload, ctx.ingest_max_bytes)
+        _check_rate_limit(
+            getattr(ctx, "session_id", ""),
+            ctx.ingest_rate_limit_burst,
+            ctx.ingest_rate_limit_refill_per_sec,
+        )
+        _check_canary(payload)
+        _check_sensitive(payload)
+    except _IngestRefused as exc:
+        _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
+        raise
+
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
 
     payload = _normalize_payload(payload)
     repo = str(payload.get("repo") or ctx.repo_path)
+    # Issue #67: ``ledger.ingest_payload`` reads ``payload.get("repo", "")``
+    # internally and falls back to subprocess.run(cwd=Path("").resolve()).
+    # On Linux that picks up the test runner's CWD (often a git repo, so
+    # the call appears to "work" with the wrong SHA). On Windows it
+    # produces a path the OS rejects with WinError 267. Inject the
+    # resolved repo path so the adapter never sees an empty value.
+    if not payload.get("repo"):
+        payload = {**payload, "repo": repo}
 
     # For agent_session / manual ingests (gap answers, inline resolutions),
     # backfill the git user email as the speaker when speakers is empty.
@@ -229,13 +499,20 @@ async def handle_ingest(
     # session-originated spans lack an author and need this backfill.
     _SESSION_SOURCE_TYPES = {"agent_session", "manual"}
     _git_email_cache: str | None = None
+    _fallback_mode = getattr(ctx, "signer_email_fallback", "local-part-only")
     for mapping in payload.get("mappings") or []:
         span = mapping.get("span") or {}
         if span.get("source_type") in _SESSION_SOURCE_TYPES and not span.get("speakers"):
             if _git_email_cache is None:
-                from events.writer import _get_git_email
+                from events.writer import _get_git_email, _resolve_signer_email
 
-                _git_email_cache = _get_git_email(ctx.repo_path)
+                _raw_email = _get_git_email(ctx.repo_path)
+                # #200 Phase 2: apply signer-email fallback policy from
+                # `.bicameral/config.yaml: signer_email_fallback`. Privacy-
+                # positive default (`local-part-only`) strips the email
+                # host before the value lands in the ledger / team-mode
+                # JSONL substrate.
+                _git_email_cache = _resolve_signer_email(_raw_email, mode=_fallback_mode)
             if _git_email_cache and _git_email_cache != "unknown":
                 span["speakers"] = [_git_email_cache]
 
@@ -311,6 +588,8 @@ async def handle_ingest(
 
     # Auto-chain: fire judge_gaps per feature_group topic so the caller gets
     # one structured gap-judgment payload per segment. Failures are swallowed.
+    # #187: collected payloads are folded into the unified `brief` envelope
+    # below; the legacy flat `judgment_payload[s]` fields were removed.
     judgment_payloads: list = []
     try:
         topics = _derive_topics(payload)
@@ -323,7 +602,6 @@ async def handle_ingest(
                     judgment_payloads.append(jp)
     except Exception as exc:
         logger.warning("[ingest] post-ingest gap-judge chain failed: %s", exc)
-    judgment_payload = judgment_payloads[0] if judgment_payloads else None
 
     cursor_summary = None
     source_type = str(
@@ -361,6 +639,21 @@ async def handle_ingest(
         source_refs,
     )
 
+    # #187: build the unified brief envelope from the gap-judge findings.
+    # Future PR may also surface drift_candidates/divergences here once
+    # those are computed in the ingest path; today only gaps + rubric are
+    # populated server-side. brief stays None when there's nothing to render
+    # (silent-on-no-signal — matches PreflightResponse contract).
+    brief: BriefEnvelope | None = None
+    if judgment_payloads:
+        gaps: list[BriefGap] = []
+        for jp in judgment_payloads:
+            gaps.extend(jp.phrasing_gaps)
+        brief = BriefEnvelope(
+            gaps=gaps,
+            rubric=judgment_payloads[0].rubric,
+        )
+
     ingest_response = IngestResponse(
         ingested=bool(result.get("ingested", False)),
         repo=str(result.get("repo", repo)),
@@ -379,17 +672,13 @@ async def handle_ingest(
             CreatedDecision(
                 decision_id=d["decision_id"],
                 description=d["description"],
-                decision_level=d.get("decision_level"),
             )
             for d in result.get("created_decisions", [])
         ],
-        pending_grounding_decisions=[
-            d for d in result.get("ungrounded_decisions", []) if d.get("decision_level") != "L1"
-        ],
+        pending_grounding_decisions=list(result.get("ungrounded_decisions", [])),
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
-        judgment_payload=judgment_payload,
-        judgment_payloads=judgment_payloads,
+        brief=brief,
         sync_status=sync_status,
     )
 

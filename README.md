@@ -18,6 +18,18 @@ Bicameral is a local-first [MCP server](https://spec.modelcontextprotocol.io/) t
 
 ---
 
+## Compliance posture
+
+bicameral-mcp's compliance stance is documented in three policy files:
+
+- [`docs/policies/host-trust-model.md`](docs/policies/host-trust-model.md) — MCP host UX dependency declaration (closes OWASP LLM-07 / MCP-01 gap)
+- [`docs/policies/acceptable-use.md`](docs/policies/acceptable-use.md) — intended purpose + prohibited uses (NIST AI RMF MAP-3.1 + EU AI Act Annex III)
+- [`docs/sla.md`](docs/sla.md) — availability stance (operator-run-only; no hosted SLA)
+
+The full compliance audit is at [`docs/research-brief-compliance-audit-2026-05-06.md`](docs/research-brief-compliance-audit-2026-05-06.md).
+
+---
+
 ## The Problem
 
 Engineering teams make hundreds of product decisions per week. A tiny fraction end up in tickets. None are linked to the code that implements them.
@@ -81,6 +93,26 @@ When you build with an AI coding assistant, this disconnect accelerates:
 ---
 
 ## Quickstart
+
+The fastest path is **uv**. If you don't have uv yet, the official installer is one line:
+
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Then:
+
+```bash
+uv tool install bicameral-mcp
+bicameral-mcp setup
+```
+
+Prefer pipx? That works too:
 
 ```bash
 pipx install bicameral-mcp
@@ -194,8 +226,8 @@ Running `bicameral-mcp setup` writes these files to your repo:
 | `.bicameral/ledger.db` | SurrealDB decision ledger (solo mode) | Auto-created on first tool call |
 | `.gitignore` entry | Ignores `.bicameral/` in solo mode | Recommended |
 | `.claude/settings.json` | PostToolUse hook: auto-calls `bicameral.link_commit` after git commits | Optional — improves sync |
-| `.claude/settings.json` | SessionEnd hook: runs `bicameral-capture-corrections` to catch uningested mid-session decisions | Optional — closes correction capture gap |
-| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral:ingest`, `/bicameral:preflight`, `/bicameral:capture-corrections`, etc.) | Recommended |
+| `.claude/settings.json` | SessionEnd hook: writes the session transcript to `.bicameral/pending-transcripts/`; next session drains the queue to surface uningested mid-session decisions | Optional — closes correction capture gap |
+| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral-ingest`, `/bicameral-preflight`, `/bicameral-capture-corrections`, etc.) | Recommended |
 
 ### Removing Bicameral
 
@@ -227,11 +259,11 @@ After setup, Claude Code gets these slash commands:
 
 | Command | When to use |
 |---|---|
-| `/bicameral:ingest` | Paste a transcript, PRD, or Slack thread to track its decisions |
-| `/bicameral:preflight` | Surface relevant decisions and drift before implementing |
-| `/bicameral:history` | See all tracked decisions grouped by feature area |
-| `/bicameral:dashboard` | Open the live decision dashboard in your browser |
-| `/bicameral:reset` | Wipe and replay the ledger (emergency use) |
+| `/bicameral-ingest` | Paste a transcript, PRD, or Slack thread to track its decisions |
+| `/bicameral-preflight` | Surface relevant decisions and drift before implementing |
+| `/bicameral-history` | See all tracked decisions grouped by feature area |
+| `/bicameral-dashboard` | Open the live decision dashboard in your browser |
+| `/bicameral-reset` | Wipe and replay the ledger (emergency use) |
 
 The agent also fires these automatically — `preflight` before any code change, `ingest` when you paste a document.
 
@@ -270,7 +302,6 @@ symbol names back to the server.
 |---|---|
 | `validate_symbols` | Fuzzy-match symbol name hypotheses against the code index |
 | `get_neighbors` | 1-hop structural graph traversal (callers, callees, imports) |
-| `extract_symbols` | Tree-sitter symbol extraction from a source file |
 
 </details>
 

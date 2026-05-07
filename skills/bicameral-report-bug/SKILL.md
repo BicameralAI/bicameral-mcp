@@ -1,11 +1,11 @@
 ---
 name: bicameral-report-bug
-description: File a bug against bicameral-mcp with auto-bundled context. Fires on "/bicameral:report-bug", "file a bicameral bug", "report this bicameral bug", "bicameral broke", "bicameral isn't working", "something's wrong with bicameral", "this is a bicameral bug". Bundles environment + recent calls + error trace into a prefilled GitHub issue URL on BicameralAI/bicameral-mcp with the `dev` label, and opens it in the browser. Skill DOES NOT submit — the user reviews and clicks submit on GitHub.
+description: File a bug against bicameral-mcp with auto-bundled context. Fires on "/bicameral-report-bug", "file a bicameral bug", "report this bicameral bug", "bicameral broke", "bicameral isn't working", "something's wrong with bicameral", "this is a bicameral bug". Bundles environment + recent calls + error trace into a prefilled GitHub issue URL on BicameralAI/bicameral-mcp with the `dev` label, and opens it in the browser. Skill DOES NOT submit — the user reviews and clicks submit on GitHub.
 ---
 
-# /bicameral:report-bug — File a bug with context
+# /bicameral-report-bug — File a bug with context
 
-**Trigger**: `/bicameral:report-bug`, or natural-language phrasing like
+**Trigger**: `/bicameral-report-bug`, or natural-language phrasing like
 "file a bicameral bug", "this bicameral thing broke", "report this issue".
 
 The skill collects environment + recent tool activity + the suspected
@@ -62,39 +62,35 @@ If the user picks "Other" for the title, prompt freely for a one-liner.
 
 ## Step 2 — Collect diagnostic context
 
-Run a single Bash block to gather environment data. Output goes
-straight into the issue body — do not surface raw output to the user.
+Assemble the diagnostic context from the current session — **do not
+shell out**. Use what the agent already knows plus the `Read` tool for
+files the user wants to include.
 
-```bash
-{
-  echo "## Environment"
-  echo
-  echo "- bicameral-mcp version: $(bicameral-mcp --version 2>/dev/null || pip show bicameral-mcp 2>/dev/null | awk '/^Version:/ {print $2}' || echo 'unknown')"
-  echo "- Python: $(python3 --version 2>/dev/null || echo 'unknown')"
-  echo "- OS: $(uname -srm 2>/dev/null || echo 'unknown')"
-  echo "- IDE: ${CLAUDE_CODE_VERSION:+Claude Code $CLAUDE_CODE_VERSION}${CURSOR_TRACE_ID:+Cursor}${TERM_PROGRAM:+ ($TERM_PROGRAM)}"
-  echo "- Shell: $SHELL"
-  echo
-  echo "## Repo state"
-  echo
-  echo '```'
-  # Branch name and commit subjects often leak business context (initiative names,
-  # vendor partners, unannounced features). Redact by default; print only the shape
-  # of the state, not the content.
-  COMMIT_COUNT=$(git -C "$(pwd)" log --oneline -3 2>/dev/null | wc -l | tr -d ' ')
-  echo "branch: <REDACTED>"
-  echo "$COMMIT_COUNT recent commit(s) (titles redacted)"
-  echo '```'
-  echo
-  if [ -f .bicameral/config.yaml ]; then
-    echo "## .bicameral/config.yaml"
-    echo
-    echo '```yaml'
-    cat .bicameral/config.yaml
-    echo '```'
-  fi
-} 2>/dev/null
-```
+Sources (in order of preference, all read-only / non-bash):
+
+- **bicameral-mcp version**: any recent `bicameral.*` tool response
+  surfaces it; otherwise `Read` `pyproject.toml` and pull the
+  `version = "..."` line. If unknown, write `unknown`.
+- **IDE / harness**: derive from the running environment context the
+  agent already has (e.g. "Claude Code", "Cursor"). If unknown,
+  write `unknown`.
+- **OS**: derive from the platform the agent already knows (e.g.
+  `darwin`, `linux`). If unknown, write `unknown`.
+- **Repo state**: do **not** read branch names or commit subjects —
+  they leak business context. Record only the shape:
+  `branch: <REDACTED>` and `recent commits: titles redacted`.
+- **`.bicameral/config.yaml`**: use `Read` on `.bicameral/config.yaml`
+  if it exists. **Extract ONLY the top-level key structure by default** —
+  every YAML key whose line doesn't start with whitespace, one per
+  line, sorted alphabetically. Do NOT include values, nested keys,
+  comments, or any other content. Default-shape rationale: top-level
+  keys are sufficient diagnostic signal for *"is this bug in the
+  config loader?"* questions while leaking zero workspace IDs, tokens,
+  allowlists, or environment-specific settings. If the operator's bug
+  genuinely needs the verbatim contents (e.g. a YAML parser regression),
+  Step 3.5's transparency preview offers an explicit opt-in toggle —
+  see "Step 3.5 — Transparency preview" below. If `Read` errors (file
+  missing), skip the section entirely.
 
 Then assemble in your head (do NOT print to user yet):
 
@@ -114,8 +110,30 @@ Then assemble in your head (do NOT print to user yet):
   *names*, not the verbatim payload — payloads almost always leak
   business context (feature names, vendor names, internal codenames).
   Also redact obvious secrets (`ANTHROPIC_API_KEY=…`, bearer tokens).
-- **Environment** + **Repo state** + **config.yaml**: from the Bash
-  block above.
+- **Environment** + **Repo state** + **config.yaml**: assembled as
+  above, with the same markdown shape:
+
+  ```markdown
+  ## Environment
+
+  - bicameral-mcp version: <version or "unknown">
+  - IDE: <IDE or "unknown">
+  - OS: <os or "unknown">
+
+  ## Repo state
+
+  ```
+  branch: <REDACTED>
+  recent commits: titles redacted
+  ```
+
+  ## .bicameral/config.yaml   ← only if Read succeeded
+
+  ```
+  <sorted top-level key list, one per line, no values>
+  ```
+  *(values redacted by default — opt in via Step 3.5 transparency preview to include verbatim)*
+  ```
 
 ---
 
@@ -139,7 +157,7 @@ Format as markdown:
 <environment + repo state + config blocks from Step 2>
 
 ---
-_Reported via `/bicameral:report-bug`._
+_Reported via `/bicameral-report-bug`._
 ```
 
 If the assembled body exceeds **6500 characters**, drop sections in
@@ -179,6 +197,9 @@ Auto-redacted in this body:
     topic, intent, description, text, excerpt, title — parameter names kept,
     values replaced with <REDACTED>)
   - Branch name and commit subject lines in the Repo state block
+  - .bicameral/config.yaml: keys only by default (workspace IDs, tokens,
+    allowlists, env-specific values stripped — toggle below to include verbatim
+    if the bug requires inspecting config values)
   - API keys, bearer tokens, secrets, passwords (regex-matched)
   - <N> redaction(s) applied   ← print actual count, or "none detected"
 
@@ -193,6 +214,8 @@ you can edit anything in the body, delete sections, or close the tab
 to abandon. The issue is only filed when you click Submit on GitHub.
 ```
 
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events on every invocation (skill name only, no body content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
+
 Then call `AskUserQuestion`:
 
 ```
@@ -202,8 +225,10 @@ AskUserQuestion({
     header: "Open issue",
     multiSelect: false,
     options: [
-      { label: "Yes, open it",
-        description: "Browser opens to a GitHub draft — you review and submit there" },
+      { label: "Yes, open it (config.yaml: keys only)",
+        description: "Default — config.yaml top-level keys included, values redacted" },
+      { label: "Yes, but include config.yaml verbatim",
+        description: "Use only when the bug requires inspecting config values (e.g. YAML parser regression). Values still pass the secret-redaction regex but workspace IDs / allowlists / env settings are exposed." },
       { label: "Edit the body first",
         description: "I want to revise the body in chat before opening" },
       { label: "Cancel",
@@ -213,7 +238,8 @@ AskUserQuestion({
 })
 ```
 
-- **Yes** → proceed to Step 4.
+- **Yes, open it (config.yaml: keys only)** → proceed to Step 4 with the keys-only body as already previewed.
+- **Yes, but include config.yaml verbatim** → regenerate the body, replacing the keys-only block in the `## .bicameral/config.yaml` section with the verbatim ```yaml <contents> ``` shape. Re-run the Auto-redacted summary on the new body (the secret-redaction regex still applies — defense-in-depth, not a substitute for the keys-only default). Re-display the transparency preview with the verbatim contents and re-ask the open-issue question one more time so the operator sees what's actually being shipped before clicking through. Then proceed to Step 4 once the operator confirms the verbatim shape.
 - **Edit the body first** → ask the user what to change, regenerate
   the body, return to this step.
 - **Cancel** → stop. Tell the user "Cancelled. Nothing was sent." and
@@ -221,36 +247,32 @@ AskUserQuestion({
 
 ---
 
-## Step 4 — Open the prefilled GitHub issue
+## Step 4 — Output the prefilled GitHub issue URL
 
-Build the URL. Use `python3 -c` to URL-encode safely (do NOT hand-roll
-encoding — `?` `&` `#` in the body will break it).
+Build the URL inline — no shell, no `python3 -c`. URL-encode the
+title and body using standard percent-encoding (RFC 3986) and assemble:
 
-```bash
-TITLE='<title from Step 1>'
-BODY='<assembled markdown from Step 3>'
-
-URL=$(python3 -c '
-import sys, urllib.parse
-title, body = sys.argv[1], sys.argv[2]
-q = urllib.parse.urlencode({
-    "title": title,
-    "body": body,
-    "labels": "dev,bug",
-})
-print("https://github.com/BicameralAI/bicameral-mcp/issues/new?" + q)
-' "$TITLE" "$BODY")
-
-case "$(uname -s)" in
-  Darwin)  open "$URL" ;;
-  Linux)   xdg-open "$URL" >/dev/null 2>&1 || echo "$URL" ;;
-  MINGW*|MSYS*|CYGWIN*) start "" "$URL" ;;
-  *) echo "$URL" ;;
-esac
+```
+https://github.com/BicameralAI/bicameral-mcp/issues/new?title=<URL-encoded title>&body=<URL-encoded body>&labels=dev,bug
 ```
 
-If `open` / `xdg-open` is unavailable (CI, headless), print the URL
-so the user can copy it.
+Encoding requirements:
+- Encode every `?`, `&`, `#`, `=`, space (→ `%20` or `+`), newline
+  (`%0A`), and any non-ASCII characters in both title and body. Triple
+  backticks and other markdown survive encoding fine.
+- Keep the URL under **8000 characters** total. If it exceeds that,
+  loop back to Step 3 and drop sections per the truncation order
+  (git log → config.yaml → tool-call argument bodies).
+
+Then print the full URL on its own line in chat — the user clicks it
+to land on the prefilled GitHub draft. Do **not** attempt to launch a
+browser yourself; the user opens it. Format:
+
+```
+Open this prefilled GitHub issue (review on the page, then click Submit):
+
+<full URL>
+```
 
 ---
 
@@ -259,10 +281,9 @@ so the user can copy it.
 Short, factual confirmation. No emoji. Format:
 
 ```
-Opened a prefilled GitHub issue on BicameralAI/bicameral-mcp with
-the `dev` label. Review, edit if needed, and submit on the page.
-
-If your browser didn't open, the URL is above.
+Posted a prefilled GitHub issue link on BicameralAI/bicameral-mcp
+with the `dev` label. Click the URL above, review the page, edit if
+needed, and click Submit.
 ```
 
 **Do not** post the full body back to the user — they'll see it on
@@ -272,9 +293,10 @@ the GitHub page. Posting it again is noise.
 
 ## Privacy & safety rules
 
-- **Never auto-submit.** The skill's whole contract is: assemble + open.
-  The user reviews on GitHub and clicks Submit. Anything that leaves
-  the machine leaves it through the user's hands.
+- **Never auto-submit.** The skill's whole contract is: assemble + hand
+  the user a URL. The user opens it, reviews on GitHub, and clicks
+  Submit. Anything that leaves the machine leaves it through the
+  user's hands.
 - **Redact obvious secrets** before placing them in the body: anything
   matching `(api[_-]?key|token|secret|password|bearer)\s*[=:]\s*\S+`
   → replace value with `***REDACTED***`.
@@ -314,8 +336,7 @@ the GitHub page. Posting it again is noise.
 **At skill start**:
 ```
 bicameral.skill_begin(skill_name="bicameral-report-bug",
-  session_id=<uuid4>,
-  rationale="<one-liner: what triggered the report>")
+  session_id=<uuid4>)
 ```
 
 **At skill end**:
@@ -323,5 +344,5 @@ bicameral.skill_begin(skill_name="bicameral-report-bug",
 bicameral.skill_end(skill_name="bicameral-report-bug",
   session_id=<stored_id>,
   errored=<bool>,
-  error_class="url_open_failed" if browser launch failed else None)
+  error_class="user_cancelled" if user cancelled at preview else None)
 ```

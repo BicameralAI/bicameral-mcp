@@ -188,8 +188,9 @@ async def test_ensure_calls_link_commit_when_head_advanced():
 
 
 @pytest.mark.asyncio
-async def test_ensure_skips_link_commit_when_already_synced():
-    ctx = _make_ctx(last_sync_sha="current_sha")
+async def test_ensure_skips_link_commit_when_already_synced(monkeypatch):
+    monkeypatch.setattr("handlers.sync_middleware._LAST_SYNCED_SHA", "current_sha")
+    ctx = _make_ctx()
 
     with (
         patch("handlers.link_commit._read_current_head_sha", return_value="current_sha"),

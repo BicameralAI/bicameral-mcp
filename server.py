@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-13 tools:
+12 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -13,7 +13,6 @@
   bicameral.dashboard         — launch live decision dashboard with SSE push updates
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   get_neighbors               — 1-hop structural graph traversal around a symbol
-  extract_symbols             — tree-sitter symbol extraction from a source file
 
 Run with: bicameral-mcp (or python server.py) for stdio transport.
 
@@ -41,7 +40,7 @@ from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
 from handlers.gap_judge import handle_judge_gaps
 from handlers.history import handle_history
-from handlers.ingest import handle_ingest
+from handlers.ingest import _IngestRefused, handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
@@ -53,9 +52,58 @@ from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
 
-# In-process map of session_id → {t0, rationale} for skill timing.
+# In-process map of session_id → {t0} for skill timing.
 # Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
 _skill_sessions: dict[str, dict] = {}
+
+# #216: operator-actionable guidance per ingest-refusal reason. Read by
+# the ``except _IngestRefused`` arm in ``call_tool`` to populate the
+# ``action`` field of the returned TextContent. Default falls back to a
+# generic "review .bicameral/config.yaml limits and retry" message.
+_ACTION_FOR_REFUSAL_REASON: dict[str, str] = {
+    "size_limit_exceeded": (
+        "split the payload into smaller ingests or raise ingest_max_bytes in .bicameral/config.yaml"
+    ),
+    "rate_limit_exceeded": (
+        "slow ingest cadence or raise ingest_rate_limit_burst / "
+        "ingest_rate_limit_refill_per_sec in .bicameral/config.yaml, or set "
+        "BICAMERAL_INGEST_RATE_LIMIT_DISABLE=1 for local debugging"
+    ),
+    "injection_canary_match": (
+        "content matched a known prompt-injection canary pattern. Review "
+        "the rejected payload, edit out the suspect content, and retry. "
+        "Set BICAMERAL_INGEST_CANARY_DISABLE=1 only for known-false-positive "
+        "workflows or controlled tests."
+    ),
+    "sensitive_data:secret": (
+        "credential or secret detected in the payload. Remove it from the "
+        "ingested content and retry. **Rotate the credential immediately** — "
+        "assume it has been logged elsewhere in the agent's context. "
+        "Set BICAMERAL_INGEST_SECRET_DISABLE=1 only for known-test-credential "
+        "workflows."
+    ),
+    "sensitive_data:phi": (
+        "Protected Health Information (PHI) detected. PHI is out of scope "
+        "for bicameral-mcp; do not ingest clinical content. Use a "
+        "HIPAA-compliant tooling channel for medical data. If this is a "
+        "false positive on non-PHI content (e.g. test data with a 'mrn:' "
+        "label), set BICAMERAL_INGEST_SECRET_DISABLE=1 for the controlled "
+        "test."
+    ),
+    "sensitive_data:pan": (
+        "cardholder data (PAN) detected — Luhn-valid 13-19 digit sequence "
+        "not preceded by an ID-class label. PAN is out of scope for "
+        "bicameral-mcp; do not ingest cardholder data. Use a PCI-DSS-"
+        "compliant system. If this is a false positive (test card outside "
+        "an obvious order_id context), set BICAMERAL_INGEST_SECRET_DISABLE=1 "
+        "for the controlled test."
+    ),
+    "malformed_payload": (
+        "the payload could not be JSON-serialized. Verify the request body "
+        "is a plain dict of JSON-compatible primitives — no circular refs, "
+        "no opaque objects, no non-serializable types. Re-serialize and retry."
+    ),
+}
 
 
 def _resolve_server_version() -> str:
@@ -101,9 +149,9 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.skill_begin",
     "bicameral.skill_end",
     "bicameral.feedback",
+    "bicameral.usage_summary",
     "validate_symbols",
     "get_neighbors",
-    "extract_symbols",
 ]
 
 server = Server(SERVER_NAME)
@@ -122,7 +170,7 @@ async def list_tools() -> list[Tool]:
                 "Sync a commit into the decision ledger. Updates implemented_by/touches edges, "
                 "recomputes content hashes, re-evaluates drift for affected decisions. "
                 "Idempotent — calling twice for the same commit is a no-op. "
-                "Slash alias: /bicameral:link-commit"
+                "Slash alias: /bicameral-link-commit"
             ),
             inputSchema={
                 "type": "object",
@@ -131,6 +179,15 @@ async def list_tools() -> list[Tool]:
                         "type": "string",
                         "default": "HEAD",
                         "description": "Git commit hash or ref to sync (default: HEAD)",
+                    },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call. "
+                            "When supplied, the local preflight-telemetry capture loop "
+                            "(#65, opt-in via BICAMERAL_PREFLIGHT_TELEMETRY=1) attributes "
+                            "this engagement to that preflight."
+                        ),
                     },
                 },
             },
@@ -149,7 +206,7 @@ async def list_tools() -> list[Tool]:
                 "At least one text field per decision must be non-empty or the decision is silently dropped. "
                 "The `query` field drives the post-ingest auto-brief and gap-judge chain — always pass it. "
                 "Auto-grounds decisions to code via semantic search over the symbol graph. Ensures the code index is fresh before grounding. "
-                "Slash alias: /bicameral:ingest"
+                "Slash alias: /bicameral-ingest"
             ),
             inputSchema={
                 "type": "object",
@@ -182,7 +239,7 @@ async def list_tools() -> list[Tool]:
                 "Pass start_line/end_line when you have exact lines (e.g. from a Read call) — "
                 "omit them to let the server resolve the exact line range automatically. Binding the same "
                 "(decision, region) pair twice is idempotent. "
-                "Slash alias: /bicameral:bind"
+                "Slash alias: /bicameral-bind"
             ),
             inputSchema={
                 "type": "object",
@@ -221,6 +278,12 @@ async def list_tools() -> list[Tool]:
                             "required": ["decision_id", "file_path", "symbol_name"],
                         },
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
+                    },
                 },
                 "required": ["bindings"],
             },
@@ -240,6 +303,12 @@ async def list_tools() -> list[Tool]:
                         "enum": ["check", "apply"],
                         "description": "'check' to see if an update is available, 'apply' to install it",
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
+                    },
                 },
                 "required": ["action"],
             },
@@ -249,14 +318,14 @@ async def list_tools() -> list[Tool]:
             description=(
                 "Fail-safe valve for a polluted or stale ledger. Returns a replay plan and, "
                 "if confirmed, wipes state according to wipe_mode. "
-                "wipe_mode='ledger' (default): wipes only the materialized SurrealDB rows — "
+                "wipe_mode='ledger' (default): wipes only the materialized decision ledger — "
                 "config and event files are preserved. Safe for bug recovery; server stays live. "
                 "wipe_mode='full': deletes the entire .bicameral/ directory (ledger + config.yaml "
                 "+ team event files). Nuclear restart. Always show the dry-run warning to the user "
                 "before confirming full mode. "
                 "DRY RUN BY DEFAULT — confirm=false returns the wipe plan without touching anything. "
                 "Pass confirm=true to actually wipe. "
-                "Slash alias: /bicameral:reset"
+                "Slash alias: /bicameral-reset"
             ),
             inputSchema={
                 "type": "object",
@@ -300,7 +369,7 @@ async def list_tools() -> list[Tool]:
                 "When fired=false, the agent MUST produce no output and proceed silently — "
                 "that's the trust contract. When fired=true, render the surfaced context with "
                 "a '(bicameral surfaced)' attribution before continuing with the implementation. "
-                "Slash alias: /bicameral:preflight"
+                "Slash alias: /bicameral-preflight"
             ),
             inputSchema={
                 "type": "object",
@@ -331,6 +400,14 @@ async def list_tools() -> list[Tool]:
                         "items": {"type": "string"},
                         "description": "Optional list of teammates the user mentioned — used by the chained brief call",
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Reserved for future symmetry; bicameral.preflight currently "
+                            "generates the preflight_id itself when telemetry is enabled "
+                            "(#65)."
+                        ),
+                    },
                 },
                 "required": ["topic"],
             },
@@ -349,7 +426,7 @@ async def list_tools() -> list[Tool]:
                 "standalone. Rubric categories: missing_acceptance_criteria, "
                 "underdefined_edge_cases, infrastructure_gap, underspecified_integration, "
                 "missing_data_requirements. "
-                "Slash alias: /bicameral:judge_gaps"
+                "Slash alias: /bicameral-judge_gaps"
             ),
             inputSchema={
                 "type": "object",
@@ -387,7 +464,7 @@ async def list_tools() -> list[Tool]:
                 "decision/region IDs are returned as structured rejections (not "
                 "exceptions) so the caller can retry the accepted subset. The server "
                 "never calls an LLM — every semantic judgment lives in the caller's "
-                "session. Slash alias: /bicameral:resolve_compliance"
+                "session. Slash alias: /bicameral-resolve_compliance"
             ),
             inputSchema={
                 "type": "object",
@@ -466,7 +543,7 @@ async def list_tools() -> list[Tool]:
                 "as a negative signal; agents consult it to avoid implementing what the team rejected. "
                 "Both actions are idempotent (was_new=false if already in that state). "
                 "The signer field identifies the human or agent; the optional note captures the rationale. "
-                "Slash alias: /bicameral:ratify"
+                "Slash alias: /bicameral-ratify"
             ),
             inputSchema={
                 "type": "object",
@@ -490,6 +567,12 @@ async def list_tools() -> list[Tool]:
                         "default": "",
                         "description": "Optional rationale or context for the sign-off (for audit)",
                     },
+                    "preflight_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional opaque id from a prior bicameral.preflight call (#65)."
+                        ),
+                    },
                 },
                 "required": ["decision_id", "signer"],
             },
@@ -508,7 +591,7 @@ async def list_tools() -> list[Tool]:
                 "Writes an input_span→context_for→decision edge (confirmed or rejected). "
                 "Context-pending decisions with ≥1 confirmed context_for edge become eligible "
                 "for bicameral.ratify. "
-                "Slash alias: /bicameral:resolve-collision"
+                "Slash alias: /bicameral-resolve-collision"
             ),
             inputSchema={
                 "type": "object",
@@ -551,7 +634,7 @@ async def list_tools() -> list[Tool]:
                 "Capped at 50 features; use feature_filter to drill in when truncated=True. "
                 "Does NOT fire on implementation, ingest, or drift-specific queries — use "
                 "bicameral.preflight or bicameral.ingest for those. "
-                "Slash alias: /bicameral:history"
+                "Slash alias: /bicameral-history"
             ),
             inputSchema={
                 "type": "object",
@@ -583,7 +666,7 @@ async def list_tools() -> list[Tool]:
                 "Subsequent calls return the existing URL immediately — the server "
                 "is a singleton and stays running for the session. "
                 "Fires on: 'open dashboard', 'show live history', 'launch dashboard'. "
-                "Slash alias: /bicameral:dashboard"
+                "Slash alias: /bicameral-dashboard"
             ),
             inputSchema={
                 "type": "object",
@@ -615,10 +698,6 @@ async def list_tools() -> list[Tool]:
                     "session_id": {
                         "type": "string",
                         "description": "Caller-generated UUID that correlates this begin with the matching skill_end",
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "One-liner for why this skill was triggered (e.g. 'user pasted transcript and said track this'). Used for quality feedback analysis.",
                     },
                 },
                 "required": ["skill_name", "session_id"],
@@ -777,23 +856,6 @@ async def list_tools() -> list[Tool]:
                 "required": ["symbol_id"],
             },
         ),
-        Tool(
-            name="extract_symbols",
-            description=(
-                "Extract all symbols (functions, classes) from a source file via static parsing. "
-                "Returns symbol names, types, and line ranges. No index required."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "file_path": {
-                        "type": "string",
-                        "description": "Absolute or repo-relative path to the source file",
-                    },
-                },
-                "required": ["file_path"],
-            },
-        ),
     ]
 
 
@@ -809,7 +871,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         session_id = arguments["session_id"]
         _skill_sessions[session_id] = {
             "t0": time.monotonic(),
-            "rationale": arguments.get("rationale", ""),
         }
         return [
             TextContent(
@@ -837,7 +898,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         raw_diagnostic = arguments.get("diagnostic") or {}
         session_data = _skill_sessions.pop(session_id, None)
         t0 = session_data["t0"] if session_data else None
-        rationale = session_data.get("rationale") if session_data else None
         duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
 
         # Validate diagnostic against the per-skill Pydantic model.
@@ -871,7 +931,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             SERVER_VERSION,
             diagnostic=diagnostic,
             error_class=error_class,
-            rationale=rationale,
         )
         response: dict = {
             "session_id": session_id,
@@ -919,6 +978,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await handle_link_commit(
                 ctx,
                 commit_hash=arguments.get("commit_hash", "HEAD"),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.ingest", "ingest"):
             result = await handle_ingest(
@@ -932,6 +992,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 action=arguments["action"],
                 current_version=SERVER_VERSION,
                 repo_path=str(ctx.repo_path),
+                preflight_id=arguments.get("preflight_id"),
             )
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
         elif name in ("bicameral.reset", "reset"):
@@ -978,6 +1039,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 signer=arguments["signer"],
                 note=arguments.get("note", ""),
                 action=arguments.get("action", "ratify"),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.resolve_collision", "resolve_collision"):
             result = await handle_resolve_collision(
@@ -993,6 +1055,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await handle_bind(
                 ctx,
                 bindings=arguments.get("bindings", []),
+                preflight_id=arguments.get("preflight_id"),
             )
         elif name in ("bicameral.history", "history"):
             result = await handle_history(
@@ -1042,9 +1105,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         elif name == "get_neighbors":
             data = await asyncio.to_thread(ctx.code_graph.get_neighbors, arguments["symbol_id"])
             return [TextContent(type="text", text=json.dumps(data, indent=2))]
-        elif name == "extract_symbols":
-            data = await ctx.code_graph.extract_symbols(arguments["file_path"])
-            return [TextContent(type="text", text=json.dumps(data, indent=2))]
         else:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -1089,6 +1149,27 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
+    except _IngestRefused as exc:
+        # #216: translate entry-time ingest guardrail refusals (size +
+        # rate limits) into a structured TextContent error. No
+        # IngestResponse schema change — refusals propagate via
+        # exception and surface here only.
+        return [
+            TextContent(
+                type="text",
+                text=json.dumps(
+                    {
+                        "error": exc.reason,
+                        "detail": exc.detail,
+                        "action": _ACTION_FOR_REFUSAL_REASON.get(
+                            exc.reason,
+                            "review .bicameral/config.yaml limits and retry",
+                        ),
+                    },
+                    indent=2,
+                ),
+            )
+        ]
     except (DestructiveMigrationRequired, SchemaVersionTooNew) as exc:
         action = (
             "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
@@ -1169,7 +1250,13 @@ async def serve_stdio() -> None:
 
 
 def cli_main(argv: list[str] | None = None) -> int:
-    """Entry point — build parser, register subcommands via _register_subparsers, dispatch via _dispatch."""
+    """Entry point — orchestrates parser build, registration, parsing, dispatch.
+
+    Decomposed from a 92-LOC monolith (#124) into _register_subparsers
+    (subparser wiring) + _dispatch (command routing). Each piece stays
+    well under the 40-LOC razor cap; new subcommands add a single line
+    to each helper.
+    """
     parser = ArgumentParser(description="Bicameral MCP server")
     subparsers = parser.add_subparsers(dest="command")
     _register_subparsers(parser, subparsers)
@@ -1178,63 +1265,31 @@ def cli_main(argv: list[str] | None = None) -> int:
 
 
 def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
-    """Wire all subparser definitions + top-level flags onto parser.
-
-    triage-adapt: omits dev's branch-scan subparser and the setup
-    --with-push-hook flag — both are #48 prerequisites that aren't on
-    this branch. Keeps dev's link_commit subparser (the actual #124 fix)
-    and the helper-extraction shape (so test_hook_command_registration.py
-    can introspect registered subcommands).
-    """
-    subparsers.add_parser(
-        "config",
-        help="interactive config editor — update mode, guided, and telemetry settings",
+    """Wire all subparser definitions + top-level flags onto parser."""
+    subparsers.add_parser("config", help="interactive config editor")
+    subparsers.add_parser("reset", help="interactive ledger reset — wipes state with confirmation")
+    setup = subparsers.add_parser("setup", help="interactive setup — configure MCP client")
+    setup.add_argument("repo_path", nargs="?", default=None, help="repo path (auto-detected)")
+    setup.add_argument(
+        "--history-path", default=None, metavar="PATH", help="separate .bicameral/ dir"
     )
-    subparsers.add_parser(
-        "reset",
-        help="interactive ledger reset — wipes state with confirmation",
+    setup.add_argument(
+        "--with-push-hook", action="store_true", help="also install pre-push drift hook (#48)"
     )
-    setup_parser = subparsers.add_parser(
-        "setup",
-        help="interactive setup — configure MCP client to use this server",
-    )
-    setup_parser.add_argument(
-        "repo_path",
-        nargs="?",
-        default=None,
-        help="path to the repo to analyze (auto-detected if omitted)",
-    )
-    setup_parser.add_argument(
-        "--history-path",
-        default=None,
-        metavar="PATH",
-        help="separate directory for .bicameral/ history storage (default: same as repo)",
-    )
-    link_parser = subparsers.add_parser(
+    link = subparsers.add_parser(
         "link_commit",
         help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
     )
-    link_parser.add_argument(
-        "commit_hash",
-        nargs="?",
-        default="HEAD",
-        help="commit hash to link (default: HEAD)",
+    link.add_argument(
+        "commit_hash", nargs="?", default="HEAD", help="commit hash to link (default: HEAD)"
     )
-    link_parser.add_argument(
-        "--quiet",
-        action="store_true",
-        help="suppress JSON output (still exits 0 on success)",
+    link.add_argument(
+        "--quiet", action="store_true", help="suppress JSON output (still exits 0 on success)"
     )
     parser.add_argument(
-        "--smoke-test",
-        action="store_true",
-        help="validate package wiring and print the registered MCP tools, then exit",
+        "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
     )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=f"%(prog)s {SERVER_VERSION}",
-    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {SERVER_VERSION}")
 
 
 def _dispatch(args: Any) -> int:
@@ -1250,10 +1305,11 @@ def _dispatch(args: Any) -> int:
     if args.command == "setup":
         from setup_wizard import run_setup
 
-        return run_setup(args.repo_path, args.history_path)
-    # triage-adapt: link_commit dispatch — added per #124 backport without
-    # the broader _register_subparsers/_dispatch refactor or the branch-scan
-    # / --with-push-hook prerequisites
+        return run_setup(
+            args.repo_path,
+            args.history_path,
+            with_push_hook=args.with_push_hook,
+        )
     if args.command == "link_commit":
         from cli.link_commit_cli import main as link_commit_main
 

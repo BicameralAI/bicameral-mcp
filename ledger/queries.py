@@ -11,6 +11,7 @@ No SDK types (RecordID etc.) leak through — normalization happens in client.py
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 
 from .client import LedgerClient, LedgerError
@@ -572,6 +573,7 @@ async def upsert_decision(
     signoff: dict | None = None,
     decision_level: str | None = None,
     parent_decision_id: str | None = None,
+    governance: dict | None = None,
 ) -> str:
     """Create or update a decision node. Returns the decision ID string.
 
@@ -611,6 +613,9 @@ async def upsert_decision(
         if parent_decision_id is not None:
             set_clause += ", parent_decision_id = $parent_decision_id"
             update_params["parent_decision_id"] = parent_decision_id
+        if governance is not None:
+            set_clause += ", governance = $governance"
+            update_params["governance"] = governance
         await client.query(
             f"UPDATE {existing[0]['id']} SET {set_clause}",
             update_params,
@@ -647,6 +652,9 @@ async def upsert_decision(
     if parent_decision_id is not None:
         create_clause += ", parent_decision_id=$parent_decision_id"
         create_params["parent_decision_id"] = parent_decision_id
+    if governance is not None:
+        create_clause += ", governance=$governance"
+        create_params["governance"] = governance
     rows = await client.query(create_clause, create_params)
     return str(rows[0].get("id", "")) if rows else ""
 
@@ -721,6 +729,44 @@ async def upsert_code_region(
     return str(rows[0].get("id", "")) if rows else ""
 
 
+async def create_code_region(
+    client: LedgerClient,
+    file_path: str,
+    symbol_name: str,
+    start_line: int,
+    end_line: int,
+    purpose: str = "",
+    repo: str = "",
+    content_hash: str = "",
+) -> str:
+    """Phase 3 (#60) — create a NEW code_region row, never upsert.
+
+    Unlike ``upsert_code_region`` (which keys on ``(file_path, symbol_name)``
+    and silently reuses the same row for same-file relocations or
+    line-shifts), this helper always creates a fresh region. Required
+    by the continuity-redirect path: when a symbol moves within the
+    same file, the old and new regions must have distinct IDs so
+    ``update_binds_to_region`` can redirect the binding without
+    overwriting the old span. PR #73 review, CodeRabbit MAJOR
+    ledger/adapter.py:365.
+    """
+    rows = await client.query(
+        "CREATE code_region SET "
+        "file_path=$fp, symbol_name=$s, start_line=$sl, end_line=$el, "
+        "purpose=$p, repo=$r, content_hash=$h",
+        {
+            "fp": file_path,
+            "s": symbol_name,
+            "sl": start_line,
+            "el": end_line,
+            "p": purpose,
+            "r": repo,
+            "h": content_hash,
+        },
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
 async def upsert_compliance_check(
     client: LedgerClient,
     decision_id: str,
@@ -733,6 +779,8 @@ async def upsert_compliance_check(
     commit_hash: str = "",
     pruned: bool = False,
     ephemeral: bool = False,
+    semantic_status: str | None = None,
+    evidence_refs: list[str] | None = None,
 ) -> bool:
     """Write a compliance_check row keyed on (decision_id, region_id, content_hash).
 
@@ -740,13 +788,21 @@ async def upsert_compliance_check(
     verdict must be one of: 'compliant', 'drifted', 'not_relevant'.
     ephemeral=True marks the verdict as from a WIP/fixup commit; downstream
     queries filter these out when computing decision status and drift scoring.
+
+    Phase 4 (#61) — additive optional fields:
+      semantic_status: 'semantically_preserved' | 'semantic_change' | None
+                       Records whether the auto-classifier or caller-LLM
+                       judged the change cosmetic vs meaningful.
+      evidence_refs:   list of free-form audit-trail strings, e.g.
+                       ['signature:1.00', 'neighbors:0.97'].
     """
+    refs = evidence_refs or []
     try:
         await client.execute(
             "CREATE compliance_check SET decision_id = $d, region_id = $r, "
             "content_hash = $h, verdict = $v, confidence = $cf, "
             "explanation = $e, phase = $p, commit_hash = $cm, pruned = $pr, "
-            "ephemeral = $ep",
+            "ephemeral = $ep, semantic_status = $ss, evidence_refs = $er",
             {
                 "d": decision_id,
                 "r": region_id,
@@ -758,6 +814,8 @@ async def upsert_compliance_check(
                 "cm": commit_hash,
                 "pr": pruned,
                 "ep": ephemeral,
+                "ss": semantic_status,
+                "er": refs,
             },
         )
         return True
@@ -819,6 +877,63 @@ async def region_exists(client: LedgerClient, region_id: str) -> bool:
     """Return True iff a code_region row exists with the given record id."""
     rows = await client.query(f"SELECT id FROM {region_id} LIMIT 1")
     return bool(rows)
+
+
+async def get_region_descriptor(
+    client: LedgerClient,
+    region_id: str,
+) -> dict | None:
+    """Return the cross-author region descriptor for a local code_region.
+
+    Used by ``handle_resolve_compliance`` (#190) to build the
+    ``compliance_check.completed`` event payload. Returns repo / file_path /
+    symbol_name / content_hash from the local row — these together are the
+    content-addressable key the receiver uses to find a matching region in
+    its own DB. Returns None if the row doesn't exist.
+
+    Line numbers (start_line / end_line) are deliberately excluded — they
+    shift across replays and would make cross-author matching brittle.
+    """
+    rows = await client.query(
+        f"SELECT repo, file_path, symbol_name, content_hash FROM {region_id} LIMIT 1"
+    )
+    if not rows or not isinstance(rows[0], dict):
+        return None
+    row = rows[0]
+    return {
+        "repo": str(row.get("repo", "")),
+        "file_path": str(row.get("file_path", "")),
+        "symbol_name": str(row.get("symbol_name", "")),
+        "content_hash": str(row.get("content_hash", "")),
+    }
+
+
+async def find_code_region_by_content(
+    client: LedgerClient,
+    *,
+    repo: str,
+    file_path: str,
+    symbol_name: str,
+    content_hash: str,
+) -> str | None:
+    """Resolve a code_region by content-addressable key. Returns the local
+    region id, or None if no matching row exists yet on this DB.
+
+    Used by ``events/materializer.py`` (#190) on receiver-side replay of
+    ``compliance_check.completed`` events: peers may have different
+    SurrealDB-generated region ids for the same code shape, so we look up
+    by ``(repo, file_path, symbol_name, content_hash)`` instead of by id.
+    """
+    rows = await client.query(
+        "SELECT id FROM code_region "
+        "WHERE repo = $r AND file_path = $fp AND symbol_name = $s "
+        "AND content_hash = $h LIMIT 1",
+        {"r": repo, "fp": file_path, "s": symbol_name, "h": content_hash},
+    )
+    if rows and isinstance(rows[0], dict):
+        rid = rows[0].get("id")
+        return str(rid) if rid else None
+    return None
 
 
 async def get_compliance_verdict(
@@ -978,9 +1093,58 @@ async def find_decision_by_canonical_id(
     return None
 
 
-# triage-adapt: dropped #77 update_decision_level block from auto-merge —
-# triage doesn't carry decision_level work (PR #107, v0.16.0); not part
-# of e6d4b8f's actual +38-line diff for #97
+# ── decision_level write helper (#77) ─────────────────────────────────
+# Single write path used by:
+#   - cli/classify.py --apply              (bulk backfill)
+#   - handlers/set_decision_level.py       (MCP tool primitive)
+#   - dashboard/server.py /api/decision/<id>/level (#76 sibling PR)
+# Schema ASSERT at ledger/schema.py enforces L1/L2/L3; this helper adds
+# defense-in-depth callers see clear Python errors before SurrealQL runs.
+
+_VALID_LEVELS = frozenset(("L1", "L2", "L3"))
+_DECISION_ID_RE = re.compile(r"^decision:[A-Za-z0-9_]+$")
+
+
+class DecisionNotFound(LedgerError):
+    """Raised by update_decision_level when the decision_id has no row."""
+
+
+async def update_decision_level(
+    client: LedgerClient,
+    decision_id: str,
+    level: str,
+) -> None:
+    """Set decision_level on a single decision. Idempotent.
+
+    Validates ``level`` against {L1, L2, L3} and ``decision_id`` against
+    the canonical ``^decision:[A-Za-z0-9_]+$`` shape before any SurrealQL
+    runs (audit S1 defense-in-depth — the existing f-string interpolation
+    pattern is consistent with siblings, but a malformed id would still
+    surface as a SurrealDB error rather than silent corruption).
+
+    Args:
+        client: Connected LedgerClient.
+        decision_id: Full record id (e.g. ``"decision:abc123"``).
+        level: One of ``"L1"``, ``"L2"``, ``"L3"``.
+
+    Raises:
+        ValueError: when ``level`` is not in {L1, L2, L3} or
+            ``decision_id`` fails the shape regex.
+        DecisionNotFound: when no row exists at ``decision_id``.
+    """
+    if level not in _VALID_LEVELS:
+        raise ValueError(f"invalid level {level!r}; expected one of L1, L2, L3")
+    if not _DECISION_ID_RE.match(decision_id):
+        raise ValueError(f"invalid decision_id shape: {decision_id!r}")
+    rows = await client.query(f"SELECT id FROM {decision_id} LIMIT 1")
+    if not rows:
+        raise DecisionNotFound(decision_id)
+    await client.execute(
+        f"UPDATE {decision_id} SET decision_level = $level",
+        {"level": level},
+    )
+
+
 async def update_region_hash(
     client: LedgerClient,
     region_id: str,
@@ -1473,7 +1637,7 @@ async def get_context_for_ready_decisions(
 # shape and raises ``LedgerError`` on mismatch — a single choke point
 # per call instead of trusting upstream callers.
 
-import re as _re  # noqa: E402
+import re as _re  # noqa: E402 — module-private import kept adjacent to its usage block
 
 _RECORD_ID_RE = _re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:[A-Za-z0-9_\-]+$")
 
@@ -1548,6 +1712,7 @@ async def upsert_subject_identity(
     content_hash: str | None,
     confidence: float,
     model_version: str,
+    neighbors_at_bind: tuple[str, ...] | list[str] | None = None,
 ) -> str:
     """Create-or-fetch a subject_identity row by ``address`` (UNIQUE).
 
@@ -1559,6 +1724,10 @@ async def upsert_subject_identity(
     SELECT and both attempt CREATE, the loser hits the UNIQUE(address)
     index and SurrealDB returns "already contains"; we re-SELECT and
     return the winning row's id rather than propagating the conflict.
+
+    ``neighbors_at_bind`` (v12) is persisted as ``array<string>`` when
+    provided, ``NONE`` otherwise. Phase 3's continuity matcher reads this
+    field to compute Jaccard against post-rebase neighbors.
     """
     rows = await client.query(
         "SELECT id FROM subject_identity WHERE address = $a LIMIT 1",
@@ -1566,6 +1735,8 @@ async def upsert_subject_identity(
     )
     if rows:
         return str(rows[0].get("id", ""))
+
+    neighbors_value = list(neighbors_at_bind) if neighbors_at_bind is not None else None
 
     create_args = {
         "address": address,
@@ -1576,6 +1747,7 @@ async def upsert_subject_identity(
         "content_hash": content_hash,
         "confidence": confidence,
         "model_version": model_version,
+        "neighbors_at_bind": neighbors_value,
     }
     try:
         rows = await client.query(
@@ -1588,7 +1760,8 @@ async def upsert_subject_identity(
                 signature_hash       = $signature_hash,
                 content_hash         = $content_hash,
                 confidence           = $confidence,
-                model_version        = $model_version
+                model_version        = $model_version,
+                neighbors_at_bind    = $neighbors_at_bind
             """,
             create_args,
         )
@@ -1623,14 +1796,257 @@ async def link_decision_to_subject(
     client: LedgerClient,
     decision_id: str,
     code_subject_id: str,
+    region_id: str | None = None,
     confidence: float = 0.8,
 ) -> None:
-    """decision → about → code_subject. Idempotent."""
+    """decision → about → code_subject. Idempotent.
+
+    PR #73 review (CodeRabbit MAJOR ledger/queries.py:1567):
+    a decision can bind multiple regions; the ``about`` edge carries
+    the originating ``region_id`` so the per-region continuity pass
+    can disambiguate which stored identity belongs to a given drifted
+    region. ``region_id`` is optional for backward-compatibility with
+    callers that don't have a specific region in scope.
+    """
     did = _validated_record_id(decision_id, "decision")
     csid = _validated_record_id(code_subject_id, "code_subject")
+    if region_id:
+        rid = _validated_record_id(region_id, "code_region")
+        await _execute_idempotent_edge(
+            client,
+            f"RELATE {did}->about->{csid} SET confidence=$c, region_id=$r, created_at=time::now()",
+            {"c": confidence, "r": rid},
+        )
+    else:
+        await _execute_idempotent_edge(
+            client,
+            f"RELATE {did}->about->{csid} SET confidence=$c, created_at=time::now()",
+            {"c": confidence},
+        )
+
+
+async def get_region_metadata(
+    client: LedgerClient,
+    region_id: str,
+) -> dict | None:
+    """Phase 3 (#60) — load span + linked-identity kind for a region.
+
+    Returns ``{file_path, symbol_name, start_line, end_line, identity_type}``
+    where ``identity_type`` falls back to ``"unknown"`` when no
+    ``subject_identity`` is reachable from this region's decision.
+
+    PR #73 review (CodeRabbit MAJOR handlers/link_commit.py:255):
+    callers were seeding ``DriftContext`` with ``kind="unknown"`` and
+    ``0,0`` line numbers, permanently dropping the kind signal from
+    the Phase 3 score and reporting ``ContinuityResolution.old_location``
+    as ``:0-0``. This helper closes both gaps with a single query.
+    """
+    rid = _validated_record_id(region_id, "code_region")
+    rows = await client.query(
+        f"""
+        SELECT
+            file_path, symbol_name, start_line, end_line,
+            (<-binds_to<-decision->about->code_subject<-has_identity
+                <-subject_identity.identity_type)[0] AS identity_type
+        FROM {rid}
+        LIMIT 1
+        """,
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    return {
+        "file_path": row.get("file_path", ""),
+        "symbol_name": row.get("symbol_name", ""),
+        "start_line": int(row.get("start_line") or 0),
+        "end_line": int(row.get("end_line") or 0),
+        "identity_type": row.get("identity_type") or "unknown",
+    }
+
+
+async def update_binds_to_region(
+    client: LedgerClient,
+    decision_id: str,
+    old_region_id: str,
+    new_region_id: str,
+    *,
+    confidence: float = 0.85,
+) -> None:
+    """Phase 3 (#60): redirect a decision's binds_to from old to new region.
+
+    Atomically deletes the old ``decision -binds_to-> old_region`` edge
+    and creates a fresh edge to ``new_region`` with
+    ``provenance.method = "continuity_resolved"``. Wrapped in a single
+    SurrealQL transaction so a failure on the second statement leaves
+    the original binding intact rather than orphaning the decision
+    (PR #73 review, CodeRabbit MAJOR ledger/queries.py:1602).
+
+    The old binding's audit trail lives in the parallel
+    ``identity_supersedes`` edge written by ``write_identity_supersedes``.
+    """
+    did = _validated_record_id(decision_id, "decision")
+    old_id = _validated_record_id(old_region_id, "code_region")
+    new_id = _validated_record_id(new_region_id, "code_region")
+    # Embed provenance as a SurrealQL object literal — passing it via
+    # ``$p`` silently drops nested dicts to ``{}`` under surrealdb-py
+    # 2.0.0. The literal value is internal-only (no caller input
+    # interpolated). The whole DELETE+RELATE pair is wrapped in a
+    # transaction so a partial migration cannot leave a decision
+    # ungrounded.
+    #
+    # Idempotency: a repeat call (same decision_id / old_region_id /
+    # new_region_id) finds the old edge already gone and the new edge
+    # already present. The RELATE then hits UNIQUE(in, out) and the
+    # transaction rolls back with "already contains". We catch that
+    # specific error and treat it as success — the desired end state
+    # is already in place.
+    # Idempotency: when a repeat call finds the old edge already gone
+    # and the new edge already present, the transaction's RELATE hits
+    # UNIQUE(in, out) and rolls back. Pre-flight by checking whether
+    # the desired end state is already in place; if so, no-op.
+    existing = await client.query(
+        f"SELECT id FROM binds_to WHERE in = {did} AND out = {new_id} LIMIT 1",
+    )
+    if existing:
+        # Desired edge already exists. Ensure the old edge is gone
+        # (covers the partial-failure recovery case where a prior
+        # transaction succeeded the RELATE but failed the DELETE).
+        await client.execute(
+            f"DELETE FROM binds_to WHERE in = {did} AND out = {old_id}",
+        )
+        return
+    try:
+        await client.execute(
+            f"""
+            BEGIN TRANSACTION;
+            DELETE FROM binds_to WHERE in = {did} AND out = {old_id};
+            RELATE {did}->binds_to->{new_id}
+                SET confidence = $c,
+                    provenance = {{method: 'continuity_resolved'}},
+                    created_at = time::now();
+            COMMIT TRANSACTION;
+            """,
+            {"c": confidence},
+        )
+    except LedgerError as exc:
+        msg = str(exc)
+        # SurrealDB v2 wraps UNIQUE violations inside transactions as
+        # "failed transaction" without exposing the underlying cause.
+        # Treat both forms as idempotent if we got past the pre-flight
+        # without finding the new edge but the transaction still
+        # collided (race condition).
+        if "already contains" not in msg and "failed transaction" not in msg:
+            raise
+
+
+async def write_identity_supersedes(
+    client: LedgerClient,
+    old_identity_id: str,
+    new_identity_id: str,
+    change_type: str,
+    confidence: float,
+    evidence_refs: tuple[str, ...] | list[str] = (),
+) -> None:
+    """Phase 3 (#60): record an identity transition. Idempotent on (in, out).
+
+    ``change_type`` must be one of ``moved``, ``renamed``, ``moved_and_renamed``
+    (enforced by the schema's ASSERT).
+    """
+    old_id = _validated_record_id(old_identity_id, "subject_identity")
+    new_id = _validated_record_id(new_identity_id, "subject_identity")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {did}->about->{csid} SET confidence=$c, created_at=time::now()",
+        f"RELATE {old_id}->identity_supersedes->{new_id} "
+        "SET change_type=$ct, confidence=$c, evidence_refs=$er, created_at=time::now()",
+        {"ct": change_type, "c": confidence, "er": list(evidence_refs)},
+    )
+
+
+async def write_subject_version(
+    client: LedgerClient,
+    code_subject_id: str,
+    repo_ref: str,
+    file_path: str,
+    start_line: int,
+    end_line: int,
+    *,
+    symbol_name: str | None = None,
+    symbol_kind: str | None = None,
+    content_hash: str | None = None,
+    signature_hash: str | None = None,
+) -> str:
+    """Phase 3 (#60): upsert a subject_version row at a concrete location.
+
+    Keyed on ``(repo_ref, file_path, start_line, end_line)`` — repeated calls
+    for the same location return the same id. Caller is responsible for the
+    ``has_version`` edge (``relate_has_version``).
+    """
+    _validated_record_id(code_subject_id, "code_subject")  # validate; no interpolation here
+    rows = await client.query(
+        """
+        UPSERT subject_version SET
+            repo_ref       = $repo_ref,
+            file_path      = $file_path,
+            start_line     = $start_line,
+            end_line       = $end_line,
+            symbol_name    = $symbol_name,
+            symbol_kind    = $symbol_kind,
+            content_hash   = $content_hash,
+            signature_hash = $signature_hash
+        WHERE repo_ref = $repo_ref AND file_path = $file_path
+              AND start_line = $start_line AND end_line = $end_line
+        """,
+        {
+            "repo_ref": repo_ref,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "symbol_name": symbol_name,
+            "symbol_kind": symbol_kind,
+            "content_hash": content_hash,
+            "signature_hash": signature_hash,
+        },
+    )
+    if rows:
+        return str(rows[0].get("id", ""))
+    rows = await client.query(
+        """
+        CREATE subject_version SET
+            repo_ref=$repo_ref, file_path=$file_path,
+            start_line=$start_line, end_line=$end_line,
+            symbol_name=$symbol_name, symbol_kind=$symbol_kind,
+            content_hash=$content_hash, signature_hash=$signature_hash
+        """,
+        {
+            "repo_ref": repo_ref,
+            "file_path": file_path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "symbol_name": symbol_name,
+            "symbol_kind": symbol_kind,
+            "content_hash": content_hash,
+            "signature_hash": signature_hash,
+        },
+    )
+    return str(rows[0].get("id", "")) if rows else ""
+
+
+async def relate_has_version(
+    client: LedgerClient,
+    code_subject_id: str,
+    subject_version_id: str,
+    confidence: float = 0.9,
+) -> None:
+    """Phase 3 (#60): code_subject → has_version → subject_version. Idempotent.
+
+    Mirrors ``relate_has_identity``. Closes the orphan-edge condition where
+    ``has_version`` was defined-but-unused since #59 schema migration.
+    """
+    csid = _validated_record_id(code_subject_id, "code_subject")
+    svid = _validated_record_id(subject_version_id, "subject_version")
+    await _execute_idempotent_edge(
+        client,
+        f"RELATE {csid}->has_version->{svid} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 
@@ -1657,7 +2073,8 @@ async def find_subject_identities_for_decision(
             signature_hash,
             content_hash,
             confidence,
-            model_version
+            model_version,
+            neighbors_at_bind
         FROM {did}->about->code_subject->has_identity->subject_identity
         """,
     )
@@ -1672,6 +2089,7 @@ async def find_subject_identities_for_decision(
             "content_hash": r.get("content_hash"),
             "confidence": float(r.get("confidence") or 0.0),
             "model_version": str(r.get("model_version", "")),
+            "neighbors_at_bind": r.get("neighbors_at_bind"),
         }
         for r in (rows or [])
         if r.get("identity_id")

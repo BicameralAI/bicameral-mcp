@@ -12,7 +12,7 @@ name: Preflight Failure-Mode Eval
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, dev]
     paths:
       - 'handlers/preflight.py'
       - 'handlers/sync_middleware.py'

@@ -52,7 +52,7 @@ def resolve_symbol_lines(
             if result.returncode != 0:
                 return None
             content = result.stdout
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError):
             return None
 
     try:
@@ -164,7 +164,7 @@ def get_git_content(
         if result.returncode != 0:
             return None
         return result.stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError):
         return None
 
 
@@ -182,6 +182,7 @@ def compute_content_hash(
     content = get_git_content(file_path, start_line, end_line, repo_path, ref)
     if content is None:
         return None
+    # Validate line range (warn but still hash — shorter file = drift signal)
     if start_line < 1 or end_line < start_line:
         logger.warning(
             "[status] Invalid range %d:%d for %s",
@@ -242,7 +243,7 @@ def get_changed_files(commit_hash: str, repo_path: str) -> list[str]:
             logger.warning("[status] git show failed for %s: %s", commit_hash, result.stderr[:200])
             return []
         return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+    except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError) as e:
         logger.warning("[status] git show error: %s", e)
         return []
 
@@ -288,7 +289,7 @@ def get_changed_files_in_range(
             )
             return None
         return [f.strip() for f in result.stdout.strip().splitlines() if f.strip()]
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+    except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError) as e:
         logger.warning("[status] git diff range error: %s", e)
         return None
 
@@ -306,19 +307,32 @@ def resolve_ref(ref: str, repo_path: str) -> str | None:
     the base). Callers must treat ``None`` as "ran, unresolvable" —
     distinct from returning an SHA that happens to match something
     stale.
+
+    Issue #67: ``repo_path=""`` (or any path that doesn't resolve to a
+    valid directory) used to call ``Path("").resolve()`` which returned
+    the process CWD. On POSIX that often happened to be a git repo, so
+    the call appeared to "work" with garbage data; on Windows it
+    crashed with ``NotADirectoryError`` from CreateProcess. We now
+    short-circuit to ``None`` when the resolved path isn't a directory.
     """
-    if not ref:
+    if not ref or not repo_path:
+        return None
+    try:
+        resolved_cwd = Path(repo_path).resolve()
+    except (OSError, RuntimeError):
+        return None
+    if not resolved_cwd.is_dir():
         return None
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--verify", ref],
-            cwd=Path(repo_path).resolve(),
+            cwd=resolved_cwd,
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
             return result.stdout.strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, NotADirectoryError):
         pass
     return None

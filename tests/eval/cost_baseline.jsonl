@@ -1,5 +1,9 @@
-{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 10, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokenizer": "cl100k_base", "tokens": 7574}
-{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 100, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokenizer": "cl100k_base", "tokens": 79025}
-{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 1000, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokenizer": "cl100k_base", "tokens": 795982}
-{"_baseline_version": "1", "bytes": 6610, "metric": "C2", "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin", "tokens": 1519}
-{"_baseline_version": "1", "metric": "C3", "p50_ms": 0.082, "p95_ms": 0.099, "recorded_at": "2026-04-29T03:19:18Z", "recorded_on": "darwin"}
+{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 10, "recorded_at": "2026-04-29T14:10:45Z", "recorded_on": "any", "tokenizer": "cl100k_base", "tokens": 7574}
+{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 100, "recorded_at": "2026-04-29T14:10:45Z", "recorded_on": "any", "tokenizer": "cl100k_base", "tokens": 79025}
+{"_baseline_version": "1", "_generator_version": "1", "metric": "C1", "n_features": 1000, "recorded_at": "2026-04-29T14:10:46Z", "recorded_on": "any", "tokenizer": "cl100k_base", "tokens": 795982}
+{"_baseline_version": "1", "bytes": 2303, "metric": "C2", "n_features": 10, "recorded_at": "2026-04-29T14:10:46Z", "recorded_on": "any", "tokens": 566}
+{"_baseline_version": "1", "bytes": 2303, "metric": "C2", "n_features": 100, "recorded_at": "2026-04-29T14:10:48Z", "recorded_on": "any", "tokens": 571}
+{"_baseline_version": "1", "bytes": 2303, "metric": "C2", "n_features": 1000, "recorded_at": "2026-04-29T14:11:51Z", "recorded_on": "any", "tokens": 575}
+{"_baseline_version": "1", "metric": "C3", "n_features": 10, "p50_ms": 2.516, "p95_ms": 2.986, "recorded_at": "2026-04-29T14:11:51Z", "recorded_on": "darwin"}
+{"_baseline_version": "1", "metric": "C3", "n_features": 100, "p50_ms": 14.759, "p95_ms": 15.95, "recorded_at": "2026-04-29T14:11:55Z", "recorded_on": "darwin"}
+{"_baseline_version": "1", "metric": "C3", "n_features": 1000, "p50_ms": 138.795, "p95_ms": 141.651, "recorded_at": "2026-04-29T14:13:13Z", "recorded_on": "darwin"}

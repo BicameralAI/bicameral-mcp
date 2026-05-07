@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # ── Skill telemetry diagnostic models ────────────────────────────────
 # One model per skill. extra="forbid" means the handler can detect and
@@ -158,6 +158,22 @@ class DecisionMatch(BaseModel):
     signoff: dict | None = None
 
 
+class PreClassificationHint(BaseModel):
+    """Phase 4 (#61) — server-computed structural-drift evidence attached
+    to ``PendingComplianceCheck`` when the auto-classifier scored the
+    change in the uncertain band [0.30, 0.80).
+
+    The caller LLM may use this as a hint when reasoning about whether
+    a code change is genuinely semantic. The caller's verdict always
+    wins; this is advisory.
+    """
+
+    verdict: Literal["cosmetic", "semantic", "uncertain"]
+    confidence: float  # weighted score in [0, 1]
+    signals: dict[str, float] = {}  # per-signal contribution
+    evidence_refs: list[str] = []  # free-form audit refs
+
+
 class ComplianceVerdict(BaseModel):
     """One caller-LLM judgment to write back to the compliance cache.
 
@@ -167,6 +183,15 @@ class ComplianceVerdict(BaseModel):
       - "not_relevant" — retrieval made a mistake; this region is not about
                          this decision. Server will prune the binds_to edge
                          and record compliance_check with pruned=true.
+
+    Phase 4 (#61) — additive optional fields:
+      semantic_status: caller's claim about whether this is a cosmetic
+                       change (``semantically_preserved``) or a real
+                       semantic change (``semantic_change``). Persisted
+                       to ``compliance_check.semantic_status`` for the
+                       audit trail. ``None`` means "no claim".
+      evidence_refs:   free-form audit-trail strings (e.g.
+                       ``["signature:1.00", "neighbors:0.97"]``).
     """
 
     decision_id: str
@@ -176,6 +201,8 @@ class ComplianceVerdict(BaseModel):
     confidence: Literal["high", "medium", "low"]
     explanation: str  # one-sentence rationale for audit trail
     phase_metadata: dict = {}
+    semantic_status: Literal["semantically_preserved", "semantic_change"] | None = None
+    evidence_refs: list[str] = []
 
 
 class ResolveComplianceRejection(BaseModel):
@@ -196,6 +223,9 @@ class ResolveComplianceAccepted(BaseModel):
     region_id: str
     phase: str
     verdict: Literal["compliant", "drifted", "not_relevant"]
+    # Phase 4 (#61) additive: echoes the caller's semantic_status claim
+    # (or None if the caller didn't provide one).
+    semantic_status: Literal["semantically_preserved", "semantic_change"] | None = None
 
 
 class ResolveComplianceResponse(BaseModel):
@@ -216,6 +246,13 @@ class PendingComplianceCheck(BaseModel):
     """One verification job batched for the caller LLM to resolve.
 
     v0.5.0: decision_id replaces intent_id.
+
+    Phase 4 (#61) additive: ``pre_classification`` carries the
+    auto-classifier's structural evidence when the score landed in the
+    uncertain band [0.30, 0.80). The caller LLM may use this as a hint
+    when reasoning about cosmetic vs semantic; the caller's verdict
+    always wins. ``None`` for clearly-semantic pendings (score ≤ 0.30)
+    and when ``codegenome.enhance_drift`` is disabled.
     """
 
     phase: Literal["ingest", "drift", "regrounding"]
@@ -227,6 +264,27 @@ class PendingComplianceCheck(BaseModel):
     content_hash: str  # key the verdict must be written against
     code_body: str = ""  # extracted via tree-sitter, capped
     old_code_body: str | None = None  # drift-phase only
+    pre_classification: PreClassificationHint | None = None  # Phase 4 (#61)
+
+
+class ContinuityResolution(BaseModel):
+    """Phase 3 (#60) — outcome of the continuity matcher per drifted region.
+
+    Emitted in ``LinkCommitResponse.continuity_resolutions`` when
+    ``codegenome.enhance_drift`` is enabled. ``identity_moved`` /
+    ``identity_renamed`` indicate auto-resolution (the binding was
+    redirected); ``needs_review`` indicates a 0.50-0.75 confidence
+    candidate the caller LLM should evaluate.
+    """
+
+    decision_id: str
+    old_code_region_id: str
+    new_code_region_id: str | None = None
+    semantic_status: Literal["identity_moved", "identity_renamed", "needs_review"]
+    confidence: float = Field(ge=0.0, le=1.0)  # PR #73: bound to probability range
+    old_location: CodeRegionSummary
+    new_location: CodeRegionSummary | None = None
+    rationale: str
 
 
 class LinkCommitResponse(BaseModel):
@@ -251,6 +309,20 @@ class LinkCommitResponse(BaseModel):
     verification_instruction: str = ""
     flow_id: str = ""
     ephemeral: bool = False
+    # Phase 3 (#60) additive: continuity-matcher resolutions per drifted
+    # region. Empty when ``codegenome.enhance_drift`` is disabled or no
+    # drifted region produces a continuity match.
+    continuity_resolutions: list[ContinuityResolution] = []
+    # Phase 4 (#61) additive: count of drifted regions auto-resolved as
+    # cosmetic (verdict='compliant', semantic_status='semantically_preserved')
+    # by the structural classifier. Stripped from
+    # ``pending_compliance_checks`` before the response is sent. Zero
+    # when ``codegenome.enhance_drift`` is disabled.
+    auto_resolved_count: int = 0
+    # #65 — preflight telemetry plumb-through. When the caller passed a
+    # preflight_id (from a prior bicameral.preflight call), the response
+    # echoes it so downstream telemetry rows can be attributed.
+    preflight_id: str | None = None
 
 
 class ActionHint(BaseModel):
@@ -393,6 +465,11 @@ class IngestMapping(BaseModel):
     feature_group: str | None = None
     decision_level: str | None = None  # L1 | L2 | L3
     parent_decision_id: str | None = None
+    # #109 — optional governance metadata. None means derive from
+    # decision_level via governance.contracts.derive_governance_metadata
+    # at evaluation time. Stored as a free-form dict on the wire so the
+    # ingest contract doesn't pull pydantic types from governance.*.
+    governance: dict | None = None
 
 
 class IngestDecision(BaseModel):
@@ -417,6 +494,8 @@ class IngestDecision(BaseModel):
     source_excerpt: str = ""
     signoff: dict | None = None
     feature_group: str | None = None
+    # #109 — optional governance metadata threaded to the ledger.
+    governance: dict | None = None
 
 
 class IngestActionItem(BaseModel):
@@ -492,8 +571,7 @@ class IngestResponse(BaseModel):
     pending_grounding_decisions: list[dict] = []
     context_for_candidates: list[ContextForCandidate] = []
     source_cursor: SourceCursorSummary | None = None
-    judgment_payload: GapJudgmentPayload | None = None  # kept for backward compat
-    judgment_payloads: list[GapJudgmentPayload] = []  # one per feature_group topic
+    brief: BriefEnvelope | None = None  # #187: unified brief envelope; replaces judgment_payload[s]
     sync_status: LinkCommitResponse | None = None
 
 
@@ -527,6 +605,30 @@ class BriefDivergence(BaseModel):
     file_path: str
     conflicting_decisions: list[BriefDecision]
     summary: str
+
+
+class BriefEnvelope(BaseModel):
+    """Unified brief envelope returned inline on `IngestResponse.brief` (#187).
+
+    Shares its shape with the brief surface that `PreflightResponse` already
+    exposes via flat fields — same readers, one model. Server-side population
+    of `gaps` (via the gap-judge auto-chain) replaces the previously-fragile
+    dual-render contract where callers had to know to render
+    `IngestResponse.judgment_payload` separately from the brief decisions.
+
+    `rubric` carries the `GapRubric` reference that previously lived on
+    `judgment_payload.rubric` (5 fixed v0.4.19 categories; structurally
+    locked by `GapRubricCategory.key` Literal typing). `None` when no
+    gap-judge findings are present.
+    """
+
+    divergences: list[BriefDivergence] = []
+    drift_candidates: list[BriefDecision] = []
+    decisions: list[BriefDecision] = []
+    gaps: list[BriefGap] = []
+    rubric: GapRubric | None = None
+    action_hints: list[ActionHint] = []
+    suggested_questions: list[str] = []
 
 
 # ── Tool 7: /bicameral_reset ─────────────────────────────────────────
@@ -577,6 +679,9 @@ class PreflightResponse(BaseModel):
     context_pending_ready: list[BriefDecision] = []  # context_pending with ≥1 confirmed context_for
     sync_metrics: SyncMetrics | None = None  # V1 A3 — catch-up wall times
     product_stage: str | None = None  # shown once per device; wait-time expectation-setting
+    # #65 — opaque per-call id for the preflight telemetry capture loop.
+    # None when telemetry is disabled (BICAMERAL_PREFLIGHT_TELEMETRY != 1).
+    preflight_id: str | None = None
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────
@@ -641,6 +746,8 @@ class RatifyResponse(BaseModel):
     was_new: bool  # True if this call set the signoff; False if already set
     signoff: dict
     projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    # #65 — preflight telemetry plumb-through.
+    preflight_id: str | None = None
 
 
 # ── Tool: bicameral.resolve_collision ────────────────────────────────────────
@@ -708,6 +815,10 @@ class HistoryDecision(BaseModel):
     decision_level: str | None = None  # L1 | L2 | L3 — for balance-sheet display
     parent_decision_id: str | None = None
     ephemeral: bool = False  # True when current status was determined by a feature-branch commit not yet in authoritative ref
+    # #109 — optional governance metadata when present on the decision
+    # row. Pre-v15 rows omit this; readers fall back to defaults derived
+    # from decision_level at evaluation time.
+    governance: dict | None = None
 
 
 class HistoryFeature(BaseModel):
@@ -755,6 +866,8 @@ class BindResponse(BaseModel):
 
     bindings: list[BindResult]
     sync_metrics: SyncMetrics | None = None  # V1 A3 — write-barrier hold time
+    # #65 — preflight telemetry plumb-through.
+    preflight_id: str | None = None
 
 
 # ── Session-start banner ─────────────────────────────────────────────
@@ -773,5 +886,6 @@ class SessionStartBanner(BaseModel):
 
 
 # Forward references
+BriefEnvelope.model_rebuild()  # forward ref to GapRubric defined later in file
 IngestResponse.model_rebuild()
 ResolveCollisionResponse.model_rebuild()

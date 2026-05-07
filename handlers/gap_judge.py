@@ -20,9 +20,9 @@ Architectural anchor: the server never calls an LLM, never holds an
 API key, preserves the ``no-LLM-in-the-server`` invariant from
 ``git-for-specs.md``. This handler is a pure data-shape builder.
 
-Attached to ``IngestResponse.judgment_payload`` by the ingest auto-
-chain when the brief produced at least one decision. Also callable
-standalone via ``bicameral.judge_gaps(topic)``.
+Folded into ``IngestResponse.brief.gaps`` (and ``brief.rubric``) by
+the ingest auto-chain (#187) when the brief produced at least one
+decision. Also callable standalone via ``bicameral.judge_gaps(topic)``.
 """
 
 from __future__ import annotations

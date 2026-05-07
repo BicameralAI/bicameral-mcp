@@ -1,6 +1,6 @@
 """v0.4.12 — bicameral.preflight regression tests.
 
-Covers:
+Covers (HISTORICAL — see status note below):
 
   1. Pure-function tests for the helpers (_validate_topic, _content_tokens,
      _has_actionable_signal_in_search, _check_dedup) — synchronous, IO-free.
@@ -20,17 +20,43 @@ Covers:
 
   4. Brief chain: triggers when search has actionable signal, OR when
      guided_mode=True. Doesn't fire otherwise.
+
+Status (issue #69): ``_has_actionable_signal_in_search`` was removed in
+commit 12f25eb ("v0.10.0 — hierarchical dashboard, history-based
+preflight, per-section ingest"). The preflight refactor dropped BM25
+topic search; preflight now reads ``bicameral.history()`` and uses LLM
+reasoning to identify relevant feature groups. The "actionable signal"
+predicate this file tested no longer exists as a discrete unit.
+
+Three of the helpers (``_validate_topic``, ``_dedup_key_for``,
+``_check_dedup``) still exist on the new code path, so a future port
+could salvage the validation/dedup tests here. The handler-level mock
+tests are tied to the old BM25 pipeline and would need full rewrites.
+
+The file is kept for git archaeology and skipped at collection time so
+it doesn't break ``pytest`` runs.
 """
 
 from __future__ import annotations
 
-import time
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
-
 import pytest
 
-from contracts import (
+pytest.skip(
+    "Tests cover preflight contracts removed in 12f25eb (v0.10.0 — "
+    "BM25 topic search dropped; _has_actionable_signal_in_search and "
+    "the BM25-based handler pipeline were removed). Kept for archaeology; "
+    "validation/dedup helper tests could be ported if needed. "
+    "See issue #69.",
+    allow_module_level=True,
+)
+
+# Imports below intentionally retained but unreachable — they document the
+# original test file's surface area for future port-forward work.
+import time  # noqa: E402, F401
+from types import SimpleNamespace  # noqa: E402, F401
+from unittest.mock import AsyncMock, patch  # noqa: E402, F401
+
+from contracts import (  # noqa: E402, F401
     BriefDecision,
     BriefDivergence,
     BriefGap,
@@ -40,12 +66,7 @@ from contracts import (
     PreflightResponse,
     SearchDecisionsResponse,
 )
-from handlers.preflight import (
-    _check_dedup,
-    _content_tokens,
-    _dedup_key_for,
-    _has_actionable_signal_in_search,
-    _validate_topic,
+from handlers.preflight import (  # noqa: E402, F401
     handle_preflight,
 )
 

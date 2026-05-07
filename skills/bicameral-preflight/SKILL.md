@@ -81,8 +81,7 @@ evolve the trigger surface; future configurability will deduplicate.
 
 **At skill start** (before any tool calls):
 ```
-bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>,
-  rationale="<one-liner: why triggered — e.g. 'user said implement Stripe webhook handler'>")
+bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>)
 ```
 
 **At skill end**:
@@ -244,7 +243,7 @@ so you can see what your branch changes relative to main.
 ### 3.5 Scan recent user turns for uningested corrections
 
 Before classifying server-returned findings, invoke
-`/bicameral:capture-corrections` in **in-session mode**:
+`/bicameral-capture-corrections` in **in-session mode**:
 
 ```
 Skill("bicameral:capture-corrections", args="--mode in-session")
@@ -260,6 +259,8 @@ into the stop-and-ask queue below.
   output needed here.
 - Ask corrections → add as `uningested_corrections` category (priority
   slot 3: after drift, before open questions). One question max.
+
+**Queue drain (#156 PR B):** in-session mode also drains the pending-transcripts queue at `<repo>/.bicameral/pending-transcripts/` — transcripts from prior sessions whose corrections never surfaced (because that session ended without a follow-up preflight). Drained ask-corrections share the same ≤4-cap as in-session corrections; remaining pending files stay queued for the next preflight to pick up. The canonical drain rubric lives in `skills/bicameral-capture-corrections/SKILL.md` (Step 0 of the scan-and-classify rubric); preflight delegates to it via the in-session mode invocation.
 
 ### 4. Classify findings before surfacing
 
@@ -323,6 +324,12 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.
+
+### 5.4 Telemetry + source attribution rendering
+
+> **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g9_*` / `g10_*` / `g11_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
+
+**Source attribution rendering (#200 Phase 3)**: every `source_ref` field on surfaced decisions is already pre-filtered server-side per the operator's `render_source_attribution` setting in `.bicameral/config.yaml`. Modes: `full` (verbatim legacy), `redacted` (default — names + dates replaced with placeholders, structural shape preserved), `hidden` (blank). Render whatever the server returned verbatim — no further redaction needed at the skill layer, and do NOT attempt to recover original values from redacted forms. The deterministic gate is the config field, not this instruction.
 
 ### 5.5 Confirm finding relevance (ground truth for calibration)
 

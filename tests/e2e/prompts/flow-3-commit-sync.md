@@ -1,3 +1,3 @@
-Need a quick docs commit. Drop a one-line comment above the CherryPickResult enum in cherry-pick.ts pointing back to the roadmap — something like `// Cherry-pick: roadmap v2.7.1 — context menu + interactive`.
+Edit `cherry-pick.ts` to add a one-line comment above the `CherryPickResult` enum: `// Cherry-pick: roadmap v2.7.1 — context menu + interactive`.
 
-Stage and commit it as `docs: annotate cherry-pick origin`.
+Then run `git add cherry-pick.ts && git commit -m "docs: annotate cherry-pick origin"` to commit the change.

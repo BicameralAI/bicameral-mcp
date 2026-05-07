@@ -1,0 +1,40 @@
+name: PR body refs lint
+
+# Issue #114 Check B — surfaces bare `#NUMBER` mentions in PR bodies that
+# aren't wrapped by Closes/Fixes/Resolves/Refs keywords or under a
+# `## Linked issues` section. Advisory only — never blocks merge.
+#
+# SECURITY: PR_BODY is contributor-controlled text. The script reads it
+# via `--from-env PR_BODY` (direct os.environ read in Python). DO NOT
+# replace with `echo "$PR_BODY" > file` — that pattern lets Bash
+# command-substitution `$(cmd)` expand inside double quotes, which is
+# OWASP A03 arbitrary code execution in CI. See module docstring for
+# the full audit context (#114 audit v1 caught this).
+#
+# Note: when this workflow file lands, it does not run on the PR that
+# adds it — pull_request workflows execute the version on the base
+# branch. First execution is on the next qualifying PR after merge.
+
+on:
+  pull_request:
+    types: [opened, edited, reopened]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  lint:
+    name: PR body refs lint (advisory)
+    runs-on: ubuntu-latest
+    # Advisory: red here doesn't gate merge.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run lint
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: python .github/scripts/lint_pr_body_refs.py --from-env PR_BODY

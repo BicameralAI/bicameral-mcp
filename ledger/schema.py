@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 15
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -40,6 +40,10 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     8: "0.9.0",
     9: "0.9.3",
     11: "0.11.0",  # placeholder; release-eng pins final value at PR merge
+    12: "0.12.0",  # placeholder; release-eng pins final value at PR merge
+    13: "0.12.1",  # provenance FLEXIBLE on binds_to (#72)
+    14: "0.13.0",  # placeholder; release-eng pins final value at PR merge — Phase 4 (#61)
+    15: "0.15.x",  # decision.governance (#109 — governance metadata)
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -110,11 +114,29 @@ _TABLES = [
     # from compliance_check aggregation at read time via project_decision_status.
     # Shape: {state: 'proposed'|'ratified', session_id, created_at/ratified_at, signer?, note?}
     "DEFINE FIELD signoff ON decision FLEXIBLE TYPE option<object> DEFAULT NONE",
-    # v0.9.3 — hierarchical decision model (CodeGenome-aligned)
-    # L1 = product commitment (claim layer), L2 = architecture (identity layer), L3 = detail (rarely tracked)
+    # v0.9.3 — hierarchical decision model (CodeGenome-aligned).
+    # See docs/decision-level.md for the full reference, including the
+    # tolerant-NULL policy and codegenome-write semantics per level.
+    #
+    # Quick reference (full doc covers nuance + examples):
+    #   L1   = behavioural / product claim   → no codegenome identity write
+    #   L2   = implementation identity       → codegenome identity write enabled
+    #   L3   = glue / infrastructure detail  → no codegenome identity write
+    #   NONE = unclassified (legacy rows)    → treated as L3 (skip), tolerant policy
+    #
+    # Enforced by handlers/bind.py L1-exemption guard; the ASSERT below
+    # is the only schema-level constraint.
     "DEFINE FIELD decision_level     ON decision TYPE option<string> DEFAULT NONE "
     "ASSERT $value = NONE OR $value IN ['L1', 'L2', 'L3']",
     "DEFINE FIELD parent_decision_id ON decision TYPE option<string> DEFAULT NONE",
+    # v15 (#109) — optional governance metadata. FLEXIBLE because the
+    # nested object carries pydantic-validated keys (decision_class,
+    # risk_class, escalation_class, owner, supervisor,
+    # notification_channels, protected_component, review_after);
+    # SurrealDB v2 silently strips nested keys for plain TYPE object
+    # without FLEXIBLE. None for pre-v15 rows; readers fall back to
+    # ``derive_governance_metadata`` defaults at evaluation time.
+    "DEFINE FIELD governance         ON decision FLEXIBLE TYPE option<object> DEFAULT NONE",
     "DEFINE INDEX idx_decision_canonical ON decision FIELDS canonical_id UNIQUE",
     "DEFINE INDEX idx_decision_fts ON decision FIELDS description "
     "SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75) HIGHLIGHTS",
@@ -173,7 +195,13 @@ _TABLES = [
     # Cache key: (decision_id, region_id, content_hash) — one verdict per code shape.
     # pruned=true means the caller said "not_relevant" — retrieval mistake, binds_to
     # edge has been deleted. Row kept for audit trail.
-    "DEFINE TABLE compliance_check SCHEMAFULL",
+    #
+    # CHANGEFEED 30d INCLUDE ORIGINAL (Phase 4 / #61, F1 audit remediation):
+    # required so caller-LLM verdicts that overwrite an auto-resolved
+    # cosmetic row remain forensically recoverable for 30 days. Without
+    # the changefeed, the original (semantic_status='semantically_preserved')
+    # row would be silently lost on overwrite.
+    "DEFINE TABLE compliance_check SCHEMAFULL CHANGEFEED 30d INCLUDE ORIGINAL",
     "DEFINE FIELD decision_id  ON compliance_check TYPE string",  # renamed from intent_id
     "DEFINE FIELD region_id    ON compliance_check TYPE string",
     "DEFINE FIELD content_hash ON compliance_check TYPE string",
@@ -189,6 +217,14 @@ _TABLES = [
     "DEFAULT 'drift'",
     "DEFINE FIELD checked_at   ON compliance_check TYPE datetime DEFAULT time::now()",
     "DEFINE FIELD ephemeral    ON compliance_check TYPE bool DEFAULT false",
+    # Phase 4 (#61) — semantic drift evaluation fields.
+    # semantic_status records whether an auto-classifier or caller-LLM
+    # judged the change cosmetic vs semantically meaningful.
+    # evidence_refs is a free-form audit trail of the signals that drove
+    # the verdict (e.g. ['signature:1.00', 'neighbors:0.97']).
+    "DEFINE FIELD semantic_status ON compliance_check TYPE option<string> DEFAULT NONE "
+    "ASSERT $value = NONE OR $value IN ['semantically_preserved', 'semantic_change']",
+    "DEFINE FIELD evidence_refs   ON compliance_check TYPE array<string> DEFAULT []",
     "DEFINE INDEX idx_cc_cache_key ON compliance_check FIELDS decision_id, region_id, content_hash UNIQUE",
     "DEFINE INDEX idx_cc_decision  ON compliance_check FIELDS decision_id",
     "DEFINE INDEX idx_cc_region    ON compliance_check FIELDS region_id",
@@ -239,6 +275,9 @@ _TABLES = [
     "ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD model_version        ON subject_identity TYPE string",
     "DEFINE FIELD created_at           ON subject_identity TYPE datetime DEFAULT time::now()",
+    # v12 (Phase 3): 1-hop call-graph neighbor addresses captured at bind
+    # time for the continuity matcher's Jaccard signal. None for pre-v12 rows.
+    "DEFINE FIELD neighbors_at_bind    ON subject_identity TYPE option<array<string>> DEFAULT NONE",
     "DEFINE INDEX idx_subject_identity_address ON subject_identity FIELDS address UNIQUE",
     # subject_version — concrete location/symbol observation at one
     # repo_ref. Phase 3 (#60) will write versions when a continuity match
@@ -278,7 +317,11 @@ _EDGES = [
     # decision → code_region (direct binding — decision tier only)
     "DEFINE TABLE binds_to SCHEMAFULL TYPE RELATION IN decision OUT code_region",
     "DEFINE FIELD confidence ON binds_to TYPE float ASSERT $value >= 0 AND $value <= 1",
-    "DEFINE FIELD provenance ON binds_to TYPE object DEFAULT {}",
+    # FLEXIBLE is required for provenance: callers attach nested
+    # objects (e.g. {"caller_llm": {...}, "search_hint": {...}}) and
+    # SurrealDB v2 silently strips nested keys for plain ``TYPE object``
+    # without FLEXIBLE. See issue #72.
+    "DEFINE FIELD provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}",
     "DEFINE FIELD created_at ON binds_to TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_binds_to_unique ON binds_to FIELDS in, out UNIQUE",
     # symbol → code_region (retrieval tier — BM25 / graph / future embeddings)
@@ -322,6 +365,21 @@ _EDGES = [
     "DEFINE FIELD confidence ON about TYPE float ASSERT $value >= 0 AND $value <= 1",
     "DEFINE FIELD created_at ON about TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_about_unique ON about FIELDS in, out UNIQUE",
+    # ── CodeGenome continuity edge (v12, Phase 3 / #60) ────────────────
+    # subject_identity → identity_supersedes → subject_identity
+    # Records identity transitions when the continuity matcher resolves a
+    # moved/renamed/moved_and_renamed symbol. Old identity is the OUT-of-scope
+    # row written at original bind time; new identity is the row written by
+    # Phase 3's auto-resolve sequence at link_commit time.
+    "DEFINE TABLE identity_supersedes SCHEMAFULL "
+    "TYPE RELATION IN subject_identity OUT subject_identity",
+    "DEFINE FIELD change_type   ON identity_supersedes TYPE string "
+    "ASSERT $value IN ['moved', 'renamed', 'moved_and_renamed']",
+    "DEFINE FIELD confidence    ON identity_supersedes TYPE float "
+    "ASSERT $value >= 0 AND $value <= 1",
+    "DEFINE FIELD evidence_refs ON identity_supersedes TYPE array<string> DEFAULT []",
+    "DEFINE FIELD created_at    ON identity_supersedes TYPE datetime DEFAULT time::now()",
+    "DEFINE INDEX idx_identity_supersedes_unique ON identity_supersedes FIELDS in, out UNIQUE",
 ]
 
 # Schema version tracking
@@ -744,6 +802,102 @@ async def _migrate_v10_to_v11(client: LedgerClient) -> None:
 
 # Registry: version → migration function that brings DB from version-1 to version.
 # Pre-v4 migrations are removed; DBs older than v4 must be reset.
+async def _migrate_v11_to_v12(client: LedgerClient) -> None:
+    """v11 → v12: Add CodeGenome continuity infrastructure (#60).
+
+    Additive only — no data loss. Defines the new ``identity_supersedes``
+    edge table and adds a nullable ``neighbors_at_bind`` field to
+    ``subject_identity``. Existing rows have ``neighbors_at_bind = None``;
+    Phase 3's continuity matcher gracefully degrades for them (Jaccard
+    signal contributes zero, remaining weights renormalize via the
+    ``weighted_average`` helper).
+    """
+    new_stmts = [
+        "DEFINE FIELD neighbors_at_bind ON subject_identity TYPE option<array<string>> DEFAULT NONE",
+        "DEFINE TABLE identity_supersedes SCHEMAFULL "
+        "TYPE RELATION IN subject_identity OUT subject_identity",
+        "DEFINE FIELD change_type   ON identity_supersedes TYPE string "
+        "ASSERT $value IN ['moved', 'renamed', 'moved_and_renamed']",
+        "DEFINE FIELD confidence    ON identity_supersedes TYPE float "
+        "ASSERT $value >= 0 AND $value <= 1",
+        "DEFINE FIELD evidence_refs ON identity_supersedes TYPE array<string> DEFAULT []",
+        "DEFINE FIELD created_at    ON identity_supersedes TYPE datetime DEFAULT time::now()",
+        "DEFINE INDEX idx_identity_supersedes_unique ON identity_supersedes FIELDS in, out UNIQUE",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, sql.strip())
+    logger.info("[migration] v11 → v12: identity_supersedes edge + neighbors_at_bind field defined")
+
+
+async def _migrate_v12_to_v13(client: LedgerClient) -> None:
+    """v12 → v13: Add FLEXIBLE to binds_to.provenance (#72)."""
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE provenance ON binds_to FLEXIBLE TYPE object DEFAULT {}",
+    )
+    logger.info("[migration] v12 → v13: binds_to.provenance redefined as FLEXIBLE")
+
+
+async def _migrate_v13_to_v14(client: LedgerClient) -> None:
+    """v13 → v14: Add CHANGEFEED on compliance_check + semantic_status +
+    evidence_refs fields (#61 Phase 4).
+
+    Three additive changes:
+
+    1. Retrofit ``CHANGEFEED 30d INCLUDE ORIGINAL`` on the
+       ``compliance_check`` table. Required so caller-LLM verdicts that
+       overwrite an auto-resolved cosmetic row remain forensically
+       recoverable for 30 days (F1 audit remediation).
+
+    2. Add ``semantic_status`` (nullable string with ASSERT enum
+       ``['semantically_preserved', 'semantic_change']``).
+
+    3. Add ``evidence_refs`` (array of strings, default ``[]``).
+
+    All three are additive: existing rows read back ``semantic_status =
+    NONE`` and ``evidence_refs = []`` until rewritten. The CHANGEFEED
+    retrofit via ``DEFINE TABLE OVERWRITE`` preserves all existing rows.
+
+    Originally numbered v12→v13 in the Phase 4 plan; PR #81 (provenance
+    FLEXIBLE) merged claiming v13 first per Obs-V3-1 of the v3 audit,
+    so this migration was renumbered v13→v14 during /qor-substantiate.
+    """
+    new_stmts = [
+        "DEFINE TABLE compliance_check SCHEMAFULL CHANGEFEED 30d INCLUDE ORIGINAL",
+        "DEFINE FIELD semantic_status ON compliance_check "
+        "TYPE option<string> DEFAULT NONE "
+        "ASSERT $value = NONE OR $value IN ['semantically_preserved', 'semantic_change']",
+        "DEFINE FIELD evidence_refs ON compliance_check TYPE array<string> DEFAULT []",
+    ]
+    for sql in new_stmts:
+        await _execute_define_idempotent(client, _with_overwrite(sql))
+    logger.info(
+        "[migration] v13 → v14: compliance_check changefeed retrofitted; "
+        "semantic_status + evidence_refs fields defined"
+    )
+
+
+async def _migrate_v14_to_v15(client: LedgerClient) -> None:
+    """v14 → v15: Add optional governance metadata to decision (#109).
+
+    Single additive change: ``decision.governance`` flexible-object
+    field defaulting to NONE. Pre-v15 rows read back ``governance =
+    NONE`` and fall through to ``derive_governance_metadata`` defaults
+    at engine evaluation time.
+
+    FLEXIBLE is required so nested keys (decision_class, risk_class,
+    escalation_class, owner, supervisor, notification_channels,
+    protected_component, review_after) survive SurrealDB v2's nested-
+    key stripping for plain TYPE object — same lesson as binds_to
+    provenance (#72).
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE governance ON decision FLEXIBLE TYPE option<object> DEFAULT NONE",
+    )
+    logger.info("[migration] v14 → v15: decision.governance field added")
+
+
 _MIGRATIONS: dict[int, ...] = {
     5: _migrate_v4_to_v5,
     6: _migrate_v5_to_v6,
@@ -752,6 +906,10 @@ _MIGRATIONS: dict[int, ...] = {
     9: _migrate_v8_to_v9,
     10: _migrate_v9_to_v10,
     11: _migrate_v10_to_v11,
+    12: _migrate_v11_to_v12,
+    13: _migrate_v12_to_v13,
+    14: _migrate_v13_to_v14,
+    15: _migrate_v14_to_v15,
 }
 
 

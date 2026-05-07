@@ -6,11 +6,17 @@ import logging
 
 from contracts import BindResponse, BindResult, PendingComplianceCheck, SyncMetrics
 from handlers.sync_middleware import repo_write_barrier
+from preflight_telemetry import telemetry_enabled, write_engagement
 
 logger = logging.getLogger(__name__)
 
 
-async def handle_bind(ctx, bindings: list[dict]) -> BindResponse:
+async def handle_bind(
+    ctx,
+    bindings: list[dict],
+    *,
+    preflight_id: str | None = None,
+) -> BindResponse:
     """Create decision→code_region bindings from caller-LLM-supplied locations.
 
     For each binding:
@@ -32,6 +38,22 @@ async def handle_bind(ctx, bindings: list[dict]) -> BindResponse:
     async with repo_write_barrier(ctx) as timing:
         response = await _do_bind(ctx, bindings)
     response.sync_metrics = SyncMetrics(barrier_held_ms=timing.held_ms)
+    response.preflight_id = preflight_id
+
+    if telemetry_enabled():
+        # One row per bind call (not per binding) — the call is the unit of
+        # engagement. decision_id is the first binding's id when present;
+        # file_paths is the union of file paths across the call.
+        first_decision = (str(bindings[0].get("decision_id") or "") if bindings else None) or None
+        file_paths = [str(b.get("file_path") or "") for b in (bindings or []) if b.get("file_path")]
+        write_engagement(
+            session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
+            tool="bicameral.bind",
+            decision_id=first_decision,
+            preflight_id=preflight_id,
+            file_paths=file_paths or None,
+        )
+
     return response
 
 
@@ -42,17 +64,6 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
 
     repo = ctx.repo_path
     authoritative_sha = getattr(ctx, "authoritative_sha", "") or "HEAD"
-    head_sha = getattr(ctx, "head_sha", "") or ""
-    authoritative_ref = getattr(ctx, "authoritative_ref", "") or ""
-
-    # On a feature branch, validate and hash against the branch HEAD rather than
-    # authoritative_sha — files added on the branch don't exist at authoritative_sha yet.
-    effective_ref = authoritative_sha
-    if head_sha and head_sha not in ("HEAD", ""):
-        from handlers.link_commit import _is_ephemeral_commit
-
-        if _is_ephemeral_commit(head_sha, repo, authoritative_ref):
-            effective_ref = head_sha
 
     results: list[BindResult] = []
 
@@ -102,14 +113,14 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
         if start_line is None or end_line is None:
             from ledger.status import resolve_symbol_lines
 
-            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=effective_ref)
+            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=authoritative_sha)
             if resolved is None:
                 results.append(
                     BindResult(
                         decision_id=decision_id,
                         region_id="",
                         content_hash="",
-                        error=f"symbol '{symbol_name}' not found in {file_path} at {effective_ref}",
+                        error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha}",
                     )
                 )
                 continue
@@ -118,13 +129,13 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             start_line, end_line = int(start_line), int(end_line)
             from ledger.status import get_git_content
 
-            if get_git_content(file_path, 1, 1, repo, ref=effective_ref) is None:
+            if get_git_content(file_path, 1, 1, repo, ref=authoritative_sha) is None:
                 results.append(
                     BindResult(
                         decision_id=decision_id,
                         region_id="",
                         content_hash="",
-                        error=f"file '{file_path}' does not exist at {effective_ref} — only bind to existing code, never hypothetical files",
+                        error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
                     )
                 )
                 continue
@@ -137,7 +148,7 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                 start_line=start_line,
                 end_line=end_line,
                 repo=repo,
-                ref=effective_ref,
+                ref=authoritative_sha,
                 purpose=purpose,
             )
         except Exception as exc:
@@ -199,6 +210,8 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         end_line=int(end_line),
                         repo_ref=authoritative_sha,
                         code_region_content_hash=content_hash,
+                        code_locator=getattr(ctx, "code_graph", None),
+                        region_id=region_id,
                     )
                 except Exception as exc:
                     logger.warning(
