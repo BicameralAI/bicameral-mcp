@@ -2135,3 +2135,98 @@ Operator review and choose push/merge path. Recommended: Option 2 (push + open P
 ---
 *Chain integrity: VALID (43 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #231 IMPLEMENTATION (#42) → #218 Phase 1 SEAL (#43)*
+
+---
+
+## Entry #44: SESSION SEAL — #218 LLM-06 substantiated (skills manifest signing — final epic sub-task)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `218-llm-06-skills-manifest-signing` (PR #249, merged into `dev` as `b2fc66e` on 2026-05-07T06:38:18Z)
+**Plan**: `plan-F-llm-06-skills-manifest-signing.md`
+**Audit**: round 2 PASS (`infrastructure-mismatch` round-1 VETO cleared via Path A — collapse into existing `scripts/hooks_manifest_build_hook.py` with second `BuildHookInterface` subclass; implementation collapsed further into a single `ManifestsBuildHook` with two-step `initialize` per hatch's actual one-class-per-registered-module constraint)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `release/skills_manifest_generator.py` (new) | 83 LOC; pure-function deterministic TOML emitter (`generate_manifest`, `_emit_toml`, `write_manifest`, `_main`); manual emission (manifest_version=1) | EXISTS |
+| `release/skills_source.py` (new) | 38 LOC; `walk_skills()` yields `(skill_name, file_path, file_bytes)` from sorted `skills/` tree | EXISTS |
+| `release/skills_verify.py` (new) | 149 LOC; mirrors `release/manifest_verify.py` shape; stub `_sigstore_verify` raising "deferred follow-up"; `verify_skills_manifest` + `verify_skills_or_bypass` helpers; module-level `_VERIFIER_HOOK` swappable | EXISTS |
+| `scripts/hooks_manifest_build_hook.py` (modified) | 59 LOC total; consolidated into a single `ManifestsBuildHook` whose `initialize` generates BOTH manifests in one pass (cleaner than the audit's Path A two-class proposal — same hatch auto-discovery semantics) | EXISTS-w/-deviation (see logged deviation) |
+| `pyproject.toml` (modified) | single `[tool.hatch.build.targets.wheel.hooks.custom]` registration unchanged; `[tool.hatch.build.targets.wheel.shared-data]` augmented with `skills-manifest.toml` mapping (table-augmentation) | EXISTS |
+| `setup_wizard.py` (modified) | `_bundled_skills_manifest_paths()` + `_verify_intended_skills_writes()` helpers added; wired into `_install_skills` (1 LOC at call site, mirrors `_verify_intended_writes` from #237) | EXISTS |
+| `.github/workflows/publish.yml` (modified) | cosign keyless sign-blob step for `skills-manifest.toml`; `.sig` + `.crt` attached to GitHub Release alongside hooks-manifest artifacts | EXISTS |
+| `docs/policies/host-trust-model.md` (modified) | "Server-side guarantees" table extended with "Skills manifest signature verification" row | EXISTS |
+| `docs/research-brief-compliance-audit-2026-05-06.md` (modified) | LLM-06 entry marked closed; cross-references to `release/skills_manifest_generator.py`, `release/skills_verify.py`, `docs/policies/host-trust-model.md` row | EXISTS |
+| `tests/test_skills_manifest_generator.py` (new) | 7 functional tests pass (per-skill section presence, SHA-256 match, deterministic serialization, `.txt` omission, directory-only walk, tomllib round-trip, lexicographic skill ordering — last 2 added beyond plan-F enumeration) | EXISTS |
+| `tests/test_setup_wizard_skills_verify.py` (new) | 7 functional tests pass (positive verify, sig-invalid, sha256-mismatch, missing-manifest, swappable hook, bypass-with-event, fail-closed) | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | new assertion `test_host_trust_model_includes_skills_manifest_row` per plan-F line 208 | EXISTS |
+
+### Logged deviations
+
+1. **Build-hook consolidation deeper than the audit prescribed**: round-2 audit's Path A specified collapse into a single registered module hosting **two** `BuildHookInterface` subclasses (one per manifest). Implementation discovered hatch's actual constraint is **one class per registered plugin module** and consolidated further into a single `ManifestsBuildHook` whose `initialize` generates BOTH manifests in one pass. Same auto-discovery semantics; cleaner module structure; closes the same Reality=Promise contract. PR #249 body documents this explicitly.
+
+2. **Generator test count over plan-F enumeration**: plan-F line 149-153 listed 5 generator tests; implementation shipped 7 (added `test_manifest_round_trip_via_tomllib` and `test_generate_manifest_orders_skills_lexicographically` for stronger contract coverage). Doctrine-positive expansion.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `release/skills_manifest_generator.py` | 83 | `_emit_toml` (~25) | OK |
+| `release/skills_source.py` | 38 | `walk_skills` (~12) | OK |
+| `release/skills_verify.py` | 149 | `_sigstore_verify` (~40) | OK |
+| `scripts/hooks_manifest_build_hook.py` | 59 | `initialize` (consolidated, ~25) | OK |
+| `setup_wizard.py` modifications | +20 LOC (helpers + 1-LOC call-site) | `_verify_intended_skills_writes` (~17) | OK |
+
+All new code under Razor limits.
+
+### Functional verification
+
+- 14 new functional tests across 2 new test files (7 generator + 7 verifier) plus 1 content-contract test extension; all PASS
+- Each test invokes the unit under test and asserts on returned value, raised exception, or observable side-effect. No presence-only descriptions.
+- Wheel-build smoke test (per PR #249): `python -m build --wheel` produces wheel containing `share/bicameral-mcp/skills-manifest.toml` at the proper hatch shared-data location alongside the existing `hooks-manifest.json`.
+- Full setup_wizard / hook regression: 49/49 PASS, 1 skipped (pre-existing) per PR #249 test plan.
+
+### Cosign-activation timing (carried forward from #237)
+
+The `release/skills_verify.py::_sigstore_verify` stub raises "deferred follow-up" identical to `release/manifest_verify.py`. When the deferred sigstore-python `Verifier.production()` wiring lands (separate #218 follow-up), BOTH LLM-11 (hooks) and LLM-06 (skills) verification activate together — single verifier swap covers both manifests.
+
+### Closes / unlocks
+
+- **Closes**: #214 (#218 sub-task LLM-06 — sign skills/ payload; OWASP-LLM-05) — landed via PR #249 merged 2026-05-07T06:38:18Z
+- **Closes #218 epic**: 6/6 sub-tasks complete (LLM-11, OWASP-01, SOC2-03, OWASP-03, OWASP-05, LLM-06)
+- **Substrate for**: future remote-skill-loading (LLM-06 design-constraint gate removed); per-file SHA-256 verification also catches post-install in-place skill tampering as secondary benefit
+
+### Timing note (out-of-band substantiation)
+
+This seal entry lands on `dev` after PR #249 already merged the implementation. The seal commit is shipped via a separate ledger-only PR off `dev` rather than bundled with the implementation PR — the same split that produced entries #42 (IMPLEMENTATION) / #43 (SEAL) lacking explicit Merkle hashes when their timing collided. Future #218-class seals should be bundled with the implementation PR per the doctrine when feasible.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #218 scope; tracked separately) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action
+
+Ledger-only PR off `dev` carrying this entry. Implementation already shipped via PR #249.
+
+---
+*Chain integrity: VALID (44 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44)*
