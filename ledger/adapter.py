@@ -58,7 +58,13 @@ from .queries import (
     write_identity_supersedes,
     write_subject_version,
 )
-from .schema import DestructiveMigrationRequired, init_schema, migrate
+from .schema import (
+    SCHEMA_VERSION,
+    DestructiveMigrationRequired,
+    _write_wire_format_sentinel,
+    init_schema,
+    migrate,
+)
 from .status import (
     compute_content_hash,
     derive_status,
@@ -177,6 +183,46 @@ class SurrealDBLedgerAdapter:
                 return
             self._connected = True
             logger.info("[ledger] SurrealDBLedgerAdapter ready at %s", self._url)
+            # #252 Layer 2 — wire-format sentinel write + observability emit.
+            # Helper-extracted to keep connect() under the Razor 40-LOC limit
+            # and provide isolation for the two-layer try/except.
+            await self._emit_wire_format_sentinel()
+
+    async def _emit_wire_format_sentinel(self) -> None:
+        """#252 Layer 2: write the bicameral_meta sentinel row + emit audit-log.
+
+        Two-layer try/except: the outer wrap catches any
+        ``_write_wire_format_sentinel`` raise (so a sentinel-helper failure
+        doesn't break connect); the inner wrap catches any ``audit_log.emit``
+        raise (so a stubbed-out emit raise — common in tests — doesn't
+        propagate either). Both layers are required by the existing audit_log
+        discipline ("audit log MUST NOT break callers").
+        """
+        try:
+            recorded, running, status = await _write_wire_format_sentinel(self._client)
+        except Exception:  # noqa: BLE001 — observability MUST NOT break connect
+            return
+
+        try:
+            from audit_log import AuditEventType
+            from audit_log import emit as audit_emit
+
+            if status == "drift":
+                audit_emit(
+                    AuditEventType.LEDGER_VERSION_DRIFT,
+                    surrealdb_client_version_recorded=recorded,
+                    surrealdb_client_version_running=running,
+                    bicameral_schema_version=SCHEMA_VERSION,
+                )
+            else:
+                audit_emit(
+                    AuditEventType.LEDGER_SCHEMA_VERIFIED,
+                    surrealdb_client_version_running=running,
+                    bicameral_schema_version=SCHEMA_VERSION,
+                    status=status,
+                )
+        except Exception:  # noqa: BLE001 — audit_log MUST NOT break connect
+            pass
 
     async def _ensure_connected(self) -> None:
         if not self._connected:

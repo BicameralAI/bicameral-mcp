@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.14.0"
+version = "0.14.1"
 description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,7 +34,14 @@ dependencies = [
   "pydantic>=2.0.0",
   "pyyaml>=6.0",
   "python-dotenv",
-  "surrealdb>=2.0.0",
+  # Patch-level pin closes wire-format drift surface (#252 Layer 1).
+  # The on-disk SurrealKV record header carries a revision number that
+  # must match the surrealdb-py deserializer. A `>=` floor lets a routine
+  # `pip install --upgrade` swap the lib under an existing ledger and
+  # produces "Invalid revision N for type Value" deserialization errors.
+  # Future bumps require explicit migration via the schema-revision
+  # sentinel (#252 Layer 2) and operator-driven export/import (Layer 4).
+  "surrealdb==2.0.0",
   "questionary>=2.0.0",
   "sigstore>=3.0",
 ]
@@ -90,6 +97,7 @@ path = "scripts/hooks_manifest_build_hook.py"
 
 [tool.hatch.build.targets.wheel.shared-data]
 "share/bicameral-mcp/hooks-manifest.json" = "share/bicameral-mcp/hooks-manifest.json"
+"share/bicameral-mcp/skills-manifest.toml" = "share/bicameral-mcp/skills-manifest.toml"
 
 [tool.ruff]
 line-length = 100

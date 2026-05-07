@@ -5,6 +5,12 @@ with ``shell=False`` per OWASP A03 commitment in plan-218. The wrapper
 validates the emitted document is CycloneDX 1.5 before returning; on
 failure (subprocess error OR wrong spec version) the output is removed
 so callers cannot mistake a stale file for a fresh build.
+
+``cyclonedx-py environment`` introspects an installed Python environment,
+not a wheel file. To SBOM a single wheel's dependency closure we install
+it into an isolated tempdir venv and point ``cyclonedx-py environment``
+at that venv's interpreter — the build environment (hatchling, build,
+cyclonedx-bom itself) is not contaminated into the output.
 """
 
 from __future__ import annotations
@@ -13,6 +19,8 @@ import argparse
 import json
 import subprocess
 import sys
+import tempfile
+import venv
 from pathlib import Path
 
 _EXPECTED_SPEC_VERSION = "1.5"
@@ -23,21 +31,43 @@ class SBOMValidationError(RuntimeError):
     """Raised when ``cyclonedx-bom`` succeeds but emits a non-1.5 doc."""
 
 
+def _venv_python(venv_path: Path) -> Path:
+    # POSIX layout; Windows would be Scripts/python.exe but the publish
+    # workflow runs ubuntu-latest exclusively.
+    return venv_path / "bin" / "python"
+
+
+def _venv_cyclonedx(venv_path: Path) -> Path:
+    return venv_path / "bin" / "cyclonedx-py"
+
+
 def emit_sbom(wheel_path: Path, output_path: Path) -> Path:
-    """Run ``cyclonedx-bom`` against ``wheel_path``, write to ``output_path``.
+    """Install ``wheel_path`` into a temp venv and emit a CycloneDX 1.5 SBOM.
 
     Subprocess discipline: list-form argv, ``shell=False`` (default).
     Raises ``subprocess.CalledProcessError`` on cyclonedx-bom failure;
     raises ``SBOMValidationError`` when the emitted doc is not CycloneDX 1.5.
     """
-    cmd = ["cyclonedx-py", "environment", "-o", str(output_path), str(wheel_path)]
-    # ``cyclonedx-bom`` (PyPI package) installs the ``cyclonedx-py`` CLI.
-    try:
-        subprocess.run(cmd, check=True, capture_output=True)
-    except subprocess.CalledProcessError:
-        if output_path.exists():
-            output_path.unlink()
-        raise
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory(prefix="bicameral-sbom-") as tmp:
+        venv_path = Path(tmp) / "venv"
+        venv.create(venv_path, with_pip=True, clear=True, symlinks=True)
+        py = _venv_python(venv_path)
+        # Install wheel + cyclonedx-bom (which installs cyclonedx-py CLI) into
+        # the isolated venv. Quiet pip; failures still raise via check=True.
+        subprocess.run(
+            [str(py), "-m", "pip", "install", "--quiet", str(wheel_path), "cyclonedx-bom"],
+            check=True,
+        )
+        cdx = _venv_cyclonedx(venv_path)
+        cmd = [str(cdx), "environment", "--output-file", str(output_path), str(py)]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+        except subprocess.CalledProcessError:
+            if output_path.exists():
+                output_path.unlink()
+            raise
 
     parsed = json.loads(output_path.read_text(encoding="utf-8"))
     if parsed.get("bomFormat") != _EXPECTED_BOM_FORMAT:

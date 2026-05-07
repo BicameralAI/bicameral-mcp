@@ -20,13 +20,16 @@ Bicameral is a local-first [MCP server](https://spec.modelcontextprotocol.io/) t
 
 ## Compliance posture
 
-bicameral-mcp's compliance stance is documented in three policy files:
+bicameral-mcp's compliance stance is documented in six policy files:
 
 - [`docs/policies/host-trust-model.md`](docs/policies/host-trust-model.md) — MCP host UX dependency declaration (closes OWASP LLM-07 / MCP-01 gap)
 - [`docs/policies/acceptable-use.md`](docs/policies/acceptable-use.md) — intended purpose + prohibited uses (NIST AI RMF MAP-3.1 + EU AI Act Annex III)
+- [`docs/policies/install-trust-model.md`](docs/policies/install-trust-model.md) — install + update supply-chain trust model (closes OWASP-03 + OWASP-05)
+- [`docs/policies/audit-log.md`](docs/policies/audit-log.md) — structured audit-log emission for self-hosted operators (closes SOC2-06 + OWASP-06 fold)
+- [`docs/policies/diagnose-output.md`](docs/policies/diagnose-output.md) — `bicameral-mcp diagnose` output allowlist + privacy posture (#252 Layer 3)
 - [`docs/sla.md`](docs/sla.md) — availability stance (operator-run-only; no hosted SLA)
 
-The full compliance audit is at [`docs/research-brief-compliance-audit-2026-05-06.md`](docs/research-brief-compliance-audit-2026-05-06.md).
+The full compliance audit is at [`docs/research-brief-compliance-audit-2026-05-06.md`](docs/research-brief-compliance-audit-2026-05-06.md). Per-release change-control evidence procedure: [`docs/RELEASE_EVIDENCE_PROCEDURE.md`](docs/RELEASE_EVIDENCE_PROCEDURE.md).
 
 ---
 

@@ -42,18 +42,26 @@ jobs:
             --output-certificate dist/share/bicameral-mcp/hooks-manifest.json.crt \
             dist/share/bicameral-mcp/hooks-manifest.json
 
-      # SBOM gen + attest disabled for v0.14.0 — release.sbom_emit invokes
-      # `cyclonedx-py environment <wheel>` which fails (cyclonedx-py expects a
-      # Python executable, not a wheel). Proper fix ships in v0.14.1.
-      # Track in #248 (SBOM regression) when filed.
+      - name: Generate skills-manifest.toml (#218 LLM-06)
+        run: |
+          # SkillsManifestBuildHook bundles the manifest into the wheel at
+          # wheel-build time; this step writes a separate copy under dist/share
+          # for cosign signing + GitHub Release upload (mirrors hooks-manifest).
+          python -m release.skills_manifest_generator dist/share/bicameral-mcp/skills-manifest.toml
+
+      - name: Cosign keyless sign skills-manifest (#218 LLM-06)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/share/bicameral-mcp/skills-manifest.toml.sig \
+            --output-certificate dist/share/bicameral-mcp/skills-manifest.toml.crt \
+            dist/share/bicameral-mcp/skills-manifest.toml
+
       - name: Generate CycloneDX 1.5 SBOM
-        if: false
         run: |
           WHEEL=$(ls dist/bicameral_mcp-*.whl)
           python -m release.sbom_emit "$WHEEL" "dist/bicameral-mcp.sbom.json"
 
       - name: Cosign attest SBOM (Rekor transparency log)
-        if: false
         run: |
           WHEEL=$(ls dist/bicameral_mcp-*.whl)
           cosign attest-blob --yes \
@@ -78,12 +86,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # SBOM artifacts (`bicameral-mcp.sbom.json`, `bicameral-mcp.sbom.intoto.jsonl`)
-          # excluded for v0.14.0 — gen step is `if: false` (#261). Restore in v0.14.1.
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/share/bicameral-mcp/hooks-manifest.json \
             dist/share/bicameral-mcp/hooks-manifest.json.sig \
             dist/share/bicameral-mcp/hooks-manifest.json.crt \
+            dist/share/bicameral-mcp/skills-manifest.toml \
+            dist/share/bicameral-mcp/skills-manifest.toml.sig \
+            dist/share/bicameral-mcp/skills-manifest.toml.crt \
+            dist/bicameral-mcp.sbom.json \
+            dist/bicameral-mcp.sbom.intoto.jsonl \
             dist/release-tag-commit.txt \
             dist/release-tag-commit.txt.sig \
             dist/release-tag-commit.txt.crt \

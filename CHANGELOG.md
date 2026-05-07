@@ -5,14 +5,34 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
-## v0.14.0 — v0-conformant cut: privacy + ingest hardening + release engineering; v1 HITL/decision_level scaled down; self-hosted team-server scaled down
+## v0.14.1 — SBOM emitter fix + Layer 3 diagnose CLI + dependabot
 
-First minor release since v0.13.9 triage. Cut from `dev` after two scale-down PRs landed:
+Fast-follow on v0.14.0. Restores CycloneDX SBOM generation in the publish pipeline (skipped in v0.14.0 by hotfixes #261/#262), lands #257 (Layer 3 `bicameral-mcp diagnose` CLI from #252), and dependabot floor bumps.
 
-- **#245 (closes #242)** — removed the self-hosted team-server runtime (HTTP `/events` API + Slack/Notion OAuth + per-source workers + Docker compose). The committed code was the wrong shape per v0 Productization §2: v0's team mode is a **remote append-only event-log adapter** consumed by **pull-based CLI sync**, not a self-hosted server. The replacement adapter (Drive/S3/Dropbox) is a separate follow-up.
-- **#246 (closes #244)** — reverted preflight HITL bypass (#112) + decision_level wiring (#77) from `dev`. Per the canonical user-flow north-star (BicameralAI/bicameral#108) and v0 Productization §4 (dashboard scope), v0's product shape is **"track decisions, surface drift"** — not **"track, classify by decision_class, route through escalation policy."** The `governance/` module itself is preserved on `dev` as future v1 surface; restoration is a single `git revert <merge-sha>` when v1 ships.
+### Fixed
 
-What ships: the v0-conformant subset of dev's accumulated work — privacy hardening, install hygiene, ingest LLM guardrails, release engineering (cosign + SBOM + SOC2 evidence), e2e test fixes, skill doc fixes, gap-judge brief envelope, setup wizard MCP-tool pre-approval. The detailed feature list below was drafted when these features were planned for the dev release stream; **entries describing v1 features removed by #246** (`bicameral.evaluate_governance`, `bicameral.record_bypass`, `bicameral.list_unclassified_decisions`, `bicameral.set_decision_level`, HITL clarification prompts, `preflight_bypass_tracking` config gate) **are no longer applicable to this release**. Where individual entries below describe still-shipping pieces of mixed PRs (e.g. #200 Phase 3's `render_source_attribution` config gate), the still-shipping piece remains accurate.
+- **`release/sbom_emit.py`: install wheel into temp venv before scanning (#218 followup).** v0.14.0's publish run halted at SBOM gen because `cyclonedx-py environment <wheel>` mis-passes the wheel as the Python-executable positional arg — `cyclonedx-py environment` introspects an installed Python environment, not a wheel file. Rewrote `emit_sbom` to (1) create an isolated tempdir venv, (2) `pip install <wheel> cyclonedx-bom` into it, (3) run `cyclonedx-py environment --output-file <out> <venv-python>`. Output is the wheel's actual dependency closure with no contamination from the build environment's `hatchling` / `build` / `cyclonedx-bom` itself.
+
+- **Removed broken `bicameral-mcp-classify` console-script entry from `pyproject.toml`.** Pointed at `cli.classify:main` which was deleted in #244 (v1 partial scale-down). Carry-over cleanup from the v0.14.0 release surgery.
+
+- **`bicameral-sync` skill auto-binds ungrounded decisions (closes #263, P0).** Sync's autonomy contract broke whenever a touched decision had no `binds_to` edge yet — the common case for any newly-ingested decision. Agent had to be hand-walked: sync → "now bind" → "now sync again". New skill step 1.5 between current step 1 (Sync HEAD) and step 2 (Resolve compliance) consumes `pending_grounding_checks` entries with `reason="ungrounded"` autonomously: locate symbol via Grep/Read + `validate_symbols`, call `bicameral.bind`, concatenate the returned `PendingComplianceCheck` with the original list, proceed to step 2 in the same invocation. `reason="symbol_disappeared"` (relocation) path unchanged. Adds a one-line *symbol* glossary on first use of `symbol_name` in the skill.
+
+### Added
+
+- **`bicameral-mcp diagnose` CLI (#257, Layer 3 of #252).** Read-only diagnostic command for ledger health: prints SurrealKV revision, ledger schema version, decision count by status/signoff, and any orphaned bindings. Use this when an operator reports "ledger acting weird" before reaching for `bicameral.reset`.
+
+### Changed
+
+- dependency floor bumps via dependabot: `bm25s>=0.3.8` (#259), `sqlite-vec>=0.1.9` (#260).
+
+### Restored artifacts
+
+- `dist/bicameral-mcp.sbom.json` (CycloneDX 1.5)
+- `dist/bicameral-mcp.sbom.intoto.jsonl` (Rekor attestation)
+
+Both are uploaded to the GitHub Release alongside hooks-manifest signatures and the release-tag-commit cosign signature.
+
+## [Unreleased — pre-v0.14.0]
 
 ### Added
 

@@ -22,6 +22,7 @@ These are enforced inside bicameral-mcp regardless of host behavior. They hold e
 | Sensitive-data detect-and-refuse | `bicameral.ingest` refuses payloads containing secrets / PHI / PAN per the v1 regex catalog | LLM-04 + HIPAA-01 + PCI-01 / #213 |
 | Source-attribution redaction | `bicameral.preflight` redacts names and dates in `source_ref` per the `render_source_attribution` config (default: redacted) | #200 Phase 3 + #209 |
 | Hooks-manifest signature verification | `setup_wizard._install_*_hooks` verifies cosign-keyless signature on `hooks-manifest.json` before writing host-config files (when bundled) | LLM-11 / #218 Phase 1 |
+| Skills-manifest signature verification | `setup_wizard._install_skills` verifies cosign-keyless signature on `skills-manifest.toml` before copying skill content (when bundled); per-file SHA-256 cross-check catches in-place tampering of the installed package directory | LLM-06 / #214 / #218 |
 | Bypass tracking | When the agent records a guidance bypass via `record_bypass`, the event is written to `~/.bicameral/preflight_events.jsonl` server-side, regardless of whether the host displays it | #200 Phase 3 |
 
 ## Host-side surfaces this design assumes
