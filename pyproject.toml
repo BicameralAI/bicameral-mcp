@@ -91,6 +91,7 @@ path = "scripts/hooks_manifest_build_hook.py"
 
 [tool.hatch.build.targets.wheel.shared-data]
 "share/bicameral-mcp/hooks-manifest.json" = "share/bicameral-mcp/hooks-manifest.json"
+"share/bicameral-mcp/skills-manifest.toml" = "share/bicameral-mcp/skills-manifest.toml"
 
 [tool.ruff]
 line-length = 100

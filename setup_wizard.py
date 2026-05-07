@@ -52,6 +52,45 @@ def _verify_intended_writes(*event_types: str) -> None:
     manifest_verify.verify_hooks_or_bypass(*paths, expected)
 
 
+def _bundled_skills_manifest_paths() -> tuple[Path, Path, Path] | None:
+    """Locate bundled ``skills-manifest.toml`` + ``.sig`` + ``.crt`` (#218 LLM-06).
+
+    Returns ``None`` when no artifacts are bundled (dev install from
+    source checkout — no production wheel context, so the LLM-06
+    design-constraint gate is N/A). Returns the triple when artifacts
+    are found alongside the installed package via hatch ``shared-data``.
+
+    Mirrors ``_bundled_manifest_paths`` for the skills-content surface.
+    """
+    candidates = [
+        Path(sys.prefix) / "share" / "bicameral-mcp" / "skills-manifest.toml",
+        Path(__file__).parent.parent / "share" / "bicameral-mcp" / "skills-manifest.toml",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c, Path(str(c) + ".sig"), Path(str(c) + ".crt")
+    return None
+
+
+def _verify_intended_skills_writes() -> None:
+    """Verify the signed skills-manifest carries the SHA-256s of the
+    SKILL.md + *.yaml files the installer is about to copy (#218 LLM-06).
+
+    No-op when no bundled manifest exists (dev install). Honors
+    ``BICAMERAL_SKILLS_VERIFY_DISABLE=1`` bypass with severity-3
+    ``verification_bypassed`` ledger event (manifest_kind="skills").
+    """
+    paths = _bundled_skills_manifest_paths()
+    if paths is None:
+        return
+    from release import skills_source, skills_verify
+
+    expected: dict[str, dict[str, str]] = {}
+    for skill_name, filename, file_bytes in skills_source.walk_skills():
+        expected.setdefault(skill_name, {})[filename] = hashlib.sha256(file_bytes).hexdigest()
+    skills_verify.verify_skills_or_bypass(*paths, expected)
+
+
 def _ensure_utf8_stdout(platform: str | None = None) -> None:
     """Reconfigure stdout/stderr to UTF-8 on Windows so banner box-drawing
     chars (┌─┐│└┘) printed by run_setup / run_config_wizard / run_reset_wizard
@@ -865,6 +904,7 @@ def _install_user_permissions_allowlist() -> bool:
 
 def _install_skills(repo_path: Path) -> int:
     """Copy skill definitions into .claude/skills/ in the target repo."""
+    _verify_intended_skills_writes()
     skills_src = Path(__file__).parent / "skills"
     if not skills_src.exists():
         print(f"  WARNING: skill source not found at {skills_src}")
