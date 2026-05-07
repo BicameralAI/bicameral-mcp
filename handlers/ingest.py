@@ -672,13 +672,10 @@ async def handle_ingest(
             CreatedDecision(
                 decision_id=d["decision_id"],
                 description=d["description"],
-                decision_level=d.get("decision_level"),
             )
             for d in result.get("created_decisions", [])
         ],
-        pending_grounding_decisions=[
-            d for d in result.get("ungrounded_decisions", []) if d.get("decision_level") != "L1"
-        ],
+        pending_grounding_decisions=list(result.get("ungrounded_decisions", [])),
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
         brief=brief,

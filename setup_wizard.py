@@ -1002,8 +1002,7 @@ def _write_collaboration_config(
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
         "signer_email_fallback: local-part-only\n"
-        "render_source_attribution: redacted\n"  # #209: privacy-positive default (was "full")
-        "preflight_bypass_tracking: enabled\n",
+        "render_source_attribution: redacted\n",  # #209: privacy-positive default (was "full")
         encoding="utf-8",
     )
     print(f"  Collaboration: {mode} mode")

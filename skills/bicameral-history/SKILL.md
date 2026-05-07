@@ -85,7 +85,6 @@ Group decisions by `HistoryFeature`. For each group:
    - Left symbol = code status: `✓` reflected · `⚠` drifted · `○` ungrounded · `~` ungrounded + AI-surfaced
    - Right symbol = signoff: `✓ date` ratified · `○` proposed · `~` AI-surfaced · `✕` rejected · `⚑` needs context · `—` superseded
    - Include `sources`, `fulfillments[].file_path:start_line`, and `drift_evidence` when present.
-   - If `decision_level` is absent, treat the decision as L1 (flat/legacy).
 
 Example layout:
 ```
