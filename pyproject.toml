@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.13.3"
+version = "0.14.1"
 description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -66,7 +66,6 @@ release = [
 
 [project.scripts]
 bicameral-mcp = "server:cli_main"
-bicameral-mcp-classify = "cli.classify:main"
 bicameral-mcp-preflight-reminder = "scripts.hooks.preflight_reminder:main"
 bicameral-mcp-post-commit-sync-reminder = "scripts.hooks.post_commit_sync_reminder:main"
 bicameral-mcp-collision-capture-reminder = "scripts.hooks.post_preflight_capture_reminder:main"
