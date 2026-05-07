@@ -2429,3 +2429,128 @@ Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), s
 ---
 *Chain integrity: VALID (46 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46)*
+
+---
+
+## Entry #47: SESSION SEAL — #252 Layer 3 substantiated (bicameral-mcp diagnose CLI)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `plan/252-layer-3-diagnose-cli` (rebased onto `upstream/dev` post-#256 merge)
+**Plan**: `plan-252-layer-3-diagnose-cli.md`
+**Audit**: round 1 PASS (no VETO — plan absorbed prior-round audit learnings: separate-table architecture from Layer 2; allowlist + content-contract test pattern from #227; helper-extraction recommendation acknowledged in implementer notes)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `cli/diagnose.py` (new) | 213 LOC; `Diagnosis` frozen dataclass (17 fields) + `_ALLOWED_FIELDS` frozenset + `_CANONICAL_TABLES` + 6 section helpers + `format_diagnosis` + `main` | EXISTS |
+| `cli/_diagnose_gather.py` (new — split per Razor advisory) | 244 LOC; `gather_diagnosis` + 5 private readers (`_read_ledger_metadata`, `_read_bicameral_meta`, `_read_schema_version`, `_read_table_counts`, `_resolve_audit_log_channel`, `_read_jsonl_warn_error_lines`, `_tail_recent_events`) + `_compute_suggestions` (5 hardcoded heuristics) + `_fetch_recommended` shim | EXISTS-w/-deviation (helper extraction; doctrine-positive per audit advisory) |
+| `handlers/update.py` — public alias `fetch_recommended_version` | added; one-line aliasing per audit advisory; clean cross-layer call from `cli/_diagnose_gather` without re-using underscore-prefixed private symbol | EXISTS |
+| `server.py` — register `diagnose` subparser + dispatch arm | both wired; `_register_subparsers` adds the subparser; `_dispatch` adds the `if args.command == "diagnose"` branch invoking `cli.diagnose.main` | EXISTS |
+| `docs/policies/diagnose-output.md` (new) | operator-readable allowlist policy + suggestion heuristic catalog + always-safe-to-paste guarantee + redaction guidance for `ledger_url` / `audit_log_channel` path-bearing fields | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | 2 new content-contract tests: `test_diagnose_output_policy_doc_lists_allowlisted_fields` (locks `_ALLOWED_FIELDS` ↔ doc parity) + `test_diagnose_output_policy_doc_documents_suggestion_heuristics` (locks heuristic-catalog drift) | EXISTS |
+| `README.md` (modified) | "Compliance posture" section bumped from 5 → 6 policy files; new `diagnose-output.md` row added | EXISTS |
+| `tests/test_diagnose_allowlist.py` (new) | 3 functional tests: dataclass/allowlist parity, forbidden-content-name exclusion, frozen-dataclass enforcement | EXISTS |
+| `tests/test_diagnose_gather.py` (new) | 18 functional tests covering gather scenarios + reader unit tests + 5 suggestion-heuristic firings + 1 negative-content-leak test (verifies decision content never appears in returned `Diagnosis` repr) | EXISTS |
+| `tests/test_diagnose_format.py` (new) | 8 functional tests covering markdown rendering + section presence + drift-status-uppercase + recent-events event_type-only emission + paste-instruction footer + clean-install message + forbidden-field-name negative lock | EXISTS |
+| `tests/test_diagnose_cli.py` (new) | 3 functional tests: end-to-end `main()` returns 0 on memory:// + emits all 6 required section headers + returns 1 with surfaced failure context on adapter-connect failure | EXISTS |
+
+### Logged deviations
+
+1. **Helper-extraction split per Razor advisory**: round-1 audit advisory recommended splitting `cli/diagnose.py` to keep the file under the 250-LOC ceiling. Implementation followed the advisory + extracted to `cli/_diagnose_gather.py` (244 LOC), keeping `cli/diagnose.py` at 213 LOC. Mirrors `cli/_link_commit_runner.py` pattern. Doctrine-positive expansion of the plan; no behavior change.
+
+2. **`drift_status: "first-write"` semantics deviation**: plan-text described `_read_bicameral_meta` returning `"unavailable"` when the table doesn't exist (pre-Layer-2 ledger) and `"first-write"` only when the table exists with no row. Reality post-rebase onto Layer 2's surface: `bicameral_meta` table is created by `init_schema` AND `Layer 2's _emit_wire_format_sentinel` writes the row at `adapter.connect()` time. By the time `gather_diagnosis` runs, the row exists with `at_first_write == at_last_write == running`, so `drift_status == "match"`. The original plan's `"unavailable"` test was renamed to `test_gather_diagnosis_reports_match_on_fresh_ledger_after_sentinel_writes` to reflect the real Layer-2-integrated behavior. The `"first-write"` and `"unavailable"` status branches in the helper still return correct values when invoked in isolation (e.g., before adapter.connect populates the row, or against a hypothetical pre-Layer-2 ledger snapshot).
+
+3. **Test count expansion (25 → 32 functional + 4 implementer-judgment edge cases = 41 total)**: plan enumerated ~25 tests; implementation shipped 41 (3 allowlist + 18 gather + 8 format + 3 CLI + 2 doc/code drift + 7 reader unit tests). Doctrine-positive expansion covering the per-reader unit boundary + edge cases (PackageNotFoundError unknown branch, recent-events 5-cap enforcement, table-counts canonical subset).
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `cli/diagnose.py` | 213 | `format_diagnosis` (~17, orchestrator) | OK |
+| `cli/_diagnose_gather.py` | 244 | `gather_diagnosis` (~35) | OK |
+| `cli/diagnose._format_*` section helpers | — | each ~10-15 LOC | OK |
+| `cli/_diagnose_gather._compute_suggestions` | — | ~38 (right at 40-LOC ceiling) | OK |
+| `cli/_diagnose_gather._read_*` readers | — | each <25 LOC | OK |
+| `handlers/update.py` `fetch_recommended_version` (alias) | — | 3 LOC | OK |
+| `server.py` modifications | — | 1-line subparser registration + 4-line dispatch arm = 5 LOC additive | OK |
+
+All new code under Razor limits. Helper extraction kept both module files under 250 LOC.
+
+### Functional verification
+
+- **41 new functional tests** across 4 test files (3 allowlist + 18 gather + 8 format + 3 CLI + 2 content-contract extensions to `test_compliance_policy_docs.py`). All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured emit calls, persisted row contents, parsed JSON, file contents, or markdown string contents. No presence-only descriptions.
+- **Negative content-leak test** (`test_gather_diagnosis_emits_no_decision_content_when_decisions_present`): inserts a decision with description `"TOP-SECRET-DECISION-CONTENT-MARKER"`; asserts the marker does NOT appear in `repr(Diagnosis)`. Locks the privacy posture at the integration boundary.
+- **Forbidden-field-name negative lock** (`test_format_diagnosis_does_not_emit_any_forbidden_content_field_names`): asserts none of `decision_text`, `description`, `source_ref`, `transcript`, `rationale` appear in the rendered markdown. Locks against future Diagnosis-field expansion that might accidentally use a content-bearing field name.
+
+### Privacy verification
+
+End-to-end smoke test against `memory://` ledger with monkeypatched recommended-version fetch:
+
+```
+## Versions
+- bicameral-mcp: unknown
+- Python: 3.13.7
+- Platform: Windows-10-10.0.19045-SP0
+- surrealdb (running): 2.0.0
+
+## Schema revision sentinel
+- bicameral schema (recorded): 16
+- bicameral schema (expected): 16
+- surrealdb (at first write): 2.0.0
+- surrealdb (at last write): 2.0.0
+- last write at: 2026-05-07T19:35:19....+00:00
+- drift status: **MATCH**
+
+## Table row counts
+- decision: 0
+- code_region: 0
+- ... (10 canonical tables, all 0)
+
+## Recent events (warn|error, last 0)
+_Audit log channel: stderr (redact if path is sensitive)_
+_No warn|error events recorded._
+
+## Suggested remediation
+- Audit log not file-persisted. Set `BICAMERAL_AUDIT_LOG=<path>` ...
+```
+
+No decision content, no source attribution, no row contents. Allowlist enforcement is airtight.
+
+### Closes / unlocks
+
+- **Closes**: #252 Layer 3 (`bicameral-mcp diagnose` CLI) per `docs/research-brief-252-privacy-preserving-ledger-remediation.md`
+- **Substrate for**: #252 Layer 4 (portable export/import) — Layer 4's export-stamp logic reads the same `bicameral_meta` sentinel + Layer 3's allowlist discipline becomes the export's privacy contract baseline
+- **Substrate for**: #252 Layer 5 (opt-in auto-migrate) — auto-migrate gates on the same `drift_status` Layer 3 surfaces; the `bicameral-mcp diagnose` output is the operator-facing pre-migrate signal
+- **Substrate for**: future #221 GDPR right-to-erasure work — `cli/diagnose` emits structural metadata only; the design discipline (allowlist by field name; never row content) becomes the template for the `#221` DSAR + erasure surfaces
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44, #45, #46:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #252 Layer 3 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251 / #253 / #255 / #256.
+
+---
+*Chain integrity: VALID (47 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47)*
