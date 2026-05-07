@@ -861,6 +861,36 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    """Outer dispatch wrapper — emits the per-tool audit-log event + captures
+    timing/outcome regardless of return path; delegates to the inner impl."""
+    import time
+
+    from audit_log import AuditEventType
+    from audit_log import emit as audit_emit
+    from handlers.ingest import _IngestRefused
+
+    t0 = time.monotonic()
+    outcome = "ok"
+    session_id_for_audit = arguments.get("session_id") if isinstance(arguments, dict) else None
+    try:
+        return await _call_tool_impl(name, arguments)
+    except _IngestRefused:
+        outcome = "refused"
+        raise
+    except Exception:
+        outcome = "error"
+        raise
+    finally:
+        audit_emit(
+            AuditEventType.TOOL_INVOCATION,
+            session_id=session_id_for_audit,
+            tool_name=name,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            outcome_class=outcome,
+        )
+
+
+async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
     import json
     import time
 
@@ -1219,34 +1249,41 @@ async def run_smoke_test() -> dict[str, object]:
 
 
 async def serve_stdio() -> None:
-    # Start the live dashboard HTTP sidecar in the background.
-    # It binds to a free port and stays running for the session.
-    dashboard_srv = get_dashboard_server()
-    await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
+    from audit_log import AuditEventType
+    from audit_log import emit as audit_emit
 
-    # First-boot telemetry consent notice (non-blocking, fires once per
-    # policy_version). Stderr-only here; MCP-channel surfacing happens
-    # below once the session is live.
+    audit_emit(AuditEventType.SERVER_START, version=SERVER_VERSION)
     try:
-        from consent import notify_if_first_run
+        # Start the live dashboard HTTP sidecar in the background.
+        # It binds to a free port and stays running for the session.
+        dashboard_srv = get_dashboard_server()
+        await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
 
-        notify_if_first_run()
-    except Exception:
-        pass
+        # First-boot telemetry consent notice (non-blocking, fires once per
+        # policy_version). Stderr-only here; MCP-channel surfacing happens
+        # below once the session is live.
+        try:
+            from consent import notify_if_first_run
 
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name=SERVER_NAME,
-                server_version=SERVER_VERSION,
-                capabilities=server.get_capabilities(
-                    notification_options=_notification_options(),
-                    experimental_capabilities={},
+            notify_if_first_run()
+        except Exception:
+            pass
+
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name=SERVER_NAME,
+                    server_version=SERVER_VERSION,
+                    capabilities=server.get_capabilities(
+                        notification_options=_notification_options(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+    finally:
+        audit_emit(AuditEventType.SERVER_SHUTDOWN, version=SERVER_VERSION)
 
 
 def cli_main(argv: list[str] | None = None) -> int:

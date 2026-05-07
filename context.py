@@ -273,6 +273,37 @@ def _read_guided_mode(repo_path: str) -> bool:
     return False
 
 
+_config_load_emitted = False
+
+
+def _emit_config_load_once(instance: BicameralContext) -> None:
+    """Emit the audit_log ``config_load`` event exactly once per process.
+
+    Idempotent module-level guard — per-tool ``from_env()`` calls re-enter
+    this helper but only the first invocation produces an emit. Source
+    fields are int-only safe-to-log values; never sources path-bearing
+    fields (forbid-list discipline catches accidental ``file_paths`` /
+    ``repo_path`` keys, but we additionally do not pass them through).
+    """
+    global _config_load_emitted
+    if _config_load_emitted:
+        return
+    try:
+        from audit_log import AuditEventType
+        from audit_log import emit as audit_emit
+
+        audit_emit(
+            AuditEventType.CONFIG_LOAD,
+            ingest_max_bytes=instance.ingest_max_bytes,
+            ingest_rate_limit_burst=instance.ingest_rate_limit_burst,
+            ingest_rate_limit_refill_per_sec=instance.ingest_rate_limit_refill_per_sec,
+            guided_mode=instance.guided_mode,
+        )
+    except Exception:  # noqa: BLE001 — config_load must not break server boot
+        pass
+    _config_load_emitted = True
+
+
 @dataclass(frozen=True)
 class BicameralContext:
     """Created once per MCP tool call. All services see the same commit."""
@@ -385,7 +416,7 @@ class BicameralContext:
         # to _SESSION_ID UUID on git/salt failure.
         session_id = _resolve_agent_identity(repo_path)
 
-        return cls(
+        instance = cls(
             repo_path=repo_path,
             head_sha=state.head_commit,
             ledger=get_ledger(),
@@ -403,3 +434,5 @@ class BicameralContext:
             ingest_rate_limit_burst=ingest_rate_limit_burst,
             ingest_rate_limit_refill_per_sec=ingest_rate_limit_refill_per_sec,
         )
+        _emit_config_load_once(instance)
+        return instance
