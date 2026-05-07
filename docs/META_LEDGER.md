@@ -2230,3 +2230,105 @@ Ledger-only PR off `dev` carrying this entry. Implementation already shipped via
 ---
 *Chain integrity: VALID (44 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44)*
+
+---
+
+## Entry #45: SESSION SEAL — #227 SOC2-06 + OWASP-06 fold substantiated (structured audit-log emission)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `227-structured-audit-log` (off `upstream/dev` tip post-#251 merge)
+**Plan**: `plan-227-structured-audit-log-emission.md`
+**Audit**: round 1 VETO `specification-drift` (dual-write helper code contradicted bidirectional-independence test specs) → round 2 PASS via Path A (wrap each write in independent try/except)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `audit_log.py` (new) | 240 LOC; `AuditEventType` StrEnum (8 values); `_FORBIDDEN_FIELDS` frozenset (10 keys); `_strip_forbidden`, `JsonFormatter`, `_resolve_channel`, `_resolve_min_level_rank`, `_build_handler`, `_get_logger`, `emit`, `_reset_for_tests` | EXISTS |
+| `tests/test_audit_log_forbid_list.py` (new) | 6 functional tests; each invokes `_strip_forbidden` or `emit` and asserts on returned dict / parsed JSON | EXISTS |
+| `tests/test_audit_log_format.py` (new) | 8 functional tests covering JsonFormatter output, session_id presence/omission, unknown event_type coercion, exception swallowing, level filter | EXISTS |
+| `tests/test_audit_log_channel.py` (new) | 8 functional tests covering channel resolution (default/stderr/disabled/path), file-write, unwriteable-fallback, level rank | EXISTS |
+| `server.py` (modified) | `serve_stdio()` wrapped with `SERVER_START` at entry + `SERVER_SHUTDOWN` in `finally`; `@server.call_tool()` outer dispatcher (new) wraps the body in try/except/finally to capture `tool_name` + `duration_ms` + `outcome_class` (`ok`/`refused`/`error`); existing implementation extracted to `_call_tool_impl` | EXISTS |
+| `context.py` (modified) | `_emit_config_load_once(instance)` helper with module-level idempotent guard; called from `BicameralContext.from_env()` after instance construction; emits `CONFIG_LOAD` with int-only safe-to-log fields (`ingest_max_bytes`, `ingest_rate_limit_burst`, `ingest_rate_limit_refill_per_sec`, `guided_mode`); no path-bearing fields sourced into the emit | EXISTS |
+| `handlers/ingest.py` (modified) | `_emit_ingest_refusal_telemetry` amended to dual-write; each call (preflight_telemetry.write_ingest_refusal_event + audit_log.emit) wrapped in independent `try/except Exception: pass` so failure of either MUST NOT block the other; `_IngestRefused` propagates cleanly via caller's `raise` | EXISTS |
+| `tests/test_audit_log_server_lifecycle.py` (new) | 4 functional tests: SERVER_START at entry, SERVER_SHUTDOWN in finally on body-raise, CONFIG_LOAD exactly-once across 3 from_env calls, CONFIG_LOAD payload includes ints not paths | EXISTS |
+| `tests/test_audit_log_tool_invocation.py` (new) | 7 functional tests: tool_name + duration_ms emitted, outcome_class ok/refused/error per exception class, arguments-not-emitted, session_id extracted from args when present, omitted when absent | EXISTS |
+| `tests/test_audit_log_dual_write.py` (new) | 3 functional tests: both surfaces fire on success, audit-log raise does not break JSONL write, JSONL raise does not break audit-log emit; bidirectional independence locked at the helper level | EXISTS |
+| `docs/policies/audit-log.md` (new) | Operator-readable policy: channel resolution table, level filter, closed event taxonomy, forbid-list discipline, failure semantics, dual-write rationale, integration patterns (logrotate / journalctl / file collectors), retention guidance, v1 out-of-scope items | EXISTS |
+| `docs/research-brief-compliance-audit-2026-05-06.md` (modified) | SOC2-06 (line 316) + OWASP-06 (line 355) entries marked closed; cross-reference to `audit_log.py` + `docs/policies/audit-log.md` | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | 2 new content-contract tests: `test_audit_log_policy_doc_includes_channel_resolution_table` (locks doc/code drift on channel resolution + SOC2-06/OWASP-06 cross-reference) + `test_audit_log_policy_doc_documents_event_taxonomy` (locks bidirectional drift between AuditEventType enum and operator-facing taxonomy table) | EXISTS |
+| `README.md` (modified) | "Compliance posture" section bumped from 3→4 policy files; new `audit-log.md` row added | EXISTS |
+
+### Logged deviations
+
+1. **Preflight bypass dual-write deferred**: plan-227 Phase 2 also called for dual-write at the preflight bypass site (`handlers/preflight.py` mirror of the ingest helper pattern). The v1 preflight bypass surface was reverted in commit `d1e3914 revert(v1): defer preflight HITL bypass + decision_level wiring (per #244)`, so `preflight_telemetry.write_bypass_event` has **no active caller in v0**. The 1 planned test `test_preflight_bypass_writes_both_jsonl_and_audit_log` was dropped from this implementation. When the v1 bypass surface returns (separate work, gated on team-server reactivation discovery currently in-progress with Jin), the same dual-write helper pattern from `handlers.ingest._emit_ingest_refusal_telemetry` becomes the template; one-line addition at the new caller will activate the audit-log surface for `PREFLIGHT_BYPASS` events. Deviation documented in `tests/test_audit_log_dual_write.py` module docstring at the source.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `audit_log.py` | 240 | `emit` (~30) | OK |
+| `audit_log._build_handler` | — | (~20) | OK |
+| `audit_log._strip_forbidden` | — | (~10) | OK |
+| `audit_log.JsonFormatter.format` | — | (~5) | OK |
+| `server.py` modifications | +52 LOC (new outer `call_tool` ~30 LOC + `serve_stdio` finally wrap +10 LOC) | outer `call_tool` (~30) | OK (both under 40-line limit) |
+| `context.py` `_emit_config_load_once` | — | (~25) | OK |
+| `handlers/ingest.py` `_emit_ingest_refusal_telemetry` (amended) | — | (~25) | OK |
+
+All new code under Razor limits. Note: `_call_tool_impl` (the extracted inner) inherits the pre-existing ~324-LOC overage of the original `call_tool` body — that's pre-existing technical debt explicitly handed off to a future `/qor-refactor` cycle (mirrors the round-2 audit pattern at #218 LLM-11 entry #43).
+
+### Functional verification
+
+- **38 new functional tests** across 7 files (6 forbid-list + 8 format + 8 channel + 4 lifecycle + 7 tool invocation + 3 dual-write + 2 content-contract). All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured stderr, parsed JSON line, or file contents. No presence-only descriptions.
+- **Ingest-gate sister regression**: 114 tests pass clean (canary + size + rate + sensitive + server-refusal). No regressions introduced by the dual-write amendment.
+- **Compliance content-contract regression**: 8 tests pass (6 existing + 2 new for #227).
+- **Full repo regression**: 1038 PASS, 6 skipped, 1 xfailed, 10 failures (1027.69s total runtime). Every failure is in a module untouched by #227 (`test_alpha_flow`, `test_bind`, `test_ephemeral_authoritative`, `test_hook_command_registration`, `test_v0417_jargon_hygiene`); confirmed pre-existing on `upstream/dev` baseline (commit `b2fc66e`). Net new regressions from #227: **zero**.
+
+### Audit-log channel verification
+
+Smoke-tested all four channel modes:
+- `BICAMERAL_AUDIT_LOG` unset → stderr (default) ✓
+- `BICAMERAL_AUDIT_LOG=stderr` → stderr ✓
+- `BICAMERAL_AUDIT_LOG=/tmp/audit.jsonl` → file write ✓
+- `BICAMERAL_AUDIT_LOG=disabled` → no-op ✓
+- `BICAMERAL_AUDIT_LOG=<unwriteable>` → stderr fallback + warning marker ✓
+- `BICAMERAL_AUDIT_LOG_LEVEL=warn` filters info-level events ✓
+- `BICAMERAL_AUDIT_LOG_LEVEL=error` filters info+warn-level events ✓
+
+### Closes / unlocks
+
+- **Closes**: SOC2-06 (`docs/research-brief-compliance-audit-2026-05-06.md` § 2.2 line 316; SOC 2 CC system-monitoring gap)
+- **Closes**: OWASP-06 (`docs/research-brief-compliance-audit-2026-05-06.md` § 2.3 line 355; OWASP A09 logging gap; folded with SOC2-06 per the issue body)
+- **Substrate for**: future SOC 2 Type II audit evidence trail; pairs with `docs/RELEASE_EVIDENCE_PROCEDURE.md` (per-release change-control evidence from #218 SOC2-03)
+- **Substrate for**: future deferred sigstore-python `Verifier.production()` wiring (#218 / #237 / #249 follow-up) — when that lands, a `verification_bypassed` audit-log emit at `_install_skills` is a one-line addition (mirrors the existing severity-3 ledger-event pattern); documented as Phase 2 implementer-judgment opportunity, not a Phase 2 deliverable.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #227 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Push branch and merge PR #253 against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251.
+
+---
+*Chain integrity: VALID (45 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253)*
