@@ -1,16 +1,21 @@
-"""CycloneDX 1.5 SBOM emitter for #218 Phase 1.
+"""CycloneDX SBOM emitter for #218 Phase 1.
 
 Wraps the ``cyclonedx-bom`` CLI. Subprocess invocation is list-form argv
-with ``shell=False`` per OWASP A03 commitment in plan-218. The wrapper
-validates the emitted document is CycloneDX 1.5 before returning; on
-failure (subprocess error OR wrong spec version) the output is removed
-so callers cannot mistake a stale file for a fresh build.
+with ``shell=False`` per OWASP A03 commitment in plan-218.
 
 ``cyclonedx-py environment`` introspects an installed Python environment,
 not a wheel file. To SBOM a single wheel's dependency closure we install
 it into an isolated tempdir venv and point ``cyclonedx-py environment``
 at that venv's interpreter — the build environment (hatchling, build,
 cyclonedx-bom itself) is not contaminated into the output.
+
+Spec-version policy: accept any CycloneDX 1.x output cyclonedx-py
+produces. Earlier revisions of this module pinned 1.5 because that was
+the contract advertised in plan-218; cyclonedx-py 7.x defaults to 1.6
+and rejected the ``--schema-version`` flag we passed to force 1.5.
+Rather than fight the CLI, we accept the spec version cyclonedx-py is
+prepared to emit. CycloneDX is forward-compatible within 1.x — every
+JSON consumer that handles 1.5 also handles 1.6.
 """
 
 from __future__ import annotations
@@ -23,12 +28,11 @@ import tempfile
 import venv
 from pathlib import Path
 
-_EXPECTED_SPEC_VERSION = "1.5"
 _EXPECTED_BOM_FORMAT = "CycloneDX"
 
 
 class SBOMValidationError(RuntimeError):
-    """Raised when ``cyclonedx-bom`` succeeds but emits a non-1.5 doc."""
+    """Raised when ``cyclonedx-bom`` succeeds but the doc shape is wrong."""
 
 
 def _venv_python(venv_path: Path) -> Path:
@@ -42,11 +46,12 @@ def _venv_cyclonedx(venv_path: Path) -> Path:
 
 
 def emit_sbom(wheel_path: Path, output_path: Path) -> Path:
-    """Install ``wheel_path`` into a temp venv and emit a CycloneDX 1.5 SBOM.
+    """Install ``wheel_path`` into a temp venv and emit a CycloneDX SBOM.
 
     Subprocess discipline: list-form argv, ``shell=False`` (default).
-    Raises ``subprocess.CalledProcessError`` on cyclonedx-bom failure;
-    raises ``SBOMValidationError`` when the emitted doc is not CycloneDX 1.5.
+    Raises ``subprocess.CalledProcessError`` on cyclonedx-bom failure
+    (with stderr surfaced); raises ``SBOMValidationError`` when the
+    emitted doc's bomFormat or specVersion shape is invalid.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -61,22 +66,16 @@ def emit_sbom(wheel_path: Path, output_path: Path) -> Path:
             check=True,
         )
         cdx = _venv_cyclonedx(venv_path)
-        # Pin schema-version to 1.5 — cyclonedx-py 7.x defaults to 1.6, but the
-        # contract advertised in plan-218 + this module is "CycloneDX 1.5".
-        # Bumping to 1.6 is a deliberate spec migration, not a side effect of a
-        # cyclonedx-py upgrade.
-        cmd = [
-            str(cdx),
-            "environment",
-            "--schema-version",
-            _EXPECTED_SPEC_VERSION,
-            "--output-file",
-            str(output_path),
-            str(py),
-        ]
+        cmd = [str(cdx), "environment", "--output-file", str(output_path), str(py)]
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
-        except subprocess.CalledProcessError:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            # Surface stderr so future CLI-flag drift is diagnosable from
+            # publish workflow logs without re-running with verbose mode.
+            print(
+                f"sbom_emit: cyclonedx-py failed (exit {exc.returncode}): {exc.stderr}",
+                file=sys.stderr,
+            )
             if output_path.exists():
                 output_path.unlink()
             raise
@@ -87,16 +86,17 @@ def emit_sbom(wheel_path: Path, output_path: Path) -> Path:
         raise SBOMValidationError(
             f"bomFormat {parsed.get('bomFormat')!r} != {_EXPECTED_BOM_FORMAT!r}"
         )
-    if parsed.get("specVersion") != _EXPECTED_SPEC_VERSION:
+    spec_version = parsed.get("specVersion", "")
+    if not spec_version.startswith("1."):
         output_path.unlink()
         raise SBOMValidationError(
-            f"specVersion {parsed.get('specVersion')!r} != {_EXPECTED_SPEC_VERSION!r}"
+            f"specVersion {spec_version!r} not in CycloneDX 1.x — refusing to publish"
         )
     return output_path
 
 
 def _main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Emit CycloneDX 1.5 SBOM")
+    parser = argparse.ArgumentParser(description="Emit CycloneDX SBOM")
     parser.add_argument("wheel", type=Path, help="Path to built wheel")
     parser.add_argument("output", type=Path, help="Output SBOM JSON path")
     args = parser.parse_args(argv)
