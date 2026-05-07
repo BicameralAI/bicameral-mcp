@@ -15,6 +15,8 @@ Fast-follow on v0.14.0. Restores CycloneDX SBOM generation in the publish pipeli
 
 - **Removed broken `bicameral-mcp-classify` console-script entry from `pyproject.toml`.** Pointed at `cli.classify:main` which was deleted in #244 (v1 partial scale-down). Carry-over cleanup from the v0.14.0 release surgery.
 
+- **`bicameral-sync` skill auto-binds ungrounded decisions (closes #263, P0).** Sync's autonomy contract broke whenever a touched decision had no `binds_to` edge yet — the common case for any newly-ingested decision. Agent had to be hand-walked: sync → "now bind" → "now sync again". New skill step 1.5 between current step 1 (Sync HEAD) and step 2 (Resolve compliance) consumes `pending_grounding_checks` entries with `reason="ungrounded"` autonomously: locate symbol via Grep/Read + `validate_symbols`, call `bicameral.bind`, concatenate the returned `PendingComplianceCheck` with the original list, proceed to step 2 in the same invocation. `reason="symbol_disappeared"` (relocation) path unchanged. Adds a one-line *symbol* glossary on first use of `symbol_name` in the skill.
+
 ### Added
 
 - **`bicameral-mcp diagnose` CLI (#257, Layer 3 of #252).** Read-only diagnostic command for ledger health: prints SurrealKV revision, ledger schema version, decision count by status/signoff, and any orphaned bindings. Use this when an operator reports "ledger acting weird" before reaching for `bicameral.reset`.
