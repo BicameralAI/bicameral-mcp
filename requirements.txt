@@ -15,7 +15,7 @@ pyyaml>=6.0
 python-dotenv
 surrealdb>=1.0.0
 cocoindex>=0.3.36,<1.0.0  # v1.0 alpha breaks flow API (op, flow_def, sources)
-sqlite-vec>=0.1.0
+sqlite-vec>=0.1.9
 sentence-transformers>=2.6.0
 # cocoindex-code removed — unused, and it pins cocoindex==1.0.0a38 (alpha) which breaks the v0.3 flow API
 pytest>=8.0.0
