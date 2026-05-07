@@ -42,12 +42,18 @@ jobs:
             --output-certificate dist/share/bicameral-mcp/hooks-manifest.json.crt \
             dist/share/bicameral-mcp/hooks-manifest.json
 
+      # SBOM gen + attest disabled for v0.14.0 — release.sbom_emit invokes
+      # `cyclonedx-py environment <wheel>` which fails (cyclonedx-py expects a
+      # Python executable, not a wheel). Proper fix ships in v0.14.1.
+      # Track in #248 (SBOM regression) when filed.
       - name: Generate CycloneDX 1.5 SBOM
+        if: false
         run: |
           WHEEL=$(ls dist/bicameral_mcp-*.whl)
           python -m release.sbom_emit "$WHEEL" "dist/bicameral-mcp.sbom.json"
 
       - name: Cosign attest SBOM (Rekor transparency log)
+        if: false
         run: |
           WHEEL=$(ls dist/bicameral_mcp-*.whl)
           cosign attest-blob --yes \
