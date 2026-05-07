@@ -78,12 +78,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # SBOM artifacts (`bicameral-mcp.sbom.json`, `bicameral-mcp.sbom.intoto.jsonl`)
+          # excluded for v0.14.0 — gen step is `if: false` (#261). Restore in v0.14.1.
           gh release upload "${{ github.event.release.tag_name }}" \
             dist/share/bicameral-mcp/hooks-manifest.json \
             dist/share/bicameral-mcp/hooks-manifest.json.sig \
             dist/share/bicameral-mcp/hooks-manifest.json.crt \
-            dist/bicameral-mcp.sbom.json \
-            dist/bicameral-mcp.sbom.intoto.jsonl \
             dist/release-tag-commit.txt \
             dist/release-tag-commit.txt.sig \
             dist/release-tag-commit.txt.crt \
