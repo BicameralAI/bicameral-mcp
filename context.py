@@ -25,7 +25,9 @@ _RENDER_ATTRIBUTION_MODES = frozenset({"full", "redacted", "hidden"})
 # agent-parseable structure. Default flips to `redacted` once the regex
 # is refined to match only true name/date patterns. Tracked separately;
 # config field already exposes the privacy-positive options for opt-in.
-_DEFAULT_RENDER_ATTRIBUTION_MODE = "full"
+_DEFAULT_RENDER_ATTRIBUTION_MODE = (
+    "redacted"  # #209: flipped from "full"; positional-cue regex refined
+)
 
 _BYPASS_TRACKING_MODES = frozenset({"enabled", "disabled"})
 _DEFAULT_BYPASS_TRACKING_MODE = "enabled"
