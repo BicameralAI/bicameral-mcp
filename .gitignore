@@ -31,3 +31,9 @@ docs/demos/**/*.mp4
 .cursor/
 .windsurf/
 .claude/worktrees/
+
+# Internal planning artifacts — not shipped in the wheel, not part of the
+# public docs surface. Plans are working memory between author + reviewers
+# during a feature; once merged, the PR description + CHANGELOG carry the
+# durable record.
+plan-*.md
