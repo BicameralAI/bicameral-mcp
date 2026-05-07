@@ -87,12 +87,18 @@ def telemetry_allowed() -> bool:
     """Single source of truth for whether the relay path may run.
 
     True when:
-      - env var BICAMERAL_TELEMETRY != "0" (allows runtime opt-out), AND
+      - consolidated BICAMERAL_TELEMETRY flag includes the ``relay`` source
+        (allows runtime opt-out via env var), AND
       - marker is missing (default-on for upgraders) OR
         marker.telemetry == "enabled"
+
+    Env-var parsing delegates to :mod:`telemetry_flags` (#192) — it handles
+    the legacy ``0/1`` boolean form, the consolidated csv form, and the
+    deprecation-overlay for legacy preflight vars.
     """
-    env_val = os.getenv("BICAMERAL_TELEMETRY", "1").strip().lower()
-    if env_val in _OFF_VALUES:
+    from telemetry_flags import get_flags
+
+    if not get_flags().relay:
         return False
     marker = read_consent()
     if marker is None:

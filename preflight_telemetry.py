@@ -75,20 +75,35 @@ _BYPASS_TAIL_SCAN_LIMIT = 1000
 
 
 def telemetry_enabled() -> bool:
-    """True when ``BICAMERAL_PREFLIGHT_TELEMETRY`` is set to a truthy value.
+    """True when the consolidated ``BICAMERAL_TELEMETRY`` flag includes the
+    ``preflight`` source.
+
+    Delegates to :mod:`telemetry_flags` (#192). Legacy
+    ``BICAMERAL_PREFLIGHT_TELEMETRY=1`` continues to work via the
+    deprecation overlay there.
 
     Default off — caller-side opt-in only.
     """
-    return os.getenv("BICAMERAL_PREFLIGHT_TELEMETRY", "0").strip().lower() not in _OFF
+    from telemetry_flags import get_flags
+
+    return get_flags().preflight
 
 
 def raw_capture_enabled() -> bool:
-    """True when ``BICAMERAL_PREFLIGHT_TELEMETRY_RAW`` is set to a truthy value.
+    """True when both ``preflight`` and ``raw`` are enabled in the
+    consolidated flag.
+
+    Delegates to :mod:`telemetry_flags` (#192). Legacy
+    ``BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1`` continues to work via the
+    deprecation overlay there.
 
     Default off — even with telemetry enabled, raw plaintext capture is a
     separate opt-in.
     """
-    return os.getenv("BICAMERAL_PREFLIGHT_TELEMETRY_RAW", "0").strip().lower() not in _OFF
+    from telemetry_flags import get_flags
+
+    flags = get_flags()
+    return flags.raw and flags.preflight
 
 
 # ── Salt + hash helpers ──────────────────────────────────────────────
