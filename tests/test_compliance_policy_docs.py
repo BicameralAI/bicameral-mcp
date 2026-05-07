@@ -28,6 +28,7 @@ README = REPO_ROOT / "README.md"
 RESEARCH_BRIEF = REPO_ROOT / "docs" / "research-brief-compliance-audit-2026-05-06.md"
 AUDIT_LOG_POLICY = REPO_ROOT / "docs" / "policies" / "audit-log.md"
 DIAGNOSE_OUTPUT_POLICY = REPO_ROOT / "docs" / "policies" / "diagnose-output.md"
+LEDGER_EXPORT_POLICY = REPO_ROOT / "docs" / "policies" / "ledger-export.md"
 
 
 def test_host_trust_model_declares_required_sections() -> None:
@@ -153,3 +154,27 @@ def test_diagnose_output_policy_doc_documents_suggestion_heuristics() -> None:
         "schema version old",
     ):
         assert heuristic in content, f"heuristic {heuristic!r} missing from policy doc"
+
+
+def test_ledger_export_policy_doc_lists_canonical_record_fields() -> None:
+    """#252 Layer 4: every canonical record-shape field must appear in the policy doc.
+    Locks doc/code drift between the export-record format and the operator-facing
+    documentation."""
+    content = LEDGER_EXPORT_POLICY.read_text(encoding="utf-8")
+    for field in ("_table", "_schema_version", "_record_version", "id", "created_at", "in", "out"):
+        assert field in content, f"canonical-record field {field!r} missing from policy doc"
+
+
+def test_ledger_export_policy_doc_documents_two_pass_import_and_gdpr_use_cases() -> None:
+    """#252 Layer 4: policy doc must enumerate the two-pass import flow + GDPR
+    workflow recipes. Locks the use-case catalog against drift."""
+    content = LEDGER_EXPORT_POLICY.read_text(encoding="utf-8")
+    for marker in (
+        "Pass A — data records",
+        "Pass B — edge records",
+        "Art. 15",
+        "Art. 17",
+        "right-to-erasure",
+        "migration vehicle",
+    ):
+        assert marker in content, f"marker {marker!r} missing from policy doc"
