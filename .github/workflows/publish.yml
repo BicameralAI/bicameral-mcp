@@ -56,6 +56,18 @@ jobs:
             --output-attestation dist/bicameral-mcp.sbom.intoto.jsonl \
             "$WHEEL"
 
+      - name: Cosign keyless sign release tag commit (#218 SOC2-03)
+        run: |
+          # Capture the commit SHA the release tag points at; sign it as
+          # change-control evidence. Operators verify with `cosign verify-blob
+          # --certificate-identity-regexp ...` per docs/RELEASE_EVIDENCE_PROCEDURE.md.
+          TAG_COMMIT=$(git rev-list -n 1 "${{ github.event.release.tag_name }}")
+          echo "$TAG_COMMIT" > dist/release-tag-commit.txt
+          cosign sign-blob --yes \
+            --output-signature dist/release-tag-commit.txt.sig \
+            --output-certificate dist/release-tag-commit.txt.crt \
+            dist/release-tag-commit.txt
+
       - name: Attach signed artifacts to GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,6 +78,9 @@ jobs:
             dist/share/bicameral-mcp/hooks-manifest.json.crt \
             dist/bicameral-mcp.sbom.json \
             dist/bicameral-mcp.sbom.intoto.jsonl \
+            dist/release-tag-commit.txt \
+            dist/release-tag-commit.txt.sig \
+            dist/release-tag-commit.txt.crt \
             --clobber
 
       - name: Upload build artifacts
@@ -91,8 +106,15 @@ jobs:
       - name: Strip non-PyPI artifacts before upload
         run: |
           # share/ holds GitHub-Release artifacts (manifest + sigs + SBOM
-          # attestation); not part of the wheel/sdist PyPI upload.
-          rm -rf dist/share dist/bicameral-mcp.sbom.json dist/bicameral-mcp.sbom.intoto.jsonl
+          # attestation + tag-commit signature); not part of the wheel/sdist
+          # PyPI upload. Tag-commit artifacts (#218 SOC2-03) are at dist/
+          # root, not under dist/share/, so enumerate explicitly.
+          rm -rf dist/share \
+            dist/bicameral-mcp.sbom.json \
+            dist/bicameral-mcp.sbom.intoto.jsonl \
+            dist/release-tag-commit.txt \
+            dist/release-tag-commit.txt.sig \
+            dist/release-tag-commit.txt.crt
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
