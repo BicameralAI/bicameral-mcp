@@ -1,5 +1,11 @@
 ![Bicameral — without vs with](assets/bicameral-hero.png)
 
+<a href="https://github.com/BicameralAI/bicameral-mcp">
+  <img src="assets/star-on-github.svg" alt="Star Bicameral MCP on GitHub" />
+</a>
+
+<img src="assets/logo.png" width="96" align="right" alt="Bicameral logo">
+
 # Bicameral MCP
 
 [![PyPI version](https://img.shields.io/pypi/v/bicameral-mcp)](https://pypi.org/project/bicameral-mcp/)
@@ -68,143 +74,6 @@ bicameral-mcp --smoke-test
 
 ---
 
-## The Problem
-
-Engineering teams make hundreds of product decisions per week. A tiny fraction end up in tickets. None are linked to the code that implements them.
-
-When you build with an AI coding assistant, this disconnect accelerates:
-
-- The agent has no memory of the sprint planning where you decided on the rate limit
-- It implements checkout without knowing the compliance rule from last week's Slack thread
-- By the time someone notices, the gap has compounded across three PRs
-
-**Bicameral solves spec-alignment friction.** It acts as a persistent, auditable memory layer between your product decisions and your codebase — so your AI agent always has the right context before writing a line of code.
-
-```
-  meeting transcript       PRD / Slack thread       inline answer
-         │                        │                       │
-         └────────────────────────┼───────────────────────┘
-                                  ▼
-                          bicameral.ingest
-                                  │
-                    ┌─────────────▼──────────────┐
-                    │       Decision Ledger        │
-                    │   what was said  ↔  code    │
-                    │  status:  reflected | drifted │
-                    │           pending | ungrounded│
-                    │  signoff: proposed | ratified │
-                    └─────────────────────────────┘
-                                  │
-              ┌───────────────────┼───────────────────┐
-              ▼                   ▼                   ▼
-       preflight fires      dashboard shows      drift detected
-     before you code        full picture        at review time
-```
-
----
-
-## Core Concepts
-
-### Two Orthogonal Axes
-
-Every decision carries two independent signals:
-
-**Status** — what the codebase says (derived at query time, never stored):
-
-| | Symbol | Meaning |
-|---|---|---|
-| **reflected** | ✓ | Code was verified to implement this decision |
-| **drifted** | ⚠ | Code changed since the decision was last verified |
-| **pending** | … | Code region found, but not yet verified by the agent |
-| **ungrounded** | ○ | Decision tracked, but no matching code region found yet |
-
-**Signoff** — what humans decided (stored explicitly):
-
-| | Symbol | Meaning |
-|---|---|---|
-| **ratified** | ✓ date | A human confirmed this decision |
-| **proposed** | ○ | Ingested but not yet confirmed; drift tracking paused |
-| **AI-surfaced** | ~ | Surfaced by the agent, no human-stated source |
-| **rejected** | ✕ | Explicitly ruled out |
-| **needs context** | ⚑ | Business driver unclear — parked until answered |
-| **superseded** | — | Replaced by a later decision |
-
-The two axes are independent. The most important combination to watch for is **proposed × reflected**: the code already implements this decision cleanly, but a human hasn't signed off yet. That's the hero case for the dashboard — the PM sees it, ratifies, and drift tracking activates.
-
-Status is immune to rebase, squash, and cherry-pick because it's derived fresh at query time from content hashes, not stored as a flag.
-
-### When Does `link_commit` Run?
-
-`link_commit` syncs a commit's changes into the ledger — it recomputes content hashes and re-evaluates drift for every bound decision.
-
-It fires automatically in three ways:
-
-1. **After every `bicameral.ingest`** — auto-chained by the server
-2. **After git commits/merges/pulls** — via the PostToolUse hook installed by `setup`
-3. **Before every `bicameral.preflight`** — lazy catch-up if HEAD has advanced since the last sync
-
-If you commit outside of Claude Code (e.g., from a terminal), the next preflight call will sync the ledger before surfacing context.
-
-### Collaboration Modes
-
-| | Solo (default) | Team |
-|---|---|---|
-| **Who** | Individual eval or single-dev use | Any mix of devs, PMs, designers |
-| **Storage** | Local only (gitignored) | Local DB + git-committed event files |
-| **Sharing** | Nothing shared | Normal `git push`/`git pull` |
-| **Merge conflicts** | N/A | Zero — per-user append-only files |
-
-In **team mode**, a PM ingests a PRD; when a dev pulls, `preflight` surfaces those decisions as coding context and the dashboard shows what still needs implementation.
-
-```
-.bicameral/
-├── events/                ← committed to git (shared decisions)
-│   ├── pm@co.com.jsonl    ← PM's ingested PRDs and transcripts
-│   └── dev@co.com.jsonl   ← developer's commit syncs
-├── config.yaml            ← committed (mode, guided flag)
-└── local/                 ← gitignored (materialized state, DB)
-```
-
----
-
-## What `setup` Installs
-
-Running `bicameral-mcp setup` writes these files to your repo:
-
-| File | What it is | Required? |
-|---|---|---|
-| `.mcp.json` | MCP server config for Claude Code | Yes — registers the server |
-| `.bicameral/config.yaml` | Collaboration mode (`solo`/`team`) and guided-mode flag | Yes — stores your preferences |
-| `.bicameral/ledger.db` | SurrealDB decision ledger (solo mode) | Auto-created on first tool call |
-| `.gitignore` entry | Ignores `.bicameral/` in solo mode | Recommended |
-| `.claude/settings.json` | PostToolUse hook: auto-calls `bicameral.link_commit` after git commits | Optional — improves sync |
-| `.claude/settings.json` | SessionEnd hook: writes the session transcript to `.bicameral/pending-transcripts/`; next session drains the queue to surface uningested mid-session decisions | Optional — closes correction capture gap |
-| `.claude/skills/bicameral-*/SKILL.md` | Slash commands (`/bicameral-ingest`, `/bicameral-preflight`, `/bicameral-capture-corrections`, etc.) | Recommended |
-
-### Removing Bicameral
-
-To fully uninstall from a repo:
-
-```bash
-# 1. Remove the MCP server
-claude mcp remove bicameral --scope project
-
-# 2. Remove data and config
-rm -rf .bicameral/
-
-# 3. Remove skills
-rm -rf .claude/skills/bicameral-*/
-
-# 4. Remove the git hook (if installed)
-#    Open .claude/settings.json and delete the PostToolUse entry
-#    with "bicameral" in the command field.
-
-# 5. Remove the .gitignore entry
-#    Delete the "# Bicameral MCP" block from .gitignore.
-```
-
----
-
 ## Slash Commands
 
 After setup, Claude Code gets these slash commands:
@@ -221,10 +90,25 @@ The agent also fires these automatically — `preflight` before any code change,
 
 ---
 
+## What `setup` writes to your repo
+
+| File | What it is |
+|---|---|
+| `.mcp.json` | MCP server config for Claude Code |
+| `.bicameral/config.yaml` | Mode (`solo`/`team`) and guided-mode flag |
+| `.bicameral/ledger.db` | Local SurrealDB decision ledger (solo mode) |
+| `.gitignore` entry | Ignores `.bicameral/` in solo mode |
+| `.claude/settings.json` | PostToolUse hook (auto-sync after commits) + SessionEnd hook (capture mid-session decisions) |
+| `.claude/skills/bicameral-*/SKILL.md` | Slash commands |
+
+All data stays local. The embedded SurrealDB runs in-process — no separate server.
+
+---
+
 ## MCP Tools Reference
 
 <details>
-<summary><strong>13 tools across three categories</strong></summary>
+<summary><strong>13 tools across two categories</strong></summary>
 
 ### Decision Ledger
 
@@ -238,17 +122,13 @@ The agent also fires these automatically — `preflight` before any code change,
 | `bicameral.link_commit` | Sync a commit — update content hashes, re-evaluate drift |
 | `bicameral.drift` | Detect drift for decisions touching a specific file |
 | `bicameral.judge_gaps` | Run the business-requirement gap rubric on a topic |
-| `bicameral.resolve_compliance` | Write back caller-LLM compliance verdicts (compliant/drifted/not_relevant) |
+| `bicameral.resolve_compliance` | Write back caller-LLM compliance verdicts |
 | `bicameral.ratify` | Record product sign-off on a decision |
 | `bicameral.update` | Check for and apply recommended version updates |
 | `bicameral.reset` | Wipe the ledger for the current repo (dry-run by default) |
 | `bicameral.dashboard` | Start the local dashboard server and return its URL |
 
 ### Code Locator
-
-The server exposes deterministic primitives only. Callers use their own
-tools (Grep/Read/Glob) for code search and pass resolved file paths /
-symbol names back to the server.
 
 | Tool | Purpose |
 |---|---|
@@ -259,51 +139,9 @@ symbol names back to the server.
 
 ---
 
-## Configuration
-
-| Variable | Default | Description |
-|---|---|---|
-| `REPO_PATH` | `.` | Path to the repository being analyzed |
-| `SURREAL_URL` | `surrealkv://~/.bicameral/ledger.db` | SurrealDB URL. Use `memory://` for tests. |
-| `CODE_LOCATOR_SQLITE_DB` | *(auto)* | Override path for the code index database |
-| `BICAMERAL_AUTHORITATIVE_REF` | *(auto-detected)* | Override the main branch name (default: reads `origin/HEAD`) |
-| `BICAMERAL_PREFLIGHT_MUTE` | `0` | Set to `1` to silence preflight for one session |
-| `BICAMERAL_GUIDED_MODE` | *(from config.yaml)* | Set to `1` to force guided (blocking) mode |
-
-All data stays local. The embedded SurrealDB instance runs in-process — no separate server.
-
----
-
-## Local Development
-
-```bash
-git clone https://github.com/BicameralAI/bicameral-mcp.git
-cd bicameral-mcp
-pip install -e "pilot/mcp[test]"
-cd pilot/mcp && pytest tests/ -v
-```
-
-Tests use real adapters with `SURREAL_URL=memory://` — no external services required. CI runs on PRs to `main` via GitHub Actions.
-
----
-
-## Telemetry
-
-Bicameral collects anonymous usage statistics — tool name, version, call duration, error flag, and integer counts (e.g. number of decisions grounded per ingest call). **Never collected**: decision content, transcript text, file paths, repo names, or any user-supplied string. Opt out at any time with `export BICAMERAL_TELEMETRY=0` or the `env` block in your `.mcp.json`.
-
-For partner / contributor access to the usage dashboard, reach out at **jin@bicameral-ai.com**.
-
----
-
-## Contributing
-
-Contributions welcome. Please open an issue before submitting large changes.
-
----
-
 ## Privacy & Compliance
 
-We take privacy seriously. Bicameral runs entirely on your laptop — code, decisions, and transcripts never leave the machine unless you explicitly opt into team mode (which only shares an append-only event file via your existing git remote). The full compliance posture (host-trust model, acceptable use, install-trust model, audit log, diagnose output, availability stance) is documented in [`docs/policies/`](docs/policies/), with a per-release change-control evidence procedure in [`docs/RELEASE_EVIDENCE_PROCEDURE.md`](docs/RELEASE_EVIDENCE_PROCEDURE.md).
+We take privacy seriously. Bicameral runs entirely on your laptop — code, decisions, and transcripts never leave the machine unless you explicitly opt into team mode (which only shares an append-only event file via your existing git remote). Telemetry is anonymous integers + tool names only — opt out with `BICAMERAL_TELEMETRY=0`. The full posture (host-trust model, acceptable use, install-trust model, audit log, diagnose output, availability stance) is in [`docs/policies/`](docs/policies/); reporting + supply-chain attestation in [`SECURITY.md`](SECURITY.md).
 
 ---
 
