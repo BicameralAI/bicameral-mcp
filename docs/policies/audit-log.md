@@ -38,6 +38,8 @@ The closed enum `audit_log.AuditEventType` captures every event class:
 | `preflight_bypass` | warn | (deferred — v1 bypass surface reverted; will activate when the surface returns) | `reason`, `session_id` |
 | `gate_fired` | warn | (extension surface for future gate handlers) | (caller-defined) |
 | `error` | error | catch-all for unknown `event_type` strings (coerced from string with `original_event_type` field) | (caller-defined) |
+| `ledger_schema_verified` | info | `adapter.connect()` after `init_schema` + `migrate` (#252 Layer 2) | `surrealdb_client_version_running`, `bicameral_schema_version`, `status` (`first-write` / `match`) |
+| `ledger_version_drift` | warn | `adapter.connect()` after `init_schema` + `migrate` (#252 Layer 2) | `surrealdb_client_version_recorded`, `surrealdb_client_version_running`, `bicameral_schema_version` |
 
 ## Forbid-list discipline
 
