@@ -68,6 +68,9 @@ class AuditEventType(enum.StrEnum):
     PREFLIGHT_BYPASS = "preflight_bypass"
     GATE_FIRED = "gate_fired"
     ERROR = "error"
+    # #252 Layer 2 — wire-format sentinel observability
+    LEDGER_SCHEMA_VERIFIED = "ledger_schema_verified"
+    LEDGER_VERSION_DRIFT = "ledger_version_drift"
 
 
 _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
@@ -79,6 +82,8 @@ _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
     AuditEventType.PREFLIGHT_BYPASS: "warn",
     AuditEventType.GATE_FIRED: "warn",
     AuditEventType.ERROR: "error",
+    AuditEventType.LEDGER_SCHEMA_VERIFIED: "info",
+    AuditEventType.LEDGER_VERSION_DRIFT: "warn",
 }
 
 _LEVEL_RANK = {"info": 10, "warn": 20, "error": 30}

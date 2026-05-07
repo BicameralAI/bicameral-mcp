@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 16
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -44,6 +44,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     13: "0.12.1",  # provenance FLEXIBLE on binds_to (#72)
     14: "0.13.0",  # placeholder; release-eng pins final value at PR merge — Phase 4 (#61)
     15: "0.15.x",  # decision.governance (#109 — governance metadata)
+    16: "0.13.x",  # #252 Layer 2 — wire-format sentinel via bicameral_meta table; placeholder, release-eng pins final value at PR merge
 }
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -389,6 +390,17 @@ _META = [
     "DEFINE FIELD migrated_at ON schema_meta TYPE datetime DEFAULT time::now()",
 ]
 
+# #252 Layer 2 — wire-format sentinel.
+# Separate from `_META` (schema_meta) because schema_meta is DELETEd on every
+# `_set_schema_version` call. bicameral_meta has stable persistence semantics:
+# write-once for `at_first_write`, update-each-connect for `at_last_write`.
+_BICAMERAL_META = [
+    "DEFINE TABLE bicameral_meta SCHEMAFULL",
+    "DEFINE FIELD surrealdb_client_version_at_first_write ON bicameral_meta TYPE option<string> DEFAULT NONE",
+    "DEFINE FIELD surrealdb_client_version_at_last_write  ON bicameral_meta TYPE option<string> DEFAULT NONE",
+    "DEFINE FIELD last_write_at                            ON bicameral_meta TYPE option<datetime> DEFAULT NONE",
+]
+
 
 def _with_overwrite(sql: str) -> str:
     """Inject OVERWRITE into a DEFINE statement so it updates existing definitions.
@@ -438,7 +450,7 @@ async def init_schema(client: LedgerClient) -> None:
     clauses, DEFAULT values, TYPE) are always brought up to the current schema
     definition — even when running against a DB created by an older version.
     """
-    for sql in _ANALYZERS + _TABLES + _EDGES + _META:
+    for sql in _ANALYZERS + _TABLES + _EDGES + _META + _BICAMERAL_META:
         sql = sql.strip()
         if sql:
             await _execute_define_idempotent(client, _with_overwrite(sql))
@@ -898,6 +910,89 @@ async def _migrate_v14_to_v15(client: LedgerClient) -> None:
     logger.info("[migration] v14 → v15: decision.governance field added")
 
 
+async def _migrate_v15_to_v16(client: LedgerClient) -> None:
+    """v15 → v16: Introduce bicameral_meta table for wire-format sentinel (#252 Layer 2).
+
+    No data migration required — the bicameral_meta DEFINEs are applied
+    via init_schema's OVERWRITE pass on every connect (see _BICAMERAL_META
+    constant). The first-write value is populated by
+    ``_write_wire_format_sentinel`` at the end of ``adapter.connect()``.
+    Existing v15 ledgers transitioning to v16 will record the upgrading
+    binary's surrealdb-py version as the ``at_first_write`` because we
+    have no archaeological record of which version originally wrote them.
+
+    The migration body is intentionally empty; the registry entry exists
+    so the migration loop in ``migrate(client)`` sees v15→v16 as a known
+    forward path (avoids ``SchemaVersionTooNew`` on existing v15 ledgers
+    when v16-aware code starts).
+    """
+    return
+
+
+async def _write_wire_format_sentinel(
+    client: LedgerClient,
+) -> tuple[str | None, str | None, str]:
+    """Read and update the ``bicameral_meta`` row with the running surrealdb-py version.
+
+    Returns ``(recorded, running, status)`` where ``status`` is one of
+    ``"first-write"`` (no prior recorded version), ``"match"`` (recorded
+    equals running), or ``"drift"`` (recorded differs from running).
+
+    Side effects: updates ``surrealdb_client_version_at_last_write`` and
+    ``last_write_at`` on the singleton ``bicameral_meta`` row. Sets
+    ``surrealdb_client_version_at_first_write`` only when it was previously
+    NONE (immutable after first set). If the table has no row yet (fresh
+    ledger), CREATEs the singleton row with both first/last fields set to
+    the running version.
+
+    The caller (``adapter.connect``) is responsible for emitting the
+    audit-log event based on the returned status; this helper does not
+    import audit_log to keep the ledger module's dependency surface tight.
+    """
+    import importlib.metadata
+
+    try:
+        running = importlib.metadata.version("surrealdb")
+    except importlib.metadata.PackageNotFoundError:
+        running = "unknown"
+
+    rows = await client.query("SELECT * FROM bicameral_meta LIMIT 1")
+    if not rows:
+        await client.query(
+            "CREATE bicameral_meta SET "
+            "surrealdb_client_version_at_first_write = $running, "
+            "surrealdb_client_version_at_last_write = $running, "
+            "last_write_at = time::now()",
+            {"running": running},
+        )
+        return None, running, "first-write"
+
+    row = rows[0]
+    recorded = row.get("surrealdb_client_version_at_last_write")
+    first = row.get("surrealdb_client_version_at_first_write")
+
+    if first is None:
+        await client.query(
+            "UPDATE bicameral_meta SET "
+            "surrealdb_client_version_at_first_write = $running, "
+            "surrealdb_client_version_at_last_write = $running, "
+            "last_write_at = time::now()",
+            {"running": running},
+        )
+        return recorded, running, "first-write"
+
+    await client.query(
+        "UPDATE bicameral_meta SET "
+        "surrealdb_client_version_at_last_write = $running, "
+        "last_write_at = time::now()",
+        {"running": running},
+    )
+
+    if recorded == running:
+        return recorded, running, "match"
+    return recorded, running, "drift"
+
+
 _MIGRATIONS: dict[int, ...] = {
     5: _migrate_v4_to_v5,
     6: _migrate_v5_to_v6,
@@ -910,6 +1005,7 @@ _MIGRATIONS: dict[int, ...] = {
     13: _migrate_v12_to_v13,
     14: _migrate_v13_to_v14,
     15: _migrate_v14_to_v15,
+    16: _migrate_v15_to_v16,
 }
 
 

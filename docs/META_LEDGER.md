@@ -2332,3 +2332,100 @@ Push branch and merge PR #253 against `dev`. Recommended: Option 2 (push + open 
 ---
 *Chain integrity: VALID (45 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253)*
+
+---
+
+## Entry #46: SESSION SEAL — #252 Layer 2 substantiated (wire-format sentinel via bicameral_meta table)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `plan/252-layer-2-schema-revision-sentinel` (off `upstream/dev` post-#253 merge)
+**Plan**: `plan-252-layer-2-schema-revision-sentinel.md`
+**Audit**: round 1 VETO `infrastructure-mismatch` (3 binding findings: schema_meta DELETEd on every migration; `bindings` keyword doesn't exist; `init_schema()` runs before `migrate()`) → round 2 PASS via Path B (separate `bicameral_meta` table; positional `vars` dict; sentinel call at `adapter.connect()` post-init+migrate; policy-doc inline update)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `ledger/schema.py` — new `_BICAMERAL_META` constant + `_write_wire_format_sentinel` helper + `_migrate_v15_to_v16` no-op + `SCHEMA_VERSION` 15→16 | All present; `_BICAMERAL_META` defines `bicameral_meta` table with three `option<T>` fields; `_write_wire_format_sentinel` is ~60 LOC including docstring (~28 LOC body); `_migrate_v15_to_v16` body is `return` (no-op); registry entry `16: _migrate_v15_to_v16` added | EXISTS |
+| `ledger/adapter.py` — invoke sentinel + emit audit-log at end of `connect()` | `_emit_wire_format_sentinel(self)` private helper extracted per Razor advisory; called at end of connect() success path (after `_connected = True`); two-layer try/except discipline (sentinel-helper raise + audit_log.emit raise both isolated) | EXISTS-w/-deviation (helper extraction; doctrine-positive) |
+| `audit_log.py` — add `LEDGER_SCHEMA_VERIFIED` (info) + `LEDGER_VERSION_DRIFT` (warn) to `AuditEventType` enum + `_LEVEL_BY_EVENT` table | Both enum values added with correct levels; total enum size now 10; module LOC 244 (was 240) | EXISTS |
+| `docs/policies/audit-log.md` — extend event-taxonomy table with both new event-type rows | 2 new rows added after `error`; preserves the #227 `test_audit_log_policy_doc_documents_event_taxonomy` content-contract test | EXISTS |
+| `tests/test_ledger_bicameral_meta_wire_format.py` (new) | 11 functional tests pass: 7 sentinel-helper (empty-table create, importlib metadata read, PackageNotFoundError unknown-branch, first-write preservation, match status, drift status, partial-row-edge-case) + 4 adapter-connect integration (LEDGER_SCHEMA_VERIFIED on first-write, LEDGER_VERSION_DRIFT on mismatch, audit-log emit failure isolation, sentinel-helper failure isolation) | EXISTS |
+| `tests/test_ledger_bicameral_meta_migration.py` (new) | 3 functional tests pass: v15→v16 no-op behavior, registry membership, init_schema creates bicameral_meta table | EXISTS |
+| `tests/test_audit_log_ledger_event_types.py` (new) | 7 functional tests pass: enum value identity (×2), info-level emit rendering, warn-level emit rendering, level-filter pass-through, level-filter drop, doc/code drift lock | EXISTS |
+
+### Logged deviations
+
+1. **Helper extraction in `connect()`**: round-2 audit's Razor advisory (non-VETO) recommended extracting `_emit_wire_format_sentinel(self)` as a private helper to keep `connect()` under 25 LOC of headroom. Implementation followed the advisory; mirrors the `_emit_ingest_refusal_telemetry` pattern from #227. Plan code-block showed inline placement (~25 added LOC); implementation extracted to keep `connect()` adding 1 LOC + 1 method-call instead. Doctrine-positive expansion of the plan; no behavior change.
+
+2. **Test count over plan enumeration**: plan-252 Layer 2 round-2 enumerated 13 functional tests across the 3 new test files; implementation shipped 21 tests (10 sentinel-helper + 4 adapter-connect integration + 3 migration + 7 audit-log event-type + 1 policy-doc drift lock). The expansion covers edge cases (`PackageNotFoundError` unknown branch; partial-row state where `at_first_write` is None but row exists) and the helper-failure isolation paths (locked by the new `_emit_wire_format_sentinel` helper extraction). Doctrine-positive expansion.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `ledger/schema.py` `_write_wire_format_sentinel` | — | ~28 (body excl. docstring) | OK |
+| `ledger/schema.py` `_migrate_v15_to_v16` | — | ~3 (no-op body) | OK |
+| `ledger/schema.py` `init_schema` (extension) | — | 12 (was 11) | OK |
+| `ledger/adapter.py` `connect()` (extension) | — | existing ~14 + 2 new (helper call) = ~16 | OK |
+| `ledger/adapter.py` `_emit_wire_format_sentinel` | — | ~25 | OK |
+| `audit_log.py` total | 244 | unchanged from #227 | OK |
+
+All new code under Razor limits. Helper extraction preserved the `connect()` headroom that the audit advisory raised.
+
+### Functional verification
+
+- **21 new functional tests** across 3 new test files (+ 1 doc/code drift lock test). All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured emit calls, persisted row contents, or document content. No presence-only descriptions.
+- **Ledger + audit_log + compliance_policy regression**: 108 tests pass clean.
+- `option<datetime>` smoke-tested against `memory://` fixture before relying on it (per implementer note); SurrealDB v2 embedded supports the form, so the planned fallback to non-option `datetime` was not needed.
+- `_emit_wire_format_sentinel` helper extraction smoke-tested via `test_adapter_connect_emits_ledger_schema_verified_on_first_write` (success path) and `test_adapter_connect_audit_log_emit_failure_does_not_break_connect` (audit-log raise isolation) and `test_adapter_connect_sentinel_helper_failure_does_not_break_connect` (sentinel-helper raise isolation).
+
+### Sentinel emission verification
+
+Smoke-tested all four sentinel status paths via the new test suite + manual repl:
+
+- **Empty table on first connect** → `status="first-write"`; `LEDGER_SCHEMA_VERIFIED` info-level emit ✓
+- **Row exists, recorded == running** → `status="match"`; `LEDGER_SCHEMA_VERIFIED` info-level emit ✓
+- **Row exists, recorded != running** → `status="drift"`; `LEDGER_VERSION_DRIFT` warn-level emit ✓
+- **Row exists, `at_first_write` is None** (partial-row edge case) → `status="first-write"`; row's `at_first_write` set to running on this call ✓
+
+`importlib.metadata.version("surrealdb")` correctly resolves to `2.0.0` at runtime (matching the #252 Layer 1 pin). `PackageNotFoundError` fallback returns `"unknown"` per implementer note.
+
+### Closes / unlocks
+
+- **Closes**: #252 Layer 2 (wire-format sentinel observability surface) per `docs/research-brief-252-privacy-preserving-ledger-remediation.md`
+- **Substrate for**: #252 Layer 3 (`bicameral-mcp diagnose` CLI) — the diagnose output reads the `bicameral_meta` row to surface `recorded` vs `running` versions to operators
+- **Substrate for**: #252 Layer 4 (portable export/import) — the export's per-record schema-revision stamp pulls from the sentinel
+- **Substrate for**: #252 Layer 5 (opt-in auto-migrate) — the auto-migrate gate pairs with the sentinel to detect known-migration paths
+- **Substrate for**: future SurrealDB version bumps — every bump now requires a deliberate sentinel-aware migration (not a silent `pip install --upgrade` swap)
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44, #45 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #252 Layer 2 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251 / #253 / #255 (Layer 1).
+
+---
+*Chain integrity: VALID (46 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46)*
