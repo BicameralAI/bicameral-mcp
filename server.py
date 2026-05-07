@@ -1323,6 +1323,10 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     link.add_argument(
         "--quiet", action="store_true", help="suppress JSON output (still exits 0 on success)"
     )
+    subparsers.add_parser(
+        "diagnose",
+        help="emit a privacy-preserving operator bug-report (#252 Layer 3)",
+    )
     parser.add_argument(
         "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
     )
@@ -1351,6 +1355,10 @@ def _dispatch(args: Any) -> int:
         from cli.link_commit_cli import main as link_commit_main
 
         return link_commit_main(args.commit_hash, quiet=args.quiet)
+    if args.command == "diagnose":
+        from cli.diagnose import main as diagnose_main
+
+        return diagnose_main()
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
