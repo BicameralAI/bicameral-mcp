@@ -5,6 +5,15 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
+## v0.14.0 — v0-conformant cut: privacy + ingest hardening + release engineering; v1 HITL/decision_level scaled down; self-hosted team-server scaled down
+
+First minor release since v0.13.9 triage. Cut from `dev` after two scale-down PRs landed:
+
+- **#245 (closes #242)** — removed the self-hosted team-server runtime (HTTP `/events` API + Slack/Notion OAuth + per-source workers + Docker compose). The committed code was the wrong shape per v0 Productization §2: v0's team mode is a **remote append-only event-log adapter** consumed by **pull-based CLI sync**, not a self-hosted server. The replacement adapter (Drive/S3/Dropbox) is a separate follow-up.
+- **#246 (closes #244)** — reverted preflight HITL bypass (#112) + decision_level wiring (#77) from `dev`. Per the canonical user-flow north-star (BicameralAI/bicameral#108) and v0 Productization §4 (dashboard scope), v0's product shape is **"track decisions, surface drift"** — not **"track, classify by decision_class, route through escalation policy."** The `governance/` module itself is preserved on `dev` as future v1 surface; restoration is a single `git revert <merge-sha>` when v1 ships.
+
+What ships: the v0-conformant subset of dev's accumulated work — privacy hardening, install hygiene, ingest LLM guardrails, release engineering (cosign + SBOM + SOC2 evidence), e2e test fixes, skill doc fixes, gap-judge brief envelope, setup wizard MCP-tool pre-approval. The detailed feature list below was drafted when these features were planned for the dev release stream; **entries describing v1 features removed by #246** (`bicameral.evaluate_governance`, `bicameral.record_bypass`, `bicameral.list_unclassified_decisions`, `bicameral.set_decision_level`, HITL clarification prompts, `preflight_bypass_tracking` config gate) **are no longer applicable to this release**. Where individual entries below describe still-shipping pieces of mixed PRs (e.g. #200 Phase 3's `render_source_attribution` config gate), the still-shipping piece remains accurate.
+
 ### Added
 
 - **uv as the preferred installer path (#199).** `handlers/update.py` resolves the upgrade installer in the deterministic order `uv tool install --force` → `pipx install --force` → `pip install --quiet`. uv goes first because it ships as a single static binary with no Python prerequisite, and `uv tool` is the canonical CLI-app installer in the uv ecosystem. README's Quickstart now leads with the one-line uv installer (`curl -LsSf https://astral.sh/uv/install.sh | sh` / `irm https://astral.sh/uv/install.ps1 | iex`) followed by `uv tool install bicameral-mcp`; the existing pipx block is preserved for users who prefer it. New `_resolve_install_command` helper in `handlers/update.py` is unit-tested for branch + priority semantics in `tests/test_update_resolve_chain.py` (4 tests). `skills/bicameral-update/SKILL.md` description and Step 3 reflect the three-path resolve order; error messages now report the actual chosen command (`{cmd[0]} install failed: …`) instead of mis-labeling pipx failures as `pip install failed`.
