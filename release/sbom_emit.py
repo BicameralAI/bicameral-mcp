@@ -61,7 +61,19 @@ def emit_sbom(wheel_path: Path, output_path: Path) -> Path:
             check=True,
         )
         cdx = _venv_cyclonedx(venv_path)
-        cmd = [str(cdx), "environment", "--output-file", str(output_path), str(py)]
+        # Pin schema-version to 1.5 — cyclonedx-py 7.x defaults to 1.6, but the
+        # contract advertised in plan-218 + this module is "CycloneDX 1.5".
+        # Bumping to 1.6 is a deliberate spec migration, not a side effect of a
+        # cyclonedx-py upgrade.
+        cmd = [
+            str(cdx),
+            "environment",
+            "--schema-version",
+            _EXPECTED_SPEC_VERSION,
+            "--output-file",
+            str(output_path),
+            str(py),
+        ]
         try:
             subprocess.run(cmd, check=True, capture_output=True)
         except subprocess.CalledProcessError:
