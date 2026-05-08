@@ -791,62 +791,43 @@ live at `response.brief.gaps[]` and the rubric reference at
 `response.brief.rubric`. Older callers asserting on `judgment_payload`
 must migrate.
 
-### 7. Ratify proposals (v0.7.0+)
+### 7. Advise on ratification (v0.14.2+)
 
 All decisions ingested by `bicameral.ingest` enter as **proposals** (`signoff.state =
 'proposed'`). Proposals are drift-exempt — drift tracking does not run against them
 until they are ratified. Ratification is the user's explicit sign-off that a decision
 is committed, not just discussed.
 
-**Position: LAST.** Surface the ratify prompt only after Steps 4, 5, and 6 are
-fully complete — report printed, brief rendered, gap-judge findings shown, parked
-decisions resolved. The ratify `AskUserQuestion` must be the last user-facing output
-of the ingest flow. Do NOT fire it immediately after `bicameral.ingest` returns.
+**Position: LAST.** Surface the advisory only after Steps 4, 5, and 6 are fully
+complete — report printed, brief rendered, gap-judge findings shown, parked decisions
+resolved. The advisory must be the last user-facing output of the ingest flow.
 
-**Multi-segment ingests (Step 0 fan-out):** fire a single ratify prompt at the
-very end of the roll-up (after all segment briefs and gap-judge outputs are shown),
-covering all decisions across all segments. Do not ratify per segment.
+**Advise, do not gate.** Print a one-block advisory naming the ingested proposals and
+how to ratify them. **Do NOT fire `AskUserQuestion`** — auto-prompting after every
+ingest burns the agent's tool-call budget on a step that the user almost always
+defers (#272 Fix 3). Ratification belongs to Flow 5 (PM Friday review — `history` +
+`ratify`) and to direct user requests (e.g. "ratify all", "sign these off"). Stay
+silent and let the user decide when to walk the queue.
 
-Use `AskUserQuestion`:
+**Direct user request shortcut.** If the user's prompt explicitly asked for sign-off
+("sign these off", "ratify them", "approve these") in the same turn that triggered
+ingest, treat that as ratification authority and call `bicameral.ratify` directly
+without an `AskUserQuestion` round-trip. Otherwise, advise only.
 
-**If N ≤ 4 decisions**: use `multiSelect: true` with one option per decision. All pre-selected (recommended). User unchecks any they want to skip.
+**Multi-segment ingests (Step 0 fan-out):** print a single advisory at the very end
+of the roll-up (after all segment briefs and gap-judge outputs are shown), covering
+all decisions across all segments. Do not advise per segment.
+
+**Advisory format:**
+
 ```
-AskUserQuestion({
-  question: "Captured N decisions as proposals — select which to ratify now (drift tracking starts on ratified decisions):",
-  header: "Ratify",
-  multiSelect: true,
-  options: [
-    { label: "<decision 1 description>", description: "L1/L2 · <feature group>" },
-    { label: "<decision 2 description>", description: "L1/L2 · <feature group>" },
-    ...
-  ]
-})
-```
-
-**If N > 4 decisions**: use a single-select shortcut:
-```
-AskUserQuestion({
-  question: "Captured N decisions as proposals — ratify now to start drift tracking:",
-  header: "Ratify",
-  multiSelect: false,
-  options: [
-    { label: "Ratify all N (recommended)",
-      description: "Drift tracking starts immediately on all N decisions." },
-    { label: "Pick which to ratify",
-      description: "Use the Other field to specify decision numbers (e.g. '1 3 5')." },
-    { label: "Skip — review later",
-      description: "All stay as proposals. They'll surface as stale after inactivity." }
-  ]
-})
+○ N decisions captured as proposals — drift tracking activates after ratification.
+  Run `bicameral.ratify` when ready, or revisit them in your next history review
+  (Flow 5: "show me what's tracked" → ratify what's ready).
 ```
 
-Handle the response:
-- **multiSelect result**: ratify the checked decisions; skip the unchecked ones.
-- "Ratify all N" → ratify everything.
-- "Pick which" + Other text → parse the numbers, ratify the specified subset.
-- "Skip" → skip all.
+When the user later asks to ratify (in this turn or any future turn), call:
 
-**For each ratified decision**, call:
 ```
 bicameral.ratify(
   decision_id = "<id from ingest response>",
@@ -855,15 +836,11 @@ bicameral.ratify(
 )
 ```
 
-Confirm the result:
+per ratified decision, then confirm:
+
 ```
 ✓ Ratified 3/3 — drift tracking active on these decisions.
-  (2 skipped — still proposals, will surface as stale after inactivity)
 ```
-
-**Never silently skip the ratify step.** If the user says "just ingest, don't ask",
-record that and skip — but make the skip explicit ("Skipped ratification — these are
-proposals; run `bicameral.ratify` when ready to start drift tracking.").
 
 **Signer resolution order:**
 1. First named speaker in the source document's `participants` / `speakers` field
@@ -885,5 +862,5 @@ User: "Ingest our sprint planning notes from today"
 -> Use Grep + Read + validate_symbols to resolve code regions — 5 touch real code, 3 are strategic
 -> Call `bicameral.ingest` with 5 filtered decisions (internal format with explicit code_regions for the 3 grounded ones)
 -> Report: "8 decisions found, 3 dropped (strategic/market), 5 ingested: 3 mapped to code, 2 ungrounded (rate limiting + webhook retry — not yet implemented)"
--> Show ratify prompt for all 5, default to all, wait for user response
--> Call `bicameral.ratify` for each confirmed decision
+-> Print advisory: "○ 5 decisions captured as proposals — drift tracking activates after ratification. Run `bicameral.ratify` when ready, or revisit in your next history review."
+-> Stop. The user calls `bicameral.ratify` later when they're ready (or asks Flow 5 for a review)
