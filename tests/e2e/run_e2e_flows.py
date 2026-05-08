@@ -1109,8 +1109,9 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
         )
     return True, (
         f"bicameral.history fired; no ratify (no proposals in queue — "
-        f"Flow 1 ratified its 3 seeds and upstream chain may not have "
-        f"produced new proposals); sequence: {names}"
+        f"upstream chain may not have produced new proposals, e.g. an "
+        f"earlier run sharing the ledger already cleared Flow 1's seeds); "
+        f"sequence: {names}"
     )
 
 
