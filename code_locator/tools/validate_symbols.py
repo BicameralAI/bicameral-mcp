@@ -37,9 +37,6 @@ class ValidateSymbolsTool:
 
     def __init__(self, db: SymbolDB, config: CodeLocatorConfig) -> None:
         self.config = config
-        # Retained so code_locator.adapter.ground_mappings() can reach
-        # db.lookup_by_file() during auto-grounding. See adapters/code_locator.py:190.
-        self._db = db
         # Cache symbol list at init (not per-call)
         self._symbols: list[tuple[int, str, str]] = db.get_all_symbol_names()
 

@@ -457,38 +457,26 @@ code search — you (the caller LLM) resolve explicit `code_regions` before
 ingesting. You have full codebase context and real retrieval tools (Grep,
 Read, Glob); the server only has the decision text. Use your advantage.
 
-**Procedure per decision**:
+**The full pre-bind verification contract lives in
+`skills/bicameral-bind/SKILL.md`** — read it before resolving regions.
+The same rules apply whether you embed `code_regions` in this ingest
+payload (preferred when decisions are concrete) or defer to a later
+`bicameral.bind` call (acceptable when decisions are abstract / for
+code that doesn't exist yet):
 
-1. **Generate symbol hypotheses** from the decision text. If a decision says
-   *"all email dispatch functions filter via a single source-of-truth check,"*
-   your hypotheses are `dispatchReminders`, `dispatchInterventions`,
-   `dispatchNudge`, `resolveMemberStatus`, `isActiveSubscriber` — not just
-   the literal word "dispatch."
-2. **Use Grep / Read / Glob** (or equivalent native search) to find candidate
-   files and symbols in the repo. Open the real source to confirm what each
-   candidate actually does.
-3. **Call `validate_symbols`** with your resolved candidates to confirm each
-   exists in the server's symbol index and get back file/line spans.
-4. **Call `get_neighbors`** on a candidate's symbol_id if you need to
-   understand scope — surfaces callers/callees so you can tell whether the
-   decision is local to one function or spans a call tree.
-5. **Build explicit `code_regions`** — `{file_path, symbol, start_line, end_line, type}` —
-   from confirmed candidates. Prefer function-level pins over file-level;
-   bind to the tightest region that still covers the decision's surface area.
-
-**Grounding quality: filter out false positives before ingesting**. If a
-candidate keyword-matches but doesn't actually implement anything related
-to the decision, drop it. Example: a decision about email dispatch should
-NOT bind to a React `dispatch` reducer just because the word appears.
-Ingesting garbage bindings means every edit to that unrelated file
-triggers a drift alarm later — noise that drowns out real signal.
-
-**Skip decisions that don't bind to real code**. If after this procedure the
-decision has zero concrete regions AND names no valid symbols, it's either
-(a) strategic (drop it) or (b) a genuine "pending" decision for code that
-doesn't exist yet. For the pending case, ingest it with empty `code_regions`
-— it stays ungrounded until a future ingest or `bicameral.bind` call pins
-it to real code.
+1. Generate symbol hypotheses from the decision text — not just literal
+   keyword matches.
+2. **Read at least one candidate file end-to-end** — open the real source
+   with the Read tool, not a grep snippet, and confirm the symbol's body
+   implements the decision.
+3. Call `validate_symbols` to confirm the symbol exists in the server's
+   index — the handler queries this same index to verify your binding
+   (#280).
+4. Call `get_neighbors` if scope is ambiguous.
+5. **Abort on weak evidence.** A decision with zero concrete regions is
+   ingested as ungrounded — honest empty state beats a false binding.
+   Garbage bindings make every edit on the unrelated file fire drift
+   noise that drowns out real signal.
 
 ### 2.5 Post-ingest conflict check (v0.9.3+)
 

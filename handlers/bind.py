@@ -11,6 +11,17 @@ from preflight_telemetry import telemetry_enabled, write_engagement
 logger = logging.getLogger(__name__)
 
 
+def _spans_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+    """True when line spans [a_start, a_end] and [b_start, b_end] share any line.
+
+    Inclusive on both ends. Used by #280 Branch B to confirm a caller-supplied
+    line range overlaps the tree-sitter-resolved span for the named symbol —
+    rejecting hallucinated line ranges without forcing exact-equality, which
+    would block legitimate sub-region binds.
+    """
+    return a_start <= b_end and b_start <= a_end
+
+
 async def handle_bind(
     ctx,
     bindings: list[dict],
@@ -127,7 +138,7 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             start_line, end_line = resolved
         else:
             start_line, end_line = int(start_line), int(end_line)
-            from ledger.status import get_git_content
+            from ledger.status import get_git_content, resolve_symbol_lines
 
             if get_git_content(file_path, 1, 1, repo, ref=authoritative_sha) is None:
                 results.append(
@@ -136,6 +147,35 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         region_id="",
                         content_hash="",
                         error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
+                    )
+                )
+                continue
+
+            # #280 — caller-supplied line range cannot bypass symbol
+            # verification. Branch A (no lines) already runs tree-sitter via
+            # resolve_symbol_lines and rejects on miss; Branch B (with lines)
+            # used to skip that check, accepting any symbol_name as long as
+            # the file existed. That was the silent-acceptance surface for
+            # M2 grounding precision regressions.
+            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=authoritative_sha)
+            if resolved is None:
+                results.append(
+                    BindResult(
+                        decision_id=decision_id,
+                        region_id="",
+                        content_hash="",
+                        error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha} — caller-supplied line range cannot bypass symbol verification (#280)",
+                    )
+                )
+                continue
+            resolved_start, resolved_end = resolved
+            if not _spans_overlap(start_line, end_line, resolved_start, resolved_end):
+                results.append(
+                    BindResult(
+                        decision_id=decision_id,
+                        region_id="",
+                        content_hash="",
+                        error=f"symbol '{symbol_name}' resolves at lines {resolved_start}-{resolved_end} but caller supplied {start_line}-{end_line} — span mismatch (#280)",
                     )
                 )
                 continue

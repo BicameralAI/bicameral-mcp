@@ -5,6 +5,19 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`handlers/bind.py`: caller-supplied line range cannot bypass symbol verification (#280, M2 grounding precision regression).** Pre-fix, when a caller supplied `start_line`/`end_line` alongside `symbol_name`, the handler verified only that the file existed at the SHA and accepted any `symbol_name` — silent corruption surface for caller-LLM grounding when the agent hallucinated a wrong symbol on a real file. Branch B now also calls `resolve_symbol_lines` (same tree-sitter path Branch A uses) and rejects two cases: (1) `symbol_name` doesn't resolve at all → `error="symbol '...' not found in <file> at <sha> — caller-supplied line range cannot bypass symbol verification (#280)"`; (2) symbol resolves but the caller-supplied span doesn't overlap the resolved span → `error="span mismatch (#280)"`. Overlap (not exact equality) is the matching rule, so legitimate sub-region binds stay accepted; only hallucinated ranges are rejected.
+
+### Added
+
+- **`skills/bicameral-bind/SKILL.md` (#280).** New skill that extracts the bind contract out of `skills/bicameral-ingest/SKILL.md` §2 and tightens it from advisory to mandatory: the agent must Read at least one candidate file end-to-end, confirm the symbol via `validate_symbols`, and abort on weak evidence. Documents the handler-side rejection contract added in this release. `bicameral-ingest` §2 now points at the new skill instead of duplicating the verification rules.
+
+### Changed
+
+- **`code_locator/tools/validate_symbols.py`: dropped unused `self._db` field.** The retention comment ("Retained so `code_locator.adapter.ground_mappings()` can reach `db.lookup_by_file()`") referenced a path deleted in v0.6.0; the field had zero readers.
+- **`tests/eval_decision_relevance.py`: docstring at L73 updated** to describe the post-v0.6.0 grounding pipeline (caller-LLM bind via `handle_bind`) instead of the deleted `code_graph.ground_mappings + ledger` pipeline.
+
 ## v0.14.1 — SBOM emitter fix + Layer 3 diagnose CLI + dependabot
 
 Fast-follow on v0.14.0. Restores CycloneDX SBOM generation in the publish pipeline (skipped in v0.14.0 by hotfixes #261/#262), lands #257 (Layer 3 `bicameral-mcp diagnose` CLI from #252), and dependabot floor bumps.
