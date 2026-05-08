@@ -146,43 +146,47 @@ def _tail_recent_events(audit_path: Path | None, limit: int) -> list[dict]:
     return safe
 
 
+def _remediation_recipe() -> str:
+    """One-line export → reset → import recipe + policy-doc pointer.
+
+    Used by three suggestion branches in `_compute_suggestions` (drift,
+    unavailable, large-ledger) so the wording lives at one source of truth.
+    """
+    return (
+        "back up ledger and re-roundtrip via "
+        "`bicameral-mcp ledger-export > backup.jsonl && bicameral-mcp reset && "
+        "bicameral-mcp ledger-import --from-file backup.jsonl` "
+        "(see docs/policies/ledger-export.md)"
+    )
+
+
 def _compute_suggestions(d_partial: dict[str, Any]) -> list[str]:
-    """Run 5 hardcoded heuristics against the assembled partial Diagnosis dict."""
+    """Run 6 hardcoded heuristics against the assembled partial Diagnosis dict."""
     suggestions: list[str] = []
     drift = d_partial.get("drift_status")
+    bv = d_partial.get("bicameral_version", "")
+    recipe = _remediation_recipe()
     if drift == "drift":
         rec = d_partial.get("surrealdb_last_write")
         run = d_partial.get("surrealdb_running")
         suggestions.append(
             f"Schema-revision drift: recorded {rec} != running {run}; "
-            f"`pip install --upgrade surrealdb=={rec}` to match writer, "
-            "OR back up ledger and `bicameral-mcp reset`."
+            f"`pip install --upgrade surrealdb=={rec}` to match writer, OR {recipe}."
         )
+    if drift == "unavailable" and bv and bv != "unknown":
+        suggestions.append(f"Ledger predates Layer 2 wire-format sentinel (bicameral_meta missing); to acquire the sentinel, {recipe}.")
     rec_v = _fetch_recommended()
-    cur_v = d_partial.get("bicameral_version", "")
-    if rec_v and cur_v and rec_v != cur_v:
-        suggestions.append(
-            f"Recommended version {rec_v} available; "
-            "`bicameral.update {action: 'apply'}` to upgrade."
-        )
+    if rec_v and bv and rec_v != bv:
+        suggestions.append(f"Recommended version {rec_v} available; `bicameral.update {{action: 'apply'}}` to upgrade.")
     if d_partial.get("audit_log_channel") == "stderr":
-        suggestions.append(
-            "Audit log not file-persisted. "
-            "Set `BICAMERAL_AUDIT_LOG=<path>` to capture incident events for SOC 2 evidence."
-        )
+        suggestions.append("Audit log not file-persisted. Set `BICAMERAL_AUDIT_LOG=<path>` to capture incident events for SOC 2 evidence.")
     size = d_partial.get("ledger_size_bytes")
     if isinstance(size, int) and size > _LARGE_LEDGER_BYTES:
-        suggestions.append(
-            f"Ledger file > 100 MiB (current: {size} bytes); "
-            "consider future `bicameral-mcp ledger-export` (Layer 4) for backup."
-        )
+        suggestions.append(f"Ledger file > 100 MiB (current: {size} bytes); {recipe}.")
     rec_schema = d_partial.get("schema_version_recorded")
     exp_schema = d_partial.get("schema_version_expected")
     if isinstance(rec_schema, int) and isinstance(exp_schema, int) and rec_schema < exp_schema:
-        suggestions.append(
-            f"Ledger schema {rec_schema} < binary schema {exp_schema}; "
-            "run `bicameral-mcp` once to apply pending migrations."
-        )
+        suggestions.append(f"Ledger schema {rec_schema} < binary schema {exp_schema}; run `bicameral-mcp` once to apply pending migrations.")
     return suggestions
 
 

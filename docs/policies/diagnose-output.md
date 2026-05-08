@@ -28,15 +28,41 @@ The `bicameral-mcp diagnose` CLI emits a markdown-styled report containing **str
 
 ## Suggestion heuristic catalog
 
-5 hardcoded heuristics fire based on the assembled Diagnosis fields:
+6 hardcoded heuristics fire based on the assembled Diagnosis fields:
 
-1. **drift detected** — `drift_status == "drift"` → recommend `pip install --upgrade surrealdb==<recorded>` or `bicameral-mcp reset` after backup.
+1. **drift detected** — `drift_status == "drift"` → recommend `pip install --upgrade surrealdb==<recorded>` to match the writer, OR the export → reset → import recipe (see Remediation recipe below).
 2. **recommended-version mismatch** — `bicameral_version` differs from the fetched `RECOMMENDED_VERSION` → recommend `bicameral.update {action: "apply"}`.
 3. **audit log disabled** — `audit_log_channel == "stderr"` (default) → recommend setting `BICAMERAL_AUDIT_LOG=<path>` for SOC 2 evidence capture.
-4. **ledger > 100 MiB** — `ledger_size_bytes > 100 * 1024 * 1024` → recommend future `bicameral-mcp ledger-export` (Layer 4) for backup.
+4. **ledger > 100 MiB** — `ledger_size_bytes > 100 * 1024 * 1024` → recommend the export → reset → import recipe (see Remediation recipe below) for backup.
 5. **schema version old** — `schema_version_recorded < schema_version_expected` → recommend running `bicameral-mcp` once to apply pending migrations.
+6. **ledger predates Layer 2 sentinel** — `drift_status == "unavailable"` (the `bicameral_meta` table is absent on a binary that should have it) AND `bicameral_version` is not `"unknown"` → recommend the export → reset → import recipe (see Remediation recipe below) to acquire the sentinel.
 
 Operators with custom diagnostic needs run `python -m cli.diagnose` directly and inspect the `Diagnosis` dataclass; the suggestion engine is a UX layer over the structural data, not a gate.
+
+## Remediation recipe (#252 Layer 5)
+
+Three of the six heuristics above (drift, ledger > 100 MiB, predates Layer 2) emit a single shared recommended remediation: back up the ledger and re-roundtrip it through Layer 4's portable JSON-Lines vehicle. The recipe is operator-facing display text; bicameral-mcp itself never executes it. The wording lives at one source of truth in `cli/_diagnose_gather.py::_remediation_recipe()`; the operator copy-pastes from the diagnose output into their own shell.
+
+The recipe one-liner:
+
+```bash
+bicameral-mcp ledger-export > backup.jsonl && bicameral-mcp reset && bicameral-mcp ledger-import --from-file backup.jsonl
+```
+
+What it does, step by step:
+
+1. **`bicameral-mcp ledger-export > backup.jsonl`** — emits every row in every canonical table as JSON-Lines to stdout, captured to a portable file (see [`docs/policies/ledger-export.md`](ledger-export.md) for the canonical record shape and the privacy posture).
+2. **`bicameral-mcp reset`** — wipes the local SurrealDB ledger. After this step the ledger is empty; the source data lives only in `backup.jsonl`.
+3. **`bicameral-mcp ledger-import --from-file backup.jsonl`** — replays the JSON-Lines back into a fresh, sentinel-equipped ledger; the Layer 2 wire-format sentinel and any newer schema fields are populated by the connect/migrate path during import.
+
+Operator-facing properties:
+
+- **Opt-in only**: diagnose never executes the recipe; the operator runs it manually after reading the diagnose output. Per the gating-is-observability discipline.
+- **Idempotent against drift**: running the recipe against a sentinel-already-equipped ledger is harmless; the `bicameral_meta` row gets re-populated with the operator's current binary's wire-format identity.
+- **Right-to-erasure capable**: between steps 1 and 3, the operator can edit `backup.jsonl` to drop personally-identifying records (per [`docs/policies/ledger-export.md`](ledger-export.md) GDPR Art. 17 workflow).
+- **GDPR Art. 15 capable**: the exported `backup.jsonl` IS the data subject's portable export; operators can hand it to a data subject directly.
+
+The recipe is the same whether the trigger was schema-revision drift, a large ledger that needs a backup vehicle, or a ledger that pre-dates the Layer 2 sentinel. Single source of truth keeps the wording locked.
 
 ## Operator paste discipline
 
