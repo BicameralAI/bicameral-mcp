@@ -129,6 +129,25 @@ jobs:
           --skill-variant from-skill-md
           -o test-results/m1-adversarial.json
 
+      # ── M2 grounding-recall eval (warn-only, #280 PR-2) ────────────
+      # Drives the bicameral-bind skill against tests/fixtures/grounding_recall/
+      # — synthetic fixture with 23 decisions across same-name-different-module,
+      # similar-intent, and cross-language cases. Cache hits at
+      # tests/eval/fixtures/bind_judge/ keep CI cost ~$0 unless the dataset,
+      # fixture repo, or skill change. Warn-only initially per #280's gating-
+      # is-observability framing — we ship the measurement, observe the
+      # baseline, then ratchet to --gate-mode hard once the signal is stable.
+      - name: M2 grounding-recall eval (warn-only)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BICAMERAL_GROUNDING_EVAL_MODEL: claude-haiku-4-5-20251001
+        run: >
+          python tests/eval_grounding_recall.py
+          --gate-mode warn
+          -o test-results/m2-grounding-recall.json
+
       # ── Generate rich E2E report from artifacts ────────────────────
       # Ubuntu-only: the script consumes the medusa adversarial corpus
       # (cloned only on Ubuntu above) plus the Phase 3 E2E artifacts
