@@ -91,9 +91,7 @@ CASES_A: list[GroundingCase] = [
         ),
         intended_file="src/checkout/orders.py",
         intended_symbol="cancel_order",
-        distractors=(
-            ("src/billing/refunds.py", "cancel_order"),
-        ),
+        distractors=(("src/billing/refunds.py", "cancel_order"),),
     ),
     GroundingCase(
         case_id="A5_cancel_order_billing",
@@ -106,9 +104,7 @@ CASES_A: list[GroundingCase] = [
         ),
         intended_file="src/billing/refunds.py",
         intended_symbol="cancel_order",
-        distractors=(
-            ("src/checkout/orders.py", "cancel_order"),
-        ),
+        distractors=(("src/checkout/orders.py", "cancel_order"),),
     ),
 ]
 
@@ -175,9 +171,7 @@ CASES_B: list[GroundingCase] = [
         ),
         intended_file="src/auth/tokens.py",
         intended_symbol="validate_token",
-        distractors=(
-            ("src/auth/session.py", "validate_session"),
-        ),
+        distractors=(("src/auth/session.py", "validate_session"),),
     ),
     GroundingCase(
         case_id="B5_validate_session",
@@ -190,9 +184,7 @@ CASES_B: list[GroundingCase] = [
         ),
         intended_file="src/auth/session.py",
         intended_symbol="validate_session",
-        distractors=(
-            ("src/auth/tokens.py", "validate_token"),
-        ),
+        distractors=(("src/auth/tokens.py", "validate_token"),),
     ),
     GroundingCase(
         case_id="B6_refresh_jwt",
@@ -205,9 +197,7 @@ CASES_B: list[GroundingCase] = [
         ),
         intended_file="src/auth/tokens.py",
         intended_symbol="refresh_token",
-        distractors=(
-            ("src/auth/session.py", "refresh_session"),
-        ),
+        distractors=(("src/auth/session.py", "refresh_session"),),
     ),
     GroundingCase(
         case_id="B7_refresh_session",
@@ -220,9 +210,7 @@ CASES_B: list[GroundingCase] = [
         ),
         intended_file="src/auth/session.py",
         intended_symbol="refresh_session",
-        distractors=(
-            ("src/auth/tokens.py", "refresh_token"),
-        ),
+        distractors=(("src/auth/tokens.py", "refresh_token"),),
     ),
     GroundingCase(
         case_id="B8_verify_webhook_python",
@@ -251,9 +239,7 @@ CASES_B: list[GroundingCase] = [
         ),
         intended_file="src/metrics/collect.py",
         intended_symbol="collect_request_metrics",
-        distractors=(
-            ("src/metrics/collect.py", "collect_handler_metrics"),
-        ),
+        distractors=(("src/metrics/collect.py", "collect_handler_metrics"),),
     ),
     GroundingCase(
         case_id="B10_handler_metrics",
@@ -266,9 +252,7 @@ CASES_B: list[GroundingCase] = [
         ),
         intended_file="src/metrics/collect.py",
         intended_symbol="collect_handler_metrics",
-        distractors=(
-            ("src/metrics/collect.py", "collect_request_metrics"),
-        ),
+        distractors=(("src/metrics/collect.py", "collect_request_metrics"),),
     ),
 ]
 
@@ -286,9 +270,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/webhooks/verify.py",
         intended_symbol="verify_webhook_signature",
-        distractors=(
-            ("src/webhooks/verify.ts", "verifyWebhookSignature"),
-        ),
+        distractors=(("src/webhooks/verify.ts", "verifyWebhookSignature"),),
     ),
     GroundingCase(
         case_id="C2_verify_typescript",
@@ -301,9 +283,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/webhooks/verify.ts",
         intended_symbol="verifyWebhookSignature",
-        distractors=(
-            ("src/webhooks/verify.py", "verify_webhook_signature"),
-        ),
+        distractors=(("src/webhooks/verify.py", "verify_webhook_signature"),),
     ),
     GroundingCase(
         case_id="C3_dispatch_python",
@@ -316,9 +296,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/webhooks/dispatch.py",
         intended_symbol="dispatch_event",
-        distractors=(
-            ("src/webhooks/dispatch.ts", "dispatchEvent"),
-        ),
+        distractors=(("src/webhooks/dispatch.ts", "dispatchEvent"),),
     ),
     GroundingCase(
         case_id="C4_dispatch_typescript",
@@ -331,9 +309,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/webhooks/dispatch.ts",
         intended_symbol="dispatchEvent",
-        distractors=(
-            ("src/webhooks/dispatch.py", "dispatch_event"),
-        ),
+        distractors=(("src/webhooks/dispatch.py", "dispatch_event"),),
     ),
     GroundingCase(
         case_id="C5_enqueue_python",
@@ -346,9 +322,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/webhooks/dispatch.py",
         intended_symbol="enqueue_dispatch",
-        distractors=(
-            ("src/webhooks/dispatch.ts", "enqueueDispatch"),
-        ),
+        distractors=(("src/webhooks/dispatch.ts", "enqueueDispatch"),),
     ),
     GroundingCase(
         case_id="C6_enqueue_typescript",
@@ -361,9 +335,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/webhooks/dispatch.ts",
         intended_symbol="enqueueDispatch",
-        distractors=(
-            ("src/webhooks/dispatch.py", "enqueue_dispatch"),
-        ),
+        distractors=(("src/webhooks/dispatch.py", "enqueue_dispatch"),),
     ),
     GroundingCase(
         case_id="C7_metrics_python",
@@ -375,9 +347,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/metrics/collect.py",
         intended_symbol="collect_request_metrics",
-        distractors=(
-            ("src/metrics/collect.ts", "collectRequestMetrics"),
-        ),
+        distractors=(("src/metrics/collect.ts", "collectRequestMetrics"),),
     ),
     GroundingCase(
         case_id="C8_metrics_typescript",
@@ -390,9 +360,7 @@ CASES_C: list[GroundingCase] = [
         ),
         intended_file="src/metrics/collect.ts",
         intended_symbol="collectRequestMetrics",
-        distractors=(
-            ("src/metrics/collect.py", "collect_request_metrics"),
-        ),
+        distractors=(("src/metrics/collect.py", "collect_request_metrics"),),
     ),
 ]
 

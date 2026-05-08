@@ -21,7 +21,7 @@ class StripeRetryPolicy:
     """Configures backoff between retries — exponential w/ 2s base."""
 
     def delay_for(self, attempt):
-        return 2 ** attempt
+        return 2**attempt
 
 
 class MaxRetriesExceeded(Exception):

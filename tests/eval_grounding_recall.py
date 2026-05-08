@@ -50,8 +50,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tests" / "eval"))
 sys.path.insert(0, str(REPO_ROOT / "tests" / "fixtures" / "grounding_recall"))
 
-from _bind_judge import BindJudgment, fixture_exists, run_bind_judgment  # type: ignore[import-not-found]
-from dataset import ALL_CASES, GENERATOR_VERSION, GroundingCase, cases_by_type  # type: ignore[import-not-found]
+from _bind_judge import BindJudgment, fixture_exists, run_bind_judgment  # type: ignore[import-not-found]  # noqa: E402, I001
+from dataset import ALL_CASES, GENERATOR_VERSION, GroundingCase, cases_by_type  # type: ignore[import-not-found]  # noqa: E402, I001
 
 FIXTURE_REPO = REPO_ROOT / "tests" / "fixtures" / "grounding_recall" / "repo"
 
@@ -223,7 +223,7 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if breaches:
         print(f"  ⚠ gate breaches: {'; '.join(breaches)}")
     else:
-        print(f"  ✓ all gates pass")
+        print("  ✓ all gates pass")
 
     if breaches and args.gate_mode == "hard":
         return report, 1
@@ -232,7 +232,9 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0] if __doc__ else None)
-    p.add_argument("--case-filter", choices=("same_name_different_module", "similar_intent", "cross_language"))
+    p.add_argument(
+        "--case-filter", choices=("same_name_different_module", "similar_intent", "cross_language")
+    )
     p.add_argument("--case-id", help="run a single case by id (debug)")
     p.add_argument("--model", help="override BICAMERAL_GROUNDING_EVAL_MODEL")
     p.add_argument("--min-recall", type=float, default=0.80)

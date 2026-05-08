@@ -341,7 +341,7 @@ def run_bind_judgment(
     on (model, SKILL.md SHA, repo SHA, decision SHA). Set
     ``BICAMERAL_GROUNDING_EVAL_RECORD=1`` to bypass cache and re-record.
     """
-    chosen_model = model or os.getenv("BICAMERAL_GROUNDING_EVAL_MODEL", DEFAULT_MODEL)
+    chosen_model: str = model or os.getenv("BICAMERAL_GROUNDING_EVAL_MODEL") or DEFAULT_MODEL
     skill_md = _load_skill_md()
     skill_sha = _sha(skill_md)
 
@@ -355,8 +355,18 @@ def run_bind_judgment(
     cache_file = _cache_path(chosen_model, skill_sha, repo_sha, input_sha)
     force_record = os.getenv("BICAMERAL_GROUNDING_EVAL_RECORD", "").strip() in {"1", "true", "yes"}
     if use_cache and not force_record and cache_file.exists():
-        cached = json.loads(cache_file.read_text(encoding="utf-8"))
-        return BindJudgment(case_id=case_id, **cached)
+        cached: dict[str, Any] = json.loads(cache_file.read_text(encoding="utf-8"))
+        return BindJudgment(
+            case_id=case_id,
+            aborted=bool(cached["aborted"]),
+            bound_file=cached.get("bound_file"),
+            bound_symbol=cached.get("bound_symbol"),
+            abort_reason=cached.get("abort_reason"),
+            reasoning=str(cached.get("reasoning") or ""),
+            turns=int(cached.get("turns") or 0),
+            tokens_in=int(cached.get("tokens_in") or 0),
+            tokens_out=int(cached.get("tokens_out") or 0),
+        )
 
     chosen_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
     if not chosen_key.strip():
@@ -378,8 +388,9 @@ def run_bind_judgment(
     aborted = False
     abort_reason: str | None = None
     reasoning = ""
+    turn = 0
 
-    for turn in range(1, MAX_TURNS + 1):
+    for turn in range(1, MAX_TURNS + 1):  # noqa: B007 — `turn` is read after the loop for telemetry
         data = _call_messages_api(
             model=chosen_model,
             system_prompt=system_prompt,
@@ -437,7 +448,7 @@ def run_bind_judgment(
         aborted = True
         abort_reason = f"hit MAX_TURNS={MAX_TURNS} without submitting a binding"
 
-    judgment_payload = {
+    judgment_payload: dict[str, Any] = {
         "aborted": aborted,
         "bound_file": bound_file,
         "bound_symbol": bound_symbol,
@@ -449,14 +460,28 @@ def run_bind_judgment(
     }
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(json.dumps(judgment_payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return BindJudgment(case_id=case_id, **judgment_payload)
+    cache_file.write_text(
+        json.dumps(judgment_payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    return BindJudgment(
+        case_id=case_id,
+        aborted=aborted,
+        bound_file=bound_file,
+        bound_symbol=bound_symbol,
+        abort_reason=abort_reason,
+        reasoning=reasoning,
+        turns=turn,
+        tokens_in=tokens_in,
+        tokens_out=tokens_out,
+    )
 
 
-def fixture_exists(*, case_id: str, decision_description: str, repo_root: Path, model: str | None = None) -> bool:
+def fixture_exists(
+    *, case_id: str, decision_description: str, repo_root: Path, model: str | None = None
+) -> bool:
     """True if a cached fixture exists for these inputs (used to skip when
     no API key + no cache)."""
-    chosen_model = model or os.getenv("BICAMERAL_GROUNDING_EVAL_MODEL", DEFAULT_MODEL)
+    chosen_model: str = model or os.getenv("BICAMERAL_GROUNDING_EVAL_MODEL") or DEFAULT_MODEL
     skill_md = _load_skill_md()
     skill_sha = _sha(skill_md)
     repo_files = _scan_repo(repo_root)

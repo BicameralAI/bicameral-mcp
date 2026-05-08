@@ -11,7 +11,7 @@ def process_order(order):
     user sees a hard error and the cart unlocks. This is the customer
     checkout path, distinct from admin/orders.py which handles refunds.
     """
-    for attempt in range(3):
+    for _attempt in range(3):
         result = _attempt_payment(order)
         if result.success:
             return _fulfill(order)
