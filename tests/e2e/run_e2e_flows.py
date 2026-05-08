@@ -762,7 +762,11 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
     ratify_calls = _calls_named(bcalls, "bicameral_ratify")
 
     binding_path = "inline code_regions" if not bind_calls else "inline + follow-up bind"
-    ratify_note = f"ratify({len(ratify_calls)})" if ratify_calls else "no ratify (advisory-only, per #272 Fix 3)"
+    ratify_note = (
+        f"ratify({len(ratify_calls)})"
+        if ratify_calls
+        else "no ratify (advisory-only, per #272 Fix 3)"
+    )
     return True, (
         f"ingest({total_items} items, {binding_path}) → cherry-pick + commit-history "
         f"feature areas bound (paths: {bind_targets}); "
