@@ -674,16 +674,20 @@ def _bound_to_area(bind_targets: list[str], area_paths: tuple[str, ...]) -> bool
 
 
 def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
-    """Flow 1: PM ingests the seed roadmap decisions, anchors at least one
-    file in each of the cherry-pick and commit-history feature areas, and
-    ratifies. Subsequent flows depend on a CLEAN, RATIFIED, BOUND ledger as
-    their baseline.
+    """Flow 1: PM ingests the seed roadmap decisions and anchors at least one
+    file in each of the cherry-pick and commit-history feature areas. Per
+    #272 Fix 3 / #108 Flow 1 spec update, the ingest skill now ADVISES the
+    user about ratification rather than auto-firing an ``AskUserQuestion``
+    ratify gate — so this asserter expects ``[ingest, bind?]`` and does NOT
+    require ``bicameral.ratify``. Flow 5 owns ratify validation (PM Friday
+    review walks the proposed queue).
 
     Anchoring path: the canonical bicameral-ingest skill embeds bindings
     inline via ``mappings[].code_regions[].file_path`` — there is no
     separate ``bicameral.bind`` call for code that already exists. A
     follow-up ``bicameral.bind`` is reserved for abstract decisions whose
-    code doesn't exist yet. This asserter accepts EITHER path.
+    code doesn't exist yet, or for ungrounded decisions surfaced by the
+    auto-bind step. This asserter accepts EITHER path.
 
     The check is feature-area-scoped, not file-scoped: any of the files
     listed in ``_CHERRY_PICK_AREA_PATHS`` / ``_COMMIT_HISTORY_AREA_PATHS``
@@ -749,20 +753,24 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
             f"commit-history: {list(_COMMIT_HISTORY_AREA_PATHS)}; sequence: {names}"
         )
 
-    # Ratify: PM blesses the just-ingested decisions. Flow 5 walks the
-    # `proposed` queue — flow 1's seeds must NOT remain in `proposed` or
-    # they'd contaminate flow 5's "what's queued for adoption" view.
+    # Ratify is intentionally NOT required here — per #272 Fix 3, the ingest
+    # skill ends in an advisory ("○ N decisions captured as proposals — run
+    # bicameral.ratify when ready"), not an AskUserQuestion gate. Flow 5
+    # walks the proposed queue and ratifies. Flow 1's seeds remain
+    # `proposed` after this run, which is the new baseline that downstream
+    # flows are built on.
     ratify_calls = _calls_named(bcalls, "bicameral_ratify")
-    if not ratify_calls:
-        return False, (
-            f"expected bicameral.ratify after ingest (PM blesses adoption); saw: {names}"
-        )
 
     binding_path = "inline code_regions" if not bind_calls else "inline + follow-up bind"
+    ratify_note = (
+        f"ratify({len(ratify_calls)})"
+        if ratify_calls
+        else "no ratify (advisory-only, per #272 Fix 3)"
+    )
     return True, (
         f"ingest({total_items} items, {binding_path}) → cherry-pick + commit-history "
         f"feature areas bound (paths: {bind_targets}); "
-        f"ratify({len(ratify_calls)}); sequence: {names}"
+        f"{ratify_note}; sequence: {names}"
     )
 
 
@@ -1074,12 +1082,14 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
     flows 1/2/4. Expect history (the review query) + IF there's anything
     in the proposed queue, ratify it.
 
-    The ratify call is conditional, not unconditional: if upstream flows
-    produced no new proposals (e.g. Flow 1 already ratified its 3 seeds
-    and Flow 2's collision didn't produce a refinement), there's literally
-    nothing to ratify and the prompt's instruction "ratify if you find
-    anything ready" is honestly satisfied by a no-op. Forcing ratify here
-    would catch a cascade failure from Flow 2 as if it were a Flow 5 bug.
+    The ratify call is conditional, not unconditional. Per #272 Fix 3 /
+    #108 Flow 1 spec update, Flow 1 now leaves its seeds as `proposed`
+    (advisory-only ingest skill — no auto-ratify), so Flow 5 SHOULD see
+    queued proposals and ratify at least one. We still tolerate a no-op
+    when the upstream chain produced nothing (e.g. Flow 2's collision
+    didn't yield a refinement and Flow 1's seeds were already cleared
+    by an earlier run sharing the ledger), because forcing ratify here
+    would catch a cascade failure from Flow 1/2 as if it were a Flow 5 bug.
 
     Per #108 Flow 5 spec: history + (ratify if proposals exist). The "if"
     is load-bearing — see step 4: "Step 3 is silent if no proposals exist."
@@ -1099,8 +1109,9 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
         )
     return True, (
         f"bicameral.history fired; no ratify (no proposals in queue — "
-        f"Flow 1 ratified its 3 seeds and upstream chain may not have "
-        f"produced new proposals); sequence: {names}"
+        f"upstream chain may not have produced new proposals, e.g. an "
+        f"earlier run sharing the ledger already cleared Flow 1's seeds); "
+        f"sequence: {names}"
     )
 
 
