@@ -139,8 +139,11 @@ jobs:
         run: python tests/generate_e2e_report.py
 
       # ── Generate step summary from JUnit XML ───────────────────────
+      # SHA-pinned to v2.4 (target=dist with bundled index.js); v2 mutable
+      # tag was repointed to v2.5 (target=main) on 2026-05-07 which broke
+      # the bundled artifact (#272). Pin per OWASP-03 / install-trust-model.
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86  # v2.4
         if: always()
         with:
           paths: test-results/results.xml
