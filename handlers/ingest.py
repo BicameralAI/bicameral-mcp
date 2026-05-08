@@ -65,14 +65,31 @@ class _IngestRefused(Exception):
 
 
 def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
-    """Append a refusal event to ``~/.bicameral/preflight_events.jsonl``.
+    """Dual-write the refusal event to JSONL telemetry + audit log.
 
     Side-effect-only helper invoked by ``handle_ingest`` after a guard
     raises ``_IngestRefused`` and before the exception re-propagates to
     the MCP boundary. Kept out of the gate helpers themselves so those
     stay pure (raise on fail; reusable in non-ingest contexts).
+
+    Each write is exception-isolated; failure of either surface MUST NOT
+    block the other so the original ``_IngestRefused`` propagates cleanly
+    via the caller's ``raise``. JSONL writes are nominally trusted not
+    to raise, but the explicit ``try/except`` formalizes that trust at
+    the helper level and is required for the bidirectional-independence
+    test contract (#227 Phase 2).
     """
-    preflight_telemetry.write_ingest_refusal_event(reason=reason, session_id=session_id)
+    from audit_log import AuditEventType
+    from audit_log import emit as audit_emit
+
+    try:
+        preflight_telemetry.write_ingest_refusal_event(reason=reason, session_id=session_id)
+    except Exception:  # noqa: BLE001 — audit-log surface must not be blocked
+        pass
+    try:
+        audit_emit(AuditEventType.INGEST_REFUSAL, session_id=session_id, reason=reason)
+    except Exception:  # noqa: BLE001 — refusal flow must not be broken by emit
+        pass
 
 
 def _check_payload_size(payload: dict, max_bytes: int) -> None:
@@ -672,13 +689,10 @@ async def handle_ingest(
             CreatedDecision(
                 decision_id=d["decision_id"],
                 description=d["description"],
-                decision_level=d.get("decision_level"),
             )
             for d in result.get("created_decisions", [])
         ],
-        pending_grounding_decisions=[
-            d for d in result.get("ungrounded_decisions", []) if d.get("decision_level") != "L1"
-        ],
+        pending_grounding_decisions=list(result.get("ungrounded_decisions", [])),
         context_for_candidates=context_for_candidates,
         source_cursor=cursor_summary,
         brief=brief,

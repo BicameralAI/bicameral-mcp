@@ -68,6 +68,17 @@ def _save_cache(data: dict) -> None:
         pass
 
 
+def fetch_recommended_version() -> str | None:
+    """Public alias for ``_fetch_recommended_version`` (#252 Layer 3 cross-layer call).
+
+    Used by ``cli/diagnose.py`` to compute the recommended-version-mismatch
+    suggestion heuristic. Same semantics + 1-hour cache; this is the
+    cross-layer-clean entry point. Internal callers in this module continue
+    to use ``_fetch_recommended_version`` directly.
+    """
+    return _fetch_recommended_version()
+
+
 def _fetch_recommended_version() -> str | None:
     """Fetch RECOMMENDED_VERSION from GitHub with a 1-hour cache."""
     cache = _load_cache()

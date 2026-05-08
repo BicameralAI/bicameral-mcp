@@ -2135,3 +2135,422 @@ Operator review and choose push/merge path. Recommended: Option 2 (push + open P
 ---
 *Chain integrity: VALID (43 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #231 IMPLEMENTATION (#42) → #218 Phase 1 SEAL (#43)*
+
+---
+
+## Entry #44: SESSION SEAL — #218 LLM-06 substantiated (skills manifest signing — final epic sub-task)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `218-llm-06-skills-manifest-signing` (PR #249, merged into `dev` as `b2fc66e` on 2026-05-07T06:38:18Z)
+**Plan**: `plan-F-llm-06-skills-manifest-signing.md`
+**Audit**: round 2 PASS (`infrastructure-mismatch` round-1 VETO cleared via Path A — collapse into existing `scripts/hooks_manifest_build_hook.py` with second `BuildHookInterface` subclass; implementation collapsed further into a single `ManifestsBuildHook` with two-step `initialize` per hatch's actual one-class-per-registered-module constraint)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `release/skills_manifest_generator.py` (new) | 83 LOC; pure-function deterministic TOML emitter (`generate_manifest`, `_emit_toml`, `write_manifest`, `_main`); manual emission (manifest_version=1) | EXISTS |
+| `release/skills_source.py` (new) | 38 LOC; `walk_skills()` yields `(skill_name, file_path, file_bytes)` from sorted `skills/` tree | EXISTS |
+| `release/skills_verify.py` (new) | 149 LOC; mirrors `release/manifest_verify.py` shape; stub `_sigstore_verify` raising "deferred follow-up"; `verify_skills_manifest` + `verify_skills_or_bypass` helpers; module-level `_VERIFIER_HOOK` swappable | EXISTS |
+| `scripts/hooks_manifest_build_hook.py` (modified) | 59 LOC total; consolidated into a single `ManifestsBuildHook` whose `initialize` generates BOTH manifests in one pass (cleaner than the audit's Path A two-class proposal — same hatch auto-discovery semantics) | EXISTS-w/-deviation (see logged deviation) |
+| `pyproject.toml` (modified) | single `[tool.hatch.build.targets.wheel.hooks.custom]` registration unchanged; `[tool.hatch.build.targets.wheel.shared-data]` augmented with `skills-manifest.toml` mapping (table-augmentation) | EXISTS |
+| `setup_wizard.py` (modified) | `_bundled_skills_manifest_paths()` + `_verify_intended_skills_writes()` helpers added; wired into `_install_skills` (1 LOC at call site, mirrors `_verify_intended_writes` from #237) | EXISTS |
+| `.github/workflows/publish.yml` (modified) | cosign keyless sign-blob step for `skills-manifest.toml`; `.sig` + `.crt` attached to GitHub Release alongside hooks-manifest artifacts | EXISTS |
+| `docs/policies/host-trust-model.md` (modified) | "Server-side guarantees" table extended with "Skills manifest signature verification" row | EXISTS |
+| `docs/research-brief-compliance-audit-2026-05-06.md` (modified) | LLM-06 entry marked closed; cross-references to `release/skills_manifest_generator.py`, `release/skills_verify.py`, `docs/policies/host-trust-model.md` row | EXISTS |
+| `tests/test_skills_manifest_generator.py` (new) | 7 functional tests pass (per-skill section presence, SHA-256 match, deterministic serialization, `.txt` omission, directory-only walk, tomllib round-trip, lexicographic skill ordering — last 2 added beyond plan-F enumeration) | EXISTS |
+| `tests/test_setup_wizard_skills_verify.py` (new) | 7 functional tests pass (positive verify, sig-invalid, sha256-mismatch, missing-manifest, swappable hook, bypass-with-event, fail-closed) | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | new assertion `test_host_trust_model_includes_skills_manifest_row` per plan-F line 208 | EXISTS |
+
+### Logged deviations
+
+1. **Build-hook consolidation deeper than the audit prescribed**: round-2 audit's Path A specified collapse into a single registered module hosting **two** `BuildHookInterface` subclasses (one per manifest). Implementation discovered hatch's actual constraint is **one class per registered plugin module** and consolidated further into a single `ManifestsBuildHook` whose `initialize` generates BOTH manifests in one pass. Same auto-discovery semantics; cleaner module structure; closes the same Reality=Promise contract. PR #249 body documents this explicitly.
+
+2. **Generator test count over plan-F enumeration**: plan-F line 149-153 listed 5 generator tests; implementation shipped 7 (added `test_manifest_round_trip_via_tomllib` and `test_generate_manifest_orders_skills_lexicographically` for stronger contract coverage). Doctrine-positive expansion.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `release/skills_manifest_generator.py` | 83 | `_emit_toml` (~25) | OK |
+| `release/skills_source.py` | 38 | `walk_skills` (~12) | OK |
+| `release/skills_verify.py` | 149 | `_sigstore_verify` (~40) | OK |
+| `scripts/hooks_manifest_build_hook.py` | 59 | `initialize` (consolidated, ~25) | OK |
+| `setup_wizard.py` modifications | +20 LOC (helpers + 1-LOC call-site) | `_verify_intended_skills_writes` (~17) | OK |
+
+All new code under Razor limits.
+
+### Functional verification
+
+- 14 new functional tests across 2 new test files (7 generator + 7 verifier) plus 1 content-contract test extension; all PASS
+- Each test invokes the unit under test and asserts on returned value, raised exception, or observable side-effect. No presence-only descriptions.
+- Wheel-build smoke test (per PR #249): `python -m build --wheel` produces wheel containing `share/bicameral-mcp/skills-manifest.toml` at the proper hatch shared-data location alongside the existing `hooks-manifest.json`.
+- Full setup_wizard / hook regression: 49/49 PASS, 1 skipped (pre-existing) per PR #249 test plan.
+
+### Cosign-activation timing (carried forward from #237)
+
+The `release/skills_verify.py::_sigstore_verify` stub raises "deferred follow-up" identical to `release/manifest_verify.py`. When the deferred sigstore-python `Verifier.production()` wiring lands (separate #218 follow-up), BOTH LLM-11 (hooks) and LLM-06 (skills) verification activate together — single verifier swap covers both manifests.
+
+### Closes / unlocks
+
+- **Closes**: #214 (#218 sub-task LLM-06 — sign skills/ payload; OWASP-LLM-05) — landed via PR #249 merged 2026-05-07T06:38:18Z
+- **Closes #218 epic**: 6/6 sub-tasks complete (LLM-11, OWASP-01, SOC2-03, OWASP-03, OWASP-05, LLM-06)
+- **Substrate for**: future remote-skill-loading (LLM-06 design-constraint gate removed); per-file SHA-256 verification also catches post-install in-place skill tampering as secondary benefit
+
+### Timing note (out-of-band substantiation)
+
+This seal entry lands on `dev` after PR #249 already merged the implementation. The seal commit is shipped via a separate ledger-only PR off `dev` rather than bundled with the implementation PR — the same split that produced entries #42 (IMPLEMENTATION) / #43 (SEAL) lacking explicit Merkle hashes when their timing collided. Future #218-class seals should be bundled with the implementation PR per the doctrine when feasible.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #218 scope; tracked separately) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action
+
+Ledger-only PR off `dev` carrying this entry. Implementation already shipped via PR #249.
+
+---
+*Chain integrity: VALID (44 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44)*
+
+---
+
+## Entry #45: SESSION SEAL — #227 SOC2-06 + OWASP-06 fold substantiated (structured audit-log emission)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `227-structured-audit-log` (off `upstream/dev` tip post-#251 merge)
+**Plan**: `plan-227-structured-audit-log-emission.md`
+**Audit**: round 1 VETO `specification-drift` (dual-write helper code contradicted bidirectional-independence test specs) → round 2 PASS via Path A (wrap each write in independent try/except)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `audit_log.py` (new) | 240 LOC; `AuditEventType` StrEnum (8 values); `_FORBIDDEN_FIELDS` frozenset (10 keys); `_strip_forbidden`, `JsonFormatter`, `_resolve_channel`, `_resolve_min_level_rank`, `_build_handler`, `_get_logger`, `emit`, `_reset_for_tests` | EXISTS |
+| `tests/test_audit_log_forbid_list.py` (new) | 6 functional tests; each invokes `_strip_forbidden` or `emit` and asserts on returned dict / parsed JSON | EXISTS |
+| `tests/test_audit_log_format.py` (new) | 8 functional tests covering JsonFormatter output, session_id presence/omission, unknown event_type coercion, exception swallowing, level filter | EXISTS |
+| `tests/test_audit_log_channel.py` (new) | 8 functional tests covering channel resolution (default/stderr/disabled/path), file-write, unwriteable-fallback, level rank | EXISTS |
+| `server.py` (modified) | `serve_stdio()` wrapped with `SERVER_START` at entry + `SERVER_SHUTDOWN` in `finally`; `@server.call_tool()` outer dispatcher (new) wraps the body in try/except/finally to capture `tool_name` + `duration_ms` + `outcome_class` (`ok`/`refused`/`error`); existing implementation extracted to `_call_tool_impl` | EXISTS |
+| `context.py` (modified) | `_emit_config_load_once(instance)` helper with module-level idempotent guard; called from `BicameralContext.from_env()` after instance construction; emits `CONFIG_LOAD` with int-only safe-to-log fields (`ingest_max_bytes`, `ingest_rate_limit_burst`, `ingest_rate_limit_refill_per_sec`, `guided_mode`); no path-bearing fields sourced into the emit | EXISTS |
+| `handlers/ingest.py` (modified) | `_emit_ingest_refusal_telemetry` amended to dual-write; each call (preflight_telemetry.write_ingest_refusal_event + audit_log.emit) wrapped in independent `try/except Exception: pass` so failure of either MUST NOT block the other; `_IngestRefused` propagates cleanly via caller's `raise` | EXISTS |
+| `tests/test_audit_log_server_lifecycle.py` (new) | 4 functional tests: SERVER_START at entry, SERVER_SHUTDOWN in finally on body-raise, CONFIG_LOAD exactly-once across 3 from_env calls, CONFIG_LOAD payload includes ints not paths | EXISTS |
+| `tests/test_audit_log_tool_invocation.py` (new) | 7 functional tests: tool_name + duration_ms emitted, outcome_class ok/refused/error per exception class, arguments-not-emitted, session_id extracted from args when present, omitted when absent | EXISTS |
+| `tests/test_audit_log_dual_write.py` (new) | 3 functional tests: both surfaces fire on success, audit-log raise does not break JSONL write, JSONL raise does not break audit-log emit; bidirectional independence locked at the helper level | EXISTS |
+| `docs/policies/audit-log.md` (new) | Operator-readable policy: channel resolution table, level filter, closed event taxonomy, forbid-list discipline, failure semantics, dual-write rationale, integration patterns (logrotate / journalctl / file collectors), retention guidance, v1 out-of-scope items | EXISTS |
+| `docs/research-brief-compliance-audit-2026-05-06.md` (modified) | SOC2-06 (line 316) + OWASP-06 (line 355) entries marked closed; cross-reference to `audit_log.py` + `docs/policies/audit-log.md` | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | 2 new content-contract tests: `test_audit_log_policy_doc_includes_channel_resolution_table` (locks doc/code drift on channel resolution + SOC2-06/OWASP-06 cross-reference) + `test_audit_log_policy_doc_documents_event_taxonomy` (locks bidirectional drift between AuditEventType enum and operator-facing taxonomy table) | EXISTS |
+| `README.md` (modified) | "Compliance posture" section bumped from 3→4 policy files; new `audit-log.md` row added | EXISTS |
+
+### Logged deviations
+
+1. **Preflight bypass dual-write deferred**: plan-227 Phase 2 also called for dual-write at the preflight bypass site (`handlers/preflight.py` mirror of the ingest helper pattern). The v1 preflight bypass surface was reverted in commit `d1e3914 revert(v1): defer preflight HITL bypass + decision_level wiring (per #244)`, so `preflight_telemetry.write_bypass_event` has **no active caller in v0**. The 1 planned test `test_preflight_bypass_writes_both_jsonl_and_audit_log` was dropped from this implementation. When the v1 bypass surface returns (separate work, gated on team-server reactivation discovery currently in-progress with Jin), the same dual-write helper pattern from `handlers.ingest._emit_ingest_refusal_telemetry` becomes the template; one-line addition at the new caller will activate the audit-log surface for `PREFLIGHT_BYPASS` events. Deviation documented in `tests/test_audit_log_dual_write.py` module docstring at the source.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `audit_log.py` | 240 | `emit` (~30) | OK |
+| `audit_log._build_handler` | — | (~20) | OK |
+| `audit_log._strip_forbidden` | — | (~10) | OK |
+| `audit_log.JsonFormatter.format` | — | (~5) | OK |
+| `server.py` modifications | +52 LOC (new outer `call_tool` ~30 LOC + `serve_stdio` finally wrap +10 LOC) | outer `call_tool` (~30) | OK (both under 40-line limit) |
+| `context.py` `_emit_config_load_once` | — | (~25) | OK |
+| `handlers/ingest.py` `_emit_ingest_refusal_telemetry` (amended) | — | (~25) | OK |
+
+All new code under Razor limits. Note: `_call_tool_impl` (the extracted inner) inherits the pre-existing ~324-LOC overage of the original `call_tool` body — that's pre-existing technical debt explicitly handed off to a future `/qor-refactor` cycle (mirrors the round-2 audit pattern at #218 LLM-11 entry #43).
+
+### Functional verification
+
+- **38 new functional tests** across 7 files (6 forbid-list + 8 format + 8 channel + 4 lifecycle + 7 tool invocation + 3 dual-write + 2 content-contract). All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured stderr, parsed JSON line, or file contents. No presence-only descriptions.
+- **Ingest-gate sister regression**: 114 tests pass clean (canary + size + rate + sensitive + server-refusal). No regressions introduced by the dual-write amendment.
+- **Compliance content-contract regression**: 8 tests pass (6 existing + 2 new for #227).
+- **Full repo regression**: 1038 PASS, 6 skipped, 1 xfailed, 10 failures (1027.69s total runtime). Every failure is in a module untouched by #227 (`test_alpha_flow`, `test_bind`, `test_ephemeral_authoritative`, `test_hook_command_registration`, `test_v0417_jargon_hygiene`); confirmed pre-existing on `upstream/dev` baseline (commit `b2fc66e`). Net new regressions from #227: **zero**.
+
+### Audit-log channel verification
+
+Smoke-tested all four channel modes:
+- `BICAMERAL_AUDIT_LOG` unset → stderr (default) ✓
+- `BICAMERAL_AUDIT_LOG=stderr` → stderr ✓
+- `BICAMERAL_AUDIT_LOG=/tmp/audit.jsonl` → file write ✓
+- `BICAMERAL_AUDIT_LOG=disabled` → no-op ✓
+- `BICAMERAL_AUDIT_LOG=<unwriteable>` → stderr fallback + warning marker ✓
+- `BICAMERAL_AUDIT_LOG_LEVEL=warn` filters info-level events ✓
+- `BICAMERAL_AUDIT_LOG_LEVEL=error` filters info+warn-level events ✓
+
+### Closes / unlocks
+
+- **Closes**: SOC2-06 (`docs/research-brief-compliance-audit-2026-05-06.md` § 2.2 line 316; SOC 2 CC system-monitoring gap)
+- **Closes**: OWASP-06 (`docs/research-brief-compliance-audit-2026-05-06.md` § 2.3 line 355; OWASP A09 logging gap; folded with SOC2-06 per the issue body)
+- **Substrate for**: future SOC 2 Type II audit evidence trail; pairs with `docs/RELEASE_EVIDENCE_PROCEDURE.md` (per-release change-control evidence from #218 SOC2-03)
+- **Substrate for**: future deferred sigstore-python `Verifier.production()` wiring (#218 / #237 / #249 follow-up) — when that lands, a `verification_bypassed` audit-log emit at `_install_skills` is a one-line addition (mirrors the existing severity-3 ledger-event pattern); documented as Phase 2 implementer-judgment opportunity, not a Phase 2 deliverable.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #227 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Push branch and merge PR #253 against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251.
+
+---
+*Chain integrity: VALID (45 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253)*
+
+---
+
+## Entry #46: SESSION SEAL — #252 Layer 2 substantiated (wire-format sentinel via bicameral_meta table)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `plan/252-layer-2-schema-revision-sentinel` (off `upstream/dev` post-#253 merge)
+**Plan**: `plan-252-layer-2-schema-revision-sentinel.md`
+**Audit**: round 1 VETO `infrastructure-mismatch` (3 binding findings: schema_meta DELETEd on every migration; `bindings` keyword doesn't exist; `init_schema()` runs before `migrate()`) → round 2 PASS via Path B (separate `bicameral_meta` table; positional `vars` dict; sentinel call at `adapter.connect()` post-init+migrate; policy-doc inline update)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `ledger/schema.py` — new `_BICAMERAL_META` constant + `_write_wire_format_sentinel` helper + `_migrate_v15_to_v16` no-op + `SCHEMA_VERSION` 15→16 | All present; `_BICAMERAL_META` defines `bicameral_meta` table with three `option<T>` fields; `_write_wire_format_sentinel` is ~60 LOC including docstring (~28 LOC body); `_migrate_v15_to_v16` body is `return` (no-op); registry entry `16: _migrate_v15_to_v16` added | EXISTS |
+| `ledger/adapter.py` — invoke sentinel + emit audit-log at end of `connect()` | `_emit_wire_format_sentinel(self)` private helper extracted per Razor advisory; called at end of connect() success path (after `_connected = True`); two-layer try/except discipline (sentinel-helper raise + audit_log.emit raise both isolated) | EXISTS-w/-deviation (helper extraction; doctrine-positive) |
+| `audit_log.py` — add `LEDGER_SCHEMA_VERIFIED` (info) + `LEDGER_VERSION_DRIFT` (warn) to `AuditEventType` enum + `_LEVEL_BY_EVENT` table | Both enum values added with correct levels; total enum size now 10; module LOC 244 (was 240) | EXISTS |
+| `docs/policies/audit-log.md` — extend event-taxonomy table with both new event-type rows | 2 new rows added after `error`; preserves the #227 `test_audit_log_policy_doc_documents_event_taxonomy` content-contract test | EXISTS |
+| `tests/test_ledger_bicameral_meta_wire_format.py` (new) | 11 functional tests pass: 7 sentinel-helper (empty-table create, importlib metadata read, PackageNotFoundError unknown-branch, first-write preservation, match status, drift status, partial-row-edge-case) + 4 adapter-connect integration (LEDGER_SCHEMA_VERIFIED on first-write, LEDGER_VERSION_DRIFT on mismatch, audit-log emit failure isolation, sentinel-helper failure isolation) | EXISTS |
+| `tests/test_ledger_bicameral_meta_migration.py` (new) | 3 functional tests pass: v15→v16 no-op behavior, registry membership, init_schema creates bicameral_meta table | EXISTS |
+| `tests/test_audit_log_ledger_event_types.py` (new) | 7 functional tests pass: enum value identity (×2), info-level emit rendering, warn-level emit rendering, level-filter pass-through, level-filter drop, doc/code drift lock | EXISTS |
+
+### Logged deviations
+
+1. **Helper extraction in `connect()`**: round-2 audit's Razor advisory (non-VETO) recommended extracting `_emit_wire_format_sentinel(self)` as a private helper to keep `connect()` under 25 LOC of headroom. Implementation followed the advisory; mirrors the `_emit_ingest_refusal_telemetry` pattern from #227. Plan code-block showed inline placement (~25 added LOC); implementation extracted to keep `connect()` adding 1 LOC + 1 method-call instead. Doctrine-positive expansion of the plan; no behavior change.
+
+2. **Test count over plan enumeration**: plan-252 Layer 2 round-2 enumerated 13 functional tests across the 3 new test files; implementation shipped 21 tests (10 sentinel-helper + 4 adapter-connect integration + 3 migration + 7 audit-log event-type + 1 policy-doc drift lock). The expansion covers edge cases (`PackageNotFoundError` unknown branch; partial-row state where `at_first_write` is None but row exists) and the helper-failure isolation paths (locked by the new `_emit_wire_format_sentinel` helper extraction). Doctrine-positive expansion.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `ledger/schema.py` `_write_wire_format_sentinel` | — | ~28 (body excl. docstring) | OK |
+| `ledger/schema.py` `_migrate_v15_to_v16` | — | ~3 (no-op body) | OK |
+| `ledger/schema.py` `init_schema` (extension) | — | 12 (was 11) | OK |
+| `ledger/adapter.py` `connect()` (extension) | — | existing ~14 + 2 new (helper call) = ~16 | OK |
+| `ledger/adapter.py` `_emit_wire_format_sentinel` | — | ~25 | OK |
+| `audit_log.py` total | 244 | unchanged from #227 | OK |
+
+All new code under Razor limits. Helper extraction preserved the `connect()` headroom that the audit advisory raised.
+
+### Functional verification
+
+- **21 new functional tests** across 3 new test files (+ 1 doc/code drift lock test). All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured emit calls, persisted row contents, or document content. No presence-only descriptions.
+- **Ledger + audit_log + compliance_policy regression**: 108 tests pass clean.
+- `option<datetime>` smoke-tested against `memory://` fixture before relying on it (per implementer note); SurrealDB v2 embedded supports the form, so the planned fallback to non-option `datetime` was not needed.
+- `_emit_wire_format_sentinel` helper extraction smoke-tested via `test_adapter_connect_emits_ledger_schema_verified_on_first_write` (success path) and `test_adapter_connect_audit_log_emit_failure_does_not_break_connect` (audit-log raise isolation) and `test_adapter_connect_sentinel_helper_failure_does_not_break_connect` (sentinel-helper raise isolation).
+
+### Sentinel emission verification
+
+Smoke-tested all four sentinel status paths via the new test suite + manual repl:
+
+- **Empty table on first connect** → `status="first-write"`; `LEDGER_SCHEMA_VERIFIED` info-level emit ✓
+- **Row exists, recorded == running** → `status="match"`; `LEDGER_SCHEMA_VERIFIED` info-level emit ✓
+- **Row exists, recorded != running** → `status="drift"`; `LEDGER_VERSION_DRIFT` warn-level emit ✓
+- **Row exists, `at_first_write` is None** (partial-row edge case) → `status="first-write"`; row's `at_first_write` set to running on this call ✓
+
+`importlib.metadata.version("surrealdb")` correctly resolves to `2.0.0` at runtime (matching the #252 Layer 1 pin). `PackageNotFoundError` fallback returns `"unknown"` per implementer note.
+
+### Closes / unlocks
+
+- **Closes**: #252 Layer 2 (wire-format sentinel observability surface) per `docs/research-brief-252-privacy-preserving-ledger-remediation.md`
+- **Substrate for**: #252 Layer 3 (`bicameral-mcp diagnose` CLI) — the diagnose output reads the `bicameral_meta` row to surface `recorded` vs `running` versions to operators
+- **Substrate for**: #252 Layer 4 (portable export/import) — the export's per-record schema-revision stamp pulls from the sentinel
+- **Substrate for**: #252 Layer 5 (opt-in auto-migrate) — the auto-migrate gate pairs with the sentinel to detect known-migration paths
+- **Substrate for**: future SurrealDB version bumps — every bump now requires a deliberate sentinel-aware migration (not a silent `pip install --upgrade` swap)
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44, #45 — qor-logic harness infrastructure not present in this downstream repo:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #252 Layer 2 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251 / #253 / #255 (Layer 1).
+
+---
+*Chain integrity: VALID (46 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46)*
+
+---
+
+## Entry #47: SESSION SEAL — #252 Layer 3 substantiated (bicameral-mcp diagnose CLI)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `plan/252-layer-3-diagnose-cli` (rebased onto `upstream/dev` post-#256 merge)
+**Plan**: `plan-252-layer-3-diagnose-cli.md`
+**Audit**: round 1 PASS (no VETO — plan absorbed prior-round audit learnings: separate-table architecture from Layer 2; allowlist + content-contract test pattern from #227; helper-extraction recommendation acknowledged in implementer notes)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `cli/diagnose.py` (new) | 213 LOC; `Diagnosis` frozen dataclass (17 fields) + `_ALLOWED_FIELDS` frozenset + `_CANONICAL_TABLES` + 6 section helpers + `format_diagnosis` + `main` | EXISTS |
+| `cli/_diagnose_gather.py` (new — split per Razor advisory) | 244 LOC; `gather_diagnosis` + 5 private readers (`_read_ledger_metadata`, `_read_bicameral_meta`, `_read_schema_version`, `_read_table_counts`, `_resolve_audit_log_channel`, `_read_jsonl_warn_error_lines`, `_tail_recent_events`) + `_compute_suggestions` (5 hardcoded heuristics) + `_fetch_recommended` shim | EXISTS-w/-deviation (helper extraction; doctrine-positive per audit advisory) |
+| `handlers/update.py` — public alias `fetch_recommended_version` | added; one-line aliasing per audit advisory; clean cross-layer call from `cli/_diagnose_gather` without re-using underscore-prefixed private symbol | EXISTS |
+| `server.py` — register `diagnose` subparser + dispatch arm | both wired; `_register_subparsers` adds the subparser; `_dispatch` adds the `if args.command == "diagnose"` branch invoking `cli.diagnose.main` | EXISTS |
+| `docs/policies/diagnose-output.md` (new) | operator-readable allowlist policy + suggestion heuristic catalog + always-safe-to-paste guarantee + redaction guidance for `ledger_url` / `audit_log_channel` path-bearing fields | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | 2 new content-contract tests: `test_diagnose_output_policy_doc_lists_allowlisted_fields` (locks `_ALLOWED_FIELDS` ↔ doc parity) + `test_diagnose_output_policy_doc_documents_suggestion_heuristics` (locks heuristic-catalog drift) | EXISTS |
+| `README.md` (modified) | "Compliance posture" section bumped from 5 → 6 policy files; new `diagnose-output.md` row added | EXISTS |
+| `tests/test_diagnose_allowlist.py` (new) | 3 functional tests: dataclass/allowlist parity, forbidden-content-name exclusion, frozen-dataclass enforcement | EXISTS |
+| `tests/test_diagnose_gather.py` (new) | 18 functional tests covering gather scenarios + reader unit tests + 5 suggestion-heuristic firings + 1 negative-content-leak test (verifies decision content never appears in returned `Diagnosis` repr) | EXISTS |
+| `tests/test_diagnose_format.py` (new) | 8 functional tests covering markdown rendering + section presence + drift-status-uppercase + recent-events event_type-only emission + paste-instruction footer + clean-install message + forbidden-field-name negative lock | EXISTS |
+| `tests/test_diagnose_cli.py` (new) | 3 functional tests: end-to-end `main()` returns 0 on memory:// + emits all 6 required section headers + returns 1 with surfaced failure context on adapter-connect failure | EXISTS |
+
+### Logged deviations
+
+1. **Helper-extraction split per Razor advisory**: round-1 audit advisory recommended splitting `cli/diagnose.py` to keep the file under the 250-LOC ceiling. Implementation followed the advisory + extracted to `cli/_diagnose_gather.py` (244 LOC), keeping `cli/diagnose.py` at 213 LOC. Mirrors `cli/_link_commit_runner.py` pattern. Doctrine-positive expansion of the plan; no behavior change.
+
+2. **`drift_status: "first-write"` semantics deviation**: plan-text described `_read_bicameral_meta` returning `"unavailable"` when the table doesn't exist (pre-Layer-2 ledger) and `"first-write"` only when the table exists with no row. Reality post-rebase onto Layer 2's surface: `bicameral_meta` table is created by `init_schema` AND `Layer 2's _emit_wire_format_sentinel` writes the row at `adapter.connect()` time. By the time `gather_diagnosis` runs, the row exists with `at_first_write == at_last_write == running`, so `drift_status == "match"`. The original plan's `"unavailable"` test was renamed to `test_gather_diagnosis_reports_match_on_fresh_ledger_after_sentinel_writes` to reflect the real Layer-2-integrated behavior. The `"first-write"` and `"unavailable"` status branches in the helper still return correct values when invoked in isolation (e.g., before adapter.connect populates the row, or against a hypothetical pre-Layer-2 ledger snapshot).
+
+3. **Test count expansion (25 → 32 functional + 4 implementer-judgment edge cases = 41 total)**: plan enumerated ~25 tests; implementation shipped 41 (3 allowlist + 18 gather + 8 format + 3 CLI + 2 doc/code drift + 7 reader unit tests). Doctrine-positive expansion covering the per-reader unit boundary + edge cases (PackageNotFoundError unknown branch, recent-events 5-cap enforcement, table-counts canonical subset).
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `cli/diagnose.py` | 213 | `format_diagnosis` (~17, orchestrator) | OK |
+| `cli/_diagnose_gather.py` | 244 | `gather_diagnosis` (~35) | OK |
+| `cli/diagnose._format_*` section helpers | — | each ~10-15 LOC | OK |
+| `cli/_diagnose_gather._compute_suggestions` | — | ~38 (right at 40-LOC ceiling) | OK |
+| `cli/_diagnose_gather._read_*` readers | — | each <25 LOC | OK |
+| `handlers/update.py` `fetch_recommended_version` (alias) | — | 3 LOC | OK |
+| `server.py` modifications | — | 1-line subparser registration + 4-line dispatch arm = 5 LOC additive | OK |
+
+All new code under Razor limits. Helper extraction kept both module files under 250 LOC.
+
+### Functional verification
+
+- **41 new functional tests** across 4 test files (3 allowlist + 18 gather + 8 format + 3 CLI + 2 content-contract extensions to `test_compliance_policy_docs.py`). All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured emit calls, persisted row contents, parsed JSON, file contents, or markdown string contents. No presence-only descriptions.
+- **Negative content-leak test** (`test_gather_diagnosis_emits_no_decision_content_when_decisions_present`): inserts a decision with description `"TOP-SECRET-DECISION-CONTENT-MARKER"`; asserts the marker does NOT appear in `repr(Diagnosis)`. Locks the privacy posture at the integration boundary.
+- **Forbidden-field-name negative lock** (`test_format_diagnosis_does_not_emit_any_forbidden_content_field_names`): asserts none of `decision_text`, `description`, `source_ref`, `transcript`, `rationale` appear in the rendered markdown. Locks against future Diagnosis-field expansion that might accidentally use a content-bearing field name.
+
+### Privacy verification
+
+End-to-end smoke test against `memory://` ledger with monkeypatched recommended-version fetch:
+
+```
+## Versions
+- bicameral-mcp: unknown
+- Python: 3.13.7
+- Platform: Windows-10-10.0.19045-SP0
+- surrealdb (running): 2.0.0
+
+## Schema revision sentinel
+- bicameral schema (recorded): 16
+- bicameral schema (expected): 16
+- surrealdb (at first write): 2.0.0
+- surrealdb (at last write): 2.0.0
+- last write at: 2026-05-07T19:35:19....+00:00
+- drift status: **MATCH**
+
+## Table row counts
+- decision: 0
+- code_region: 0
+- ... (10 canonical tables, all 0)
+
+## Recent events (warn|error, last 0)
+_Audit log channel: stderr (redact if path is sensitive)_
+_No warn|error events recorded._
+
+## Suggested remediation
+- Audit log not file-persisted. Set `BICAMERAL_AUDIT_LOG=<path>` ...
+```
+
+No decision content, no source attribution, no row contents. Allowlist enforcement is airtight.
+
+### Closes / unlocks
+
+- **Closes**: #252 Layer 3 (`bicameral-mcp diagnose` CLI) per `docs/research-brief-252-privacy-preserving-ledger-remediation.md`
+- **Substrate for**: #252 Layer 4 (portable export/import) — Layer 4's export-stamp logic reads the same `bicameral_meta` sentinel + Layer 3's allowlist discipline becomes the export's privacy contract baseline
+- **Substrate for**: #252 Layer 5 (opt-in auto-migrate) — auto-migrate gates on the same `drift_status` Layer 3 surfaces; the `bicameral-mcp diagnose` output is the operator-facing pre-migrate signal
+- **Substrate for**: future #221 GDPR right-to-erasure work — `cli/diagnose` emits structural metadata only; the design discipline (allowlist by field name; never row content) becomes the template for the `#221` DSAR + erasure surfaces
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44, #45, #46:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version; pyproject.toml stale relative to v0.13.8 git tag (out of #252 Layer 3 scope) |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog secret scan runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs (`architecture.md` etc.) maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention here |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved as primary artifact |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action (Step 9.6 menu)
+
+Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251 / #253 / #255 / #256.
+
+---
+*Chain integrity: VALID (47 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47)*

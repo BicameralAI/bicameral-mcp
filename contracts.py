@@ -18,8 +18,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from governance.contracts import GovernanceFinding, HITLPrompt
-
 # ── Skill telemetry diagnostic models ────────────────────────────────
 # One model per skill. extra="forbid" means the handler can detect and
 # echo back any field names the LLM sent that don't belong here.
@@ -686,60 +684,6 @@ class PreflightResponse(BaseModel):
     # csv list excludes "preflight"; legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still
     # honored via the #192 deprecation overlay).
     preflight_id: str | None = None
-    # #108-#110 — consolidated governance finding (with attached
-    # policy_result) when preflight surfaced one or more drift candidates
-    # for a region-anchored decision. None when there are no findings.
-    # Phase 4 (#112) populates ``policy_result.action`` with
-    # bypass-aware downgrades by passing the JSONL-derived recency
-    # scalar to the engine; Phase 3 always passed
-    # ``bypass_recency_seconds=None``.
-    governance_finding: GovernanceFinding | None = None
-    # #112 — HITL clarification prompts for unresolved signoff states
-    # (proposed, ai_surfaced, needs_context, collision_pending,
-    # context_pending). Each prompt carries a mandatory ``bypass``
-    # option as its LAST option; the skill side asserts this and
-    # routes the bypass selection to ``bicameral.record_bypass``.
-    # Bypass does NOT mutate decision state; the engine reads the
-    # bypass JSONL log and drops one tier of escalation when a recent
-    # bypass exists for the same decision_id.
-    hitl_prompts: list[HITLPrompt] = []
-
-
-# ── Tool: bicameral.evaluate_governance (#108) ───────────────────────
-
-
-class EvaluateGovernanceResponse(BaseModel):
-    """Response envelope for ``bicameral.evaluate_governance``.
-
-    Read-only ad-hoc evaluation: given a (decision_id, region_id?)
-    pair, returns the engine's policy result for the synthetic finding
-    constructed from the current ledger state. ``error`` is set when
-    the decision_id is unknown; ``finding`` is None in that case.
-    """
-
-    decision_id: str
-    region_id: str | None = None
-    finding: GovernanceFinding | None = None
-    error: str | None = None
-
-
-# ── Tool: bicameral.record_bypass (#112) ─────────────────────────────
-
-
-class RecordBypassResponse(BaseModel):
-    """Response envelope for ``bicameral.record_bypass``.
-
-    ``recorded`` is True iff a new ``preflight_prompt_bypassed`` event
-    was appended to the JSONL log. ``deduped`` is True iff the call
-    was a no-op because a prior bypass for the same decision_id is
-    still inside the recency window (V4 idempotency guard). When
-    telemetry is disabled both are False and ``reason`` carries the
-    ``telemetry_disabled`` sentinel.
-    """
-
-    recorded: bool
-    deduped: bool
-    reason: str | None = None
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────
@@ -941,48 +885,6 @@ class SessionStartBanner(BaseModel):
     items: list[dict] = []
     message: str = ""
     truncated: bool = False
-
-
-# ── Tool: bicameral.list_unclassified_decisions / set_decision_level (#77)
-
-
-class UnclassifiedProposal(BaseModel):
-    """One unclassified decision row with a heuristic-proposed level.
-
-    Returned in batches by ``bicameral.list_unclassified_decisions``. The
-    ``rationale`` string explains which signal the heuristic matched and is
-    rendered by the bulk-classify CLI's dry-run table. ``confidence`` is
-    ``"low"`` when the heuristic defaulted (no positive signal matched) so
-    a human reviewer can prioritise these for manual override.
-    """
-
-    decision_id: str
-    description: str
-    proposed_level: Literal["L1", "L2", "L3"]
-    rationale: str
-    confidence: Literal["high", "low"]
-
-
-class ListUnclassifiedDecisionsResponse(BaseModel):
-    """Response envelope for ``bicameral.list_unclassified_decisions``."""
-
-    proposals: list[UnclassifiedProposal]
-    total_count: int
-
-
-class SetDecisionLevelResponse(BaseModel):
-    """Response envelope for ``bicameral.set_decision_level``.
-
-    Errors (invalid level, unknown decision_id) come back structured rather
-    than as exceptions so an agent loop can recover per-row without aborting
-    the whole batch. ``ok=True`` carries ``level``; ``ok=False`` carries
-    ``error``.
-    """
-
-    ok: bool
-    decision_id: str
-    level: str | None = None
-    error: str | None = None
 
 
 # Forward references

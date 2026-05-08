@@ -494,7 +494,7 @@ it to real code.
 
 After calling `bicameral.ingest`, check for conflicts against existing decisions using the caller-LLM — no server keyword search involved.
 
-The response includes `created_decisions: [{decision_id, description, decision_level}]` — the exact IDs of every decision just created. Use these IDs (not fuzzy text matching) when calling `bicameral_resolve_collision`.
+The response includes `created_decisions: [{decision_id, description}]` — the exact IDs of every decision just created. Use these IDs (not fuzzy text matching) when calling `bicameral_resolve_collision`.
 
 **Procedure:**
 

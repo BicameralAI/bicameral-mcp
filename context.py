@@ -29,9 +29,6 @@ _DEFAULT_RENDER_ATTRIBUTION_MODE = (
     "redacted"  # #209: flipped from "full"; positional-cue regex refined
 )
 
-_BYPASS_TRACKING_MODES = frozenset({"enabled", "disabled"})
-_DEFAULT_BYPASS_TRACKING_MODE = "enabled"
-
 # #216 LLM-02: payload-size guardrail. 1 MiB cap is loose enough for
 # any legitimate transcript / decision dump but bounds DoS shape
 # (single oversized payload can't blow out the ledger writer).
@@ -97,21 +94,6 @@ def _read_render_source_attribution(repo_path: str) -> str:
         "render_source_attribution",
         _RENDER_ATTRIBUTION_MODES,
         _DEFAULT_RENDER_ATTRIBUTION_MODE,
-    )
-
-
-def _read_preflight_bypass_tracking(repo_path: str) -> str:
-    """Resolve `preflight_bypass_tracking` from `.bicameral/config.yaml`.
-
-    Default: ``"enabled"`` (backward-compat with pre-#200 behavior; lift
-    candidate for a later deprecation cycle). Modes: ``enabled``,
-    ``disabled``. When disabled, ``handlers.record_bypass.handle_record_bypass``
-    short-circuits before the JSONL write to ``~/.bicameral/preflight_events.jsonl``."""
-    return _read_yaml_string_field(
-        repo_path,
-        "preflight_bypass_tracking",
-        _BYPASS_TRACKING_MODES,
-        _DEFAULT_BYPASS_TRACKING_MODE,
     )
 
 
@@ -291,6 +273,37 @@ def _read_guided_mode(repo_path: str) -> bool:
     return False
 
 
+_config_load_emitted = False
+
+
+def _emit_config_load_once(instance: BicameralContext) -> None:
+    """Emit the audit_log ``config_load`` event exactly once per process.
+
+    Idempotent module-level guard — per-tool ``from_env()`` calls re-enter
+    this helper but only the first invocation produces an emit. Source
+    fields are int-only safe-to-log values; never sources path-bearing
+    fields (forbid-list discipline catches accidental ``file_paths`` /
+    ``repo_path`` keys, but we additionally do not pass them through).
+    """
+    global _config_load_emitted
+    if _config_load_emitted:
+        return
+    try:
+        from audit_log import AuditEventType
+        from audit_log import emit as audit_emit
+
+        audit_emit(
+            AuditEventType.CONFIG_LOAD,
+            ingest_max_bytes=instance.ingest_max_bytes,
+            ingest_rate_limit_burst=instance.ingest_rate_limit_burst,
+            ingest_rate_limit_refill_per_sec=instance.ingest_rate_limit_refill_per_sec,
+            guided_mode=instance.guided_mode,
+        )
+    except Exception:  # noqa: BLE001 — config_load must not break server boot
+        pass
+    _config_load_emitted = True
+
+
 @dataclass(frozen=True)
 class BicameralContext:
     """Created once per MCP tool call. All services see the same commit."""
@@ -343,12 +356,6 @@ class BicameralContext:
     # while preserving structural shape. Modes: `full` (legacy verbatim),
     # `redacted` (default), `hidden` (blank source_ref entirely).
     render_source_attribution: str = _DEFAULT_RENDER_ATTRIBUTION_MODE
-    # #200 Phase 3: preflight_bypass_tracking gates the JSONL write to
-    # ~/.bicameral/preflight_events.jsonl. Default `enabled` matches pre-#200
-    # behavior; `disabled` makes record_bypass a no-op (returns recorded=False
-    # with reason="tracking_disabled"). Operator privacy choice; deterministic
-    # at config-load time.
-    preflight_bypass_tracking: str = _DEFAULT_BYPASS_TRACKING_MODE
     # #216 LLM-02: max serialized-JSON byte size for an inbound ingest
     # payload. 1 MiB default. Clamped to [1 KiB, 64 MiB]. Enforced by
     # ``handlers.ingest._check_payload_size`` before payload normalization;
@@ -402,7 +409,6 @@ class BicameralContext:
         guided_mode = _read_guided_mode(repo_path)
         signer_email_fallback = _read_signer_email_fallback(repo_path)
         render_source_attribution = _read_render_source_attribution(repo_path)
-        preflight_bypass_tracking = _read_preflight_bypass_tracking(repo_path)
         ingest_max_bytes = _read_ingest_max_bytes(repo_path)
         ingest_rate_limit_burst = _read_ingest_rate_limit_burst(repo_path)
         ingest_rate_limit_refill_per_sec = _read_ingest_rate_limit_refill_per_sec(repo_path)
@@ -410,7 +416,7 @@ class BicameralContext:
         # to _SESSION_ID UUID on git/salt failure.
         session_id = _resolve_agent_identity(repo_path)
 
-        return cls(
+        instance = cls(
             repo_path=repo_path,
             head_sha=state.head_commit,
             ledger=get_ledger(),
@@ -424,8 +430,9 @@ class BicameralContext:
             session_id=session_id,
             signer_email_fallback=signer_email_fallback,
             render_source_attribution=render_source_attribution,
-            preflight_bypass_tracking=preflight_bypass_tracking,
             ingest_max_bytes=ingest_max_bytes,
             ingest_rate_limit_burst=ingest_rate_limit_burst,
             ingest_rate_limit_refill_per_sec=ingest_rate_limit_refill_per_sec,
         )
+        _emit_config_load_once(instance)
+        return instance

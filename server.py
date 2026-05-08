@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-14 tools:
+12 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -11,8 +11,6 @@
   bicameral.ratify            — product sign-off on a decision (double-entry ledger)
   bicameral.history           — read-only ledger dump grouped by feature area
   bicameral.dashboard         — launch live decision dashboard with SSE push updates
-  bicameral.list_unclassified_decisions — list decisions whose decision_level is NULL with proposals (#77)
-  bicameral.set_decision_level — set decision_level (L1/L2/L3) on a single decision (#77)
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   get_neighbors               — 1-hop structural graph traversal around a symbol
 
@@ -40,19 +38,15 @@ from mcp.types import TextContent, Tool
 from context import BicameralContext
 from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
-from handlers.evaluate_governance import handle_evaluate_governance
 from handlers.gap_judge import handle_judge_gaps
 from handlers.history import handle_history
 from handlers.ingest import _IngestRefused, handle_ingest
 from handlers.link_commit import handle_link_commit
-from handlers.list_unclassified_decisions import handle_list_unclassified_decisions
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
-from handlers.record_bypass import handle_record_bypass
 from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
-from handlers.set_decision_level import handle_set_decision_level
 from handlers.update import get_update_notice, handle_update
 from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
@@ -156,10 +150,6 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.skill_end",
     "bicameral.feedback",
     "bicameral.usage_summary",
-    "bicameral.list_unclassified_decisions",
-    "bicameral.set_decision_level",
-    "bicameral.evaluate_governance",
-    "bicameral.record_bypass",
     "validate_symbols",
     "get_neighbors",
 ]
@@ -829,114 +819,6 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
-        # ── decision_level classification primitives (#77) ───────────
-        Tool(
-            name="bicameral.list_unclassified_decisions",
-            description=(
-                "List decisions whose decision_level is NULL, with a "
-                "heuristic-proposed level (L1/L2/L3) and a rationale per row. "
-                "Read-only. Use this to discover what needs classification "
-                "before calling bicameral.set_decision_level per row."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decision_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": (
-                            "Restrict to these decision_ids; empty/omitted means all unclassified."
-                        ),
-                    },
-                },
-            },
-        ),
-        Tool(
-            name="bicameral.set_decision_level",
-            description=(
-                "Set decision_level (L1/L2/L3) on a single decision. "
-                "Idempotent. Use this after reviewing proposals from "
-                "bicameral.list_unclassified_decisions, or directly when "
-                "you already know the right level."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decision_id": {"type": "string"},
-                    "level": {
-                        "type": "string",
-                        "enum": ["L1", "L2", "L3"],
-                    },
-                    "rationale": {
-                        "type": "string",
-                        "description": "Optional one-line audit note.",
-                    },
-                },
-                "required": ["decision_id", "level"],
-            },
-        ),
-        # ── Governance evaluation (#108-#110) ────────────────────────
-        Tool(
-            name="bicameral.evaluate_governance",
-            description=(
-                "Evaluate the deterministic escalation policy for a "
-                "single (decision, region) pair. Returns the policy "
-                "result without side effects. Use this to ask 'if "
-                "drift were detected here, what would Bicameral do?' "
-                "Read-only; engine is non-blocking by design."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decision_id": {
-                        "type": "string",
-                        "description": "Decision record id (e.g. 'decision:abc123').",
-                    },
-                    "region_id": {
-                        "type": "string",
-                        "description": "Optional code_region record id; omit for decision-level evaluation.",
-                    },
-                    "source": {
-                        "type": "string",
-                        "description": "Origin label for the synthetic finding (informational).",
-                    },
-                },
-                "required": ["decision_id"],
-            },
-        ),
-        # ── Governance HITL bypass (#112) ───────────────────────────
-        Tool(
-            name="bicameral.record_bypass",
-            description=(
-                "Record that the user bypassed a preflight HITL prompt. "
-                "Bypass does NOT mutate decision state -- it preserves "
-                "the unresolved status while recording that the user "
-                "chose to continue. Idempotent within a 1-hour recency "
-                "window (returns deduped=true on a within-window repeat). "
-                "The governance engine reads recent bypass events at "
-                "preflight call time and drops one tier of escalation."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "decision_id": {
-                        "type": "string",
-                        "description": "Decision record id whose HITL prompt the user bypassed.",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "default": "user_bypassed",
-                        "description": "Free-form reason label for the audit trail.",
-                    },
-                    "state_preserved": {
-                        "type": "string",
-                        "default": "proposed",
-                        "description": "The decision's signoff_state at bypass time (recorded for audit).",
-                    },
-                },
-                "required": ["decision_id"],
-            },
-        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -980,6 +862,36 @@ async def list_tools() -> list[Tool]:
 
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+    """Outer dispatch wrapper — emits the per-tool audit-log event + captures
+    timing/outcome regardless of return path; delegates to the inner impl."""
+    import time
+
+    from audit_log import AuditEventType
+    from audit_log import emit as audit_emit
+    from handlers.ingest import _IngestRefused
+
+    t0 = time.monotonic()
+    outcome = "ok"
+    session_id_for_audit = arguments.get("session_id") if isinstance(arguments, dict) else None
+    try:
+        return await _call_tool_impl(name, arguments)
+    except _IngestRefused:
+        outcome = "refused"
+        raise
+    except Exception:
+        outcome = "error"
+        raise
+    finally:
+        audit_emit(
+            AuditEventType.TOOL_INVOCATION,
+            session_id=session_id_for_audit,
+            tool_name=name,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            outcome_class=outcome,
+        )
+
+
+async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
     import json
     import time
 
@@ -1198,35 +1110,6 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 if update_notice:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
-        elif name in (
-            "bicameral.list_unclassified_decisions",
-            "list_unclassified_decisions",
-        ):
-            result = await handle_list_unclassified_decisions(
-                ctx,
-                decision_ids=arguments.get("decision_ids") or None,
-            )
-        elif name in ("bicameral.set_decision_level", "set_decision_level"):
-            result = await handle_set_decision_level(
-                ctx,
-                decision_id=arguments["decision_id"],
-                level=arguments["level"],
-                rationale=arguments.get("rationale"),
-            )
-        elif name in ("bicameral.evaluate_governance", "evaluate_governance"):
-            result = await handle_evaluate_governance(
-                ctx,
-                decision_id=arguments["decision_id"],
-                region_id=arguments.get("region_id"),
-                source=arguments.get("source", "manual"),
-            )
-        elif name in ("bicameral.record_bypass", "record_bypass"):
-            result = await handle_record_bypass(
-                ctx,
-                decision_id=arguments["decision_id"],
-                reason=arguments.get("reason", "user_bypassed"),
-                state_preserved=arguments.get("state_preserved", "proposed"),
-            )
         elif name in ("bicameral.dashboard", "dashboard"):
             from contracts import DashboardResponse
 
@@ -1367,31 +1250,26 @@ async def run_smoke_test() -> dict[str, object]:
 
 
 async def serve_stdio() -> None:
-    # Start the live dashboard HTTP sidecar in the background.
-    # It binds to a free port and stays running for the session.
-    dashboard_srv = get_dashboard_server()
-    await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
+    from audit_log import AuditEventType
+    from audit_log import emit as audit_emit
 
-    # First-boot telemetry consent notice (non-blocking, fires once per
-    # policy_version). Stderr-only here; MCP-channel surfacing happens
-    # below once the session is live.
+    audit_emit(AuditEventType.SERVER_START, version=SERVER_VERSION)
     try:
-        from consent import notify_if_first_run
+        # Start the live dashboard HTTP sidecar in the background.
+        # It binds to a free port and stays running for the session.
+        dashboard_srv = get_dashboard_server()
+        await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
 
-        notify_if_first_run()
-    except Exception:
-        pass
+        # First-boot telemetry consent notice (non-blocking, fires once per
+        # policy_version). Stderr-only here; MCP-channel surfacing happens
+        # below once the session is live.
+        try:
+            from consent import notify_if_first_run
 
-    # Team-server event consumer — opt-in via BICAMERAL_TEAM_SERVER_URL env.
-    # Closes the v0 pull→dispatch wiring gap (issue #160). Periodically
-    # pulls events from the team-server's /events endpoint, bridges to
-    # IngestPayload, and invokes the inner adapter's ingest_payload.
-    from adapters.ledger import get_ledger
-    from events.team_server_consumer import start_team_server_consumer_if_configured
+            notify_if_first_run()
+        except Exception:
+            pass
 
-    team_consumer_task = start_team_server_consumer_if_configured(get_ledger())
-
-    try:
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
             await server.run(
                 read_stream,
@@ -1406,12 +1284,7 @@ async def serve_stdio() -> None:
                 ),
             )
     finally:
-        if team_consumer_task is not None:
-            team_consumer_task.cancel()
-            try:
-                await team_consumer_task
-            except asyncio.CancelledError:
-                pass
+        audit_emit(AuditEventType.SERVER_SHUTDOWN, version=SERVER_VERSION)
 
 
 def cli_main(argv: list[str] | None = None) -> int:
@@ -1441,7 +1314,6 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     setup.add_argument(
         "--with-push-hook", action="store_true", help="also install pre-push drift hook (#48)"
     )
-    subparsers.add_parser("branch-scan", help="surface bicameral drift for HEAD (pre-push hook)")
     link = subparsers.add_parser(
         "link_commit",
         help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
@@ -1451,6 +1323,10 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     )
     link.add_argument(
         "--quiet", action="store_true", help="suppress JSON output (still exits 0 on success)"
+    )
+    subparsers.add_parser(
+        "diagnose",
+        help="emit a privacy-preserving operator bug-report (#252 Layer 3)",
     )
     parser.add_argument(
         "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
@@ -1476,14 +1352,14 @@ def _dispatch(args: Any) -> int:
             args.history_path,
             with_push_hook=args.with_push_hook,
         )
-    if args.command == "branch-scan":
-        from cli.branch_scan import main as branch_scan_main
-
-        return branch_scan_main([])
     if args.command == "link_commit":
         from cli.link_commit_cli import main as link_commit_main
 
         return link_commit_main(args.commit_hash, quiet=args.quiet)
+    if args.command == "diagnose":
+        from cli.diagnose import main as diagnose_main
+
+        return diagnose_main()
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")

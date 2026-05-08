@@ -5,6 +5,35 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
+## v0.14.1 — SBOM emitter fix + Layer 3 diagnose CLI + dependabot
+
+Fast-follow on v0.14.0. Restores CycloneDX SBOM generation in the publish pipeline (skipped in v0.14.0 by hotfixes #261/#262), lands #257 (Layer 3 `bicameral-mcp diagnose` CLI from #252), and dependabot floor bumps.
+
+### Fixed
+
+- **`release/sbom_emit.py`: install wheel into temp venv before scanning (#218 followup).** v0.14.0's publish run halted at SBOM gen because `cyclonedx-py environment <wheel>` mis-passes the wheel as the Python-executable positional arg — `cyclonedx-py environment` introspects an installed Python environment, not a wheel file. Rewrote `emit_sbom` to (1) create an isolated tempdir venv, (2) `pip install <wheel> cyclonedx-bom` into it, (3) run `cyclonedx-py environment --output-file <out> <venv-python>`. Output is the wheel's actual dependency closure with no contamination from the build environment's `hatchling` / `build` / `cyclonedx-bom` itself.
+
+- **Removed broken `bicameral-mcp-classify` console-script entry from `pyproject.toml`.** Pointed at `cli.classify:main` which was deleted in #244 (v1 partial scale-down). Carry-over cleanup from the v0.14.0 release surgery.
+
+- **`bicameral-sync` skill auto-binds ungrounded decisions (closes #263, P0).** Sync's autonomy contract broke whenever a touched decision had no `binds_to` edge yet — the common case for any newly-ingested decision. Agent had to be hand-walked: sync → "now bind" → "now sync again". New skill step 1.5 between current step 1 (Sync HEAD) and step 2 (Resolve compliance) consumes `pending_grounding_checks` entries with `reason="ungrounded"` autonomously: locate symbol via Grep/Read + `validate_symbols`, call `bicameral.bind`, concatenate the returned `PendingComplianceCheck` with the original list, proceed to step 2 in the same invocation. `reason="symbol_disappeared"` (relocation) path unchanged. Adds a one-line *symbol* glossary on first use of `symbol_name` in the skill.
+
+### Added
+
+- **`bicameral-mcp diagnose` CLI (#257, Layer 3 of #252).** Read-only diagnostic command for ledger health: prints SurrealKV revision, ledger schema version, decision count by status/signoff, and any orphaned bindings. Use this when an operator reports "ledger acting weird" before reaching for `bicameral.reset`.
+
+### Changed
+
+- dependency floor bumps via dependabot: `bm25s>=0.3.8` (#259), `sqlite-vec>=0.1.9` (#260).
+
+### Restored artifacts
+
+- `dist/bicameral-mcp.sbom.json` (CycloneDX 1.5)
+- `dist/bicameral-mcp.sbom.intoto.jsonl` (Rekor attestation)
+
+Both are uploaded to the GitHub Release alongside hooks-manifest signatures and the release-tag-commit cosign signature.
+
+## [Unreleased — pre-v0.14.0]
+
 ### Added
 
 - **uv as the preferred installer path (#199).** `handlers/update.py` resolves the upgrade installer in the deterministic order `uv tool install --force` → `pipx install --force` → `pip install --quiet`. uv goes first because it ships as a single static binary with no Python prerequisite, and `uv tool` is the canonical CLI-app installer in the uv ecosystem. README's Quickstart now leads with the one-line uv installer (`curl -LsSf https://astral.sh/uv/install.sh | sh` / `irm https://astral.sh/uv/install.ps1 | iex`) followed by `uv tool install bicameral-mcp`; the existing pipx block is preserved for users who prefer it. New `_resolve_install_command` helper in `handlers/update.py` is unit-tested for branch + priority semantics in `tests/test_update_resolve_chain.py` (4 tests). `skills/bicameral-update/SKILL.md` description and Step 3 reflect the three-path resolve order; error messages now report the actual chosen command (`{cmd[0]} install failed: …`) instead of mis-labeling pipx failures as `pip install failed`.

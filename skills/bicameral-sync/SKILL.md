@@ -50,6 +50,40 @@ bicameral.link_commit(commit_hash="HEAD")
 auto-sync injection (the auto-sync already ran `link_commit` for you — use those
 checks directly).
 
+### 1.5. Auto-bind ungrounded decisions (#263)
+
+> A *symbol* is a named code identifier (function, class, method) that
+> tree-sitter can locate. Symbols are how bicameral pins decisions to
+> specific code regions for drift tracking.
+
+If the `link_commit` response contains `pending_grounding_checks` with
+`reason="ungrounded"`, the touched decision has no `binds_to` edge yet and
+needs an initial binding. Bind autonomously — do NOT bail out and ask the user.
+
+For each entry where `reason="ungrounded"`:
+
+1. **Locate the symbol.** Use Grep / Read on `decision_description` against
+   `file_path` to identify the function or class the decision is about, then
+   call `validate_symbols` to confirm the symbol name resolves on the index.
+
+2. **Bind it.** Call:
+   ```
+   bicameral.bind(
+     decision_id=<entry.decision_id>,
+     file_path=<entry.file_path>,
+     symbol_name=<resolved-symbol-name>,
+   )
+   ```
+
+3. **Use the returned `pending_compliance_check`.** Each `bind` call returns
+   a fresh `PendingComplianceCheck`. Concatenate them with any pendings from
+   the original `link_commit` response and proceed to step 2.
+
+`reason="symbol_disappeared"` (relocation case — the symbol the decision was
+bound to no longer exists at the expected location) is informational only —
+do NOT bind on the new location. That path stays the same as today; atomic
+rebind is a future `bicameral_rebind` tool, tracked separately.
+
 ### 2. Resolve every pending compliance check
 
 If `pending_compliance_checks` is non-empty (from the `link_commit` response or

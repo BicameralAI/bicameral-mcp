@@ -26,6 +26,8 @@ ACCEPTABLE_USE = REPO_ROOT / "docs" / "policies" / "acceptable-use.md"
 SLA = REPO_ROOT / "docs" / "sla.md"
 README = REPO_ROOT / "README.md"
 RESEARCH_BRIEF = REPO_ROOT / "docs" / "research-brief-compliance-audit-2026-05-06.md"
+AUDIT_LOG_POLICY = REPO_ROOT / "docs" / "policies" / "audit-log.md"
+DIAGNOSE_OUTPUT_POLICY = REPO_ROOT / "docs" / "policies" / "diagnose-output.md"
 
 
 def test_host_trust_model_declares_required_sections() -> None:
@@ -36,6 +38,18 @@ def test_host_trust_model_declares_required_sections() -> None:
     assert "## Server-side guarantees" in content
     assert "## Host-side surfaces this design assumes" in content
     assert "## Per-host operator checklist" in content
+
+
+def test_host_trust_model_includes_skills_manifest_row() -> None:
+    """#218 LLM-06: the Server-side guarantees table must list the
+    skills-manifest signature verification gate alongside the existing
+    hooks-manifest verification gate. Locks the bidirectional
+    cross-reference between the policy doc and the verifier surface."""
+    content = HOST_TRUST.read_text(encoding="utf-8")
+    assert "Skills-manifest signature verification" in content
+    assert "_install_skills" in content
+    assert "skills-manifest.toml" in content
+    assert "LLM-06" in content
 
 
 def test_acceptable_use_lists_required_prohibited_categories() -> None:
@@ -82,3 +96,60 @@ def test_research_brief_marks_closed_gaps() -> None:
     assert "host-trust-model.md" in content  # MCP-01 closure pointer
     assert "acceptable-use.md" in content  # NIST-RMF-01 + AI-ACT-02 closure pointer
     assert "sla.md" in content  # SOC2-02 closure pointer
+
+
+def test_audit_log_policy_doc_includes_channel_resolution_table() -> None:
+    """#227 SOC2-06 + OWASP-06: the audit-log policy doc must include the
+    operator-facing channel-resolution table. Locks the bidirectional
+    cross-reference between the policy doc and the audit_log.py module's
+    `_resolve_channel` semantics — if the channel resolution behavior
+    changes silently, the doc-as-unit assertion catches the drift.
+    """
+    content = AUDIT_LOG_POLICY.read_text(encoding="utf-8")
+    assert "## Channel resolution" in content
+    assert "BICAMERAL_AUDIT_LOG" in content
+    assert "BICAMERAL_AUDIT_LOG_LEVEL" in content
+    assert "stderr" in content
+    assert "disabled" in content
+    assert "unwriteable" in content
+    assert "SOC2-06" in content
+    assert "OWASP-06" in content
+
+
+def test_audit_log_policy_doc_documents_event_taxonomy() -> None:
+    """The policy doc must enumerate every `AuditEventType` enum value so
+    operators reading the doc see the closed event taxonomy. Locks
+    drift between the enum and the operator-facing surface."""
+    from audit_log import AuditEventType
+
+    content = AUDIT_LOG_POLICY.read_text(encoding="utf-8")
+    for event in AuditEventType:
+        assert event.value in content, f"event_type {event.value!r} missing from policy doc"
+
+
+def test_diagnose_output_policy_doc_lists_allowlisted_fields() -> None:
+    """#252 Layer 3: every Diagnosis dataclass field must appear in
+    `docs/policies/diagnose-output.md`. Locks doc/code drift between
+    the `_ALLOWED_FIELDS` privacy-allowlist and the operator-facing
+    policy doc; if a future field is added without updating the doc,
+    this test fails."""
+    from cli.diagnose import _ALLOWED_FIELDS
+
+    content = DIAGNOSE_OUTPUT_POLICY.read_text(encoding="utf-8")
+    for field in _ALLOWED_FIELDS:
+        assert field in content, f"allowlisted field {field!r} missing from policy doc"
+
+
+def test_diagnose_output_policy_doc_documents_suggestion_heuristics() -> None:
+    """#252 Layer 3: the policy doc must enumerate the 5 suggestion
+    heuristics by name so operators understand what triggers each
+    recommendation. Locks the suggestion-engine catalog against drift."""
+    content = DIAGNOSE_OUTPUT_POLICY.read_text(encoding="utf-8")
+    for heuristic in (
+        "drift detected",
+        "recommended-version mismatch",
+        "audit log disabled",
+        "ledger > 100 MiB",
+        "schema version old",
+    ):
+        assert heuristic in content, f"heuristic {heuristic!r} missing from policy doc"

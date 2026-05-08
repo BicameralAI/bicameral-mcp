@@ -325,73 +325,11 @@ format. Lead with the `(bicameral surfaced)` attribution line.
 Then, if `response.action_hints` is non-empty, render each hint
 verbatim — never paraphrase the `message` field.
 
-### 5.4 Surface HITL clarification prompts (#112)
-
-If `response.hitl_prompts` is non-empty, the server has detected one
-or more decisions with an unresolved `signoff_state`. Each prompt
-already carries the question, the trigger label, and a closed option
-list. Render them via `AskUserQuestion`.
+### 5.4 Telemetry + source attribution rendering
 
 > **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g9_*` / `g10_*` / `g11_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
 
 **Source attribution rendering (#200 Phase 3)**: every `source_ref` field on surfaced decisions is already pre-filtered server-side per the operator's `render_source_attribution` setting in `.bicameral/config.yaml`. Modes: `full` (verbatim legacy), `redacted` (default — names + dates replaced with placeholders, structural shape preserved), `hidden` (blank). Render whatever the server returned verbatim — no further redaction needed at the skill layer, and do NOT attempt to recover original values from redacted forms. The deterministic gate is the config field, not this instruction.
-
-**Trigger conditions** — a prompt is emitted whenever a surfaced
-decision's `signoff_state` is one of:
-
-- `proposed` — decision exists but no one has ratified it yet.
-- `ai_surfaced` — auto-extracted by an LLM, awaiting human review.
-- `needs_context` — decision text is unclear; asks for more.
-- `collision_pending` — two decisions appear to conflict.
-- `context_pending` — awaiting a span to ground it.
-
-Bypass is **mandatory and last** in every option list — assert
-`prompt.options[-1].kind == "bypass"` before rendering. Trust contract:
-Bicameral does NOT block work, the bypass option is always reachable.
-
-```python
-for prompt in response.hitl_prompts:
-    assert prompt.options[-1].kind == "bypass"
-    answer = AskUserQuestion({
-        "question": prompt.question,
-        "multiSelect": False,
-        "options": [
-            {"label": opt.label, "description": opt.kind}
-            for opt in prompt.options
-        ],
-    })
-    if answer.kind == "bypass":
-        bicameral.record_bypass(decision_id=prompt.decision_id)
-```
-
-**Bypass semantics**:
-
-- Bypass does NOT mutate decision state. The unresolved
-  `signoff_state` persists for future preflight surfaces.
-- Calling `bicameral.record_bypass(decision_id)` writes a
-  `preflight_prompt_bypassed` event to the local JSONL log
-  (`~/.bicameral/preflight_events.jsonl`). Idempotent within a 1-hour
-  recency window — repeat calls inside the window return
-  `deduped=true` without re-writing (V4 spam-bypass guard prevents
-  indefinite escalation suppression).
-- The governance engine reads recent bypass events and drops one
-  escalation tier (e.g. `escalate` → `warn`, `warn` → `context`) when
-  the same decision is resurfaced inside the recency window. This
-  acknowledges that the user has SEEN the unresolved state without
-  permanently silencing the finding.
-- Preflight telemetry must be enabled (canonical:
-  `BICAMERAL_TELEMETRY=preflight`; legacy `BICAMERAL_PREFLIGHT_TELEMETRY=1`
-  still honored via #192 deprecation overlay) for bypass writes to persist;
-  otherwise `record_bypass` returns `recorded=false, deduped=false,
-  reason="telemetry_disabled"` and the engine sees no recency.
-- **`preflight_bypass_tracking` config gate (#200 Phase 3)**: when
-  `.bicameral/config.yaml: preflight_bypass_tracking: disabled`, the
-  handler short-circuits BEFORE the JSONL write and returns
-  `recorded=false, deduped=false, reason="tracking_disabled"`. Operator
-  privacy choice; deterministic at config-load time. Default is
-  `enabled` (pre-#200 behavior). When disabled, the engine's recency
-  read sees no events → no escalation drop, which matches the user's
-  privacy choice (resurfacing happens at full intensity until ratified).
 
 ### 5.5 Confirm finding relevance (ground truth for calibration)
 
