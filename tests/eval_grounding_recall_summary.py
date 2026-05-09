@@ -88,7 +88,7 @@ def render(payload: dict[str, Any]) -> str:
     out.append("")
     out.append("| Outcome | Count | Share |")
     out.append("|---|---|---|")
-    for label in ("correct", "wrong_symbol", "wrong_file", "aborted"):
+    for label in ("correct", "wrong_symbol", "wrong_file", "aborted", "eval_error"):
         count = outcomes.get(label, 0)
         out.append(f"| {label} | {count} | {_safe_pct(count, total)} |")
     out.append("")
@@ -116,17 +116,18 @@ def render(payload: dict[str, Any]) -> str:
     if misses:
         out.append(f"<details><summary>{len(misses)} missed cases (click to expand)</summary>")
         out.append("")
-        out.append("| Case | Type | Outcome | Bound |")
+        out.append("| Case | Type | Outcome | Bound / Reason |")
         out.append("|---|---|---|---|")
         for r in misses[:25]:  # cap so the summary stays readable
-            bound = (
-                f"`{r.get('bound_file') or '—'}::{r.get('bound_symbol') or '—'}`"
-                if not r.get("aborted")
-                else "_aborted_"
-            )
+            outcome = r.get("outcome", "?")
+            if outcome == "eval_error":
+                detail = f"_error: `{r.get('error_msg') or 'unknown'}`_"
+            elif r.get("aborted"):
+                detail = f"_aborted: {r.get('abort_reason') or 'no reason given'}_"
+            else:
+                detail = f"`{r.get('bound_file') or '—'}::{r.get('bound_symbol') or '—'}`"
             out.append(
-                f"| {r.get('case_id', '?')} | {r.get('case_type', '?')} | "
-                f"{r.get('outcome', '?')} | {bound} |"
+                f"| {r.get('case_id', '?')} | {r.get('case_type', '?')} | {outcome} | {detail} |"
             )
         if len(misses) > 25:
             out.append("")
