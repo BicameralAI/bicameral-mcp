@@ -356,8 +356,7 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
     # on missing commits, so its verdict is uninformative for this branch.
     bash_calls = [c for c in flow3.tool_calls if c.get("name") == "Bash"]
     commit_calls = [
-        c for c in bash_calls
-        if _command_runs_git_commit((c.get("input") or {}).get("command", ""))
+        c for c in bash_calls if _command_runs_git_commit((c.get("input") or {}).get("command", ""))
     ]
     commit_happened = bool(commit_calls)
 
@@ -1048,8 +1047,7 @@ def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:
     """
     bash_calls = [c for c in calls if c.get("name") == "Bash"]
     commit_calls = [
-        c for c in bash_calls
-        if _command_runs_git_commit((c.get("input") or {}).get("command", ""))
+        c for c in bash_calls if _command_runs_git_commit((c.get("input") or {}).get("command", ""))
     ]
     if commit_calls:
         return True, (
