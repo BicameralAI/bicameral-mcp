@@ -22,31 +22,32 @@ logger = logging.getLogger(__name__)
 _real_ledger_instance = None
 
 
-def _read_collaboration_mode(repo_path: str) -> str:
-    """Read mode from .bicameral/config.yaml (returns 'solo' or 'team').
+def _read_team_config(repo_path: str) -> dict:
+    """Read .bicameral/config.yaml as a parsed dict.
 
+    Returns ``{"mode": "solo"}`` when the file is absent or unparseable.
     Checks BICAMERAL_DATA_PATH first so history stored in a private parent
     repo is discovered even when REPO_PATH points to a public submodule.
     """
     data_path = os.getenv("BICAMERAL_DATA_PATH", repo_path)
     config_path = Path(data_path) / ".bicameral" / "config.yaml"
     if not config_path.exists():
-        return "solo"
+        return {"mode": "solo"}
     try:
         import yaml
 
-        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        return config.get("mode", "solo")
+        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return cfg if isinstance(cfg, dict) else {"mode": "solo"}
     except Exception:
-        # yaml not installed or bad file — fall back to basic parsing
+        # yaml not installed or bad file — fall back to mode-only parse
         try:
             for line in config_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if line.startswith("mode:"):
-                    return line.split(":", 1)[1].strip().strip("\"'")
+                    return {"mode": line.split(":", 1)[1].strip().strip("\"'")}
         except OSError:
             pass
-    return "solo"
+    return {"mode": "solo"}
 
 
 def get_ledger():
@@ -64,9 +65,11 @@ def get_ledger():
         )
 
         repo_path = os.getenv("REPO_PATH", ".")
-        mode = _read_collaboration_mode(repo_path)
+        cfg = _read_team_config(repo_path)
+        mode = cfg.get("mode", "solo")
 
         if mode == "team":
+            from events.backends import get_backend
             from events.materializer import EventMaterializer
             from events.team_adapter import TeamWriteAdapter
             from events.writer import EventFileWriter, _get_git_email
@@ -83,8 +86,23 @@ def get_ledger():
             writer = EventFileWriter(events_dir, author)
             materializer = EventMaterializer(events_dir, local_dir)
 
-            _real_ledger_instance = TeamWriteAdapter(inner, writer, materializer)
-            logger.info("[ledger] team mode — events at %s (author: %s)", events_dir, author)
+            cfg.setdefault("team", {})["author"] = author
+            try:
+                backend = get_backend(cfg)
+            except Exception as exc:
+                logger.warning(
+                    "[ledger] team backend init failed (%s) — continuing local-only", exc
+                )
+                backend = None
+
+            _real_ledger_instance = TeamWriteAdapter(inner, writer, materializer, backend=backend)
+            backend_kind = (cfg.get("team") or {}).get("backend") or "local-only"
+            logger.info(
+                "[ledger] team mode — events at %s (author: %s, backend: %s)",
+                events_dir,
+                author,
+                backend_kind,
+            )
         else:
             _real_ledger_instance = inner
 

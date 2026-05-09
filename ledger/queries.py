@@ -873,6 +873,25 @@ async def get_decision_level(client: LedgerClient, decision_id: str) -> str | No
     return str(val) if val else None
 
 
+async def get_decision_source(client: LedgerClient, decision_id: str) -> str | None:
+    """Return ``decision.source_type`` (a controlled enum like
+    ``"transcript"`` / ``"spec"`` / ``"chat"`` / ``"manual"`` /
+    ``"document"``) or ``None`` if the row doesn't exist.
+
+    Used by the M2 grounding-precision telemetry (#280 PR-3) to segment
+    `m2_grounding_*` events by decision provenance. Safe to relay to
+    PostHog — the source_type value space is a fixed enum from the
+    ingest contract, not user content.
+    """
+    rows = await client.query(
+        f"SELECT source_type FROM {decision_id} LIMIT 1",
+    )
+    if not rows:
+        return None
+    val = rows[0].get("source_type")
+    return str(val) if val else None
+
+
 async def region_exists(client: LedgerClient, region_id: str) -> bool:
     """Return True iff a code_region row exists with the given record id."""
     rows = await client.query(f"SELECT id FROM {region_id} LIMIT 1")

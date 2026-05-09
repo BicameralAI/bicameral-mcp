@@ -69,8 +69,11 @@ def _build_payload_from_fixture(source_ref: str) -> dict:
 
     Used by --skill-variant none. Each fixture entry's `description` becomes
     one decision. The runner bypasses the LLM extraction stage and feeds these
-    directly into handle_ingest so we're measuring the grounding pipeline
-    (code_graph.ground_mappings + ledger) in isolation.
+    directly into handle_ingest so we're measuring the post-extraction
+    grounding pipeline — caller-LLM bind via ``handlers.bind.handle_bind``
+    plus the ledger write — in isolation. (Pre-v0.6.0 this measured a BM25
+    ``ground_mappings`` path; that pipeline was deleted, caller-LLM grounding
+    is the current substrate.)
     """
     fixture_decisions = _decisions_for_source_ref(source_ref)
     return {

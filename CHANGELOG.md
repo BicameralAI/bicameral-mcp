@@ -3,7 +3,32 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## v0.14.3 — #280 grounding precision + #277 team-mode remote event-log adapter
+
+Triages 25 dev commits onto main: bind-handler grounding-precision hardening
+(#280), the M2 grounding-recall eval harness + telemetry (#280 PR-2 / PR-3),
+and the team-mode remote event-log adapter (#277) that shifts team mode off
+git as the inter-machine substrate. Drive backend ships with a bundled OAuth
+client; LocalFolder backend ships for shared-filesystem teams.
+
+### Fixed
+
+- **`handlers/bind.py`: caller-supplied line range cannot bypass symbol verification (#280, M2 grounding precision regression).** Pre-fix, when a caller supplied `start_line`/`end_line` alongside `symbol_name`, the handler verified only that the file existed at the SHA and accepted any `symbol_name` — silent corruption surface for caller-LLM grounding when the agent hallucinated a wrong symbol on a real file. Branch B now also calls `resolve_symbol_lines` (same tree-sitter path Branch A uses) and rejects two cases: (1) `symbol_name` doesn't resolve at all → `error="symbol '...' not found in <file> at <sha> — caller-supplied line range cannot bypass symbol verification (#280)"`; (2) symbol resolves but the caller-supplied span doesn't overlap the resolved span → `error="span mismatch (#280)"`. Overlap (not exact equality) is the matching rule, so legitimate sub-region binds stay accepted; only hallucinated ranges are rejected.
+
+### Added
+
+- **Team-mode remote event-log adapter (#277, v0 §2 productization).** Team mode now replicates decisions across teammates' machines via a pluggable `BackendAdapter` (`events/backends/__init__.py`), with two ship-day backends: `LocalFolderAdapter` (shared filesystem — NFS/Dropbox/syncthing) and `GoogleDriveAdapter` (per-team folder with a bundled OAuth client). Pull-only sync — no daemons, no webhooks, no Bicameral server in the loop. `TeamWriteAdapter` gains `flush_to_backend()`; `handlers/sync_middleware.py` adds `ensure_team_synced` (30 s TTL pull) + `flush_team_writes` (post-handler push), wired into `server.py` dispatch (pull at top, flush in `finally`). Setup wizard splits team-mode into Create-vs-Join branches: Create makes the Drive folder + prints the literal share-text-to-teammates message; Join verifies access (404/read-only both block) and confirms the operator's resolved signer (default-No) before persisting. Drive scope narrowed to `drive.file` — Bicameral's CLI can only see files it created in the team folder. Colored security disclosure renders before browser open; mirrors the bicameral-ai.com/privacy page. Operator walkthrough at `docs/team-mode-setup.md`; OAuth verification submission text at `docs/google-oauth-verification-submission.md`. 53 new tests (Phase 1 LocalFolder + sync_middleware + TeamWriteAdapter wiring + two-author round-trip; Phase 2 GoogleDrive unit tests with mocked Drive client; Phase 3 wizard Create/Join/LocalFolder branches).
+
+- **`skills/bicameral-bind/SKILL.md` (#280).** New skill that extracts the bind contract out of `skills/bicameral-ingest/SKILL.md` §2 and tightens it from advisory to mandatory: the agent must Read at least one candidate file end-to-end, confirm the symbol via `validate_symbols`, and abort on weak evidence. Documents the handler-side rejection contract added in this release. `bicameral-ingest` §2 now points at the new skill instead of duplicating the verification rules.
+
+- **`tests/eval_grounding_recall.py` — M2 grounding-recall eval harness (#280 PR-2).** Synthetic-fixture benchmark that drives the `bicameral-bind` skill end-to-end and measures three axes: precision (of bindings the agent committed, what fraction were correct), recall (of ground-truth bindings, how many the agent got right), and abort rate (first-class signal because the bind skill makes "abort on weak evidence" an explicit contract). Dataset at `tests/fixtures/grounding_recall/dataset.py` with 23 cases across same-name-different-module (5), similar-intent-different-symbol (10), and cross-language (8) — fixture repo at `tests/fixtures/grounding_recall/repo/`. Headless caller-LLM driver at `tests/eval/_bind_judge.py` (modeled on `_skill_judge.py`) drives a multi-turn `read_file` / `validate_symbols` / `submit_binding` tool-use loop with response caching at `tests/eval/fixtures/bind_judge/` keyed on SHA(model | skill | repo | decision). Default gates: recall ≥ 0.80, precision ≥ 0.85, abort_rate ≤ 0.30 per #280 acceptance. New CI step is **warn-only initially** (`continue-on-error: true`, mirrors the M1 step) — gather a baseline first, ratchet to `--gate-mode hard` once the signal is stable.
+
+- **M2 grounding-precision telemetry (#280 PR-3).** Three PostHog events now emit from the bind / ratification surfaces: `m2_grounding_attempt` (per `handle_bind` invocation, with `success` and `handler_rejected` diagnostics — the latter trips when #280 PR-1's reject path fires); `m2_grounding_ratified_correct` (per `handle_resolve_compliance` verdict where caller said `compliant`); `m2_grounding_ratified_incorrect` (per `drifted` or `not_relevant` verdict — both signal the original bind was wrong). New `m2_grounding_log.py` module owns the contract: writes a JSONL row to `~/.bicameral/m2_grounding.jsonl` (local mirror, 10 MB rotation, 3 backups) AND fires `telemetry.send_event` to the relay. Privacy-preserving — `decision_id` lives in the local mirror only; the PostHog payload carries only the controlled `decision_source` enum (`transcript` / `spec` / `chat` / `manual` / `document`) and numeric/bool diagnostics. M2 metrics surface on the GitHub Actions run page via a new `tests/eval_grounding_recall_summary.py` step that renders the PR-2 eval JSON to `$GITHUB_STEP_SUMMARY` (precision / recall / abort rate, per-case-type recall breakdown, miss-list) — no operator dashboard panel (per Jin: "the dashboard is for users").
+
+### Changed
+
+- **`code_locator/tools/validate_symbols.py`: dropped unused `self._db` field.** The retention comment ("Retained so `code_locator.adapter.ground_mappings()` can reach `db.lookup_by_file()`") referenced a path deleted in v0.6.0; the field had zero readers.
+- **`tests/eval_decision_relevance.py`: docstring at L73 updated** to describe the post-v0.6.0 grounding pipeline (caller-LLM bind via `handle_bind`) instead of the deleted `code_graph.ground_mappings + ledger` pipeline.
 
 ## v0.14.2 — README + SECURITY surface, ingest skill softening, e2e Flow 3 hardening
 
@@ -27,6 +52,7 @@ Patch on v0.14.1. First-touch surface polish (restructured README with hero imag
 - **Flow 5 e2e prompt disambiguated: "decisions we've tracked in our ledger" (#282).** Same root cause as Flow 1 — without the explicit "ledger" anchor the agent would skip the `bicameral.history` call. Companion `style(e2e)` commit refreshes the stale "no ratify" message that no longer matches the v0.14.2 advisory-only ingest behavior.
 - **CI: SHA-pinned `phoenix-actions/test-reporting-summary` (#272).** The GitHub Actions Marketplace floating tag was a supply-chain risk; now pinned to a specific commit SHA. Companion fix renames `eval_decision_relevance` attr drift introduced in #272.
 
+## v0.14.1 — SBOM emitter fix + Layer 3 diagnose CLI + dependabot
 
 Fast-follow on v0.14.0. Restores CycloneDX SBOM generation in the publish pipeline (skipped in v0.14.0 by hotfixes #261/#262), lands #257 (Layer 3 `bicameral-mcp diagnose` CLI from #252), and dependabot floor bumps.
 
