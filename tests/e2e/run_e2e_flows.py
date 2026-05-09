@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -310,21 +311,26 @@ def _validate_flow4_via_ledger() -> None:
 
 
 def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
-    """Validate the V1 lifecycle outcome by opening the ledger directly
-    after the chained dev_session has fully completed.
+    """Validate Flow 3's V1 lifecycle outcome from the ledger.
 
-    Per bicameral-mcp #135, the post-commit hook is sync-only — ``link_commit``
-    runs server-side via ``ensure_ledger_synced`` on the NEXT bicameral tool
-    call after HEAD moves (naturally happens during Flow 4's preflight, since
-    it's chained in the same session). Without a caller-LLM, ``resolve_compliance``
-    can't fire from the hook, so the V1 success outcome we can validate
-    headless is: at least one decision flipped to ``status='pending'``
-    after Flow 3's commit.
+    Aligns with North Star (BicameralAI/bicameral#108) Flow 3:
+    *trigger* = ``git commit``; *test* = ledger lifecycle outcome.
 
-    This is Flow 3's REAL assertion — the per-flow stream-json check (did
-    git commit happen?) is a precondition. The ledger state IS the verdict.
-    This function finds the existing Flow 3 ``FlowResult`` and merges the
-    ledger findings into its body + verdict. No separate row is added.
+    Verdict matrix (single source of truth for Flow 3):
+      precondition unmet (no commit)       → SKIP   (advisory, non-blocking)
+      commit + verdict written             → PASS   (full V1 lifecycle)
+      commit + compliance_check row only   → PASS   (degraded, advisory:
+                                                     known caller-LLM gap #135)
+      commit + neither                     → FAIL   (no advisory — real bug
+                                                     in the sync chain)
+
+    Per #135, the post-commit hook is sync-only — ``link_commit`` runs
+    server-side via ``ensure_ledger_synced`` on the NEXT bicameral tool
+    call after HEAD moves, and ``resolve_compliance`` requires a
+    caller-LLM in-session. So the realistic headless terminus is a
+    ``compliance_check`` row materializing (status stays ``pending``);
+    the full status flip to ``reflected``/``drifted`` is the stretch
+    outcome that requires the caller-LLM step.
     """
     flow3 = next((r for r in RESULTS if r.flow_id == "Flow 3"), None)
     if flow3 is None:
@@ -345,21 +351,15 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
         flow3.body += f"\n— Ledger validation —\nbaseline snapshot failed: {baseline['error']}\n"
         return
 
-    # The honest V1-lifecycle assertion: by the end of the dev_session run
-    # (and the runs that follow it within the same harness invocation), at
-    # least one decision should have transitioned from `pending` to a
-    # verdict state (`reflected` or `drifted`). That transition proves the
-    # full lifecycle — ensure_ledger_synced → link_commit → resolve_compliance
-    # → status verdict — completed somewhere in the run. The transition can
-    # be triggered by ANY bicameral tool call after HEAD moves; in practice
-    # it's often Flow 5's `bicameral.history` that provokes the chain. We
-    # don't try to attribute the transition to a specific flow — what
-    # matters is the V1 outcome materialised at all.
-    #
-    # Per #135 (post-commit hook is sync-only), the resolve_compliance step
-    # requires a caller-LLM. So this assertion implicitly tests the chain
-    # ALL THE WAY through, not just the sync. The compliance_check row
-    # count delta is reported alongside as an additional signal.
+    # Detect the precondition (commit) from the agent's actual Bash calls,
+    # not from `flow3.verdict` — the per-flow asserter no longer FAILs Flow 3
+    # on missing commits, so its verdict is uninformative for this branch.
+    bash_calls = [c for c in flow3.tool_calls if c.get("name") == "Bash"]
+    commit_calls = [
+        c for c in bash_calls if _command_runs_git_commit((c.get("input") or {}).get("command", ""))
+    ]
+    commit_happened = bool(commit_calls)
+
     cc_before = baseline.get("compliance_checks", 0)
     cc_after = after.get("compliance_checks", 0)
     cc_delta = cc_after - cc_before
@@ -372,16 +372,40 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
     drifted_after = after.get("by_status", {}).get("drifted", 0)
 
     verdicts_written = (reflected_after - reflected_before) + (drifted_after - drifted_before)
-    pending_drained = pending_before - pending_after
 
-    # Flow 3's verdict is now purely ledger-based per the user-flow design:
-    # the commit-happened stream-json check is informational, not a gate.
-    # The V1 lifecycle is what we care about; whichever flow triggers it
-    # is fine.
-    ledger_passed = verdicts_written > 0 or cc_delta > 0
-    final_verdict = "PASS" if ledger_passed else "FAIL"
+    status_before = baseline.get("by_status", {})
+    status_after = after.get("by_status", {})
+    all_statuses = sorted(set(status_before) | set(status_after))
+    status_lines = "\n".join(
+        f"  {s:<22} {status_before.get(s, 0)} → {status_after.get(s, 0)}" for s in all_statuses
+    )
 
-    if verdicts_written > 0:
+    if not commit_happened:
+        # Precondition unmet — SKIP the ledger lifecycle test. Setting
+        # advisory makes this non-blocking at the CI gate while still
+        # rendering loudly in the report so the failure mode is visible.
+        flow3.verdict = "SKIP"
+        flow3.advisory = (
+            "Flow 3's V1 lifecycle assertion requires the agent to run git commit "
+            "(the trigger for ensure_ledger_synced → link_commit → resolve_compliance). "
+            "The agent's session ended without a commit — likely a prompt-following "
+            "or budget issue, not a bicameral regression. SKIP rather than FAIL: "
+            "the test cannot speak to the lifecycle when the trigger never fires."
+        )
+        ledger_detail = (
+            "skipped — precondition (git commit) not met. Ledger snapshot "
+            f"recorded for diagnostics: cc {cc_before}→{cc_after}, "
+            f"verdicts {verdicts_written}."
+        )
+        commit_note = (
+            f"no git commit observed across {len(bash_calls)} Bash call(s) — see "
+            f"per-flow assertion above for the command list"
+        )
+    elif verdicts_written > 0:
+        # Full V1 lifecycle: commit → sync → link_commit → resolve_compliance
+        # → status verdict.
+        flow3.verdict = "PASS"
+        flow3.advisory = ""
         ledger_detail = (
             f"✓ {verdicts_written} verdict(s) written during the run "
             f"(reflected: {reflected_before}→{reflected_after}, "
@@ -390,33 +414,43 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
             f"V1 lifecycle (ingest → bind → link_commit → resolve_compliance "
             f"→ verdict) completed end-to-end."
         )
+        commit_note = f"git commit ran ({len(commit_calls)} call(s)) — precondition met"
     elif cc_delta > 0:
+        # Degraded headless terminus: link_commit fired, compliance_check row
+        # written, but no caller-LLM ran resolve_compliance. Per #135 this is
+        # the expected headless outcome — counts as PASS with advisory.
+        flow3.verdict = "PASS"
+        flow3.advisory = (
+            f"Headless terminus reached: compliance_check rows grew by {cc_delta} "
+            f"({cc_before}→{cc_after}) but no status verdicts written. "
+            "The caller-LLM step (resolve_compliance) is a known headless gap (#135) — "
+            "the post-commit hook is sync-only by design and can't fire it. "
+            "Validate the full reflected/drifted flip via the interactive "
+            "recording path."
+        )
         ledger_detail = (
             f"⚠ compliance_check rows grew by {cc_delta} ({cc_before}→{cc_after}) "
-            f"but no verdicts written — sync mechanism fired but resolve_compliance "
-            f"never ran. The caller-LLM step in the V1 chain didn't trigger; "
-            f"per #135 this is expected without an in-session bicameral call "
-            f"that surfaces pending checks to the agent."
+            f"but no verdicts written — sync mechanism fired (link_commit ran) "
+            f"but resolve_compliance never did. Per #135 this is the expected "
+            f"headless terminus."
         )
+        commit_note = f"git commit ran ({len(commit_calls)} call(s)) — precondition met"
     else:
+        # Commit happened but neither cc rows nor verdicts. The sync chain
+        # itself is broken — real bug, no advisory, blocks CI.
+        flow3.verdict = "FAIL"
+        flow3.advisory = ""
         ledger_detail = (
             f"✗ no compliance_check rows written ({cc_before}→{cc_after}) and "
-            f"no verdicts written. Either the bound decisions never had their "
-            f"sync triggered (no bicameral call after HEAD moves) or Flow 1's "
-            f"binding didn't land properly."
+            f"no verdicts written despite a successful git commit. The sync "
+            f"chain is broken upstream of resolve_compliance — likely either "
+            f"(a) ensure_ledger_synced not firing on subsequent bicameral calls, "
+            f"(b) Flow 1's bindings not pointing at the committed file, or "
+            f"(c) link_commit producing zero pending checks. This is a real "
+            f"regression — investigate via the artifact transcripts."
         )
+        commit_note = f"git commit ran ({len(commit_calls)} call(s)) — precondition met"
 
-    status_before = baseline.get("by_status", {})
-    status_after = after.get("by_status", {})
-    all_statuses = sorted(set(status_before) | set(status_after))
-    status_lines = "\n".join(
-        f"  {s:<22} {status_before.get(s, 0)} → {status_after.get(s, 0)}" for s in all_statuses
-    )
-    commit_note = (
-        "agent committed in Flow 3 (precondition met)"
-        if flow3.verdict == "PASS"
-        else "agent did NOT commit in Flow 3 (precondition NOT met — informational)"
-    )
     flow3.body += (
         f"\n— Ledger state (before → after dev_session) —\n"
         f"session_id:               {session_id[:8]}…\n"
@@ -428,9 +462,6 @@ def _validate_flow3_via_ledger(session_id: str, baseline: dict) -> None:
         f"stream-json precondition: {commit_note}\n"
         f"ledger assertion:         {ledger_detail}\n"
     )
-    # Flow 3's final verdict is the ledger result, not the commit precondition.
-    # The lifecycle outcome matters; the path through it is incidental.
-    flow3.verdict = final_verdict
 
 
 # ── Claude Code CLI invocation ──────────────────────────────────────────
@@ -674,16 +705,20 @@ def _bound_to_area(bind_targets: list[str], area_paths: tuple[str, ...]) -> bool
 
 
 def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
-    """Flow 1: PM ingests the seed roadmap decisions, anchors at least one
-    file in each of the cherry-pick and commit-history feature areas, and
-    ratifies. Subsequent flows depend on a CLEAN, RATIFIED, BOUND ledger as
-    their baseline.
+    """Flow 1: PM ingests the seed roadmap decisions and anchors at least one
+    file in each of the cherry-pick and commit-history feature areas. Per
+    #272 Fix 3 / #108 Flow 1 spec update, the ingest skill now ADVISES the
+    user about ratification rather than auto-firing an ``AskUserQuestion``
+    ratify gate — so this asserter expects ``[ingest, bind?]`` and does NOT
+    require ``bicameral.ratify``. Flow 5 owns ratify validation (PM Friday
+    review walks the proposed queue).
 
     Anchoring path: the canonical bicameral-ingest skill embeds bindings
     inline via ``mappings[].code_regions[].file_path`` — there is no
     separate ``bicameral.bind`` call for code that already exists. A
     follow-up ``bicameral.bind`` is reserved for abstract decisions whose
-    code doesn't exist yet. This asserter accepts EITHER path.
+    code doesn't exist yet, or for ungrounded decisions surfaced by the
+    auto-bind step. This asserter accepts EITHER path.
 
     The check is feature-area-scoped, not file-scoped: any of the files
     listed in ``_CHERRY_PICK_AREA_PATHS`` / ``_COMMIT_HISTORY_AREA_PATHS``
@@ -749,20 +784,24 @@ def assert_flow_1(calls: list[dict]) -> tuple[bool, str]:
             f"commit-history: {list(_COMMIT_HISTORY_AREA_PATHS)}; sequence: {names}"
         )
 
-    # Ratify: PM blesses the just-ingested decisions. Flow 5 walks the
-    # `proposed` queue — flow 1's seeds must NOT remain in `proposed` or
-    # they'd contaminate flow 5's "what's queued for adoption" view.
+    # Ratify is intentionally NOT required here — per #272 Fix 3, the ingest
+    # skill ends in an advisory ("○ N decisions captured as proposals — run
+    # bicameral.ratify when ready"), not an AskUserQuestion gate. Flow 5
+    # walks the proposed queue and ratifies. Flow 1's seeds remain
+    # `proposed` after this run, which is the new baseline that downstream
+    # flows are built on.
     ratify_calls = _calls_named(bcalls, "bicameral_ratify")
-    if not ratify_calls:
-        return False, (
-            f"expected bicameral.ratify after ingest (PM blesses adoption); saw: {names}"
-        )
 
     binding_path = "inline code_regions" if not bind_calls else "inline + follow-up bind"
+    ratify_note = (
+        f"ratify({len(ratify_calls)})"
+        if ratify_calls
+        else "no ratify (advisory-only, per #272 Fix 3)"
+    )
     return True, (
         f"ingest({total_items} items, {binding_path}) → cherry-pick + commit-history "
         f"feature areas bound (paths: {bind_targets}); "
-        f"ratify({len(ratify_calls)}); sequence: {names}"
+        f"{ratify_note}; sequence: {names}"
     )
 
 
@@ -961,38 +1000,67 @@ def assert_flow_2a(calls: list[dict]) -> tuple[bool, str]:
     )
 
 
+# Match `git commit` even when invoked as `git -C <path> commit`,
+# `git --git-dir=<path> commit`, etc. The ``-[A-Za-z]\S*`` clause covers
+# short flags (``-C``); the optional ``\s+\S+`` after consumes a separated
+# flag arg (``-C /path``); ``--\S+`` covers long flags whether ``=``-joined
+# or space-separated. We do NOT try to parse the full git CLI surface — only
+# enough to detect ``git [flags] commit`` reliably across the patterns the
+# Claude Code CLI actually emits.
+_GIT_COMMIT_RE = re.compile(
+    r"\bgit\b(?:\s+(?:-[A-Za-z]\S*|--[A-Za-z][\w-]*=?\S*)(?:\s+[^\s-]\S*)?)*\s+commit(?=\s|$)"
+)
+
+
+def _command_runs_git_commit(cmd: str) -> bool:
+    """True if ``cmd`` invokes ``git commit`` directly or via ``-C``/flags.
+
+    Bug history: an earlier asserter used the literal substring ``"git commit" in cmd``,
+    which silently FAILED Flow 3 whenever the agent prepended a flag — e.g. the
+    ``git -C /tmp/desktop-clone commit -m ...`` pattern that ``claude`` produces
+    when its cwd doesn't match the prompt's bare relative path. See PR #282 CI
+    investigation for the full thread.
+    """
+    return bool(_GIT_COMMIT_RE.search(cmd or ""))
+
+
 def assert_flow_3(calls: list[dict]) -> tuple[bool, str]:
     """Flow 3 (chained dev session): dev implements the high-signal
     notification feature (the only Flow-1 decision that's still
     ungrounded — cherry-pick + reorder are already reflected from Flow 1's
-    inline binding) and commits. The prompt is intentionally minimal:
-    implement + commit, no bicameral verbs, no status checks.
+    inline binding) and commits.
 
-    Per bicameral-mcp #135, the post-commit hook is sync-only by design —
-    it just prints a reminder to the agent. ``link_commit`` runs server-side
-    via ``ensure_ledger_synced`` on the next bicameral tool call after HEAD
-    moves (naturally happens in Flow 4's preflight), and ``resolve_compliance``
-    requires a caller-LLM in-session (the hook can't trigger it).
+    Per North Star (BicameralAI/bicameral#108) Flow 3, the agent's
+    ``git commit`` is the *trigger* for the V1 lifecycle, not the test.
+    The test is the ledger outcome (``ensure_ledger_synced`` →
+    ``link_commit`` → ``resolve_compliance``) which runs server-side on
+    the next bicameral tool call after HEAD moves. Per #135, the
+    post-commit hook is sync-only — ``resolve_compliance`` needs a
+    caller-LLM in-session.
 
-    Per-flow assertion: did the agent actually run ``git commit``? That's
-    the only thing this flow controls. The interesting outcome — a
-    decision flipping to ``pending`` after the commit — is validated by the
-    post-hoc ledger query (``_assert_dev_session_ledger_state``) that runs
-    after the whole ``dev_session`` group completes.
+    This per-flow asserter ONLY records whether the precondition was met
+    (informational). The real verdict — PASS / PASS-degraded / FAIL /
+    SKIP — is computed post-hoc in ``_validate_flow3_via_ledger`` after
+    the whole ``dev_session`` group completes. Returning ``True`` here
+    keeps the per-flow body honest (it documents precondition state) and
+    lets the post-hoc validator be the single source of verdict truth.
     """
     bash_calls = [c for c in calls if c.get("name") == "Bash"]
     commit_calls = [
-        c for c in bash_calls if "git commit" in (c.get("input") or {}).get("command", "")
+        c for c in bash_calls if _command_runs_git_commit((c.get("input") or {}).get("command", ""))
     ]
-    if not commit_calls:
-        bash_cmds = [(c.get("input") or {}).get("command", "")[:60] for c in bash_calls]
-        return False, (
-            f"expected a `git commit` Bash call (the prompt asks for a commit); "
-            f"saw {len(bash_calls)} Bash call(s): {bash_cmds}"
+    if commit_calls:
+        return True, (
+            f"precondition met: git commit ran ({len(commit_calls)} call(s)). "
+            "V1 lifecycle outcome is validated post-hoc against the ledger — "
+            "see 'Ledger validation' below."
         )
+    bash_cmds = [(c.get("input") or {}).get("command", "")[:80] for c in bash_calls]
     return True, (
-        f"git commit executed ({len(commit_calls)} call(s)). Status flip to "
-        "`pending` validated post-hoc via ledger query at end of dev_session."
+        f"precondition unmet: agent ran {len(bash_calls)} Bash call(s) but no "
+        f"git commit detected. Ledger lifecycle cannot proceed without HEAD "
+        f"moving; the post-hoc ledger validator will SKIP the V1 assertion. "
+        f"Bash commands seen: {bash_cmds}"
     )
 
 
@@ -1074,12 +1142,14 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
     flows 1/2/4. Expect history (the review query) + IF there's anything
     in the proposed queue, ratify it.
 
-    The ratify call is conditional, not unconditional: if upstream flows
-    produced no new proposals (e.g. Flow 1 already ratified its 3 seeds
-    and Flow 2's collision didn't produce a refinement), there's literally
-    nothing to ratify and the prompt's instruction "ratify if you find
-    anything ready" is honestly satisfied by a no-op. Forcing ratify here
-    would catch a cascade failure from Flow 2 as if it were a Flow 5 bug.
+    The ratify call is conditional, not unconditional. Per #272 Fix 3 /
+    #108 Flow 1 spec update, Flow 1 now leaves its seeds as `proposed`
+    (advisory-only ingest skill — no auto-ratify), so Flow 5 SHOULD see
+    queued proposals and ratify at least one. We still tolerate a no-op
+    when the upstream chain produced nothing (e.g. Flow 2's collision
+    didn't yield a refinement and Flow 1's seeds were already cleared
+    by an earlier run sharing the ledger), because forcing ratify here
+    would catch a cascade failure from Flow 1/2 as if it were a Flow 5 bug.
 
     Per #108 Flow 5 spec: history + (ratify if proposals exist). The "if"
     is load-bearing — see step 4: "Step 3 is silent if no proposals exist."
@@ -1099,8 +1169,9 @@ def assert_flow_5(calls: list[dict]) -> tuple[bool, str]:
         )
     return True, (
         f"bicameral.history fired; no ratify (no proposals in queue — "
-        f"Flow 1 ratified its 3 seeds and upstream chain may not have "
-        f"produced new proposals); sequence: {names}"
+        f"upstream chain may not have produced new proposals, e.g. an "
+        f"earlier run sharing the ledger already cleared Flow 1's seeds); "
+        f"sequence: {names}"
     )
 
 
