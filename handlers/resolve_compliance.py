@@ -37,6 +37,7 @@ from ledger.queries import (
     decision_exists,
     delete_binds_to_edge,
     get_canonical_id,
+    get_decision_source,
     get_region_descriptor,
     project_decision_status,
     promote_ephemeral_verdict,
@@ -47,6 +48,31 @@ from ledger.queries import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_m2_ratification(
+    *,
+    decision_id: str,
+    decision_source: str | None,
+    verdict: str,
+    confidence: str | None,
+) -> None:
+    """Fire-and-forget M2 ratification event (#280 PR-3).
+
+    Wraps ``m2_grounding_log.record_ratification`` in try/except so a
+    telemetry failure never breaks ratification.
+    """
+    try:
+        from m2_grounding_log import record_ratification
+
+        record_ratification(
+            decision_id=decision_id,
+            decision_source=decision_source,
+            verdict=verdict,
+            confidence=confidence,
+        )
+    except Exception as exc:
+        logger.debug("[resolve_compliance] m2 telemetry emit failed (non-fatal): %s", exc)
 
 
 _VALID_PHASES = {"ingest", "drift", "regrounding", "supersession", "divergence"}
@@ -208,6 +234,20 @@ async def handle_resolve_compliance(
                 verdict=v.verdict,
                 semantic_status=getattr(v, "semantic_status", None),
             )
+        )
+
+        # #280 PR-3 — M2 grounding-precision ratification telemetry.
+        # Best-effort source lookup (single-field query). On failure, fall
+        # back to "unknown" rather than blocking the verdict write.
+        try:
+            decision_source = await get_decision_source(client, v.decision_id)
+        except Exception:
+            decision_source = None
+        _emit_m2_ratification(
+            decision_id=v.decision_id,
+            decision_source=decision_source,
+            verdict=v.verdict,
+            confidence=v.confidence,
         )
 
     # Sync code_region.content_hash to the verdict hash for every accepted verdict.

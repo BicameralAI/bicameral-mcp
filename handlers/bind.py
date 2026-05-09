@@ -22,6 +22,35 @@ def _spans_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
     return a_start <= b_end and b_start <= a_end
 
 
+def _emit_m2_attempt(
+    *,
+    decision_id: str,
+    decision_source: str | None,
+    success: bool,
+    handler_rejected: bool,
+) -> None:
+    """Fire-and-forget M2 grounding-attempt event (#280 PR-3).
+
+    Wraps ``m2_grounding_log.record_attempt`` in try/except so a telemetry
+    failure never breaks bind. Skip the call entirely when ``decision_id``
+    is empty (API misuse) or unknown (handled elsewhere — those aren't
+    representative grounding attempts and would skew the precision metric).
+    """
+    if not decision_id:
+        return
+    try:
+        from m2_grounding_log import record_attempt
+
+        record_attempt(
+            decision_id=decision_id,
+            decision_source=decision_source,
+            success=success,
+            handler_rejected=handler_rejected,
+        )
+    except Exception as exc:
+        logger.debug("[bind] m2 telemetry emit failed (non-fatal): %s", exc)
+
+
 async def handle_bind(
     ctx,
     bindings: list[dict],
@@ -121,6 +150,14 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             )
             continue
 
+        # #280 PR-3 — resolve decision_source once for telemetry. Cheap query
+        # (single field SELECT). Best-effort; on lookup failure we still bind
+        # but log "unknown" as the source.
+        try:
+            decision_source = await ledger.get_decision_source(decision_id)
+        except Exception:
+            decision_source = None
+
         if start_line is None or end_line is None:
             from ledger.status import resolve_symbol_lines
 
@@ -133,6 +170,12 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         content_hash="",
                         error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha}",
                     )
+                )
+                _emit_m2_attempt(
+                    decision_id=decision_id,
+                    decision_source=decision_source,
+                    success=False,
+                    handler_rejected=True,
                 )
                 continue
             start_line, end_line = resolved
@@ -148,6 +191,12 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         content_hash="",
                         error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
                     )
+                )
+                _emit_m2_attempt(
+                    decision_id=decision_id,
+                    decision_source=decision_source,
+                    success=False,
+                    handler_rejected=True,
                 )
                 continue
 
@@ -167,6 +216,12 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha} — caller-supplied line range cannot bypass symbol verification (#280)",
                     )
                 )
+                _emit_m2_attempt(
+                    decision_id=decision_id,
+                    decision_source=decision_source,
+                    success=False,
+                    handler_rejected=True,
+                )
                 continue
             resolved_start, resolved_end = resolved
             if not _spans_overlap(start_line, end_line, resolved_start, resolved_end):
@@ -177,6 +232,12 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         content_hash="",
                         error=f"symbol '{symbol_name}' resolves at lines {resolved_start}-{resolved_end} but caller supplied {start_line}-{end_line} — span mismatch (#280)",
                     )
+                )
+                _emit_m2_attempt(
+                    decision_id=decision_id,
+                    decision_source=decision_source,
+                    success=False,
+                    handler_rejected=True,
                 )
                 continue
 
@@ -200,6 +261,12 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                     content_hash="",
                     error=str(exc),
                 )
+            )
+            _emit_m2_attempt(
+                decision_id=decision_id,
+                decision_source=decision_source,
+                success=False,
+                handler_rejected=False,  # ledger error, not a #280 reject
             )
             continue
 
@@ -289,6 +356,12 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                 content_hash=content_hash,
                 pending_compliance_check=pending_check,
             )
+        )
+        _emit_m2_attempt(
+            decision_id=decision_id,
+            decision_source=decision_source,
+            success=True,
+            handler_rejected=False,
         )
 
     try:
