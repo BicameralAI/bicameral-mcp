@@ -221,6 +221,55 @@ async def get_session_start_banner(ctx) -> SessionStartBanner | None:
     )
 
 
+# ── Team-mode backend sync (#277) ───────────────────────────────────────
+# In-process TTL cache so a tight tool-call loop in one session doesn't
+# hammer Drive on every invocation. 30 s is the user-visible bound on
+# how stale peer events can be at the start of a tool call.
+_LAST_TEAM_PULL_AT: dict[str, float] = {}
+_TEAM_PULL_TTL_S = 30.0
+
+
+async def ensure_team_synced(ctx) -> None:
+    """Pull peer events from the team backend, TTL-cached per repo.
+
+    No-op when ledger is solo (no `_backend`), backend is None, or the
+    last pull for this repo finished within the TTL. Swallows backend
+    errors at DEBUG so a transient remote failure never blocks tool dispatch.
+    """
+    ledger = getattr(ctx, "ledger", None)
+    if ledger is None:
+        return
+    backend = getattr(ledger, "_backend", None)
+    if backend is None:
+        return
+    repo = getattr(ctx, "repo_path", "") or "."
+    now = time.monotonic()
+    last = _LAST_TEAM_PULL_AT.get(repo, 0.0)
+    if now - last < _TEAM_PULL_TTL_S:
+        return
+    try:
+        await backend.pull_events(ledger._writer.events_dir, since_token=None)
+        await ledger._materializer.replay_new_events(ledger._inner)
+        _LAST_TEAM_PULL_AT[repo] = now
+    except Exception as exc:
+        logger.debug("[sync_middleware] team pull failed: %s", exc)
+
+
+async def flush_team_writes(ctx) -> None:
+    """Push the author's JSONL to the backend if any write happened.
+
+    Called from the dispatch `finally` so a successful tool call propagates
+    its events to peers at most once per call. Swallows errors at DEBUG.
+    """
+    ledger = getattr(ctx, "ledger", None)
+    if ledger is None or not hasattr(ledger, "flush_to_backend"):
+        return
+    try:
+        await ledger.flush_to_backend()
+    except Exception as exc:
+        logger.debug("[sync_middleware] team flush failed: %s", exc)
+
+
 async def ensure_ledger_synced(ctx) -> LinkCommitResponse | None:
     """Sync ledger to HEAD if it has moved since the last sync in this process.
 

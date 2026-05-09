@@ -25,19 +25,44 @@ class TeamWriteAdapter:
         inner,
         writer: EventFileWriter,
         materializer: EventMaterializer,
+        backend=None,
     ) -> None:
         self._inner = inner
         self._writer = writer
         self._materializer = materializer
+        self._backend = backend
+        self._dirty = False
         self._ready = False
 
     async def connect(self) -> None:
-        """Connect inner adapter, then replay any new events from peers."""
+        """Connect inner adapter, pull peer events from the backend (if any),
+        then replay everything new from disk."""
         await self._inner.connect()
+        if self._backend is not None:
+            try:
+                await self._backend.pull_events(
+                    self._writer.events_dir, since_token=None
+                )
+            except Exception as exc:
+                logger.warning("[team] backend pull failed on connect: %s", exc)
         replayed = await self._materializer.replay_new_events(self._inner)
         if replayed:
             logger.info("[team] materialized %d peer events on startup", replayed)
         self._ready = True
+
+    async def flush_to_backend(self) -> None:
+        """Push the author's own JSONL to the remote when writes have happened.
+
+        Called from the post-handler middleware so writes propagate at most
+        once per tool-call lifecycle (vs once per individual event, which
+        would hammer remote APIs).
+        """
+        if self._backend is None or not self._dirty:
+            return
+        await self._backend.push_events(
+            self._writer.path, remote_name=self._writer.path.name
+        )
+        self._dirty = False
 
     async def _ensure_ready(self) -> None:
         """Lazy connect + materialize on first use."""
@@ -56,6 +81,7 @@ class TeamWriteAdapter:
         """
         await self._ensure_ready()
         self._writer.write("ingest.completed", payload)
+        self._dirty = True
         return await self._inner.ingest_payload(payload, ctx=ctx)
 
     async def ingest_commit(
@@ -79,6 +105,7 @@ class TeamWriteAdapter:
             "link_commit.completed",
             {"commit_hash": commit_hash, "repo_path": repo_path},
         )
+        self._dirty = True
         return await self._inner.ingest_commit(
             commit_hash,
             repo_path,
@@ -131,6 +158,7 @@ class TeamWriteAdapter:
                 "end_line": end_line,
             },
         )
+        self._dirty = True
         return await self._inner.bind_decision(
             decision_id=decision_id,
             file_path=file_path,
@@ -158,6 +186,7 @@ class TeamWriteAdapter:
                 "signoff": signoff,
             },
         )
+        self._dirty = True
         return await self._inner.apply_ratify(decision_id, signoff)
 
     async def apply_supersede(
@@ -190,6 +219,7 @@ class TeamWriteAdapter:
                 "session_id": session_id,
             },
         )
+        self._dirty = True
         return await self._inner.apply_supersede(
             new_id=new_id,
             old_id=old_id,
@@ -242,6 +272,7 @@ class TeamWriteAdapter:
                 "evidence": evidence,
             },
         )
+        self._dirty = True
 
     async def wipe_all_rows(self, repo: str) -> None:
         """Wipe the DB then reset the event watermark.
