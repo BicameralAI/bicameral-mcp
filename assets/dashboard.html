@@ -372,6 +372,24 @@ body {
   <div class="empty">Loading decision ledger…</div>
 </main>
 
+<!-- #280 PR-3 — M2 grounding-precision panel. Reads from /m2_grounding,
+     which aggregates the local m2_grounding.jsonl mirror written by
+     handlers/bind.py and handlers/resolve_compliance.py. -->
+<section id="m2-panel" class="m2-panel" style="
+    margin: 24px 28px 36px;
+    padding: 16px 20px;
+    border: 1px solid var(--border);
+    background: var(--paper);
+    font-family: var(--mono);
+    font-size: 12px;
+">
+  <div style="font-family: var(--serif); font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 6px;">
+    M2 grounding precision <span style="font-weight: 400; color: var(--text-dim);">— rolling 7-day, segmented by decision source</span>
+  </div>
+  <div id="m2-body" style="color: var(--text-dim);">Loading m2 metrics…</div>
+</section>
+
+
 <script>
 // ── helpers ─────────────────────────────────────────────────
 function esc(s) {
@@ -781,6 +799,48 @@ function connect() {
 
 fetch('/history').then(r => r.json()).then(render).catch(() => {});
 connect();
+
+// ── M2 grounding-precision panel (#280 PR-3) ────────────────
+function renderM2(data) {
+  const body = document.getElementById('m2-body');
+  if (!body) return;
+  if (!data || data.error) {
+    body.textContent = data && data.error ? `error: ${data.error}` : 'no data';
+    return;
+  }
+  const rows = data.per_source || [];
+  if (rows.length === 0) {
+    body.innerHTML = `<span style="color: var(--text-light);">No grounding events in the last 7 days. Run <code>bicameral_bind</code> + <code>resolve_compliance</code> to populate this panel.</span>`;
+    return;
+  }
+  const header = `
+    <div style="display: grid; grid-template-columns: 1.6fr 0.7fr 0.7fr 0.9fr 0.9fr 0.9fr; gap: 8px; padding: 4px 0; color: var(--text-light); font-size: 11px; border-bottom: 1px solid var(--border);">
+      <span>source</span><span>attempts</span><span>rejects</span><span>ratified ✓</span><span>ratified ✕</span><span>precision</span>
+    </div>`;
+  const lines = rows.map(r => {
+    const prec = r.precision === null ? '—' : `${(r.precision * 100).toFixed(1)}%`;
+    const precColor = r.precision === null ? 'var(--text-light)'
+                    : r.precision >= 0.85 ? 'var(--green)'
+                    : r.precision >= 0.7 ? 'var(--amber)'
+                    : '#a23a3a';
+    return `
+      <div style="display: grid; grid-template-columns: 1.6fr 0.7fr 0.7fr 0.9fr 0.9fr 0.9fr; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--border);">
+        <span>${esc(r.decision_source)}</span>
+        <span>${r.attempts}</span>
+        <span style="color: ${r.rejects > 0 ? 'var(--amber)' : 'var(--text-dim)'};">${r.rejects}</span>
+        <span style="color: var(--green);">${r.ratified_correct}</span>
+        <span style="color: #a23a3a;">${r.ratified_incorrect}</span>
+        <span style="color: ${precColor}; font-weight: 600;">${prec}</span>
+      </div>`;
+  }).join('');
+  body.innerHTML = header + lines;
+}
+
+function loadM2() {
+  fetch('/m2_grounding').then(r => r.json()).then(renderM2).catch(err => renderM2({error: String(err)}));
+}
+loadM2();
+setInterval(loadM2, 30000);  // refresh every 30s
 </script>
 </body>
 </html>
