@@ -133,8 +133,6 @@ class DashboardServer:
                 await self._serve_history(writer)
             elif method == "GET" and path == "/events":
                 await self._serve_sse(writer)
-            elif method == "GET" and path == "/m2_grounding":
-                await self._serve_m2_grounding(writer)
             else:
                 writer.write(_HTTP_404.encode())
                 await writer.drain()
@@ -168,63 +166,6 @@ class DashboardServer:
 
             response = await handle_history(ctx)
             body = json.dumps(response.model_dump(), default=str).encode()
-        except Exception as exc:
-            body = json.dumps({"error": str(exc)}).encode()
-        writer.write(_send_body(_HTTP_200_JSON, body))
-        await writer.drain()
-
-    async def _serve_m2_grounding(self, writer: asyncio.StreamWriter) -> None:
-        """Aggregate the local m2_grounding mirror into rolling-7d metrics
-        per decision_source. Read-only; no ledger I/O.
-        """
-        try:
-            from m2_grounding_log import read_recent_events
-
-            events = read_recent_events(since_seconds=7 * 24 * 3600)
-            by_source: dict[str, dict[str, int]] = {}
-            for ev in events:
-                src = str(ev.get("decision_source") or "unknown")
-                bucket = by_source.setdefault(
-                    src,
-                    {
-                        "attempts": 0,
-                        "rejects": 0,
-                        "ratified_correct": 0,
-                        "ratified_incorrect": 0,
-                    },
-                )
-                t = ev.get("event_type")
-                if t == "m2_grounding_attempt":
-                    bucket["attempts"] += 1
-                    if ev.get("handler_rejected"):
-                        bucket["rejects"] += 1
-                elif t == "m2_grounding_ratified_correct":
-                    bucket["ratified_correct"] += 1
-                elif t == "m2_grounding_ratified_incorrect":
-                    bucket["ratified_incorrect"] += 1
-
-            per_source = []
-            for src, b in sorted(by_source.items()):
-                ratified = b["ratified_correct"] + b["ratified_incorrect"]
-                precision = (b["ratified_correct"] / ratified) if ratified > 0 else None
-                per_source.append(
-                    {
-                        "decision_source": src,
-                        "attempts": b["attempts"],
-                        "rejects": b["rejects"],
-                        "ratified_correct": b["ratified_correct"],
-                        "ratified_incorrect": b["ratified_incorrect"],
-                        "precision": (round(precision, 4) if precision is not None else None),
-                    }
-                )
-
-            body = json.dumps(
-                {
-                    "window_seconds": 7 * 24 * 3600,
-                    "total_events": len(events),
-                    "per_source": per_source,
-                }
-            ).encode()
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
         writer.write(_send_body(_HTTP_200_JSON, body))

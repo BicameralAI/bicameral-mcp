@@ -26,7 +26,6 @@ import json
 import logging
 import os
 import threading
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -173,43 +172,6 @@ def record_ratification(
         }
     )
     _send_relay(event_type, source, diagnostic)
-
-
-def read_recent_events(*, since_seconds: int = 7 * 24 * 3600) -> list[dict]:
-    """Return rows from the local mirror within the lookback window.
-
-    Used by the dashboard panel to compute rolling-7d M2 precision per
-    `decision_source`. Reads the live file plus rotated siblings so a
-    log-roll mid-window doesn't blank the panel.
-    """
-    out: list[dict] = []
-    cutoff = time.time() - since_seconds
-
-    candidates = [_LOG_FILE]
-    for i in range(1, _MAX_ROTATIONS + 1):
-        candidates.append(_LOG_FILE.with_suffix(_LOG_FILE.suffix + f".{i}"))
-
-    for path in candidates:
-        if not path.exists():
-            continue
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        row = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    ts_str = row.get("ts", "")
-                    try:
-                        ts = datetime.fromisoformat(ts_str).timestamp()
-                    except ValueError:
-                        continue
-                    if ts >= cutoff:
-                        out.append(row)
-        except OSError as exc:
-            logger.debug("[m2_grounding] read failed for %s: %s", path, exc)
-
-    return out
 
 
 def reset_for_tests() -> None:

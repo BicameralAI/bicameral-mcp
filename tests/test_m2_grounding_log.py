@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
 
 import pytest
 
@@ -122,46 +121,6 @@ def test_record_ratification_unknown_confidence_defaults_to_medium(monkeypatch, 
 
     rows = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
     assert rows[0]["confidence"] == 1
-
-
-def test_read_recent_events_respects_window(monkeypatch, tmp_path):
-    m2, log_path = _reload_module_with_path(monkeypatch, tmp_path)
-
-    # Write a row, then re-read with a short window
-    m2.record_attempt(
-        decision_id="decision:fresh",
-        decision_source="transcript",
-        success=True,
-        handler_rejected=False,
-    )
-    fresh = m2.read_recent_events(since_seconds=3600)
-    assert len(fresh) == 1
-    assert fresh[0]["decision_id"] == "decision:fresh"
-
-    # Inject a stale row by hand (before "now" by 30 days)
-    from datetime import UTC, datetime, timedelta
-
-    stale_ts = (datetime.now(UTC) - timedelta(days=30)).isoformat(timespec="seconds")
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(
-            json.dumps(
-                {
-                    "ts": stale_ts,
-                    "event_type": "m2_grounding_attempt",
-                    "decision_id": "decision:stale",
-                    "decision_source": "transcript",
-                    "success": True,
-                    "handler_rejected": False,
-                }
-            )
-            + "\n"
-        )
-
-    # Default 7-day window must filter the stale row out
-    seven_day = m2.read_recent_events(since_seconds=7 * 24 * 3600)
-    ids = {r["decision_id"] for r in seven_day}
-    assert "decision:fresh" in ids
-    assert "decision:stale" not in ids
 
 
 def test_decision_id_never_relayed_to_posthog(monkeypatch, tmp_path):

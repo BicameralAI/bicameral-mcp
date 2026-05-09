@@ -148,6 +148,17 @@ jobs:
           --gate-mode warn
           -o test-results/m2-grounding-recall.json
 
+      # ── Surface M2 metrics on the GitHub run summary (#280 PR-3) ───
+      # Reads test-results/m2-grounding-recall.json and renders a markdown
+      # table to $GITHUB_STEP_SUMMARY so reviewers can read precision /
+      # recall / abort-rate without downloading the artifact. always()
+      # guard means the summary appears even when the eval step above
+      # exited non-zero (warn-only currently masks that).
+      - name: M2 metrics summary
+        if: always() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: python tests/eval_grounding_recall_summary.py test-results/m2-grounding-recall.json >> "$GITHUB_STEP_SUMMARY"
+
       # ── Generate rich E2E report from artifacts ────────────────────
       # Ubuntu-only: the script consumes the medusa adversarial corpus
       # (cloned only on Ubuntu above) plus the Phase 3 E2E artifacts
