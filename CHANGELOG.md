@@ -5,7 +5,28 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 ## [Unreleased]
 
-## v0.14.1 — SBOM emitter fix + Layer 3 diagnose CLI + dependabot
+## v0.14.2 — README + SECURITY surface, ingest skill softening, e2e Flow 3 hardening
+
+Patch on v0.14.1. First-touch surface polish (restructured README with hero image, star CTA, and Quickstart reorder; new SECURITY.md that enables the GitHub Security tab), one user-visible skill behavior change (ingest no longer auto-prompts for ratification — it advises and lets ratify happen on the next history pass), and a structural rework of the Flow 3 e2e assertion so it stops masking real sync-chain bugs behind a regex bug.
+
+### Added
+
+- **`SECURITY.md` (#274 / PR #282).** Enables the GitHub Security tab and documents the supported-version + private-disclosure surface for `bicameral-mcp`. No code change — pure repo hygiene that unlocks dependabot security alerts and CodeQL surfacing on the project page.
+
+### Changed
+
+- **`bicameral-ingest` skill: advisory-only ratification path (#272 Fix 3 — commit `6cab533`).** Ingest no longer fires an `AskUserQuestion` ratification gate at the end of a successful capture. The skill now appends a one-line advisory ("○ N decisions captured as proposals — run `bicameral.history` + ratify when ready") to the rendered ingest summary, and ratification moves to the next `bicameral.history` invocation (Flow 5). Rationale: the gate was burning Flow 1's tool-call budget on every ingest even when the user had no ratification intent, and it produced a poor agent-side experience when the same prompt also wanted to do unrelated work after the capture. The next history call still surfaces the proposals, so nothing is lost — the prompt just no longer interrupts mid-flow.
+- **README restructured for first-touch clarity (#282).** New hero image, Quickstart reordered to the top above feature exposition, star CTA + logo, and the test-out path trimmed to a single working invocation. Aimed at the "user clicks repo from a Slack/Twitter link" entry point — the prior README led with concept-heavy material that pushed the install command below the fold.
+- **`.gitignore`: untrack `plan-*.md`.** Ad-hoc planning files were being committed accidentally; they now stay local. Existing tracked plans under `thoughts/shared/plans/` are unaffected — only the unprefixed top-level pattern is gitignored.
+
+### Fixed
+
+- **`tests/e2e/run_e2e_flows.py::assert_flow_3` aligned with North Star Flow 3 (PR #282).** The per-flow asserter previously gated the verdict on `"git commit" in cmd` — a literal substring that silently FAILed Flow 3 whenever the agent prepended a flag (e.g. the `git -C /tmp/desktop-clone commit -m ...` form `claude` produces when its cwd doesn't match the prompt's bare relative path). The buggy substring masked the post-hoc ledger validator's real signal. Fix: (1) new `_command_runs_git_commit()` regex helper that handles `-C <path>`, `--git-dir=<path>`, `&&`-chained sequences, and rejects `commit-tree` plumbing; (2) the per-flow asserter now ONLY records precondition state (commit-met / commit-unmet) — never gates the verdict; (3) `_validate_flow3_via_ledger` becomes the single source of verdict truth with an explicit matrix: precondition unmet → `SKIP` (advisory, non-blocking); commit + verdict written → `PASS` (full V1 lifecycle); commit + compliance-check rows only → `PASS` (degraded, advisory: known #135 caller-LLM gap); commit + neither → `FAIL` (no advisory — real sync-chain bug). The North Star (BicameralAI/bicameral#108) explicitly defines `git commit` as Flow 3's *trigger*, not the test; this fix encodes that distinction.
+- **Flow 3 e2e prompt now edits inside the bound code region (PR #282).** The old prompt asked the agent to add a comment above the `CherryPickResult` enum at line 30 of `app/src/lib/git/cherry-pick.ts`, which sits *outside* the cherry-pick decision's bound region (`cherryPick` function body, lines 142–183). `link_commit` correctly recognized "no bound region drifted" and wrote zero `compliance_check` rows — and the harness's success signal (`cc_delta > 0`) never materialized despite a clean lifecycle run. The new prompt asks for a comment immediately above the `if (commits.length === 0)` early-return inside the `cherryPick` function body, which is well inside the bound region. Verified end-to-end: Flow 3 now reaches `pending → reflected` for all three decisions (full V1 hero case from issue #108) when the agent runs `bicameral_link_commit` + `bicameral_resolve_compliance` after the commit. Drive-by: the prompt now uses the full `app/src/lib/git/cherry-pick.ts` path so the agent doesn't need to defensively rewrite to `git -C <repo>` form.
+- **Flow 1 e2e prompt re-anchored with explicit "decision ledger" language (#282).** The previous wording was getting interpreted as generic note-taking by the agent rather than as a directive to ingest. The re-anchor restores reliable `bicameral.ingest` firing.
+- **Flow 5 e2e prompt disambiguated: "decisions we've tracked in our ledger" (#282).** Same root cause as Flow 1 — without the explicit "ledger" anchor the agent would skip the `bicameral.history` call. Companion `style(e2e)` commit refreshes the stale "no ratify" message that no longer matches the v0.14.2 advisory-only ingest behavior.
+- **CI: SHA-pinned `phoenix-actions/test-reporting-summary` (#272).** The GitHub Actions Marketplace floating tag was a supply-chain risk; now pinned to a specific commit SHA. Companion fix renames `eval_decision_relevance` attr drift introduced in #272.
+
 
 Fast-follow on v0.14.0. Restores CycloneDX SBOM generation in the publish pipeline (skipped in v0.14.0 by hotfixes #261/#262), lands #257 (Layer 3 `bicameral-mcp diagnose` CLI from #252), and dependabot floor bumps.
 
