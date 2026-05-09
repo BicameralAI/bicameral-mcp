@@ -41,6 +41,7 @@ async def test_push_skips_when_remote_hash_matches(tmp_path: Path) -> None:
 
     # Bump local mtime but keep contents identical → push must be a no-op.
     import os
+
     os.utime(local, ns=(first_mtime + 1_000_000_000, first_mtime + 1_000_000_000))
     await adapter.push_events(local, "alice@x.com.jsonl")
 

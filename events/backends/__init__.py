@@ -58,8 +58,10 @@ def get_backend(config: dict) -> BackendAdapter | None:
     author = team.get("author", "")
     if kind == "local_folder":
         from .local_folder import LocalFolderAdapter
+
         return LocalFolderAdapter(remote_root=Path(team["remote_root"]), author=author)
     if kind == "google_drive":
         from .google_drive import GoogleDriveAdapter
+
         return GoogleDriveAdapter(folder_id=team["folder_id"], author=author)
     return None

@@ -53,9 +53,7 @@ def stub_credentials():
 
 
 def _files_list(svc, returned_files):
-    svc.files.return_value.list.return_value.execute.return_value = {
-        "files": returned_files
-    }
+    svc.files.return_value.list.return_value.execute.return_value = {"files": returned_files}
 
 
 @pytest.mark.asyncio
@@ -107,9 +105,7 @@ async def test_push_creates_when_remote_missing(tmp_path: Path, stub_drive, stub
 
 
 @pytest.mark.asyncio
-async def test_pull_writes_only_changed_peer_files(
-    tmp_path: Path, stub_drive, stub_credentials
-):
+async def test_pull_writes_only_changed_peer_files(tmp_path: Path, stub_drive, stub_credentials):
     from events.backends.google_drive import GoogleDriveAdapter
 
     local_dir = tmp_path / "local"
@@ -120,11 +116,27 @@ async def test_pull_writes_only_changed_peer_files(
     _files_list(
         stub_drive,
         [
-            {"id": "alice-id", "name": "alice@x.com.jsonl", "md5Checksum": "x", "modifiedTime": "2026-05-08T10:00:00Z"},
-            {"id": "bob-id", "name": "bob@x.com.jsonl", "md5Checksum": _md5(bob_existing), "modifiedTime": "2026-05-08T11:00:00Z"},
-            {"id": "carol-id", "name": "carol@x.com.jsonl", "md5Checksum": "y", "modifiedTime": "2026-05-08T12:00:00Z"},
+            {
+                "id": "alice-id",
+                "name": "alice@x.com.jsonl",
+                "md5Checksum": "x",
+                "modifiedTime": "2026-05-08T10:00:00Z",
+            },
+            {
+                "id": "bob-id",
+                "name": "bob@x.com.jsonl",
+                "md5Checksum": _md5(bob_existing),
+                "modifiedTime": "2026-05-08T11:00:00Z",
+            },
+            {
+                "id": "carol-id",
+                "name": "carol@x.com.jsonl",
+                "md5Checksum": "y",
+                "modifiedTime": "2026-05-08T12:00:00Z",
+            },
         ],
     )
+
     # Stub the get_media chain: returns a request whose .execute() returns bytes.
     def _media_for(fileId):
         media = MagicMock()
@@ -138,7 +150,10 @@ async def test_pull_writes_only_changed_peer_files(
 
     # Carol is the only peer that should have been downloaded.
     # Alice is owned (skipped); Bob's md5 matches local (skipped).
-    downloaded_ids = [c.kwargs.get("fileId") or c.args[0] for c in stub_drive.files.return_value.get_media.call_args_list]
+    downloaded_ids = [
+        c.kwargs.get("fileId") or c.args[0]
+        for c in stub_drive.files.return_value.get_media.call_args_list
+    ]
     assert downloaded_ids == ["carol-id"]
     assert (local_dir / "carol@x.com.jsonl").read_bytes() == b"new-content-for-carol-id"
     # Alice's own file must not be created locally

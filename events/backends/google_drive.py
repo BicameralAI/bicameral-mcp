@@ -91,9 +91,8 @@ def _bundled_client_config() -> dict:
     project is provisioned. Once Jin replaces the constants, this branch
     becomes unreachable.
     """
-    if (
-        _BUNDLED_CLIENT_ID.startswith(_PLACEHOLDER_PREFIX)
-        or _BUNDLED_CLIENT_SECRET.startswith(_PLACEHOLDER_PREFIX)
+    if _BUNDLED_CLIENT_ID.startswith(_PLACEHOLDER_PREFIX) or _BUNDLED_CLIENT_SECRET.startswith(
+        _PLACEHOLDER_PREFIX
     ):
         raise OAuthClientNotProvisionedError(
             "Bicameral's Google Drive OAuth client isn't published yet. "
@@ -143,9 +142,7 @@ class GoogleDriveAdapter:
 
         creds = None
         if self._token_path.exists():
-            creds = Credentials.from_authorized_user_file(
-                str(self._token_path), [DRIVE_SCOPE]
-            )
+            creds = Credentials.from_authorized_user_file(str(self._token_path), [DRIVE_SCOPE])
         if creds and creds.valid:
             return creds
         if creds and creds.expired and creds.refresh_token:
@@ -300,11 +297,7 @@ class GoogleDriveAdapter:
         creds = self._credentials()
         svc = _build_drive_service(creds)
         try:
-            meta = (
-                svc.files()
-                .get(fileId=self._folder_id, fields="id,capabilities")
-                .execute()
-            )
+            meta = svc.files().get(fileId=self._folder_id, fields="id,capabilities").execute()
         except HttpError as exc:
             if getattr(exc, "resp", None) is not None and exc.resp.status == 404:
                 raise FolderNotFoundError(

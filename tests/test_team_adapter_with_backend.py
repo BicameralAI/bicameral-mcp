@@ -66,7 +66,9 @@ def _payload(intent: str, source_ref: str) -> dict:
     }
 
 
-def _build(events_dir: Path, local_dir: Path, author: str, backend) -> tuple[TeamWriteAdapter, SurrealDBLedgerAdapter]:
+def _build(
+    events_dir: Path, local_dir: Path, author: str, backend
+) -> tuple[TeamWriteAdapter, SurrealDBLedgerAdapter]:
     inner = SurrealDBLedgerAdapter(url="memory://")
     writer = EventFileWriter(events_dir, author)
     materializer = EventMaterializer(events_dir, local_dir)
@@ -81,16 +83,19 @@ async def test_connect_pulls_then_replays(tmp_path: Path) -> None:
     peer_payload = _payload("peer-intent", "peer-1")
     import json
 
-    peer_event = json.dumps(
-        {
-            "schema_version": 2,
-            "event_type": "ingest.completed",
-            "author": "peer@x.com",
-            "timestamp": "2026-05-08T00:00:00Z",
-            "payload": peer_payload,
-        },
-        separators=(",", ":"),
-    ) + "\n"
+    peer_event = (
+        json.dumps(
+            {
+                "schema_version": 2,
+                "event_type": "ingest.completed",
+                "author": "peer@x.com",
+                "timestamp": "2026-05-08T00:00:00Z",
+                "payload": peer_payload,
+            },
+            separators=(",", ":"),
+        )
+        + "\n"
+    )
     backend = FakeBackend(prepopulate={"peer@x.com.jsonl": peer_event.encode()})
 
     events_dir = tmp_path / "events"

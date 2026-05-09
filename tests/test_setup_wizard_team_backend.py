@@ -31,7 +31,10 @@ def _read_yaml(path: Path) -> dict:
 def test_extract_folder_id_accepts_raw_id():
     from setup_wizard import _extract_folder_id
 
-    assert _extract_folder_id("1AbCdEfGhIjKl_mNoPqRsTuVwXyZ-abcd") == "1AbCdEfGhIjKl_mNoPqRsTuVwXyZ-abcd"
+    assert (
+        _extract_folder_id("1AbCdEfGhIjKl_mNoPqRsTuVwXyZ-abcd")
+        == "1AbCdEfGhIjKl_mNoPqRsTuVwXyZ-abcd"
+    )
 
 
 def test_extract_folder_id_accepts_full_url():
@@ -58,9 +61,7 @@ def test_create_branch_persists_founding_member_role(tmp_path: Path, monkeypatch
 
     fake_adapter = MagicMock()
     fake_adapter.create_folder.return_value = "abc123"
-    with patch(
-        "events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter
-    ):
+    with patch("events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter):
         team_cfg = _create_shared_ledger_drive(repo_path=tmp_path)
 
     assert team_cfg == {
@@ -100,9 +101,7 @@ def test_join_branch_extracts_folder_id_from_url(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("setup_wizard._prompt_yes_no", lambda *a, **kw: True)
 
     fake_adapter = MagicMock()
-    with patch(
-        "events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter
-    ):
+    with patch("events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter):
         team_cfg = _join_shared_ledger_drive(repo_path=tmp_path)
 
     assert team_cfg["folder_id"] == "xyz789"
@@ -132,9 +131,7 @@ def test_join_branch_verifies_access_before_persist(tmp_path: Path, monkeypatch)
     fake_adapter = MagicMock()
     fake_adapter.verify_access.side_effect = FolderNotFoundError("missing-id not found")
 
-    with patch(
-        "events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter
-    ):
+    with patch("events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter):
         with pytest.raises(SystemExit):
             _join_shared_ledger_drive(repo_path=tmp_path)
 
@@ -150,9 +147,7 @@ def test_join_branch_aborts_on_identity_decline(tmp_path: Path, monkeypatch):
     monkeypatch.setattr("setup_wizard._prompt_yes_no", lambda *a, **kw: False)
 
     fake_adapter = MagicMock()
-    with patch(
-        "events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter
-    ):
+    with patch("events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter):
         with pytest.raises(SystemExit):
             _join_shared_ledger_drive(repo_path=tmp_path)
 
@@ -166,9 +161,7 @@ def test_create_aborts_when_security_disclosure_declined(tmp_path: Path, monkeyp
     monkeypatch.setattr("setup_wizard._prompt_yes_no", lambda *a, **kw: False)
 
     fake_adapter = MagicMock()
-    with patch(
-        "events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter
-    ):
+    with patch("events.backends.google_drive.GoogleDriveAdapter", return_value=fake_adapter):
         with pytest.raises(SystemExit, match="Aborted"):
             _create_shared_ledger_drive(repo_path=tmp_path)
     fake_adapter._credentials.assert_not_called()
@@ -233,5 +226,3 @@ def test_local_folder_branch_rejects_unwritable_path(tmp_path: Path, monkeypatch
     monkeypatch.setattr("setup_wizard._prompt_text_or_exit", lambda *a, **kw: "/")
     with pytest.raises(SystemExit, match="not writable"):
         _select_local_folder_backend()
-
-

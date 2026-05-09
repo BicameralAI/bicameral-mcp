@@ -40,9 +40,7 @@ class TeamWriteAdapter:
         await self._inner.connect()
         if self._backend is not None:
             try:
-                await self._backend.pull_events(
-                    self._writer.events_dir, since_token=None
-                )
+                await self._backend.pull_events(self._writer.events_dir, since_token=None)
             except Exception as exc:
                 logger.warning("[team] backend pull failed on connect: %s", exc)
         replayed = await self._materializer.replay_new_events(self._inner)
@@ -59,9 +57,7 @@ class TeamWriteAdapter:
         """
         if self._backend is None or not self._dirty:
             return
-        await self._backend.push_events(
-            self._writer.path, remote_name=self._writer.path.name
-        )
+        await self._backend.push_events(self._writer.path, remote_name=self._writer.path.name)
         self._dirty = False
 
     async def _ensure_ready(self) -> None:

@@ -1030,22 +1030,34 @@ def _print_drive_security_disclosure() -> None:
     print(border)
     print()
     print(f"  {bold}What flows where{reset}")
-    print(f"    {_color('•', _ANSI_GREEN)} Decision data (transcripts, payloads) flows your-CLI ↔ Google directly.")
+    print(
+        f"    {_color('•', _ANSI_GREEN)} Decision data (transcripts, payloads) flows your-CLI ↔ Google directly."
+    )
     print("      Bicameral the company does NOT receive copies. No Bicameral server in the loop.")
-    print(f"    {_color('•', _ANSI_GREEN)} Your OAuth token stays on your machine ({_color('~/.bicameral/google-drive-token.json', _ANSI_CYAN)}, mode 0600).")
+    print(
+        f"    {_color('•', _ANSI_GREEN)} Your OAuth token stays on your machine ({_color('~/.bicameral/google-drive-token.json', _ANSI_CYAN)}, mode 0600)."
+    )
     print()
     print(f"  {bold}What the `drive.file` scope means for the rest of your Drive{reset}")
-    print(f"    {_color('•', _ANSI_GREEN)} The Bicameral CLI on your machine can only touch files it creates")
+    print(
+        f"    {_color('•', _ANSI_GREEN)} The Bicameral CLI on your machine can only touch files it creates"
+    )
     print("      in the team folder. Your other Drive content (other folders, Google Docs,")
     print("      shared files) is invisible to the CLI — Google enforces this.")
     print()
     print(f"  {bold}What Bicameral the company CAN see (as the OAuth app publisher){reset}")
-    print(f"    {_color('•', _ANSI_YELLOW)} Aggregate API request counts. {_color('Not contents.', _ANSI_BOLD)}")
-    print(f"    {_color('•', _ANSI_YELLOW)} OAuth consent records: which Google accounts authenticated, when.")
+    print(
+        f"    {_color('•', _ANSI_YELLOW)} Aggregate API request counts. {_color('Not contents.', _ANSI_BOLD)}"
+    )
+    print(
+        f"    {_color('•', _ANSI_YELLOW)} OAuth consent records: which Google accounts authenticated, when."
+    )
     print()
     print(f"  {bold}The trust dependency you're accepting{reset}")
     print("    Same as any OAuth tool (gh, gcloud, Notion, Slack desktop): you trust")
-    print("    that the open-source CLI behaves as advertised. Source: github.com/BicameralAI/bicameral-mcp")
+    print(
+        "    that the open-source CLI behaves as advertised. Source: github.com/BicameralAI/bicameral-mcp"
+    )
     print()
     print("  Full security model: docs/team-mode-setup.md")
     print(border)
@@ -1103,7 +1115,7 @@ def _create_shared_ledger_drive(repo_path: Path) -> dict:
     print("  Send this to your teammates so they can Join:")
     print(
         f'    "Share this folder with my teammate as Editor, then run `bicameral setup` '
-        f"and paste this folder ID: {folder_id}\""
+        f'and paste this folder ID: {folder_id}"'
     )
     print()
     return {"backend": "google_drive", "folder_id": folder_id, "role": "founding_member"}

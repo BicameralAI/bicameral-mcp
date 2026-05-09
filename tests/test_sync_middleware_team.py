@@ -48,7 +48,9 @@ class StubLedger:
     def __init__(self, backend, materializer) -> None:
         self._backend = backend
         self._inner = StubInner()
-        self._writer = SimpleNamespace(events_dir=Path("/tmp/never-touched"), path=Path("/tmp/x.jsonl"))
+        self._writer = SimpleNamespace(
+            events_dir=Path("/tmp/never-touched"), path=Path("/tmp/x.jsonl")
+        )
         self._materializer = materializer
         self.flush_count = 0
         self._raise_on_flush = False

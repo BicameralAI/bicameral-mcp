@@ -95,9 +95,7 @@ def get_ledger():
                 )
                 backend = None
 
-            _real_ledger_instance = TeamWriteAdapter(
-                inner, writer, materializer, backend=backend
-            )
+            _real_ledger_instance = TeamWriteAdapter(inner, writer, materializer, backend=backend)
             backend_kind = (cfg.get("team") or {}).get("backend") or "local-only"
             logger.info(
                 "[ledger] team mode — events at %s (author: %s, backend: %s)",
