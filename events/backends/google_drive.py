@@ -30,6 +30,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from . import BackendAdapter
+
 logger = logging.getLogger(__name__)
 
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file"
@@ -112,7 +114,7 @@ def _bundled_client_config() -> dict:
     }
 
 
-class GoogleDriveAdapter:
+class GoogleDriveAdapter(BackendAdapter):
     """BackendAdapter against a single Google Drive folder."""
 
     def __init__(

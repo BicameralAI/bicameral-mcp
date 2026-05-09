@@ -14,6 +14,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from . import BackendAdapter
+
 
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -23,7 +25,7 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
-class LocalFolderAdapter:
+class LocalFolderAdapter(BackendAdapter):
     """Move per-author event files via a shared filesystem directory.
 
     Each author writes only to ``<remote_root>/<my-email>.jsonl``. Pull
