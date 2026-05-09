@@ -38,6 +38,14 @@ MAX_OUTPUT_TOKENS = 2048
 MAX_TURNS = 8
 REQUEST_TIMEOUT_S = 90.0
 
+# Retry envelope for transient API failures (#288 fix). The hard-gate flip
+# exposed that a single httpx ReadTimeout on one of N tool-use turns crashes
+# the whole eval run. Three attempts with exponential backoff: 2s / 8s / 32s.
+# Cumulative worst case ~42s of backoff sleep + 3×90s timeouts = ~5min per
+# call in the all-fail path — bounded by the workflow step's overall budget.
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_BASE_S = 2.0
+
 
 # ── Tool schemas exposed to the LLM ─────────────────────────────────────────
 
@@ -294,6 +302,13 @@ def _call_messages_api(
     messages: list[dict],
     api_key: str,
 ) -> dict:
+    """POST to the Anthropic Messages API with bounded retry on transient
+    failures (httpx timeouts + 5xx + 429). Raises RuntimeError on the final
+    attempt failing or on a 4xx-other terminal response so the runner's
+    existing per-case catch can record an `eval_error` outcome.
+    """
+    import time
+
     headers = {
         "anthropic-version": ANTHROPIC_API_VERSION,
         "content-type": "application/json",
@@ -313,11 +328,39 @@ def _call_messages_api(
         "messages": messages,
         "tools": TOOLS,
     }
-    with httpx.Client(timeout=REQUEST_TIMEOUT_S) as client:
-        resp = client.post(ANTHROPIC_API_URL, headers=headers, json=payload)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:500]}")
-        return resp.json()
+
+    last_exc: Exception | None = None
+    for attempt in range(1, _RETRY_ATTEMPTS + 1):
+        try:
+            with httpx.Client(timeout=REQUEST_TIMEOUT_S) as client:
+                resp = client.post(ANTHROPIC_API_URL, headers=headers, json=payload)
+
+            if resp.status_code >= 500 or resp.status_code == 429:
+                # Transient server-side or rate-limit — retry with backoff.
+                last_exc = RuntimeError(
+                    f"Anthropic API {resp.status_code} (attempt {attempt}/{_RETRY_ATTEMPTS}): "
+                    f"{resp.text[:200]}"
+                )
+                if attempt < _RETRY_ATTEMPTS:
+                    time.sleep(_RETRY_BACKOFF_BASE_S * (4 ** (attempt - 1)))
+                    continue
+                raise last_exc
+            if resp.status_code >= 400:
+                # Terminal client error (auth, malformed payload) — don't retry.
+                raise RuntimeError(f"Anthropic API error {resp.status_code}: {resp.text[:500]}")
+            return resp.json()
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as exc:
+            last_exc = exc
+            if attempt < _RETRY_ATTEMPTS:
+                time.sleep(_RETRY_BACKOFF_BASE_S * (4 ** (attempt - 1)))
+                continue
+            raise RuntimeError(
+                f"Anthropic API transport failure after {_RETRY_ATTEMPTS} attempts: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+    # Unreachable — the loop either returns or raises. mypy needs this.
+    raise RuntimeError(f"unreachable: retry loop exited without return (last_exc={last_exc!r})")
 
 
 # ── Public entrypoint ───────────────────────────────────────────────────────

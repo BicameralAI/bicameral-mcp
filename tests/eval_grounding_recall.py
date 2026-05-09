@@ -175,10 +175,31 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 repo_root=FIXTURE_REPO,
                 model=args.model,
             )
-        except RuntimeError as exc:
-            print(f"ERROR on {case.case_id}: {exc}", file=sys.stderr)
-            if args.gate_mode == "hard":
-                return {}, 3
+        except Exception as exc:
+            # Per-case failure (typically: API timeout / network — see retry
+            # loop in _bind_judge._call_messages_api). Record as eval_error
+            # outcome and continue; do NOT fail the whole run on one case.
+            # The aggregate gate check below catches the case where so many
+            # cases erred that recall fell below the gate.
+            print(f"ERROR on {case.case_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            rows.append(
+                {
+                    "case_id": case.case_id,
+                    "case_type": case.case_type,
+                    "intended_file": case.intended_file,
+                    "intended_symbol": case.intended_symbol,
+                    "bound_file": None,
+                    "bound_symbol": None,
+                    "outcome": "eval_error",
+                    "aborted": False,
+                    "abort_reason": None,
+                    "reasoning": "",
+                    "error_msg": f"{type(exc).__name__}: {exc}",
+                    "turns": 0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                }
+            )
             continue
 
         outcome = _classify(case, judgment)
