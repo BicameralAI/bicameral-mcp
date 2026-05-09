@@ -1000,9 +1000,10 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
     # can surface pending_compliance_checks in the outer tool response.
     _sync_result = None
     if name not in ("bicameral.link_commit", "link_commit", "bicameral.update", "update"):
-        from handlers.sync_middleware import ensure_ledger_synced
+        from handlers.sync_middleware import ensure_ledger_synced, ensure_team_synced
 
         _sync_result = await ensure_ledger_synced(ctx)
+        await ensure_team_synced(ctx)
 
     try:
         if name in ("bicameral.link_commit", "link_commit"):
@@ -1213,6 +1214,13 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 text=json.dumps({"error": str(exc), "action": action}, indent=2),
             )
         ]
+    finally:
+        # #277: push the author's JSONL to the team backend at most once
+        # per tool-call lifecycle. No-op in solo mode or when no writes
+        # happened. Errors swallowed at DEBUG inside the helper.
+        from handlers.sync_middleware import flush_team_writes
+
+        await flush_team_writes(ctx)
 
 
 async def run_smoke_test() -> dict[str, object]:

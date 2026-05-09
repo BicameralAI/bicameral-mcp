@@ -129,6 +129,40 @@ jobs:
           --skill-variant from-skill-md
           -o test-results/m1-adversarial.json
 
+      # ── M2 grounding-recall eval (hard gate, #280) ─────────────────
+      # Drives the bicameral-bind skill against tests/fixtures/grounding_recall/
+      # — synthetic fixture with 23 decisions across same-name-different-module,
+      # similar-intent, and cross-language cases. Cache hits at
+      # tests/eval/fixtures/bind_judge/ keep CI cost ~$0 unless the dataset,
+      # fixture repo, or skill change.
+      #
+      # Gate flipped warn → hard after PR #285 produced a stable baseline:
+      #   23 cases / precision 0.913 / recall 0.913 / abort_rate 0.000
+      # all gates passed with ~7-13 pp headroom. Future PRs that touch the
+      # bind handler / skill / fixture must keep recall ≥ 0.80, precision
+      # ≥ 0.85, abort_rate ≤ 0.30 — OR explicitly re-record the cache
+      # after a deliberate skill-prompt change. "Deliberate not drift."
+      - name: M2 grounding-recall eval (hard gate)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BICAMERAL_GROUNDING_EVAL_MODEL: claude-haiku-4-5-20251001
+        run: >
+          python tests/eval_grounding_recall.py
+          --gate-mode hard
+          -o test-results/m2-grounding-recall.json
+
+      # ── Surface M2 metrics on the GitHub run summary (#280 PR-3) ───
+      # Reads test-results/m2-grounding-recall.json and renders a markdown
+      # table to $GITHUB_STEP_SUMMARY so reviewers can read precision /
+      # recall / abort-rate without downloading the artifact. always()
+      # guard means the summary still appears when the eval step above
+      # fails the hard gate (so the breach line is visible inline).
+      - name: M2 metrics summary
+        if: always() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: python tests/eval_grounding_recall_summary.py test-results/m2-grounding-recall.json >> "$GITHUB_STEP_SUMMARY"
+
       # ── Generate rich E2E report from artifacts ────────────────────
       # Ubuntu-only: the script consumes the medusa adversarial corpus
       # (cloned only on Ubuntu above) plus the Phase 3 E2E artifacts
@@ -139,8 +173,11 @@ jobs:
         run: python tests/generate_e2e_report.py
 
       # ── Generate step summary from JUnit XML ───────────────────────
+      # SHA-pinned to v2.4 (target=dist with bundled index.js); v2 mutable
+      # tag was repointed to v2.5 (target=main) on 2026-05-07 which broke
+      # the bundled artifact (#272). Pin per OWASP-03 / install-trust-model.
       - name: Test Summary
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86  # v2.4
         if: always()
         with:
           paths: test-results/results.xml

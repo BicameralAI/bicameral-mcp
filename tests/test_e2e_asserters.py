@@ -166,11 +166,16 @@ def test_flow1_accepts_cherry_pick_tsx():
     assert ok, f"Flow 1 should accept cherry-pick.tsx; detail: {detail}"
 
 
-def test_flow1_fails_without_ratify():
-    """Even if bindings are fine, missing ratify still fails the asserter."""
+def test_flow1_passes_without_ratify():
+    """Per #272 Fix 3 / #108 Flow 1 spec update, the ingest skill is now
+    advisory about ratification — the agent prints a one-line "run
+    bicameral.ratify when ready" advisory rather than firing an
+    AskUserQuestion gate that auto-calls ratify. Flow 5 (PM Friday review)
+    owns ratify validation. The asserter must accept the no-ratify path.
+    """
     calls = _seed_calls(commit_history_anchor="app/src/lib/git/reorder.ts")
-    # Drop the three ratify calls.
+    # Drop the three ratify calls — emulate the new advisory-only flow.
     calls = [c for c in calls if "ratify" not in c["name"]]
     ok, detail = run_e2e_flows.assert_flow_1(calls)
-    assert not ok
-    assert "ratify" in detail.lower()
+    assert ok, f"Flow 1 should pass without ratify (advisory-only); detail: {detail}"
+    assert "advisory-only" in detail or "no ratify" in detail.lower()

@@ -21,6 +21,7 @@ from .queries import (
     get_all_decisions,
     get_compliance_verdict,
     get_decision_level,
+    get_decision_source,
     get_decisions_for_file,
     get_decisions_for_files,
     get_pending_decisions_with_regions,
@@ -268,6 +269,15 @@ class SurrealDBLedgerAdapter:
         or ``None`` if unset. Used by the bind handler's L1 exemption."""
         await self._ensure_connected()
         return await get_decision_level(self._client, decision_id)
+
+    async def get_decision_source(self, decision_id: str) -> str | None:
+        """Return the decision's ``source_type`` or ``None`` if unset.
+
+        Used by the M2 grounding-precision telemetry (#280 PR-3) to segment
+        events by decision provenance (controlled enum, safe to relay).
+        """
+        await self._ensure_connected()
+        return await get_decision_source(self._client, decision_id)
 
     async def bind_decision(
         self,

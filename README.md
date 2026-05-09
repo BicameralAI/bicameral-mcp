@@ -74,6 +74,45 @@ bicameral-mcp --smoke-test
 
 ---
 
+## Solo or Team mode
+
+Bicameral runs in two modes; the setup wizard asks you which one at install time.
+
+| | Solo | Team |
+|---|---|---|
+| **Best for** | Individual builders; small projects with one decision-maker | Multiple people writing decisions for the same codebase (PMs, designers, multiple engineers) |
+| **Where decisions live** | Local SurrealDB at `.bicameral/ledger.db`; not shared | One append-only `<your-email>.jsonl` per teammate; replicated via a remote substrate you provision |
+| **Who can ingest** | You | Anyone on the shared substrate (PM ingests a PRD, dev pulls and surfaces it on `preflight`) |
+| **What gets shared** | Nothing leaves your machine | Decision payloads, canonical IDs, signoffs. **No source code** |
+| **How replication works** | N/A | Pull-only on tool invocation (~30 s freshness). No daemons, no webhooks, no central server |
+| **Failure if remote is down** | N/A | Falls back to local; resync next call. No blocking |
+
+### Team-mode remote substrate
+
+Team mode replicates events through a substrate **you provision and own** —
+nothing routes through a Bicameral-operated server, and your decision data
+never crosses our infrastructure. The wizard supports two backends:
+
+| Backend | Substrate | Setup |
+|---|---|---|
+| **Google Drive** (default) | A folder in your team's Google account. Each teammate writes to their own `<email>.jsonl`; everyone reads the rest. | 3-minute one-time OAuth client setup, then Create-or-Join in the wizard. |
+| **Local folder** (advanced) | A directory mounted on every teammate's machine (NFS, Dropbox, syncthing). | One prompt for the path. |
+
+S3, Dropbox-native, and Box backends are on the roadmap but not yet shipped — we
+deliberately ship Drive first, validate the model with paying teams, then extend.
+
+The Drive integration is scoped to `drive.file` — the Bicameral CLI on your
+machine can only touch files it creates inside the team folder; the rest of your
+Drive (other folders, Google Docs, shared files) is invisible to the CLI.
+Decision data flows your-CLI ↔ Google directly; **Bicameral the company does
+not receive copies of your files**. We do see aggregate OAuth telemetry (API
+request counts, OAuth consent records — not contents) as the OAuth app
+publisher, the same way any OAuth-using tool's vendor does. Token cache lives
+at `~/.bicameral/google-drive-token.json`, mode 0600. Full security posture
+and operator walkthrough: [`docs/team-mode-setup.md`](docs/team-mode-setup.md).
+
+---
+
 ## Slash Commands
 
 After setup, Claude Code gets these slash commands:
@@ -95,8 +134,10 @@ The agent also fires these automatically — `preflight` before any code change,
 | File | What it is |
 |---|---|
 | `.mcp.json` | MCP server config for Claude Code |
-| `.bicameral/config.yaml` | Mode (`solo`/`team`) and guided-mode flag |
+| `.bicameral/config.yaml` | Mode (`solo`/`team`), guided-mode flag, and (in team mode) `team.backend` + `team.folder_id`/`team.remote_root` + `team.role` |
 | `.bicameral/ledger.db` | Local SurrealDB decision ledger (solo mode) |
+| `.bicameral/events/<email>.jsonl` | Append-only event log per teammate (team mode) |
+| `~/.bicameral/google-drive-token.json` | Drive OAuth token cache, mode 0600 (team mode + Drive backend only) |
 | `.gitignore` entry | Ignores `.bicameral/` in solo mode |
 | `.claude/settings.json` | PostToolUse hook (auto-sync after commits) + SessionEnd hook (capture mid-session decisions) |
 | `.claude/skills/bicameral-*/SKILL.md` | Slash commands |
