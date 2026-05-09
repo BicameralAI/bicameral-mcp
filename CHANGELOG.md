@@ -3,6 +3,14 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.14.4 — Hotfix: skip install-time manifest verification until release-side sigstore wiring lands
+
+Hotfix on v0.14.3. Unblocks every fresh `bicameral-mcp setup` against the published wheel — the v0.14.x wheels ship `skills-manifest.toml` and `hooks-manifest.json` but no `.sig`/`.crt` companions yet (release-side sigstore signing is a deferred follow-up of #218 LLM-06 / #237 LLM-11). The install-time verifiers were hitting a missing-signature path their own docstrings claim is unreachable, raising `SignatureError` and aborting setup.
+
+### Fixed
+
+- **`setup_wizard._bundled_manifest_paths` + `_bundled_skills_manifest_paths`: return `None` unless ALL THREE artifacts (manifest + `.sig` + `.crt`) exist on disk.** Pre-fix, the helpers returned the triple as soon as the manifest existed, regardless of whether the signature/certificate companions were also present — turning an interim packaging gap (manifest shipping, signatures not yet shipping) into a hard install-time crash. The all-or-nothing guard matches what both helpers' docstrings already promised ("returns the triple when artifacts are found alongside the installed package"). Verification logic itself is unchanged and stays armed: once the release pipeline starts emitting `.sig`/`.crt` alongside the manifests in the wheel (BicameralAI/bicameral-mcp#TBD, owner: Kevin), the helpers automatically resume returning the triple and both verifiers re-engage with no install-time code change. New regression tests in `tests/test_setup_wizard.py` lock in both the missing-sig (return `None`) and all-present (return triple) branches for both surfaces. Symptom that motivated the hotfix: stack trace ending at `release.skills_verify.SignatureError: signature not found: .../share/bicameral-mcp/skills-manifest.toml.sig` after Google Drive auth during team-mode setup.
+
 ## v0.14.3 — #280 grounding precision + #277 team-mode remote event-log adapter
 
 Triages 25 dev commits onto main: bind-handler grounding-precision hardening
