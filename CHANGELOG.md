@@ -21,6 +21,7 @@ All notable changes to bicameral-mcp are tracked here. Format loosely follows
 
 - **`code_locator/tools/validate_symbols.py`: dropped unused `self._db` field.** The retention comment ("Retained so `code_locator.adapter.ground_mappings()` can reach `db.lookup_by_file()`") referenced a path deleted in v0.6.0; the field had zero readers.
 - **`tests/eval_decision_relevance.py`: docstring at L73 updated** to describe the post-v0.6.0 grounding pipeline (caller-LLM bind via `handle_bind`) instead of the deleted `code_graph.ground_mappings + ledger` pipeline.
+- **M2 grounding-recall CI step flipped from `--gate-mode warn` to `--gate-mode hard` (#280 followup).** PR #285's first CI run produced a clean baseline — 23 cases / precision 0.913 / recall 0.913 / abort_rate 0.000, all gates passing with ~7-13 pp headroom. Locking the baseline in before drift sets in: future PRs that touch the bind handler / skill / fixture must keep recall ≥ 0.80, precision ≥ 0.85, abort_rate ≤ 0.30 — or deliberately re-record the cache after a skill-prompt change. Removed `continue-on-error: true` from the eval step so a breach actually fails CI; the metrics-summary step keeps `continue-on-error: true` so a renderer bug never masks the eval result.
 
 ## v0.14.1 — SBOM emitter fix + Layer 3 diagnose CLI + dependabot
 
