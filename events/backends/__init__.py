@@ -42,8 +42,12 @@ class BackendAdapter(ABC):
         """Best-effort write lock. Caller handles races on its own."""
 
     @abstractmethod
-    async def list_peers(self) -> AsyncIterator[str]:
-        """Yield ``<author-email>`` for every peer file in remote_root."""
+    def list_peers(self) -> AsyncIterator[str]:
+        """Yield ``<author-email>`` for every peer file in remote_root.
+
+        Declared synchronous (returns the async iterator) to match async-generator
+        implementations. See https://mypy.readthedocs.io/en/stable/more_types.html#asynchronous-iterators
+        """
 
 
 def get_backend(config: dict) -> BackendAdapter | None:
