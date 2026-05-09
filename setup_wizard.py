@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -951,6 +952,219 @@ def _select_collaboration_mode() -> str:
     return result if result is not None else "team"
 
 
+# ── Team-mode backend wizard (#277) ─────────────────────────────────────
+
+
+def _prompt_text_or_exit(message: str) -> str:
+    """Prompt for free text; exit cleanly if the user aborts (Ctrl-C)."""
+    import questionary
+
+    answer = questionary.text(message).ask()
+    if answer is None:
+        sys.exit("Setup aborted.")
+    return answer.strip()
+
+
+def _prompt_yes_no(message: str, default: bool = False) -> bool:
+    """Yes/no confirmation with explicit default. Default-No when in doubt."""
+    import questionary
+
+    answer = questionary.confirm(message, default=default).ask()
+    return bool(answer) if answer is not None else default
+
+
+def _extract_folder_id(raw: str) -> str:
+    """Accept either a raw folder ID or a Drive folder URL."""
+    raw = raw.strip()
+    marker = "/folders/"
+    if marker in raw:
+        tail = raw.split(marker, 1)[1]
+        return tail.split("?", 1)[0].split("/", 1)[0]
+    return raw
+
+
+def _resolved_signer(repo_path: Path) -> str:
+    """The signer string the team will see in the JSONL substrate.
+
+    Defaults to the privacy-positive `local-part-only` policy (see
+    events/writer.py::_resolve_signer_email) — operator can override in
+    config.yaml after setup.
+    """
+    from events.writer import _get_git_email, _resolve_signer_email
+
+    return _resolve_signer_email(_get_git_email(str(repo_path)), mode="local-part-only")
+
+
+# ── Colored security disclosure (#277, user request) ────────────────────
+# Stays explicit about what Bicameral can and cannot see BEFORE we open the
+# OAuth consent browser. Color rendered only when stdout is a TTY; falls
+# back to plain text in pipes / CI / non-interactive contexts.
+
+_ANSI_BOLD = "\033[1m"
+_ANSI_GREEN = "\033[32m"
+_ANSI_YELLOW = "\033[33m"
+_ANSI_CYAN = "\033[36m"
+_ANSI_RESET = "\033[0m"
+
+
+def _color(s: str, code: str) -> str:
+    """Wrap with ANSI color code only when stdout is a TTY."""
+    if not sys.stdout.isatty():
+        return s
+    return f"{code}{s}{_ANSI_RESET}"
+
+
+def _print_drive_security_disclosure() -> None:
+    """Show the security model BEFORE the browser redirects to Google.
+
+    Operator gets one last chance to read what Bicameral can and cannot see
+    before granting Drive access. Required by team-mode setup UX (#277).
+    """
+    border = _color("─" * 72, _ANSI_CYAN)
+    bold = _ANSI_BOLD if sys.stdout.isatty() else ""
+    reset = _ANSI_RESET if sys.stdout.isatty() else ""
+
+    print()
+    print(border)
+    print(_color("  About to open Google sign-in. Read this first:", _ANSI_BOLD))
+    print(border)
+    print()
+    print(f"  {bold}What flows where{reset}")
+    print(
+        f"    {_color('•', _ANSI_GREEN)} Decision data (transcripts, payloads) flows your-CLI ↔ Google directly."
+    )
+    print("      Bicameral the company does NOT receive copies. No Bicameral server in the loop.")
+    print(
+        f"    {_color('•', _ANSI_GREEN)} Your OAuth token stays on your machine ({_color('~/.bicameral/google-drive-token.json', _ANSI_CYAN)}, mode 0600)."
+    )
+    print()
+    print(f"  {bold}What the `drive.file` scope means for the rest of your Drive{reset}")
+    print(
+        f"    {_color('•', _ANSI_GREEN)} The Bicameral CLI on your machine can only touch files it creates"
+    )
+    print("      in the team folder. Your other Drive content (other folders, Google Docs,")
+    print("      shared files) is invisible to the CLI — Google enforces this.")
+    print()
+    print(f"  {bold}What Bicameral the company CAN see (as the OAuth app publisher){reset}")
+    print(
+        f"    {_color('•', _ANSI_YELLOW)} Aggregate API request counts. {_color('Not contents.', _ANSI_BOLD)}"
+    )
+    print(
+        f"    {_color('•', _ANSI_YELLOW)} OAuth consent records: which Google accounts authenticated, when."
+    )
+    print()
+    print(f"  {bold}The trust dependency you're accepting{reset}")
+    print("    Same as any OAuth tool (gh, gcloud, Notion, Slack desktop): you trust")
+    print(
+        "    that the open-source CLI behaves as advertised. Source: github.com/BicameralAI/bicameral-mcp"
+    )
+    print()
+    print("  Full security model: docs/team-mode-setup.md")
+    print(border)
+    print()
+
+
+def _select_team_backend(repo_path: Path) -> dict:
+    """Top-level Create vs Join vs LocalFolder dispatch. Returns team config dict."""
+    import questionary
+
+    if not _is_interactive():
+        return {}
+
+    intent = questionary.select(
+        "How do you want to set up the shared ledger?",
+        choices=[
+            questionary.Choice(
+                "Create a new shared ledger (you become the founding member)",
+                value="create",
+            ),
+            questionary.Choice(
+                "Join an existing shared ledger (paste a folder ID from a teammate)",
+                value="join",
+            ),
+            questionary.Choice(
+                "Use a shared filesystem instead (NFS, Dropbox, syncthing) — advanced",
+                value="local_folder",
+            ),
+        ],
+        default="create",
+    ).ask()
+    if intent is None or intent == "create":
+        return _create_shared_ledger_drive(repo_path)
+    if intent == "join":
+        return _join_shared_ledger_drive(repo_path)
+    return _select_local_folder_backend()
+
+
+def _create_shared_ledger_drive(repo_path: Path) -> dict:
+    """Create branch — operator becomes the founding member."""
+    from events.backends.google_drive import GoogleDriveAdapter
+
+    _print_drive_security_disclosure()
+    if not _prompt_yes_no("Open browser to grant Drive access?", default=True):
+        sys.exit("Aborted. Re-run setup when you're ready to grant access.")
+    adapter = GoogleDriveAdapter(folder_id=None, author=_resolved_signer(repo_path))
+    adapter._credentials()  # runs OAuth, caches token
+    repo_name = Path(repo_path).resolve().name
+    folder_id = adapter.create_folder(name=f"bicameral-{repo_name}-ledger")
+    print()
+    print(f"  Created shared ledger folder: bicameral-{repo_name}-ledger")
+    print(f"  Folder ID: {folder_id}")
+    print(f"  URL: https://drive.google.com/drive/folders/{folder_id}")
+    print()
+    print("  Send this to your teammates so they can Join:")
+    print(
+        f'    "Share this folder with my teammate as Editor, then run `bicameral setup` '
+        f'and paste this folder ID: {folder_id}"'
+    )
+    print()
+    return {"backend": "google_drive", "folder_id": folder_id, "role": "founding_member"}
+
+
+def _join_shared_ledger_drive(repo_path: Path) -> dict:
+    """Join branch — verify access, confirm identity, then persist."""
+    raw = _prompt_text_or_exit(
+        "Paste the shared ledger folder ID (or full Drive URL) from your teammate:"
+    )
+    folder_id = _extract_folder_id(raw)
+
+    from events.backends.google_drive import GoogleDriveAdapter
+
+    _print_drive_security_disclosure()
+    if not _prompt_yes_no("Open browser to grant Drive access?", default=True):
+        sys.exit("Aborted. Re-run setup when you're ready to grant access.")
+
+    adapter = GoogleDriveAdapter(folder_id=folder_id, author=_resolved_signer(repo_path))
+    adapter._credentials()
+    try:
+        adapter.verify_access()
+    except Exception as exc:
+        sys.exit(f"\n  Cannot join shared ledger: {exc}")
+
+    signer = _resolved_signer(repo_path)
+    confirmed = _prompt_yes_no(
+        f"You'll appear in the team ledger as `{signer}`. Continue?",
+        default=False,
+    )
+    if not confirmed:
+        sys.exit(
+            "Aborted. Adjust signer_email_fallback in your config.yaml "
+            "(redact | local-part-only | full) and re-run setup."
+        )
+    return {"backend": "google_drive", "folder_id": folder_id, "role": "member"}
+
+
+def _select_local_folder_backend() -> dict:
+    """Advanced branch — shared filesystem (NFS, Dropbox, syncthing)."""
+    raw = _prompt_text_or_exit(
+        "Path to the shared folder (must exist on every teammate's machine):"
+    )
+    p = Path(raw).expanduser().resolve()
+    if not p.exists() or not os.access(p, os.W_OK):
+        sys.exit(f"\n  Path not writable: {p}")
+    return {"backend": "local_folder", "remote_root": str(p), "role": "member"}
+
+
 def _select_guided_mode() -> bool:
     """Prompt user for guided-mode intensity."""
     import questionary
@@ -1024,27 +1238,39 @@ def _write_collaboration_config(
     mode: str,
     guided: bool = False,
     telemetry: bool = False,
+    team_backend: dict | None = None,
 ) -> None:
     """Write .bicameral/config.yaml with collaboration mode, guided-mode, telemetry,
-    and signer-email fallback flags.
+    signer-email fallback, and (optionally) the team-backend block.
 
     `signer_email_fallback` (#200 Phase 2) defaults to `local-part-only` —
     privacy-positive: preserves attribution prefix on session-originated
     ingests without leaking the full git user.email to the ledger / team-
     mode JSONL substrate. Modes: `redact` (strongest, no attribution),
     `local-part-only` (default), `full` (legacy verbatim email).
+
+    `team_backend` (#277): when present, persists `team:` block with
+    `backend`, `role`, and either `folder_id` (Drive) or `remote_root`
+    (LocalFolder).
     """
     config_path = data_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
+    base = (
         "# Bicameral configuration\n"
         f"mode: {mode}\n"
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
         "signer_email_fallback: local-part-only\n"
-        "render_source_attribution: redacted\n",  # #209: privacy-positive default (was "full")
-        encoding="utf-8",
+        "render_source_attribution: redacted\n"  # #209: privacy-positive default
     )
+    if team_backend:
+        team_lines = ["team:"]
+        for key in ("backend", "folder_id", "remote_root", "role"):
+            if key in team_backend:
+                value = team_backend[key]
+                team_lines.append(f"  {key}: {value}")
+        base += "\n".join(team_lines) + "\n"
+    config_path.write_text(base, encoding="utf-8")
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
@@ -1175,7 +1401,19 @@ def run_setup(
     collab_mode = _select_collaboration_mode()
     guided = _select_guided_mode()
     telemetry = _select_telemetry()
-    _write_collaboration_config(data_path, collab_mode, guided=guided, telemetry=telemetry)
+
+    team_backend: dict | None = None
+    if collab_mode == "team":
+        # #277: Create vs Join vs LocalFolder dispatch for the shared ledger.
+        team_backend = _select_team_backend(repo_path)
+
+    _write_collaboration_config(
+        data_path,
+        collab_mode,
+        guided=guided,
+        telemetry=telemetry,
+        team_backend=team_backend,
+    )
     _ensure_gitignore(data_path, mode=collab_mode, repo_path=repo_path)
 
     if collab_mode == "team":

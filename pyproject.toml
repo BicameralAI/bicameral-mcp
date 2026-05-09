@@ -44,6 +44,9 @@ dependencies = [
   "surrealdb==2.0.0",
   "questionary>=2.0.0",
   "sigstore>=3.0",
+  # Google Drive backend for team-mode replication (#277).
+  "google-auth-oauthlib>=1.2",
+  "google-api-python-client>=2.100",
 ]
 
 [project.optional-dependencies]
