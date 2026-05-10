@@ -78,8 +78,7 @@ async def test_define_index_overwrite_type_violation_matches_recoverable_pattern
         await c.execute("RELATE input_span:fresh_1 -> yields -> decision:d_1")
         # Tighten — this re-validates the source_span row against the new IN type.
         await c.execute(
-            "DEFINE TABLE OVERWRITE yields SCHEMAFULL "
-            "TYPE RELATION IN input_span OUT decision"
+            "DEFINE TABLE OVERWRITE yields SCHEMAFULL TYPE RELATION IN input_span OUT decision"
         )
         with pytest.raises(LedgerError) as exc:
             await c.execute(

@@ -64,8 +64,7 @@ async def test_legacy_ledger_fixture_reaches_clean_state(slug: str, module) -> N
         rows = await c.query("SELECT version FROM schema_meta LIMIT 1")
         assert rows, f"{slug}: schema_meta empty after migrate"
         assert rows[0]["version"] == SCHEMA_VERSION, (
-            f"{slug}: schema_meta.version = {rows[0]['version']!r}, "
-            f"expected {SCHEMA_VERSION}"
+            f"{slug}: schema_meta.version = {rows[0]['version']!r}, expected {SCHEMA_VERSION}"
         )
 
         # Fixture-specific invariants.
@@ -77,8 +76,7 @@ async def test_legacy_ledger_fixture_reaches_clean_state(slug: str, module) -> N
         await migrate(c, allow_destructive=True)
         rows = await c.query("SELECT version FROM schema_meta LIMIT 1")
         assert rows[0]["version"] == SCHEMA_VERSION, (
-            f"{slug}: schema_meta.version regressed on second migrate "
-            f"({rows[0]['version']!r})"
+            f"{slug}: schema_meta.version regressed on second migrate ({rows[0]['version']!r})"
         )
     finally:
         await c.close()

@@ -147,9 +147,7 @@ def _classify_recovery(diagnosis) -> tuple[str, str]:
             "Connect may have stopped mid-init; re-run a tool call to retry."
         )
 
-    return "clean", (
-        f"Ledger is at expected schema v{exp}. No remediation needed."
-    )
+    return "clean", (f"Ledger is at expected schema v{exp}. No remediation needed.")
 
 
 def _events_present(ledger_url: str) -> bool:

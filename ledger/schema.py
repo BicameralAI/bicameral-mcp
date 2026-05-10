@@ -55,10 +55,10 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
 # (tests/test_schema_recoverable_errors.py) that produces the exact string,
 # so a future surrealdb-py bump that changes the format fails CI loudly.
 RECOVERABLE_DEFINE_PATTERNS: tuple[str, ...] = (
-    "already exists",         # DEFINE re-applied with no change
-    "already contains",       # UNIQUE index attempted on table w/ duplicates
-    "expected a record<",     # TYPE constraint mismatch (rename of IN/OUT type)
-    "but expected",           # generic value-type assertion failure (defensive)
+    "already exists",  # DEFINE re-applied with no change
+    "already contains",  # UNIQUE index attempted on table w/ duplicates
+    "expected a record<",  # TYPE constraint mismatch (rename of IN/OUT type)
+    "but expected",  # generic value-type assertion failure (defensive)
 )
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -462,7 +462,11 @@ async def _execute_define_idempotent(client: LedgerClient, sql: str) -> None:
             raise
         # Loud signal — UNIQUE-violation and type-mismatch each warrant a
         # warning so the next migration's cleanup is visible in audit logs.
-        if "already contains" in msg_lower or "expected a record<" in msg_lower or "but expected" in msg_lower:
+        if (
+            "already contains" in msg_lower
+            or "expected a record<" in msg_lower
+            or "but expected" in msg_lower
+        ):
             logger.warning(
                 "[schema] DEFINE skipped — existing data violates new constraint "
                 "(%s). Migration will clean stale rows and re-apply. detail=%s",
