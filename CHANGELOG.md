@@ -3,6 +3,26 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.14.5 — bicameral_diagnose tool + reset --replay-from-events + README polish (triage)
+
+Triages the #296 ledger-resilience track and the #299 README pass onto main. New `bicameral_diagnose` MCP tool gives operators a privacy-preserving structural read of their ledger (recovery_path classification + table counts + recent audit events) without crashing on init when the ledger is corrupt — pairs with `bicameral_reset --replay-from-events` for the dataloss-avoidant recovery path. README opens with a position-take pitch + three-scene demo video drop-in (ingest → preflight → ratify async).
+
+### Added
+
+- **`bicameral_diagnose` MCP tool (#296).** Read-only structural diagnosis that opens a raw `LedgerClient` (no `init_schema` / `migrate`) so it works even when the normal adapter connect crashes during init. Returns `recovery_path` classification (`clean` / `fixable` / `reset_rebuild` / `reset_destructive`), `schema_meta` state, table counts, recent `warn`|`error` audit events, and a `next_action` recommendation. Slash alias `/bicameral-diagnose`. New skill at `skills/bicameral-diagnose/SKILL.md`. Privacy-preserving — only structural shape leaves the machine, never decision content.
+- **`bicameral_reset --replay-from-events` flag (#296).** Rebuild the ledger from the team-mode JSONL event substrate instead of nuking decision rows. Use when the binary store is corrupt but the event log is intact — recovers without dataloss in team mode.
+- **Legacy-ledger fixtures + replay tests (#296).** New `tests/fixtures/legacy_ledgers/` holds reproducible byte-level corruption fixtures (e.g. `v3_yields_source_span.py` for the v16→v17 yields integrity bug). `tests/test_legacy_ledger_fixtures.py` and `tests/test_schema_recoverable_errors.py` exercise the recovery paths against these fixtures.
+
+### Fixed
+
+- **`ledger/schema.py`: resilient init + v16→v17 yields integrity cleanup (#296).** v0.14.4 ledgers with stale `source_span:...` records on the `yields.in` field rejected `DEFINE INDEX OVERWRITE idx_yields_unique` on every connect, blocking `ingest` / `history` / `preflight` until manual reset. The migration now sweeps these stale rows during the v16→v17 step and the init path tolerates the recovery without aborting. Pairs with `bicameral_diagnose` for operator visibility into whether the migration ran.
+
+### Documentation
+
+- **README opener rewrite (#299).** Two-paragraph position-take: paragraph 1 names the failure mode ("requirement gaps surfaced mid-implementation are buried under thousands of lines of code"); paragraph 2 introduces Bicameral MCP as a **spec compliance layer** for AI-assisted engineering that ingests transcripts / PRDs / Slack threads, captures any mid-implementation decision that was not discussed (to be ratified async by the product owner), and pins each one to the implementing code.
+- **README demo video section (#299).** Replaces the dashboard image transition with a three-beat demo loop — ingest (PM/dev) → preflight (auto) → ratify async (product owner) — each as an inline `user-attachments` video drop-in so the videos render on github.com without asset-path coupling.
+- **README star CTA relocation (#299).** Moved from the top header (where it sat awkwardly between the hero image and the logo) to a centered placement immediately after the demo videos — natural post-demo conversion beat.
+
 ## v0.14.4 — Hotfix: skip install-time manifest verification until release-side sigstore wiring lands
 
 Hotfix on v0.14.3. Unblocks every fresh `bicameral-mcp setup` against the published wheel — the v0.14.x wheels ship `skills-manifest.toml` and `hooks-manifest.json` but no `.sig`/`.crt` companions yet (release-side sigstore signing is a deferred follow-up of #218 LLM-06 / #237 LLM-11). The install-time verifiers were hitting a missing-signature path their own docstrings claim is unreachable, raising `SignatureError` and aborting setup.
