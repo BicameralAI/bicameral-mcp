@@ -373,22 +373,7 @@ class BicameralContext:
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
     # repo-state expectations before chaining downstream tools.
-    # #200 Phase 2: also stores the session-scoped `seen_ingest_warning`
-    # flag (set by `bicameral-ingest` Step 0.6 after the first pre-ingest
-    # leak warning is shown; gates re-display on subsequent ingests in the
-    # same session). Read via `seen_ingest_warning` property; set via
-    # `set_seen_ingest_warning(bool)`.
     _sync_state: dict = field(default_factory=dict)
-
-    @property
-    def seen_ingest_warning(self) -> bool:
-        """True if the pre-ingest leak warning has been shown this session."""
-        return bool(self._sync_state.get("seen_ingest_warning", False))
-
-    def set_seen_ingest_warning(self, value: bool) -> None:
-        """Set the session-scoped flag. Frozen-dataclass-safe — mutates
-        the `_sync_state` dict's contents, not the dataclass field."""
-        self._sync_state["seen_ingest_warning"] = bool(value)
 
     @classmethod
     def from_env(cls) -> BicameralContext:

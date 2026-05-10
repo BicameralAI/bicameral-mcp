@@ -125,35 +125,16 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
 - Using semantic clustering as the first move when structural signals exist (wastes tokens)
 - Fabricating topic titles or decision estimates you aren't confident in — if uncertain, mark as `?` in the preview and let the user decide
 
-### 0.6. Pre-ingest leak warning (#200 Phase 2)
+### 0.6. What gets persisted (and where)
 
 > **Telemetry note**: this skill emits `skill_begin` / `skill_end` events with `g2_*` / `g3_*` / `g6_*` diagnostic counters (counts only, no content). Set `BICAMERAL_TELEMETRY=0` to opt out before invoking.
 
-Before the first `bicameral.ingest` call of the current session, fire an `AskUserQuestion` warning the operator that ingested `source_excerpt` / `span.text` quotes persist verbatim to the ledger and (in team mode) commit to git via the JSONL event substrate. Skip this step if `bicameral.context()` reports `seen_ingest_warning=true` for the current session.
+Ingested `source_excerpt` / `span.text` quotes persist **verbatim** to the local ledger at `~/.bicameral/`. In team mode they additionally sync to your team's shared substrate (Google Drive folder or shared filesystem) as per-author append-only `<email>.jsonl`, where the team's Drive ACL or filesystem permissions govern visibility. Bicameral the company never sees decision content. The team-mode disclosure is shown once during `bicameral-mcp setup`; do not re-prompt the operator inside this skill.
 
-```python
-AskUserQuestion({
-  questions: [{
-    question: "Bicameral will record verbatim source quotes from your transcripts/PRDs/Slack threads to the ledger. In team mode, these quotes are committed to git via the JSONL event substrate, making them visible to every collaborator with repo access. Continue?",
-    header: "Ingest leak warning",
-    multiSelect: false,
-    options: [
-      { label: "Yes — proceed, don't ask again this session",
-        description: "Default for repeated ingests in the same workflow. Sets seen_ingest_warning for the rest of this server session." },
-      { label: "Yes — proceed, warn me before each ingest",
-        description: "Highest visibility. The flag is reset on the next ingest call so the warning fires again." },
-      { label: "Cancel this ingest",
-        description: "Stop. Nothing is sent to the ledger." }
-    ]
-  }]
-})
-```
+Two automatic protections run regardless of operator consent:
 
-When the operator picks the first option, set `seen_ingest_warning=true` for the rest of the session. When they pick the second, leave the flag unset so the next ingest re-fires the warning. Cancel exits the skill with `errored=False, error_class="user_cancelled"`.
-
-Defense-in-depth: even with the operator's consent, ingested payloads still pass the existing secret-redaction regex (`(api[_-]?key|token|secret|password|bearer)\s*[=:]\s*\S+` → `***REDACTED***`) before landing in the ledger.
-
-The `signer_email_fallback` config field in `.bicameral/config.yaml` (default `local-part-only`; see "Signer fallback chain" below for the deterministic gate) further constrains what email-shaped data reaches team-mode JSONL.
+- **Secret redaction.** Payloads pass `(api[_-]?key|token|secret|password|bearer)\s*[=:]\s*\S+` → `***REDACTED***` before landing in the ledger.
+- **Signer-email policy.** The `signer_email_fallback` config field in `.bicameral/config.yaml` (default `local-part-only`; see "Signer fallback chain" below) gates what email-shaped data reaches team-mode JSONL.
 
 ### 0.5. Pre-ingest context pull (v0.7.3+)
 
