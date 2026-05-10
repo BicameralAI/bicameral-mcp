@@ -90,3 +90,27 @@ def test_install_sets_executable_bit(tmp_path: Path) -> None:
     # Owner must have execute; world-readable acceptable
     assert mode & stat.S_IXUSR
     assert mode & stat.S_IRUSR
+
+
+def test_install_handles_submodule_gitdir_pointer(tmp_path: Path) -> None:
+    """Submodule layout — ``.git`` is a *file* containing ``gitdir: <path>``,
+    not a directory. The hooks live under the resolved gitdir, not under
+    a synthesized ``<repo>/.git/hooks``. Regression for the install
+    crashing with ``NotADirectoryError`` when run inside a submodule."""
+    superrepo = tmp_path / "super"
+    real_gitdir = superrepo / ".git" / "modules" / "sub"
+    real_gitdir.mkdir(parents=True)
+    (real_gitdir / "HEAD").write_text("ref: refs/heads/main\n")
+
+    submodule = superrepo / "sub"
+    submodule.mkdir()
+    # Relative pointer, mirroring how `git submodule add` writes it.
+    (submodule / ".git").write_text("gitdir: ../.git/modules/sub\n")
+
+    written = _install_git_pre_push_hook(submodule)
+    assert written is True
+
+    # Hook lives under the real gitdir — NOT under the submodule's .git file.
+    hook = real_gitdir / "hooks" / "pre-push"
+    assert hook.exists()
+    assert "bicameral" in hook.read_text()
