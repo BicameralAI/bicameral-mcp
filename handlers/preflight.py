@@ -272,7 +272,7 @@ def _check_dedup(ctx, topic: str) -> bool:
 async def _region_anchored_preflight(
     ctx,
     file_paths: list[str],
-) -> tuple[list[DecisionMatch], bool]:
+) -> tuple[list[DecisionMatch], bool, str | None]:
     """file_paths (caller-supplied) → decisions pinned to those regions.
 
     The caller LLM is responsible for resolving which files a proposed change
@@ -284,14 +284,20 @@ async def _region_anchored_preflight(
     operation/reorder.tsx``. Expansion is deterministic, no LLM in the path,
     bounded by ``code_locator/config.py::max_neighbors_per_result``.
 
-    Returns ``(matches, expanded)`` where ``expanded`` is True iff the graph
-    expansion produced extra paths beyond the caller-supplied set, so the
-    caller can record ``"graph"`` in ``sources_chained``. Direct-pin matches
-    carry ``confidence=0.9``; matches surfaced only via expanded paths carry
-    ``confidence=0.7``.
+    Returns ``(matches, expanded, fallback_reason)``:
+      - ``expanded`` is True iff the graph expansion produced extra paths
+        beyond the caller-supplied set, so the caller can record ``"graph"``
+        in ``sources_chained``. Direct-pin matches carry ``confidence=0.9``;
+        matches surfaced only via expanded paths carry ``confidence=0.7``.
+      - ``fallback_reason`` is non-None iff expansion was attempted but
+        couldn't run cleanly (#243). Possible values: ``"absent"`` (no
+        ``code_graph`` on ctx), ``"missing_method"`` (``code_graph`` lacks
+        ``expand_file_paths_via_graph``), ``"exception:<type>"`` (expander
+        raised). Caller adds ``"graph_unavailable"`` to ``sources_chained``
+        when non-None; the granular reason flows to the telemetry counter.
     """
     if not file_paths:
-        return [], False
+        return [], False, None
 
     # Dedup + normalize while preserving caller-supplied order.
     seen_paths: set[str] = set()
@@ -302,30 +308,62 @@ async def _region_anchored_preflight(
             seen_paths.add(fp)
             ordered.append(fp)
     if not ordered:
-        return [], False
+        return [], False, None
 
-    # Graph expansion. Defensive: code_graph may be absent (mock contexts) or
-    # the adapter may not implement the method (older deployments). Either
-    # case falls back to direct file_paths only.
+    # Graph expansion. #243: surface the silent fallback as a loud signal —
+    # response carries `"graph_unavailable"` (added by caller), exception
+    # case logs at WARN, telemetry counter increments. Three fallback
+    # reasons distinguished for the telemetry signal:
+    #   - absent          : no `code_graph` on ctx (mock contexts, older
+    #                       deployments without the adapter wired)
+    #   - missing_method  : `code_graph` set but no
+    #                       `expand_file_paths_via_graph` attribute
+    #   - exception:<typ> : expander raised at runtime (uninitialized
+    #                       index, sqlite locked, missing repo, etc.)
     direct_paths: set[str] = set(ordered)
     expanded_paths = list(ordered)
     expanded_only_paths: set[str] = set()
+    fallback_reason: str | None = None
     code_graph = getattr(ctx, "code_graph", None)
-    expander = getattr(code_graph, "expand_file_paths_via_graph", None) if code_graph else None
-    if expander is not None:
+    if code_graph is None:
+        fallback_reason = "absent"
+    else:
+        expander = getattr(code_graph, "expand_file_paths_via_graph", None)
+        if expander is None:
+            fallback_reason = "missing_method"
+        else:
+            try:
+                expanded_paths, added_paths = expander(ordered, hops=1)
+                expanded_only_paths = set(added_paths)
+            except Exception as exc:
+                fallback_reason = f"exception:{type(exc).__name__}"
+                logger.warning(
+                    "[preflight:fallback] graph expansion raised %s: %s — "
+                    "recall degraded for this call (#243)",
+                    type(exc).__name__,
+                    exc,
+                )
+                expanded_paths = list(ordered)
+                expanded_only_paths = set()
+
+    if fallback_reason is not None:
         try:
-            expanded_paths, added_paths = expander(ordered, hops=1)
-            expanded_only_paths = set(added_paths)
+            from preflight_telemetry import write_fallback_event
+
+            write_fallback_event(
+                reason=fallback_reason,
+                session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
+            )
         except Exception as exc:
-            logger.debug("[preflight:region] graph expansion failed: %s", exc)
-            expanded_paths = list(ordered)
-            expanded_only_paths = set()
+            # Telemetry must never break the hot path. Silent on failure
+            # (counter just won't increment for this call).
+            logger.debug("[preflight:fallback] telemetry emit failed: %s", exc)
 
     try:
         raw = await ctx.ledger.get_decisions_for_files(expanded_paths)
     except Exception as exc:
         logger.debug("[preflight:region] ledger region lookup failed: %s", exc)
-        return [], False
+        return [], False, fallback_reason
 
     matches: list[DecisionMatch] = []
     seen_ids: set[str] = set()
@@ -386,7 +424,7 @@ async def _region_anchored_preflight(
             )
         )
 
-    return matches, surfaced_via_expansion
+    return matches, surfaced_via_expansion, fallback_reason
 
 
 async def handle_preflight(
@@ -468,11 +506,21 @@ async def handle_preflight(
     region_matches: list[DecisionMatch] = []
     if file_paths:
         try:
-            region_matches, used_graph_expansion = await _region_anchored_preflight(ctx, file_paths)
+            (
+                region_matches,
+                used_graph_expansion,
+                fallback_reason,
+            ) = await _region_anchored_preflight(ctx, file_paths)
             if region_matches:
                 sources_chained.append("region")
                 if used_graph_expansion:
                     sources_chained.append("graph")
+            # #243 — surface graph-expansion fallback as a loud signal,
+            # additive to existing tags. Caller can render a recall-degraded
+            # warning to the agent. Bare tag — granular reason flows through
+            # the telemetry counter, not the response shape.
+            if fallback_reason is not None:
+                sources_chained.append("graph_unavailable")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 

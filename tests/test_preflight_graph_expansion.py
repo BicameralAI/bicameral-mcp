@@ -432,3 +432,351 @@ async def test_preflight_does_not_tag_expanded_when_direct_pin_alone(integration
     assert "graph" not in pf_resp.sources_chained, (
         f"direct pin alone must not tag 'graph'; got: {pf_resp.sources_chained}"
     )
+
+
+# ── #243: graph-expansion fallback signal ──────────────────────────────
+
+
+class _RaisingCodeGraph:
+    """code_graph stub whose expander raises on every call. Used by #243
+    test to prove the loud-signal path: response carries
+    ``graph_unavailable``, log captured at WARN, telemetry counter increments.
+    """
+
+    def __init__(self, real, exc: Exception) -> None:
+        self._real = real
+        self._exc = exc
+        self.calls: list[list[str]] = []
+
+    def expand_file_paths_via_graph(
+        self,
+        file_paths: list[str],
+        hops: int = 1,
+    ) -> tuple[list[str], list[str]]:
+        self.calls.append(list(file_paths))
+        raise self._exc
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+@pytest.mark.asyncio
+async def test_preflight_fallback_absent_code_graph_tags_graph_unavailable(
+    integration_env, monkeypatch
+):
+    """#243 test 1 — when ``ctx.code_graph`` is None (mock contexts /
+    older deployments), preflight surfaces ``"graph_unavailable"`` in
+    ``sources_chained`` and emits a ``graph_expansion_fallback`` event
+    with reason ``"absent"``. No ``RuntimeError`` raised; expansion
+    silently degraded path becomes loud.
+    """
+    import dataclasses
+
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_emit(*, reason: str, session_id: str) -> None:
+        captured.append((reason, session_id))
+
+    # Patch the lazy import inside _region_anchored_preflight; can't
+    # monkeypatch the module attr because it's resolved per-call.
+    import preflight_telemetry
+
+    monkeypatch.setattr(preflight_telemetry, "write_fallback_event", fake_emit)
+
+    base = BicameralContext.from_env()
+    ctx = dataclasses.replace(base, code_graph=None)
+
+    pf_resp = await handle_preflight(
+        ctx,
+        topic="refactor reorder",
+        file_paths=["app/src/ui/multi-commit-operation/reorder.tsx"],
+    )
+
+    assert "graph_unavailable" in pf_resp.sources_chained, (
+        f"absent code_graph must surface graph_unavailable; got: {pf_resp.sources_chained}"
+    )
+    assert any(r == "absent" for r, _ in captured), (
+        f"telemetry counter must record reason=absent; got: {captured}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_preflight_fallback_expander_raises_warns_and_tags(
+    integration_env, monkeypatch, caplog
+):
+    """#243 test 2 — when the expander raises, preflight logs at WARN
+    (not DEBUG), surfaces ``"graph_unavailable"``, and emits a
+    ``graph_expansion_fallback`` event with reason
+    ``"exception:RuntimeError"``.
+    """
+    import dataclasses
+    import logging
+
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+    import preflight_telemetry
+
+    monkeypatch.setattr(
+        preflight_telemetry,
+        "write_fallback_event",
+        lambda *, reason, session_id: captured.append((reason, session_id)),
+    )
+
+    base = BicameralContext.from_env()
+    ctx = dataclasses.replace(
+        base,
+        code_graph=_RaisingCodeGraph(base.code_graph, RuntimeError("uninitialized index")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="handlers.preflight"):
+        pf_resp = await handle_preflight(
+            ctx,
+            topic="refactor reorder",
+            file_paths=["app/src/ui/multi-commit-operation/reorder.tsx"],
+        )
+
+    assert "graph_unavailable" in pf_resp.sources_chained
+    assert any(r == "exception:RuntimeError" for r, _ in captured), (
+        f"telemetry must record exception type; got: {captured}"
+    )
+    # WARN-level log captured (was DEBUG pre-#243).
+    warn_records = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and "preflight:fallback" in r.message
+    ]
+    assert warn_records, (
+        f"expander raise must log at WARN with [preflight:fallback] tag; got: "
+        f"{[(r.levelname, r.message) for r in caplog.records]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_preflight_successful_expansion_does_not_tag_graph_unavailable(
+    integration_env, monkeypatch
+):
+    """#243 test 3 — regression guard: when expansion runs cleanly,
+    ``"graph_unavailable"`` MUST NOT appear in ``sources_chained``.
+    Direct-pin-only path also covered: a clean ctx with no graph hits
+    still doesn't leak the fallback tag.
+    """
+    import dataclasses
+
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+    import preflight_telemetry
+
+    monkeypatch.setattr(
+        preflight_telemetry,
+        "write_fallback_event",
+        lambda *, reason, session_id: captured.append((reason, session_id)),
+    )
+
+    base = BicameralContext.from_env()
+    ctx = dataclasses.replace(
+        base,
+        code_graph=_FakeCodeGraph(
+            base.code_graph,
+            expansion_for_tsx=["app/src/lib/git/reorder.ts"],
+        ),
+    )
+
+    ingest_resp = await handle_ingest(
+        ctx,
+        _build_ingest_payload("Reorder commits via the git-layer reorder helper."),
+    )
+    decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
+    await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "app/src/lib/git/reorder.ts",
+                "symbol_name": "reorder",
+                "start_line": 10,
+                "end_line": 80,
+            }
+        ],
+    )
+
+    pf_resp = await handle_preflight(
+        ctx,
+        topic="refactor reorder",
+        file_paths=["app/src/ui/multi-commit-operation/reorder.tsx"],
+    )
+
+    assert "graph_unavailable" not in pf_resp.sources_chained, (
+        f"clean expansion must not surface graph_unavailable; got: {pf_resp.sources_chained}"
+    )
+    assert not captured, f"clean run must not emit fallback telemetry; got: {captured}"
+
+
+@pytest.mark.asyncio
+async def test_preflight_empty_file_paths_does_not_tag_graph_unavailable(
+    integration_env, monkeypatch
+):
+    """#243 test 4 — when caller passes empty file_paths, expansion was
+    NEVER attempted (vs attempted-and-fell-back). The two cases must be
+    distinguishable: ``"graph_unavailable"`` is only set when expansion
+    was tried.
+    """
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+    import preflight_telemetry
+
+    monkeypatch.setattr(
+        preflight_telemetry,
+        "write_fallback_event",
+        lambda *, reason, session_id: captured.append((reason, session_id)),
+    )
+
+    pf_resp = await handle_preflight(
+        integration_env,
+        topic="refactor reorder",
+        file_paths=[],
+    )
+
+    assert "graph_unavailable" not in pf_resp.sources_chained, (
+        f"empty file_paths must not surface graph_unavailable; got: {pf_resp.sources_chained}"
+    )
+    assert not captured, f"empty file_paths must not emit fallback telemetry; got: {captured}"
+
+
+# ── #243 Piece B: singleton + eager init at server startup ─────────────
+
+
+def test_get_code_locator_returns_same_instance_per_repo_path(tmp_path, monkeypatch):
+    """#243 test 5a — Singleton-by-REPO_PATH: subsequent calls with the
+    same REPO_PATH return the same adapter instance, so eager init at
+    startup warms the same instance every tool call later reuses.
+    """
+    from adapters.code_locator import get_code_locator, reset_code_locator_cache
+
+    reset_code_locator_cache()
+    repo_a = tmp_path / "repo-a"
+    repo_a.mkdir()
+    monkeypatch.setenv("REPO_PATH", str(repo_a))
+
+    a1 = get_code_locator()
+    a2 = get_code_locator()
+    assert a1 is a2, "same REPO_PATH must return cached instance"
+
+    repo_b = tmp_path / "repo-b"
+    repo_b.mkdir()
+    monkeypatch.setenv("REPO_PATH", str(repo_b))
+    b1 = get_code_locator()
+    assert b1 is not a1, "different REPO_PATH must return distinct instance"
+    assert get_code_locator() is b1, "second call for repo-b returns cached b1"
+
+    reset_code_locator_cache()
+    a3 = get_code_locator()
+    assert a3 is not b1, "post-reset call returns a fresh instance"
+
+
+@pytest.mark.asyncio
+async def test_initialize_succeeds_when_index_present(tmp_path, monkeypatch):
+    """#243 test 5b — Eager ``initialize()`` succeeds on a populated index.
+
+    Uses ``_stub_adapter_with`` to skip the real ``ensure_index_matches_repo``
+    machinery — we're proving the async wrapper completes cleanly when
+    ``_ensure_initialized`` would also complete cleanly, not retesting the
+    index-build pipeline.
+    """
+    db = _build_synthetic_db(tmp_path)
+    adapter = _stub_adapter_with(db)
+    # Already-initialized adapter: initialize() must be an idempotent no-op.
+    await adapter.initialize()
+    # Subsequent calls also no-op (don't re-run the sync init).
+    await adapter.initialize()
+    assert adapter._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_initialize_fails_loudly_when_index_empty(monkeypatch, tmp_path):
+    """#243 test 6 — Eager ``initialize()`` re-raises the RuntimeError
+    from ``_ensure_initialized`` when the index is empty.
+
+    Per #243 phase-2 signoff Q3, the contract is fail-loud at boot:
+    ``serve_stdio`` MUST refuse to start when init fails rather than
+    silently degrade every subsequent preflight call. This test proves
+    the async wrapper preserves the RuntimeError instead of swallowing it.
+    """
+    from adapters.code_locator import RealCodeLocatorAdapter
+
+    adapter = RealCodeLocatorAdapter(repo_path=str(tmp_path))
+
+    # Stub _ensure_initialized to raise the canonical empty-index error
+    # without going through the full ensure_index_matches_repo pipeline
+    # (which requires real tree-sitter / config setup).
+    def _raise_empty_index() -> None:
+        raise RuntimeError("Code locator index is empty. Run: python -m code_locator index <repo>")
+
+    monkeypatch.setattr(adapter, "_ensure_initialized", _raise_empty_index)
+
+    with pytest.raises(RuntimeError, match="index is empty"):
+        await adapter.initialize()
+
+
+@pytest.mark.asyncio
+async def test_serve_stdio_refuses_boot_on_empty_index(monkeypatch, tmp_path):
+    """#243 test 7 — ``serve_stdio()`` propagates ``initialize()`` failure
+    rather than catching it and proceeding to the MCP loop.
+
+    Asserts the fail-loud contract from #243 phase-2 signoff Q3 at the
+    boot-path level: even if everything else (dashboard, audit log) is
+    healthy, an empty/missing code-locator index aborts boot with a
+    clear ``RuntimeError`` the operator can act on.
+    """
+    import server as server_mod
+    from adapters.code_locator import reset_code_locator_cache
+
+    reset_code_locator_cache()
+
+    # Stub the dashboard sidecar so we don't actually open an HTTP port
+    # — the test is about the init-failure path, not the dashboard.
+    class _NoopDashboard:
+        async def start(self, **_kw):  # noqa: D401
+            return None
+
+    monkeypatch.setattr(server_mod, "get_dashboard_server", lambda: _NoopDashboard())
+
+    # Stub get_code_locator() to return an adapter whose initialize() raises.
+    class _FailingLocator:
+        async def initialize(self):
+            raise RuntimeError(
+                "Code locator index is empty. Run: python -m code_locator index <repo>"
+            )
+
+    monkeypatch.setattr(
+        server_mod,
+        "BicameralContext",
+        type(
+            "_StubCtx",
+            (),
+            {"from_env": staticmethod(lambda: object())},
+        ),
+        raising=False,
+    )
+    # The serve_stdio body imports get_code_locator lazily; patch the
+    # module attribute it imports from.
+    import adapters.code_locator as code_locator_mod
+
+    monkeypatch.setattr(code_locator_mod, "get_code_locator", lambda: _FailingLocator())
+
+    # Stub audit_log so the test doesn't write events. Only need emit() +
+    # the AuditEventType enum to be addressable.
+    import audit_log
+
+    monkeypatch.setattr(audit_log, "emit", lambda *a, **kw: None)
+
+    with pytest.raises(RuntimeError, match="index is empty"):
+        await server_mod.serve_stdio()
