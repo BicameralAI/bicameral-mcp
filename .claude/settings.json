@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "python3 scripts/hooks/post_commit_sync_reminder.py"
+          },
+          {
+            "type": "command",
+            "command": "bicameral-mcp-post-commit-sync-reminder"
           }
         ]
       },
@@ -15,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/post_preflight_capture_reminder.py"
+            "command": "bicameral-mcp-collision-capture-reminder"
           }
         ]
       }
@@ -35,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 scripts/hooks/preflight_reminder.py"
+            "command": "bicameral-mcp-preflight-reminder"
           }
         ]
       }
