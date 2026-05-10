@@ -71,6 +71,8 @@ class AuditEventType(enum.StrEnum):
     # #252 Layer 2 — wire-format sentinel observability
     LEDGER_SCHEMA_VERIFIED = "ledger_schema_verified"
     LEDGER_VERSION_DRIFT = "ledger_version_drift"
+    # #296 — recoverable schema-definition skip (init_schema deferring to migrate)
+    SCHEMA_DEFINE_SKIPPED = "schema_define_skipped"
 
 
 _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
@@ -84,6 +86,7 @@ _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
     AuditEventType.ERROR: "error",
     AuditEventType.LEDGER_SCHEMA_VERIFIED: "info",
     AuditEventType.LEDGER_VERSION_DRIFT: "warn",
+    AuditEventType.SCHEMA_DEFINE_SKIPPED: "warn",
 }
 
 _LEVEL_RANK = {"info": 10, "warn": 20, "error": 30}

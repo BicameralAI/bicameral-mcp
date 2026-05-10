@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -45,7 +45,21 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     14: "0.13.0",  # placeholder; release-eng pins final value at PR merge — Phase 4 (#61)
     15: "0.15.x",  # decision.governance (#109 — governance metadata)
     16: "0.13.x",  # #252 Layer 2 — wire-format sentinel via bicameral_meta table; placeholder, release-eng pins final value at PR merge
+    17: "0.14.x",  # re-runnable yields integrity cleanup; placeholder, release-eng pins final value at PR merge
 }
+
+# SurrealDB error substrings that init_schema treats as recoverable: the row
+# state predates the new constraint and the next migration is responsible for
+# cleaning it up. The substring set is the load-bearing safety contract — any
+# new pattern here must be paired with a fixture-DB regression test
+# (tests/test_schema_recoverable_errors.py) that produces the exact string,
+# so a future surrealdb-py bump that changes the format fails CI loudly.
+RECOVERABLE_DEFINE_PATTERNS: tuple[str, ...] = (
+    "already exists",         # DEFINE re-applied with no change
+    "already contains",       # UNIQUE index attempted on table w/ duplicates
+    "expected a record<",     # TYPE constraint mismatch (rename of IN/OUT type)
+    "but expected",           # generic value-type assertion failure (defensive)
+)
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
 # the user must explicitly confirm via bicameral_reset(confirm=True).
@@ -423,24 +437,49 @@ def _with_overwrite(sql: str) -> str:
 
 
 async def _execute_define_idempotent(client: LedgerClient, sql: str) -> None:
-    """Run a DEFINE statement; treat "already exists" / "already contains" as success.
+    """Run a DEFINE statement; treat known recoverable errors as success.
 
-    "already contains" is SurrealDB's error when a UNIQUE index is attempted on
-    a table that already has duplicate rows. This lets the server start so the
-    migration that cleans stale data can run; the migration re-issues the index.
+    Recoverable patterns are listed in ``RECOVERABLE_DEFINE_PATTERNS``:
+
+    - ``already exists`` — DEFINE re-applied; no-op.
+    - ``already contains`` — UNIQUE index against duplicates; the migration
+      that cleans stale data runs next and re-issues the index.
+    - ``expected a record<`` — DEFINE TABLE / INDEX OVERWRITE re-validating
+      legacy rows whose IN/OUT type was renamed (e.g. v3 ``yields.in =
+      source_span:*`` against the current ``RELATION IN input_span``).
+      The migration that drops those rows runs next.
+    - ``but expected`` — generic value-type assertion failure; same recovery
+      shape as the type-mismatch case.
+
+    Any other ``LedgerError`` propagates so connect() fails fast and the
+    operator sees an actionable message pointing at ``bicameral-mcp diagnose``.
     """
     try:
         await client.execute(sql)
     except LedgerError as exc:
-        msg = str(exc)
-        if "already exists" not in msg and "already contains" not in msg:
+        msg_lower = str(exc).lower()
+        if not any(p in msg_lower for p in RECOVERABLE_DEFINE_PATTERNS):
             raise
-        if "already contains" in msg:
+        # Loud signal — UNIQUE-violation and type-mismatch each warrant a
+        # warning so the next migration's cleanup is visible in audit logs.
+        if "already contains" in msg_lower or "expected a record<" in msg_lower or "but expected" in msg_lower:
             logger.warning(
-                "[schema] DEFINE INDEX skipped — existing data violates UNIQUE "
-                "constraint (%s). Migration will clean stale rows and re-apply.",
+                "[schema] DEFINE skipped — existing data violates new constraint "
+                "(%s). Migration will clean stale rows and re-apply. detail=%s",
                 sql.split("ON")[0].strip(),
+                str(exc).splitlines()[0] if str(exc) else "",
             )
+            try:
+                from audit_log import AuditEventType
+                from audit_log import emit as audit_emit
+
+                audit_emit(
+                    AuditEventType.SCHEMA_DEFINE_SKIPPED,
+                    sql_prefix=sql.split("ON")[0].strip(),
+                    error_class=type(exc).__name__,
+                )
+            except Exception:  # noqa: BLE001 — audit MUST NOT break init_schema
+                pass
 
 
 async def init_schema(client: LedgerClient) -> None:
@@ -459,64 +498,81 @@ async def init_schema(client: LedgerClient) -> None:
 # ── Migrations ──────────────────────────────────────────────────────────
 
 
-async def _migrate_v4_to_v5(client: LedgerClient) -> None:
-    """v4 → v5: Remove stale v3-era yields edges and deduplicate.
+async def _clean_yields_legacy_rows(client: LedgerClient, *, log_tag: str) -> int:
+    """Delete `yields` rows whose IN/OUT references the v3-era types
+    (`source_span:*` / `intent:*`) that no longer match the current
+    `RELATION IN input_span OUT decision` constraint.
 
-    Some DBs that went through v3→v4 still have residual source_span→intent
-    edges in the yields table (the REMOVE TABLE in v3→v4 silently failed).
-    Those stale edges prevent DEFINE INDEX idx_yields_unique from being
-    applied, which broke startup. This migration:
-
-      1. Deletes any yields edge whose `in` is a source_span record
-         or whose `out` is an intent record (v3-era types).
-      2. Deduplicates remaining yields edges by (in, out), keeping
-         the first-seen record per pair.
-      3. Re-applies the unique index now that the table is clean.
+    Returns the count of rows removed. Tolerates per-row failures so a
+    single rejected delete does not abort the whole pass.
     """
-    # Step 1: Remove stale v3 edges
     try:
         stale = await client.query(
             "SELECT id FROM yields "
             "WHERE string::starts_with(type::string(in), 'source_span:') "
             "   OR string::starts_with(type::string(out), 'intent:')"
         )
-        for row in stale or []:
+    except Exception as exc:
+        logger.warning("[migration] %s: stale-edge select failed: %s", log_tag, exc)
+        return 0
+    removed = 0
+    for row in stale or []:
+        try:
+            await client.execute(f"DELETE {row['id']}")
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        logger.info("[migration] %s: removed %d stale legacy yields edges", log_tag, removed)
+    return removed
+
+
+async def _dedupe_yields(client: LedgerClient, *, log_tag: str) -> int:
+    """Drop duplicate `yields` rows by (in, out), keeping the first seen.
+
+    Returns the count of duplicates removed. Caller is responsible for
+    re-applying ``DEFINE INDEX idx_yields_unique`` afterwards.
+    """
+    try:
+        rows = await client.query("SELECT id, in, out FROM yields")
+    except Exception as exc:
+        logger.warning("[migration] %s: dedup select failed: %s", log_tag, exc)
+        return 0
+    seen: set[tuple[str, str]] = set()
+    removed = 0
+    for row in rows or []:
+        key = (str(row.get("in", "")), str(row.get("out", "")))
+        if key in seen:
             try:
                 await client.execute(f"DELETE {row['id']}")
+                removed += 1
             except Exception:
                 pass
-        logger.info(
-            "[migration] v4 → v5: removed %d stale v3 yields edges",
-            len(stale or []),
-        )
-    except Exception as exc:
-        logger.warning("[migration] v4 → v5: stale-edge cleanup failed: %s", exc)
+        else:
+            seen.add(key)
+    if removed:
+        logger.info("[migration] %s: removed %d duplicate yields edges", log_tag, removed)
+    return removed
 
-    # Step 2: Deduplicate remaining yields by (in, out)
-    try:
-        all_yields = await client.query("SELECT id, in, out FROM yields")
-        seen: set[tuple[str, str]] = set()
-        removed = 0
-        for row in all_yields or []:
-            key = (str(row.get("in", "")), str(row.get("out", "")))
-            if key in seen:
-                try:
-                    await client.execute(f"DELETE {row['id']}")
-                    removed += 1
-                except Exception:
-                    pass
-            else:
-                seen.add(key)
-        if removed:
-            logger.info("[migration] v4 → v5: removed %d duplicate yields edges", removed)
-    except Exception as exc:
-        logger.warning("[migration] v4 → v5: dedup failed: %s", exc)
 
-    # Step 3: Re-apply the unique index now that the table is clean
-    for sql in [
+async def _migrate_v4_to_v5(client: LedgerClient) -> None:
+    """v4 → v5: Remove stale v3-era yields edges and deduplicate.
+
+    Some DBs that went through v3→v4 still have residual source_span→intent
+    edges in the yields table (the REMOVE TABLE in v3→v4 silently failed).
+    Those stale edges prevent DEFINE INDEX idx_yields_unique from being
+    applied, which broke startup.
+
+    See also ``_migrate_v16_to_v17`` — a re-run of the same cleanup, gated
+    on the v16→v17 boundary, for DBs that rolled past v5 with the
+    corruption still present.
+    """
+    await _clean_yields_legacy_rows(client, log_tag="v4 → v5")
+    await _dedupe_yields(client, log_tag="v4 → v5")
+    await _execute_define_idempotent(
+        client,
         "DEFINE INDEX idx_yields_unique ON yields FIELDS in, out UNIQUE",
-    ]:
-        await _execute_define_idempotent(client, sql)
+    )
 
     logger.info("[migration] v4 → v5: yields table clean, unique index applied")
 
@@ -929,6 +985,36 @@ async def _migrate_v15_to_v16(client: LedgerClient) -> None:
     return
 
 
+async def _migrate_v16_to_v17(client: LedgerClient) -> None:
+    """v16 → v17: Re-run the yields integrity cleanup (#296 follow-up).
+
+    The v4 → v5 cleanup (``_migrate_v4_to_v5``) was the last reachable
+    pass that purged v3-era ``source_span:*`` rows from the ``yields``
+    table. Any DB whose ``schema_meta.version`` rolled past 5 with the
+    corruption still present is permanently broken on the v4→v5 boundary
+    — ``migrate()`` only iterates ``range(current+1, SCHEMA_VERSION+1)``,
+    so historical migrations are unreachable.
+
+    This migration re-runs the same yields cleanup body. It is a no-op on
+    a clean DB (zero deletions, idempotent index re-apply). It exists to
+    cover any operator whose ledger crashes connect() with the type
+    mismatch ``yields.in expected a record<input_span>`` because their DB
+    holds the legacy rows.
+
+    Symmetric with v4→v5 — both call into
+    ``_clean_yields_legacy_rows`` + ``_dedupe_yields`` so the SQL lives
+    in one place. Add a new fixture under
+    ``tests/fixtures/legacy_ledgers/`` for any future row-shape we
+    discover; the registry-driven test parametrizes over it.
+    """
+    await _clean_yields_legacy_rows(client, log_tag="v16 → v17")
+    await _dedupe_yields(client, log_tag="v16 → v17")
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX idx_yields_unique ON yields FIELDS in, out UNIQUE",
+    )
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1006,6 +1092,7 @@ _MIGRATIONS: dict[int, ...] = {
     14: _migrate_v13_to_v14,
     15: _migrate_v14_to_v15,
     16: _migrate_v15_to_v16,
+    17: _migrate_v16_to_v17,
 }
 
 
