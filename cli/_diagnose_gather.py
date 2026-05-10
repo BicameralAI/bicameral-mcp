@@ -23,9 +23,8 @@ _LARGE_LEDGER_BYTES = 100 * 1024 * 1024
 _RECENT_EVENT_TAIL = 5
 
 
-def _read_ledger_metadata(adapter) -> tuple[str, int | None, str | None]:
+def _read_ledger_metadata_for_url(url: str) -> tuple[str, int | None, str | None]:
     """Return (ledger_url, size_bytes_or_None, mtime_iso_or_None)."""
-    url = getattr(adapter, "_url", "")
     if not url.startswith("surrealkv://"):
         return url, None, None
     path_str = url.removeprefix("surrealkv://")
@@ -37,21 +36,23 @@ def _read_ledger_metadata(adapter) -> tuple[str, int | None, str | None]:
     return url, stat.st_size, mtime_iso
 
 
-async def _read_bicameral_meta(
-    adapter,
-) -> tuple[str | None, str | None, str | None, str, str]:
-    """Return (first_write, last_write, last_write_at_iso, drift_status, running).
+def _read_ledger_metadata(adapter) -> tuple[str, int | None, str | None]:
+    return _read_ledger_metadata_for_url(getattr(adapter, "_url", ""))
 
-    ``drift_status`` is one of: ``"first-write"`` / ``"match"`` / ``"drift"`` /
-    ``"unavailable"`` (table missing, e.g., pre-Layer-2 ledger).
-    """
+
+async def _read_bicameral_meta_raw(
+    client,
+) -> tuple[str | None, str | None, str | None, str, str]:
+    """Same shape as ``_read_bicameral_meta`` but operates on a raw
+    ``LedgerClient``. Used by the MCP ``bicameral_diagnose`` tool, which
+    must work without ``init_schema``/``migrate`` succeeding."""
     try:
         running = importlib.metadata.version("surrealdb")
     except importlib.metadata.PackageNotFoundError:
         running = "unknown"
 
     try:
-        rows = await adapter._client.query("SELECT * FROM bicameral_meta LIMIT 1")
+        rows = await client.query("SELECT * FROM bicameral_meta LIMIT 1")
     except Exception:  # noqa: BLE001 — table missing is the load-bearing case
         return None, None, None, "unavailable", running
 
@@ -71,9 +72,20 @@ async def _read_bicameral_meta(
     return first, last, last_at_iso, "drift", running
 
 
-async def _read_schema_version(adapter) -> int | None:
+async def _read_bicameral_meta(
+    adapter,
+) -> tuple[str | None, str | None, str | None, str, str]:
+    """Return (first_write, last_write, last_write_at_iso, drift_status, running).
+
+    ``drift_status`` is one of: ``"first-write"`` / ``"match"`` / ``"drift"`` /
+    ``"unavailable"`` (table missing, e.g., pre-Layer-2 ledger).
+    """
+    return await _read_bicameral_meta_raw(adapter._client)
+
+
+async def _read_schema_version_raw(client) -> int | None:
     try:
-        rows = await adapter._client.query("SELECT version FROM schema_meta LIMIT 1")
+        rows = await client.query("SELECT version FROM schema_meta LIMIT 1")
     except Exception:  # noqa: BLE001
         return None
     if not rows:
@@ -82,17 +94,25 @@ async def _read_schema_version(adapter) -> int | None:
     return int(val) if val is not None else None
 
 
-async def _read_table_counts(adapter) -> dict[str, int]:
+async def _read_schema_version(adapter) -> int | None:
+    return await _read_schema_version_raw(adapter._client)
+
+
+async def _read_table_counts_raw(client) -> dict[str, int]:
     counts: dict[str, int] = {}
     for table in _CANONICAL_TABLES:
         try:
-            rows = await adapter._client.query(f"SELECT count() AS n FROM {table} GROUP ALL")
+            rows = await client.query(f"SELECT count() AS n FROM {table} GROUP ALL")
         except Exception:  # noqa: BLE001 — missing table is acceptable (pre-v16)
             continue
         if rows:
             n = rows[0].get("n", 0)
             counts[table] = int(n) if n is not None else 0
     return counts
+
+
+async def _read_table_counts(adapter) -> dict[str, int]:
+    return await _read_table_counts_raw(adapter._client)
 
 
 def _resolve_audit_log_channel() -> tuple[str, Path | None]:
@@ -195,8 +215,17 @@ def _fetch_recommended() -> str | None:
         return None
 
 
-async def gather_diagnosis(adapter) -> Diagnosis:
-    """Collect every allowlisted field from the running install + ledger."""
+async def gather_diagnosis_raw(client, ledger_url: str) -> Diagnosis:
+    """Same allowlisted gather as ``gather_diagnosis`` but takes a raw
+    ``LedgerClient`` and an explicit ``ledger_url``.
+
+    Used by the MCP ``bicameral_diagnose`` tool, which opens a raw client
+    so it can produce a report even when ``adapter.connect()`` (and its
+    init_schema / migrate calls) would crash on a corrupted ledger. The
+    CLI ``bicameral-mcp diagnose`` keeps using ``gather_diagnosis``
+    (adapter-based) because it benefits from the adapter's connection
+    lifecycle in the happy-path operator-bug-report flow.
+    """
     try:
         bicameral_version = importlib.metadata.version("bicameral-mcp")
     except importlib.metadata.PackageNotFoundError:
@@ -204,10 +233,10 @@ async def gather_diagnosis(adapter) -> Diagnosis:
 
     from ledger.schema import SCHEMA_VERSION
 
-    ledger_url, size_bytes, mtime_iso = _read_ledger_metadata(adapter)
-    first, last, last_at_iso, drift_status, running = await _read_bicameral_meta(adapter)
-    schema_recorded = await _read_schema_version(adapter)
-    table_counts = await _read_table_counts(adapter)
+    _, size_bytes, mtime_iso = _read_ledger_metadata_for_url(ledger_url)
+    first, last, last_at_iso, drift_status, running = await _read_bicameral_meta_raw(client)
+    schema_recorded = await _read_schema_version_raw(client)
+    table_counts = await _read_table_counts_raw(client)
     channel_label, audit_path = _resolve_audit_log_channel()
     recent_events = _tail_recent_events(audit_path, _RECENT_EVENT_TAIL)
 
@@ -242,3 +271,12 @@ async def gather_diagnosis(adapter) -> Diagnosis:
         recent_events=recent_events,
         suggestions=suggestions,
     )
+
+
+async def gather_diagnosis(adapter) -> Diagnosis:
+    """Adapter-flavoured wrapper over ``gather_diagnosis_raw``.
+
+    Reads the ledger URL off the adapter and forwards to the raw helper.
+    Existing CLI callers (`bicameral-mcp diagnose`) keep this entry point.
+    """
+    return await gather_diagnosis_raw(adapter._client, getattr(adapter, "_url", ""))
