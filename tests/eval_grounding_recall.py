@@ -70,11 +70,89 @@ def _classify(case: GroundingCase, judgment: BindJudgment) -> str:
     return "wrong_file"
 
 
+def classify_failure_mode(row: dict[str, Any]) -> str:
+    """Map a row dict (the per-case payload from ``_per_case_row``) to a
+    PM-readable failure-mode category for cross-functional design discussion
+    (#280, Jin's PR-#288 followup). Pure post-hoc classifier — no agent-side
+    change. Each row falls into exactly one category:
+
+      - ``correct``                   — agent got it right, no action
+      - ``wrong_module``              — same-name disambiguation failed
+      - ``wrong_intent``              — similar-intent miss; picked the wrong
+                                        plausible symbol
+      - ``cross_language_confusion``  — Python ↔ TypeScript runtime mistake
+      - ``wrong_symbol_in_right_file``— right module, wrong symbol within
+      - ``hallucinated_symbol``       — agent named a non-existent symbol;
+                                        handler reject path caught it
+      - ``span_mismatch``             — caller-supplied lines didn't overlap
+                                        the resolved symbol; handler caught it
+      - ``aborted_correctly``         — agent aborted on a case whose expected
+                                        outcome IS abort (behavioral decisions
+                                        — only meaningful once §B fixture lands)
+      - ``aborted_incorrectly``       — agent aborted but the case has a
+                                        bindable answer
+      - ``eval_error``                — infra (API timeout / network); not an
+                                        agent decision
+
+    Categories drive the PM-actionable next steps documented in the plan.
+    """
+    outcome = row.get("outcome")
+    if outcome == "correct":
+        return "correct"
+    if outcome == "eval_error":
+        return "eval_error"
+
+    if outcome == "aborted":
+        # `expected_outcome` is reserved for §B (ungroundable behavioral cases);
+        # default-`bind` rows treat any abort as incorrect for now.
+        if row.get("expected_outcome") == "abort":
+            return "aborted_correctly"
+        return "aborted_incorrectly"
+
+    error_msg = str(row.get("error_msg") or "")
+    if "span mismatch" in error_msg.lower() and "#280" in error_msg:
+        return "span_mismatch"
+    if "not found" in error_msg.lower() and "#280" in error_msg:
+        return "hallucinated_symbol"
+
+    if outcome == "wrong_symbol":
+        return "wrong_symbol_in_right_file"
+
+    case_type = row.get("case_type")
+    if outcome == "wrong_file":
+        if case_type == "same_name_different_module":
+            return "wrong_module"
+        if case_type == "similar_intent":
+            return "wrong_intent"
+        if case_type == "cross_language":
+            return "cross_language_confusion"
+
+    # Catch-all: shouldn't happen given the outcome enum, but keep deterministic.
+    return "uncategorized"
+
+
+# Documented next-step per category — keep in sync with the plan's taxonomy
+# table. Used by the renderer's "Failure modes" section.
+FAILURE_MODE_NEXT_STEPS: dict[str, str] = {
+    "correct": "—",
+    "wrong_module": "tighten case-A decision text to name the module/scope",
+    "wrong_intent": "improve the bind skill prompt's 'abort on weak evidence' rule",
+    "cross_language_confusion": "make decision text mention runtime explicitly OR add language detection",
+    "wrong_symbol_in_right_file": "agent reached the right module — sub-region disambiguation gap",
+    "hallucinated_symbol": "handler failsafe is doing its job; LLM degraded — consider model bump",
+    "span_mismatch": "handler failsafe caught hallucinated lines; LLM degraded — consider model bump",
+    "aborted_correctly": "expected — behavioral decisions correctly route to PM review, not engineering",
+    "aborted_incorrectly": "bind skill prompt is too cautious; loosen the abort rule",
+    "eval_error": "infra (API timeout / network); not an agent issue",
+    "uncategorized": "unexpected outcome — investigate manually",
+}
+
+
 # ── Report shape ────────────────────────────────────────────────────────────
 
 
 def _per_case_row(case: GroundingCase, judgment: BindJudgment, outcome: str) -> dict[str, Any]:
-    return {
+    row: dict[str, Any] = {
         "case_id": case.case_id,
         "case_type": case.case_type,
         "intended_file": case.intended_file,
@@ -89,6 +167,8 @@ def _per_case_row(case: GroundingCase, judgment: BindJudgment, outcome: str) -> 
         "tokens_in": judgment.tokens_in,
         "tokens_out": judgment.tokens_out,
     }
+    row["failure_mode"] = classify_failure_mode(row)
+    return row
 
 
 def _aggregate(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -175,10 +255,31 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 repo_root=FIXTURE_REPO,
                 model=args.model,
             )
-        except RuntimeError as exc:
-            print(f"ERROR on {case.case_id}: {exc}", file=sys.stderr)
-            if args.gate_mode == "hard":
-                return {}, 3
+        except Exception as exc:
+            # Per-case failure (typically: API timeout / network — see retry
+            # loop in _bind_judge._call_messages_api). Record as eval_error
+            # outcome and continue; do NOT fail the whole run on one case.
+            # The aggregate gate check below catches the case where so many
+            # cases erred that recall fell below the gate.
+            print(f"ERROR on {case.case_id}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            error_row = {
+                "case_id": case.case_id,
+                "case_type": case.case_type,
+                "intended_file": case.intended_file,
+                "intended_symbol": case.intended_symbol,
+                "bound_file": None,
+                "bound_symbol": None,
+                "outcome": "eval_error",
+                "aborted": False,
+                "abort_reason": None,
+                "reasoning": "",
+                "error_msg": f"{type(exc).__name__}: {exc}",
+                "turns": 0,
+                "tokens_in": 0,
+                "tokens_out": 0,
+            }
+            error_row["failure_mode"] = classify_failure_mode(error_row)
+            rows.append(error_row)
             continue
 
         outcome = _classify(case, judgment)

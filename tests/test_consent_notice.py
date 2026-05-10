@@ -12,10 +12,15 @@ import pytest
 
 
 def _reload_consent():
+    """Reload consent module AND flush telemetry_flags lru_cache so env-var
+    monkeypatches take effect. Required since #192 — consent.telemetry_allowed
+    delegates to telemetry_flags.get_flags() which is process-cached."""
     import importlib
 
     import consent
+    import telemetry_flags
 
+    telemetry_flags._reset_for_tests()
     importlib.reload(consent)
     return consent
 

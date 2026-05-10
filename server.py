@@ -186,8 +186,9 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Optional opaque id from a prior bicameral.preflight call. "
                             "When supplied, the local preflight-telemetry capture loop "
-                            "(#65, opt-in via BICAMERAL_PREFLIGHT_TELEMETRY=1) attributes "
-                            "this engagement to that preflight."
+                            "(#65, opt-in via BICAMERAL_TELEMETRY=preflight — see #192; "
+                            "legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still honored via "
+                            "deprecation overlay) attributes this engagement to that preflight."
                         ),
                     },
                 },
@@ -1283,6 +1284,38 @@ async def serve_stdio() -> None:
         # It binds to a free port and stays running for the session.
         dashboard_srv = get_dashboard_server()
         await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
+
+        # #243 Piece B — eager symbol-index initialization. Pre-fix, init
+        # was lazy (first tool call paid the cost AND could race the
+        # index check). Post-fix, the server refuses to boot when the
+        # index is broken — silent degradation is the failure mode #243
+        # is fixing. Production deployments that don't have an indexed
+        # repo at boot SHOULD see a clear startup error and run
+        # ``python -m code_locator index <repo_path>`` rather than have
+        # every preflight call silently fall back.
+        #
+        # Fail-loud per #243 phase-2 signoff Q3 — do NOT catch the
+        # `RuntimeError("Code locator index is empty...")`. Let it
+        # propagate; the outer try/finally below still runs the
+        # SERVER_SHUTDOWN audit emit so the operator gets a clean event.
+        try:
+            from adapters.code_locator import get_code_locator
+
+            await get_code_locator().initialize()
+            print(
+                "[serve_stdio] code-locator index initialized at startup (#243)",
+                file=sys.stderr,
+            )
+        except RuntimeError as exc:
+            # Re-raise to fail boot. The audit log records SERVER_SHUTDOWN
+            # in the outer finally; operator sees the bare RuntimeError on
+            # stderr with the actionable index-missing message.
+            print(
+                f"[serve_stdio] code-locator init FAILED at startup (#243) — refusing to boot: {exc}\n"
+                "Run: python -m code_locator index <repo_path>",
+                file=sys.stderr,
+            )
+            raise
 
         # First-boot telemetry consent notice (non-blocking, fires once per
         # policy_version). Stderr-only here; MCP-channel surfacing happens

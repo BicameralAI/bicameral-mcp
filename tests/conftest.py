@@ -87,6 +87,27 @@ def _ensure_rate_limit_enabled(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _reset_telemetry_flags_cache():
+    """Flush ``telemetry_flags`` lru_cache between tests so monkeypatched env
+    vars (BICAMERAL_TELEMETRY, BICAMERAL_PREFLIGHT_TELEMETRY*) take effect.
+    Required since #192 — flags are parsed once per process by default.
+    Imported lazily so tests that don't touch telemetry pay zero cost."""
+    try:
+        import telemetry_flags
+
+        telemetry_flags._reset_for_tests()
+    except ImportError:
+        pass
+    yield
+    try:
+        import telemetry_flags
+
+        telemetry_flags._reset_for_tests()
+    except ImportError:
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _default_authoritative_ref_to_current_branch(monkeypatch):
     """v0.4.6 pollution guard default: treat whatever branch the test
     runner is on as authoritative.
