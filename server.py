@@ -38,13 +38,13 @@ from mcp.types import TextContent, Tool
 from context import BicameralContext
 from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
+from handlers.diagnose import handle_diagnose
 from handlers.gap_judge import handle_judge_gaps
 from handlers.history import handle_history
 from handlers.ingest import _IngestRefused, handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
-from handlers.diagnose import handle_diagnose
 from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
