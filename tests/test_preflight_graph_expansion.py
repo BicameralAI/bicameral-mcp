@@ -649,3 +649,134 @@ async def test_preflight_empty_file_paths_does_not_tag_graph_unavailable(
         f"empty file_paths must not surface graph_unavailable; got: {pf_resp.sources_chained}"
     )
     assert not captured, f"empty file_paths must not emit fallback telemetry; got: {captured}"
+
+
+# ── #243 Piece B: singleton + eager init at server startup ─────────────
+
+
+def test_get_code_locator_returns_same_instance_per_repo_path(tmp_path, monkeypatch):
+    """#243 test 5a — Singleton-by-REPO_PATH: subsequent calls with the
+    same REPO_PATH return the same adapter instance, so eager init at
+    startup warms the same instance every tool call later reuses.
+    """
+    from adapters.code_locator import get_code_locator, reset_code_locator_cache
+
+    reset_code_locator_cache()
+    repo_a = tmp_path / "repo-a"
+    repo_a.mkdir()
+    monkeypatch.setenv("REPO_PATH", str(repo_a))
+
+    a1 = get_code_locator()
+    a2 = get_code_locator()
+    assert a1 is a2, "same REPO_PATH must return cached instance"
+
+    repo_b = tmp_path / "repo-b"
+    repo_b.mkdir()
+    monkeypatch.setenv("REPO_PATH", str(repo_b))
+    b1 = get_code_locator()
+    assert b1 is not a1, "different REPO_PATH must return distinct instance"
+    assert get_code_locator() is b1, "second call for repo-b returns cached b1"
+
+    reset_code_locator_cache()
+    a3 = get_code_locator()
+    assert a3 is not b1, "post-reset call returns a fresh instance"
+
+
+@pytest.mark.asyncio
+async def test_initialize_succeeds_when_index_present(tmp_path, monkeypatch):
+    """#243 test 5b — Eager ``initialize()`` succeeds on a populated index.
+
+    Uses ``_stub_adapter_with`` to skip the real ``ensure_index_matches_repo``
+    machinery — we're proving the async wrapper completes cleanly when
+    ``_ensure_initialized`` would also complete cleanly, not retesting the
+    index-build pipeline.
+    """
+    db = _build_synthetic_db(tmp_path)
+    adapter = _stub_adapter_with(db)
+    # Already-initialized adapter: initialize() must be an idempotent no-op.
+    await adapter.initialize()
+    # Subsequent calls also no-op (don't re-run the sync init).
+    await adapter.initialize()
+    assert adapter._initialized is True
+
+
+@pytest.mark.asyncio
+async def test_initialize_fails_loudly_when_index_empty(monkeypatch, tmp_path):
+    """#243 test 6 — Eager ``initialize()`` re-raises the RuntimeError
+    from ``_ensure_initialized`` when the index is empty.
+
+    Per #243 phase-2 signoff Q3, the contract is fail-loud at boot:
+    ``serve_stdio`` MUST refuse to start when init fails rather than
+    silently degrade every subsequent preflight call. This test proves
+    the async wrapper preserves the RuntimeError instead of swallowing it.
+    """
+    from adapters.code_locator import RealCodeLocatorAdapter
+
+    adapter = RealCodeLocatorAdapter(repo_path=str(tmp_path))
+
+    # Stub _ensure_initialized to raise the canonical empty-index error
+    # without going through the full ensure_index_matches_repo pipeline
+    # (which requires real tree-sitter / config setup).
+    def _raise_empty_index() -> None:
+        raise RuntimeError("Code locator index is empty. Run: python -m code_locator index <repo>")
+
+    monkeypatch.setattr(adapter, "_ensure_initialized", _raise_empty_index)
+
+    with pytest.raises(RuntimeError, match="index is empty"):
+        await adapter.initialize()
+
+
+@pytest.mark.asyncio
+async def test_serve_stdio_refuses_boot_on_empty_index(monkeypatch, tmp_path):
+    """#243 test 7 — ``serve_stdio()`` propagates ``initialize()`` failure
+    rather than catching it and proceeding to the MCP loop.
+
+    Asserts the fail-loud contract from #243 phase-2 signoff Q3 at the
+    boot-path level: even if everything else (dashboard, audit log) is
+    healthy, an empty/missing code-locator index aborts boot with a
+    clear ``RuntimeError`` the operator can act on.
+    """
+    import server as server_mod
+    from adapters.code_locator import reset_code_locator_cache
+
+    reset_code_locator_cache()
+
+    # Stub the dashboard sidecar so we don't actually open an HTTP port
+    # — the test is about the init-failure path, not the dashboard.
+    class _NoopDashboard:
+        async def start(self, **_kw):  # noqa: D401
+            return None
+
+    monkeypatch.setattr(server_mod, "get_dashboard_server", lambda: _NoopDashboard())
+
+    # Stub get_code_locator() to return an adapter whose initialize() raises.
+    class _FailingLocator:
+        async def initialize(self):
+            raise RuntimeError(
+                "Code locator index is empty. Run: python -m code_locator index <repo>"
+            )
+
+    monkeypatch.setattr(
+        server_mod,
+        "BicameralContext",
+        type(
+            "_StubCtx",
+            (),
+            {"from_env": staticmethod(lambda: object())},
+        ),
+        raising=False,
+    )
+    # The serve_stdio body imports get_code_locator lazily; patch the
+    # module attribute it imports from.
+    import adapters.code_locator as code_locator_mod
+
+    monkeypatch.setattr(code_locator_mod, "get_code_locator", lambda: _FailingLocator())
+
+    # Stub audit_log so the test doesn't write events. Only need emit() +
+    # the AuditEventType enum to be addressable.
+    import audit_log
+
+    monkeypatch.setattr(audit_log, "emit", lambda *a, **kw: None)
+
+    with pytest.raises(RuntimeError, match="index is empty"):
+        await server_mod.serve_stdio()

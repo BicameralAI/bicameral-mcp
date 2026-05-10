@@ -8,6 +8,7 @@ to the server via bind and preflight.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -20,10 +21,46 @@ from code_locator_runtime import (
 logger = logging.getLogger(__name__)
 
 
-def get_code_locator():
-    """Return the code locator adapter backed by a real indexed repo."""
-    repo_path = os.getenv("REPO_PATH", ".")
-    return RealCodeLocatorAdapter(repo_path=repo_path)
+# #243 Piece B — singleton cache. Pre-fix, ``get_code_locator()`` returned
+# a fresh adapter per call, which (combined with lazy ``_ensure_initialized``)
+# meant the FIRST tool call after server boot paid the index-build cost AND
+# could race the index check on multiple concurrent tool calls.
+#
+# Cache keyed by ``REPO_PATH`` so multi-repo correctness is preserved (any
+# test that swaps REPO_PATH mid-process still gets a fresh adapter for the
+# new path). Single global was rejected at signoff (Q1 of #243 phase-2 spec)
+# for exactly this reason.
+_INSTANCE_CACHE: dict[str, RealCodeLocatorAdapter] = {}
+
+
+def get_code_locator() -> RealCodeLocatorAdapter:
+    """Return the code locator adapter backed by a real indexed repo.
+
+    Singleton-by-REPO_PATH (#243): subsequent calls with the same
+    ``REPO_PATH`` return the same adapter instance, so the server-startup
+    init path sets up the index once and every subsequent tool dispatch
+    reuses the warm instance. Eager init lives in ``initialize()``;
+    callers that don't await ``initialize()`` still get lazy init via
+    ``_ensure_initialized()`` on first use (test contexts).
+    """
+    repo_path = str(Path(os.getenv("REPO_PATH", ".")).resolve())
+    cached = _INSTANCE_CACHE.get(repo_path)
+    if cached is not None:
+        return cached
+    instance = RealCodeLocatorAdapter(repo_path=repo_path)
+    _INSTANCE_CACHE[repo_path] = instance
+    return instance
+
+
+def reset_code_locator_cache() -> None:
+    """Test-only hook: drop all cached adapter instances.
+
+    Production paths never call this — the cache lives for the lifetime
+    of the process. Tests that swap ``REPO_PATH`` between assertions can
+    use this to force a fresh adapter on the next ``get_code_locator()``
+    call. Mirrors the ``adapters.ledger.reset_ledger_singleton`` pattern.
+    """
+    _INSTANCE_CACHE.clear()
 
 
 class RealCodeLocatorAdapter:
@@ -67,6 +104,26 @@ class RealCodeLocatorAdapter:
         self._validate_tool = ValidateSymbolsTool(db, config)
         self._neighbors_tool = GetNeighborsTool(db, config)
         self._initialized = True
+
+    async def initialize(self) -> None:
+        """Async wrapper around ``_ensure_initialized()`` for the
+        ``server.py:serve_stdio`` startup hook (#243 Piece B).
+
+        Runs the sync init in a thread-pool executor so the event loop
+        stays responsive while sqlite-vec opens + tree-sitter loads —
+        the cold-init path can take several seconds on larger repos.
+
+        **Fail-loud contract** (per #243 phase-2 signoff Q3): caller MUST
+        NOT swallow the ``RuntimeError("Code locator index is empty...")``
+        — the server should refuse to start when index init fails rather
+        than silently degrade every preflight call. Lazy init via
+        ``_ensure_initialized`` remains for test contexts where mock
+        adapters bypass this path.
+        """
+        if self._initialized:
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._ensure_initialized)
 
     def validate_symbols(self, candidates: list[str]) -> list[dict]:
         """Fuzzy-match candidate symbol names against the codebase index."""
