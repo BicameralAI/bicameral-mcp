@@ -1,6 +1,6 @@
 """Handler for /bicameral_reset MCP tool.
 
-The fail-safe valve. Two modes:
+The fail-safe valve. Two wipe modes plus an optional replay path.
 
   wipe_mode="ledger" (default)
     Wipes the materialized SurrealDB rows scoped to the current repo.
@@ -14,10 +14,19 @@ The fail-safe valve. Two modes:
     Use this for: nuclear restart, switching repos, credential rotation.
     The user must explicitly confirm after seeing the warning.
 
+  replay_from_events=True (#296 Layer E)
+    After a successful ``wipe_mode="ledger"`` wipe, the watermark is
+    reset and ``EventMaterializer.replay_new_events`` rebuilds the
+    local DB from ``.bicameral/events/<author>.jsonl``. The event log
+    is the canonical record (committed to git in team mode) — replay
+    is recovery, not destruction. Combined with ``wipe_mode="full"``
+    is rejected because full-wipe deletes the very events we'd replay.
+
 Safety design:
   - Dry run by default. confirm=False returns the plan without touching state.
   - Replay plan is always computed before any destructive operation.
   - Full mode surfaces the exact path that will be deleted in the dry run.
+  - replay_from_events surfaces the on-disk event count in the dry run.
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ async def handle_reset(
     replay: bool = True,
     confirm: bool = False,
     wipe_mode: str = "ledger",
+    replay_from_events: bool = False,
 ) -> ResetResponse:
     """Wipe the ledger (and optionally the full .bicameral/ dir) for ctx.repo_path.
 
@@ -44,7 +54,32 @@ async def handle_reset(
         confirm: False = dry run (default). True = execute.
         wipe_mode: "ledger" = wipe DB rows only (server stays live).
                    "full"   = delete the entire .bicameral/ directory.
+        replay_from_events: After wipe (only when wipe_mode="ledger"),
+            replay every event in .bicameral/events/*.jsonl through the
+            ingest path to recover decisions deterministically. Mutually
+            exclusive with wipe_mode="full" — that mode deletes the
+            substrate we'd replay from.
     """
+    if replay_from_events and wipe_mode == "full":
+        return ResetResponse(
+            wiped=False,
+            wipe_mode=wipe_mode,
+            ledger_url=_resolve_ledger_url(ctx, ctx.ledger),
+            bicameral_dir="",
+            repo=ctx.repo_path,
+            cursors_before=0,
+            replay_plan=[],
+            replay_errors=[
+                "replay_from_events is incompatible with wipe_mode='full' "
+                "(full wipe deletes .bicameral/events which is the replay source)"
+            ],
+            next_action=(
+                "Pick one: wipe_mode='ledger' + replay_from_events=True for "
+                "recovery from a corrupted ledger, OR wipe_mode='full' for a "
+                "nuclear restart that intentionally drops everything."
+            ),
+        )
+
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
@@ -70,6 +105,8 @@ async def handle_reset(
     ledger_url = _resolve_ledger_url(ctx, ledger)
     bicameral_dir = _resolve_bicameral_dir(ledger) if wipe_mode == "full" else ""
 
+    events_on_disk = _count_events_on_disk(ledger) if replay_from_events else 0
+
     if not confirm:
         if wipe_mode == "full":
             dir_desc = (
@@ -82,6 +119,16 @@ async def handle_reset(
                 f"every bicameral node/edge scoped to {ctx.repo_path!r}{dir_desc}. "
                 f"WARNING: this removes config.yaml, team event files, and all history — "
                 f"there is no undo. Re-run with confirm=True to execute."
+            )
+        elif replay_from_events:
+            next_action = (
+                f"DRY RUN — LEDGER WIPE + REBUILD. Would wipe {cursors_before} "
+                f"source_cursor row(s), every bicameral node/edge scoped to "
+                f"{ctx.repo_path!r}, then reset the watermark and replay "
+                f"{events_on_disk} event(s) from .bicameral/events/*.jsonl through "
+                f"the ingest path. The event log is the canonical record — replay "
+                f"recovers decisions deterministically. "
+                f"Re-run with confirm=True to execute."
             )
         else:
             next_action = (
@@ -97,6 +144,7 @@ async def handle_reset(
             repo=ctx.repo_path,
             cursors_before=cursors_before,
             replay_plan=replay_plan if replay else [],
+            events_replayed=events_on_disk if replay_from_events else 0,
             next_action=next_action,
         )
 
@@ -138,6 +186,15 @@ async def handle_reset(
         bicameral_dir,
     )
 
+    events_replayed = 0
+    replay_errors: list[str] = []
+    if replay_from_events and wipe_mode != "full":
+        try:
+            events_replayed = await _replay_events_into_ledger(ledger)
+        except Exception as exc:  # noqa: BLE001 — surface failure but keep wipe done
+            logger.exception("[reset] replay_from_events failed: %s", exc)
+            replay_errors.append(f"replay_from_events failed: {exc}")
+
     if wipe_mode == "full":
         next_action = (
             f"Full wipe complete for repo {ctx.repo_path!r}. "
@@ -146,6 +203,20 @@ async def handle_reset(
             f"Schema has been reinitialised — the server is ready for fresh ingestion. "
             f"Re-run the original bicameral_ingest calls for each entry in replay_plan."
         )
+    elif replay_from_events:
+        if replay_errors:
+            next_action = (
+                f"Ledger wiped for repo {ctx.repo_path!r}. Replay FAILED — see "
+                f"replay_errors. The wipe succeeded; the event substrate is intact. "
+                f"Re-run with confirm=True after addressing the replay error, or "
+                f"fall back to manual ingest using replay_plan."
+            )
+        else:
+            next_action = (
+                f"Ledger wiped and rebuilt from events for repo {ctx.repo_path!r}. "
+                f"{events_replayed} event(s) replayed through the ingest path. "
+                f"Verify with `bicameral_diagnose` or `bicameral_history`."
+            )
     else:
         next_action = (
             f"Ledger wiped for repo {ctx.repo_path!r}. "
@@ -162,11 +233,84 @@ async def handle_reset(
         repo=ctx.repo_path,
         cursors_before=cursors_before,
         replay_plan=replay_plan if replay else [],
+        replay_errors=replay_errors,
+        events_replayed=events_replayed,
         next_action=next_action,
     )
 
 
 # ── Wipe implementations ─────────────────────────────────────────────
+
+
+def _resolve_events_dir(ledger) -> Path | None:
+    """Return ``.bicameral/events/`` for the resolved ledger URL, or None
+    when the ledger is in-memory or the directory does not exist.
+
+    Honours ``BICAMERAL_DATA_PATH`` symmetrically with
+    ``adapters/ledger.py:_real_ledger_instance`` so `replay_from_events`
+    targets the same substrate the team-mode write path uses.
+    """
+    import os as _os
+
+    bicameral_dir = _resolve_bicameral_dir(ledger)
+    data_path = _os.environ.get("BICAMERAL_DATA_PATH")
+    if data_path:
+        events_dir = Path(data_path) / ".bicameral" / "events"
+    elif bicameral_dir:
+        events_dir = Path(bicameral_dir) / "events"
+    else:
+        return None
+    return events_dir if events_dir.exists() else None
+
+
+def _count_events_on_disk(ledger) -> int:
+    """Tally non-empty lines across every ``<author>.jsonl`` under events/.
+
+    Best-effort: returns 0 when the directory is missing, ledger is
+    in-memory, or any file read fails. Used only to surface a count in
+    the dry-run; not load-bearing for the replay itself.
+    """
+    events_dir = _resolve_events_dir(ledger)
+    if events_dir is None:
+        return 0
+    total = 0
+    for path in events_dir.glob("*.jsonl"):
+        try:
+            with open(path, "rb") as f:
+                for line in f:
+                    if line.strip():
+                        total += 1
+        except OSError:
+            continue
+    return total
+
+
+async def _replay_events_into_ledger(ledger) -> int:
+    """Reset the materializer watermark and replay every event back
+    through the ingest path. Returns the count of events the
+    materializer applied.
+
+    Uses the same ``EventMaterializer`` instance team mode uses, so
+    replay-vs-live divergence is impossible by construction. Determinism
+    is tracked separately under issue #296.
+    """
+    inner = getattr(ledger, "_inner", ledger)
+    events_dir = _resolve_events_dir(ledger)
+    if events_dir is None:
+        return 0
+
+    local_dir = events_dir.parent / "local"
+    watermark_path = local_dir / "watermark"
+    local_dir.mkdir(parents=True, exist_ok=True)
+    # Reset the watermark so every event replays from offset 0. The
+    # materializer's offset map is `{author: byte_offset}`; writing an
+    # empty object is the canonical "start over" signal.
+    watermark_path.write_text("{}\n", encoding="utf-8")
+
+    from events.materializer import EventMaterializer
+
+    materializer = EventMaterializer(events_dir, local_dir)
+    return await materializer.replay_new_events(inner)
 
 
 async def _wipe_ledger(ledger, repo_path: str) -> None:
