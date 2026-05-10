@@ -21,8 +21,11 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import Literal
 
 from contracts import DiagnoseResponse
+
+RecoveryPath = Literal["clean", "fixable", "reset_rebuild", "reset_destructive"]
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +101,7 @@ async def handle_diagnose(ctx) -> DiagnoseResponse:
     )
 
 
-def _classify_recovery(diagnosis) -> tuple[str, str]:
+def _classify_recovery(diagnosis) -> tuple[RecoveryPath, str]:
     """Translate the raw diagnosis into one of four recovery paths.
 
     - ``clean``: schema_recorded == schema_expected and no flagged drift.
@@ -119,7 +122,7 @@ def _classify_recovery(diagnosis) -> tuple[str, str]:
     has_events = _events_present(diagnosis.ledger_url)
 
     if rec is not None and rec > exp:
-        path = "reset_rebuild" if has_events else "reset_destructive"
+        path: RecoveryPath = "reset_rebuild" if has_events else "reset_destructive"
         return path, (
             f"Ledger schema v{rec} is newer than this binary (v{exp}). "
             f"Upgrade `bicameral-mcp` to a version that understands v{rec}, "
