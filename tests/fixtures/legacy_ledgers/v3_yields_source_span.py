@@ -38,13 +38,9 @@ async def build(client) -> None:
     # RELATE refuses cross-table on a typed edge, so write the bad row
     # by direct CREATE on the yields table after defining it permissively.
     await client.execute("DEFINE TABLE yields SCHEMAFULL TYPE RELATION")
-    await client.execute(
-        "RELATE source_span:legacy_span_1 -> yields -> decision:dec_1"
-    )
+    await client.execute("RELATE source_span:legacy_span_1 -> yields -> decision:dec_1")
     # And one valid row so the dedupe step has something legitimate.
-    await client.execute(
-        "RELATE input_span:span_1 -> yields -> decision:dec_1"
-    )
+    await client.execute("RELATE input_span:span_1 -> yields -> decision:dec_1")
     # Mark the schema as v16 so the migration loop targets v16 → v17.
     await client.execute("DEFINE TABLE schema_meta SCHEMAFULL")
     await client.execute("DEFINE FIELD version ON schema_meta TYPE int")
@@ -54,8 +50,6 @@ async def build(client) -> None:
 # Post-migration assertions specific to this fixture.
 async def assert_clean(client) -> None:
     """All ``yields`` rows must reference an ``input_span`` IN."""
-    rows = await client.query(
-        "SELECT id, type::string(in) AS in_table FROM yields"
-    )
+    rows = await client.query("SELECT id, type::string(in) AS in_table FROM yields")
     bad = [r for r in (rows or []) if not str(r.get("in_table", "")).startswith("input_span:")]
     assert not bad, f"v16→v17 left stale yields rows: {bad}"
