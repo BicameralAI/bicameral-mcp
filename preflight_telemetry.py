@@ -10,7 +10,9 @@ under ``~/.bicameral/`` and never leaves the machine.
 Privacy model
 =============
 
-Default mode (``BICAMERAL_PREFLIGHT_TELEMETRY=1``): hashed-only.
+Default mode (canonical: ``BICAMERAL_TELEMETRY=preflight``; legacy
+``BICAMERAL_PREFLIGHT_TELEMETRY=1`` still honored via #192 deprecation
+overlay): hashed-only.
 
   - ``topic_hash``       : 16-hex-char SHA-256 of (per-install salt || topic).
   - ``file_paths_hash``  : 16-hex-char SHA-256 of the salt-prefixed, sorted,
@@ -23,8 +25,10 @@ Default mode (``BICAMERAL_PREFLIGHT_TELEMETRY=1``): hashed-only.
                             would defeat the only useful triage join.
   - ``fired``, ``reason``, ``attribution`` : opaque enums / booleans.
 
-Raw mode (``BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1``): adds plaintext ``topic``
-and ``file_paths`` alongside the hashed fields. User explicitly opts in.
+Raw mode (canonical: ``BICAMERAL_TELEMETRY=preflight,raw``; legacy
+``BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1`` still honored via #192 deprecation
+overlay): adds plaintext ``topic`` and ``file_paths`` alongside the hashed
+fields. User explicitly opts in.
 
 Salt (``~/.bicameral/salt``) is per-install, generated once with ``os.urandom(32)``,
 stored mode 0o600 on POSIX. Race-safe init: ``os.O_EXCL`` create with a
@@ -75,20 +79,35 @@ _BYPASS_TAIL_SCAN_LIMIT = 1000
 
 
 def telemetry_enabled() -> bool:
-    """True when ``BICAMERAL_PREFLIGHT_TELEMETRY`` is set to a truthy value.
+    """True when the consolidated ``BICAMERAL_TELEMETRY`` flag includes the
+    ``preflight`` source.
+
+    Delegates to :mod:`telemetry_flags` (#192). Legacy
+    ``BICAMERAL_PREFLIGHT_TELEMETRY=1`` continues to work via the
+    deprecation overlay there.
 
     Default off — caller-side opt-in only.
     """
-    return os.getenv("BICAMERAL_PREFLIGHT_TELEMETRY", "0").strip().lower() not in _OFF
+    from telemetry_flags import get_flags
+
+    return get_flags().preflight
 
 
 def raw_capture_enabled() -> bool:
-    """True when ``BICAMERAL_PREFLIGHT_TELEMETRY_RAW`` is set to a truthy value.
+    """True when both ``preflight`` and ``raw`` are enabled in the
+    consolidated flag.
+
+    Delegates to :mod:`telemetry_flags` (#192). Legacy
+    ``BICAMERAL_PREFLIGHT_TELEMETRY_RAW=1`` continues to work via the
+    deprecation overlay there.
 
     Default off — even with telemetry enabled, raw plaintext capture is a
     separate opt-in.
     """
-    return os.getenv("BICAMERAL_PREFLIGHT_TELEMETRY_RAW", "0").strip().lower() not in _OFF
+    from telemetry_flags import get_flags
+
+    flags = get_flags()
+    return flags.raw and flags.preflight
 
 
 # ── Salt + hash helpers ──────────────────────────────────────────────

@@ -1226,7 +1226,8 @@ def _select_telemetry() -> bool:
     print('     "diagnostic": {"decisions_ingested": 3}}')
     print()
     print("    No code. No decision text. No file paths. No personal data.")
-    print("    Change anytime: BICAMERAL_TELEMETRY=0")
+    print("    Change anytime: BICAMERAL_TELEMETRY=0  (turns off all telemetry)")
+    print("    Per-source control (#192): BICAMERAL_TELEMETRY=relay,preflight,raw")
     print()
 
     if not _is_interactive():
