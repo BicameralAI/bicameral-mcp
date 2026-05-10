@@ -361,6 +361,45 @@ def write_ingest_refusal_event(reason: str, session_id: str) -> None:
     _append(_EVENTS_FILE, record)
 
 
+# ── #243: graph-expansion fallback events ────────────────────────────
+
+
+def write_fallback_event(reason: str, session_id: str) -> None:
+    """Append a graph-expansion fallback event to
+    ``~/.bicameral/preflight_events.jsonl``.
+
+    Fires when ``_region_anchored_preflight`` couldn't run the
+    code-locator graph expansion cleanly — either because ``code_graph``
+    is absent on ctx, the adapter doesn't expose
+    ``expand_file_paths_via_graph``, or the expander raised at runtime
+    (uninitialized index, sqlite locked, missing repo, etc.).
+
+    Reason values are a controlled enum:
+      - ``absent``           — no ``code_graph`` on ctx
+      - ``missing_method``   — adapter lacks the expander method
+      - ``exception:<type>`` — expander raised; ``<type>`` is the
+                               concrete exception class name (e.g.
+                               ``exception:RuntimeError``)
+
+    No-op when telemetry is disabled. Written into the same JSONL file
+    as preflight + bypass + ingest-refusal events so operator triage
+    joins on a single substrate.
+
+    Pairs with the response-side ``"graph_unavailable"`` tag in
+    ``sources_chained`` (the response carries the bare signal; this
+    counter carries the granular reason).
+    """
+    if not telemetry_enabled():
+        return
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event_type": "graph_expansion_fallback",
+        "reason": reason,
+        "session_id": session_id,
+    }
+    _append(_EVENTS_FILE, record)
+
+
 # ── Phase 4: #112 HITL bypass flow ───────────────────────────────────
 
 

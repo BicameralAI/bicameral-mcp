@@ -187,6 +187,21 @@ pins), and `sources_chained` includes `"graph"` (alongside `"region"`)
 when expansion contributed at least one hit. Caller can de-prioritize
 expanded matches without losing them.
 
+**Graph fallback signal (#243).** When `sources_chained` contains
+`"graph_unavailable"`, the code-locator graph expansion couldn't run
+this call (uninitialized symbol index, missing adapter, or transient
+error). Render a one-line note to the user before the surfaced block:
+
+> *Note: structural-neighbor lookup was unavailable this call — recall
+> may be reduced until the symbol index is rebuilt. Decisions bound to
+> files that import these may not have surfaced.*
+
+The granular reason (`absent` / `missing_method` /
+`exception:<type>`) is recorded in the local `preflight_events.jsonl`
+telemetry counter for operator triage; the response shape stays
+stable. Treat `"graph_unavailable"` as advisory — it doesn't block
+the preflight surface; direct-pin matches are unaffected.
+
 ### 2.5 Resolve pending compliance checks if present
 
 Before evaluating `response.fired`, check `response._pending_compliance_checks`.

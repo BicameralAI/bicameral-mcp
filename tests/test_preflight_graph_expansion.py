@@ -432,3 +432,220 @@ async def test_preflight_does_not_tag_expanded_when_direct_pin_alone(integration
     assert "graph" not in pf_resp.sources_chained, (
         f"direct pin alone must not tag 'graph'; got: {pf_resp.sources_chained}"
     )
+
+
+# ── #243: graph-expansion fallback signal ──────────────────────────────
+
+
+class _RaisingCodeGraph:
+    """code_graph stub whose expander raises on every call. Used by #243
+    test to prove the loud-signal path: response carries
+    ``graph_unavailable``, log captured at WARN, telemetry counter increments.
+    """
+
+    def __init__(self, real, exc: Exception) -> None:
+        self._real = real
+        self._exc = exc
+        self.calls: list[list[str]] = []
+
+    def expand_file_paths_via_graph(
+        self,
+        file_paths: list[str],
+        hops: int = 1,
+    ) -> tuple[list[str], list[str]]:
+        self.calls.append(list(file_paths))
+        raise self._exc
+
+    def __getattr__(self, name: str):
+        return getattr(self._real, name)
+
+
+@pytest.mark.asyncio
+async def test_preflight_fallback_absent_code_graph_tags_graph_unavailable(
+    integration_env, monkeypatch
+):
+    """#243 test 1 — when ``ctx.code_graph`` is None (mock contexts /
+    older deployments), preflight surfaces ``"graph_unavailable"`` in
+    ``sources_chained`` and emits a ``graph_expansion_fallback`` event
+    with reason ``"absent"``. No ``RuntimeError`` raised; expansion
+    silently degraded path becomes loud.
+    """
+    import dataclasses
+
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+
+    def fake_emit(*, reason: str, session_id: str) -> None:
+        captured.append((reason, session_id))
+
+    # Patch the lazy import inside _region_anchored_preflight; can't
+    # monkeypatch the module attr because it's resolved per-call.
+    import preflight_telemetry
+
+    monkeypatch.setattr(preflight_telemetry, "write_fallback_event", fake_emit)
+
+    base = BicameralContext.from_env()
+    ctx = dataclasses.replace(base, code_graph=None)
+
+    pf_resp = await handle_preflight(
+        ctx,
+        topic="refactor reorder",
+        file_paths=["app/src/ui/multi-commit-operation/reorder.tsx"],
+    )
+
+    assert "graph_unavailable" in pf_resp.sources_chained, (
+        f"absent code_graph must surface graph_unavailable; got: {pf_resp.sources_chained}"
+    )
+    assert any(r == "absent" for r, _ in captured), (
+        f"telemetry counter must record reason=absent; got: {captured}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_preflight_fallback_expander_raises_warns_and_tags(
+    integration_env, monkeypatch, caplog
+):
+    """#243 test 2 — when the expander raises, preflight logs at WARN
+    (not DEBUG), surfaces ``"graph_unavailable"``, and emits a
+    ``graph_expansion_fallback`` event with reason
+    ``"exception:RuntimeError"``.
+    """
+    import dataclasses
+    import logging
+
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+    import preflight_telemetry
+
+    monkeypatch.setattr(
+        preflight_telemetry,
+        "write_fallback_event",
+        lambda *, reason, session_id: captured.append((reason, session_id)),
+    )
+
+    base = BicameralContext.from_env()
+    ctx = dataclasses.replace(
+        base,
+        code_graph=_RaisingCodeGraph(base.code_graph, RuntimeError("uninitialized index")),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="handlers.preflight"):
+        pf_resp = await handle_preflight(
+            ctx,
+            topic="refactor reorder",
+            file_paths=["app/src/ui/multi-commit-operation/reorder.tsx"],
+        )
+
+    assert "graph_unavailable" in pf_resp.sources_chained
+    assert any(r == "exception:RuntimeError" for r, _ in captured), (
+        f"telemetry must record exception type; got: {captured}"
+    )
+    # WARN-level log captured (was DEBUG pre-#243).
+    warn_records = [
+        r
+        for r in caplog.records
+        if r.levelno >= logging.WARNING and "preflight:fallback" in r.message
+    ]
+    assert warn_records, (
+        f"expander raise must log at WARN with [preflight:fallback] tag; got: "
+        f"{[(r.levelname, r.message) for r in caplog.records]}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_preflight_successful_expansion_does_not_tag_graph_unavailable(
+    integration_env, monkeypatch
+):
+    """#243 test 3 — regression guard: when expansion runs cleanly,
+    ``"graph_unavailable"`` MUST NOT appear in ``sources_chained``.
+    Direct-pin-only path also covered: a clean ctx with no graph hits
+    still doesn't leak the fallback tag.
+    """
+    import dataclasses
+
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+    import preflight_telemetry
+
+    monkeypatch.setattr(
+        preflight_telemetry,
+        "write_fallback_event",
+        lambda *, reason, session_id: captured.append((reason, session_id)),
+    )
+
+    base = BicameralContext.from_env()
+    ctx = dataclasses.replace(
+        base,
+        code_graph=_FakeCodeGraph(
+            base.code_graph,
+            expansion_for_tsx=["app/src/lib/git/reorder.ts"],
+        ),
+    )
+
+    ingest_resp = await handle_ingest(
+        ctx,
+        _build_ingest_payload("Reorder commits via the git-layer reorder helper."),
+    )
+    decision_id = ingest_resp.pending_grounding_decisions[0]["decision_id"]
+    await handle_bind(
+        ctx,
+        bindings=[
+            {
+                "decision_id": decision_id,
+                "file_path": "app/src/lib/git/reorder.ts",
+                "symbol_name": "reorder",
+                "start_line": 10,
+                "end_line": 80,
+            }
+        ],
+    )
+
+    pf_resp = await handle_preflight(
+        ctx,
+        topic="refactor reorder",
+        file_paths=["app/src/ui/multi-commit-operation/reorder.tsx"],
+    )
+
+    assert "graph_unavailable" not in pf_resp.sources_chained, (
+        f"clean expansion must not surface graph_unavailable; got: {pf_resp.sources_chained}"
+    )
+    assert not captured, f"clean run must not emit fallback telemetry; got: {captured}"
+
+
+@pytest.mark.asyncio
+async def test_preflight_empty_file_paths_does_not_tag_graph_unavailable(
+    integration_env, monkeypatch
+):
+    """#243 test 4 — when caller passes empty file_paths, expansion was
+    NEVER attempted (vs attempted-and-fell-back). The two cases must be
+    distinguishable: ``"graph_unavailable"`` is only set when expansion
+    was tried.
+    """
+    monkeypatch.setenv("BICAMERAL_GUIDED_MODE", "1")
+    monkeypatch.setenv("BICAMERAL_TELEMETRY", "preflight")
+
+    captured: list[tuple[str, str]] = []
+    import preflight_telemetry
+
+    monkeypatch.setattr(
+        preflight_telemetry,
+        "write_fallback_event",
+        lambda *, reason, session_id: captured.append((reason, session_id)),
+    )
+
+    pf_resp = await handle_preflight(
+        integration_env,
+        topic="refactor reorder",
+        file_paths=[],
+    )
+
+    assert "graph_unavailable" not in pf_resp.sources_chained, (
+        f"empty file_paths must not surface graph_unavailable; got: {pf_resp.sources_chained}"
+    )
+    assert not captured, f"empty file_paths must not emit fallback telemetry; got: {captured}"

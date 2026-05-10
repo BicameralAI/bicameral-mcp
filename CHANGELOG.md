@@ -3,6 +3,12 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **#243 Piece A — Loud graph-expansion fallback signal in `handle_preflight`.** PR #174 closed the recall ceiling but introduced two silent fallback paths in `_region_anchored_preflight`: when `ctx.code_graph` was absent OR when the expander raised, the response shape was byte-identical to "expansion ran and matched zero" — caller couldn't tell recall was degraded. Three additive signals now surface every fallback: (1) `sources_chained` includes `"graph_unavailable"` (additive, never replaces existing tags); (2) the exception case logs at `WARN` level (was `DEBUG`) with a stable `[preflight:fallback]` substring + exception type for grep-friendly production logs; (3) new `preflight_telemetry.write_fallback_event(reason, session_id)` emits a `graph_expansion_fallback` row to `~/.bicameral/preflight_events.jsonl` carrying the granular reason (`"absent"` / `"missing_method"` / `"exception:<type>"`). Response shape stays bare for callers (single tag); operator triage gets the granular reason via the local telemetry counter. `bicameral-preflight` skill updated to render a one-line recall-degraded note when the tag is present. 4 new tests in `tests/test_preflight_graph_expansion.py` cover absent-code-graph, expander-raises (with WARN log assertion), clean-expansion regression guard, and empty-file_paths short-circuit. Refs #243 (parent #173 / PR #174).
+
 ## v0.14.4 — Hotfix: skip install-time manifest verification until release-side sigstore wiring lands
 
 Hotfix on v0.14.3. Unblocks every fresh `bicameral-mcp setup` against the published wheel — the v0.14.x wheels ship `skills-manifest.toml` and `hooks-manifest.json` but no `.sig`/`.crt` companions yet (release-side sigstore signing is a deferred follow-up of #218 LLM-06 / #237 LLM-11). The install-time verifiers were hitting a missing-signature path their own docstrings claim is unreachable, raising `SignatureError` and aborting setup.
