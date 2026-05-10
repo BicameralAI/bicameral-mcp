@@ -13,7 +13,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/test-mcp-regression.yml?branch=main&label=tests)](https://github.com/BicameralAI/bicameral-mcp/actions)
 
-A local-first [MCP server](https://spec.modelcontextprotocol.io/) that ingests your meeting transcripts, PRDs, and Slack threads, maps every decision to the code that implements it, and surfaces alignment gaps to your AI agent — before they become bugs.
+Bicameral helps software teams preserve alignment between what they decide in meetings and PRDs and what their AI-assisted development workflow actually builds. It's a local-first [MCP server](https://spec.modelcontextprotocol.io/) that ingests your transcripts, specs, and Slack threads, maps every decision to the code that implements it, and surfaces drift to your AI agent — before it becomes a bug.
 
 ---
 
