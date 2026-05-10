@@ -32,7 +32,7 @@ async def test_migrate_v15_to_v16_is_no_op_for_existing_v15_ledger(fresh_client)
     await migrate(fresh_client, allow_destructive=True)
     rows = await fresh_client.query("SELECT version FROM schema_meta LIMIT 1")
     assert rows[0]["version"] == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 16
+    assert SCHEMA_VERSION >= 16  # current floor — bumps land here as version increments
     bm_rows = await fresh_client.query("SELECT * FROM bicameral_meta")
     # Migration body is a no-op; sentinel writes happen in adapter.connect, not here.
     assert bm_rows == []

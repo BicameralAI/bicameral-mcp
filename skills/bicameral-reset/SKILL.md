@@ -1,18 +1,29 @@
 ---
 name: bicameral-reset
-description: Emergency trust recovery for a polluted or stale ledger. Fires when the user says "my ledger looks wrong", "nuke the ledger", "start over", "this is polluted", or otherwise loses trust in the current state. DRY RUN BY DEFAULT — always confirms with the user before the destructive call. Two modes: ledger (default, wipes DB rows only) and full (deletes entire .bicameral/ directory).
+description: Emergency trust recovery for a polluted or stale ledger. Fires when the user says "my ledger looks wrong", "nuke the ledger", "start over", "this is polluted", or otherwise loses trust in the current state. DRY RUN BY DEFAULT — always confirms with the user before the destructive call. Two wipe modes (ledger / full) plus an optional `replay_from_events` flag that rebuilds the ledger from `.bicameral/events/*.jsonl` after wipe.
 ---
 
 # Bicameral Reset
 
 The fail-safe valve. When the ledger gets polluted — bad ingest, stale groundings, or a session that went off the rails — `bicameral.reset` gives you a one-command recovery path.
 
-## Two modes
+## Two wipe modes
 
 | Mode | What's deleted | When to use |
 |------|----------------|-------------|
 | `wipe_mode="ledger"` (default) | Materialized SurrealDB rows only. Config, event files, and team history are preserved. Server stays live. | Bug recovery, bad ingest, polluted groundings. The safe default. |
 | `wipe_mode="full"` | The entire `.bicameral/` directory — ledger, `config.yaml`, team event JSONL files, everything. | Nuclear restart: switching repos, credential rotation, complete distrust of all prior decisions. |
+
+## Optional `replay_from_events`
+
+`replay_from_events=True` (only valid with `wipe_mode="ledger"`) wipes the materialized DB, resets the team-mode watermark, and replays every event in `.bicameral/events/*.jsonl` back through the same ingest path team mode uses. The event log is the canonical record (committed to git in team mode); this replay is recovery, not destruction.
+
+Use it when:
+
+- `bicameral_diagnose` returns `recovery_path="reset_rebuild"` — events are present and the ledger is unrecoverable through normal migration.
+- A corrupted ledger needs to be reconstructed without losing decision history.
+
+The dry run reports the on-disk event count; the post-confirm response reports `events_replayed` so the user can verify the round-trip. Combining `replay_from_events=True` with `wipe_mode="full"` is rejected by the handler — full-wipe deletes the substrate we'd replay from.
 
 ## When to fire
 

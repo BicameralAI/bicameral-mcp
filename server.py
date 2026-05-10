@@ -38,6 +38,7 @@ from mcp.types import TextContent, Tool
 from context import BicameralContext
 from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
+from handlers.diagnose import handle_diagnose
 from handlers.gap_judge import handle_judge_gaps
 from handlers.history import handle_history
 from handlers.ingest import _IngestRefused, handle_ingest
@@ -818,6 +819,19 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
+        Tool(
+            name="bicameral.diagnose",
+            description=(
+                "Read-only structural diagnosis of the local ledger — versions, schema_meta state, "
+                "table counts, recent warn|error audit events, and a recovery_path classification "
+                "(clean / fixable / reset_rebuild / reset_destructive). Works even when the normal "
+                "adapter connect crashes during init_schema/migrate, because it opens a raw "
+                "LedgerClient that doesn't run schema initialization. Pair with `bicameral_reset` "
+                "for the actual recovery action — this tool never mutates state. "
+                "Slash alias: /bicameral-diagnose"
+            ),
+            inputSchema={"type": "object", "properties": {}},
+        ),
         # ── Code locator tools (MCP-native) ──────────────────────────
         Tool(
             name="validate_symbols",
@@ -1032,7 +1046,10 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 confirm=arguments.get("confirm", False),
                 replay=arguments.get("replay", True),
                 wipe_mode=arguments.get("wipe_mode", "ledger"),
+                replay_from_events=arguments.get("replay_from_events", False),
             )
+        elif name in ("bicameral.diagnose", "diagnose"):
+            result = await handle_diagnose(ctx)
         elif name in ("bicameral.preflight", "preflight"):
             result = await handle_preflight(
                 ctx,

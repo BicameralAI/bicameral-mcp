@@ -77,6 +77,8 @@ jobs:
           tests/test_phase1_code_locator.py
           tests/test_phase2_ledger.py
           tests/test_phase3_integration.py
+          tests/test_legacy_ledger_fixtures.py
+          tests/test_schema_recoverable_errors.py
           -v --tb=short
           --junitxml=test-results/results.xml
           --html=test-results/report.html --self-contained-html
