@@ -580,8 +580,13 @@ class SurrealDBLedgerAdapter:
             return []
         await self._ensure_connected()
         conditions = " OR ".join(f"status = '{s}'" for s in statuses)
+        # `decision_id` is not a stored field on the decision table; alias the
+        # Surreal record id into it (matches queries.py:167, 228, 404, 512 et al).
+        # Without the alias every banner row arrives with decision_id=None,
+        # which makes the items the agent sees unactionable.
         query = (
-            f"SELECT decision_id, description, status, source_ref, meeting_date, signoff "
+            f"SELECT type::string(id) AS decision_id, description, status, "
+            f"source_ref, meeting_date, signoff "
             f"FROM decision WHERE {conditions} LIMIT 50"
         )
         result = await self._client.query(query)

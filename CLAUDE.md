@@ -20,6 +20,27 @@ worse than a compile error because it fails at runtime in production sessions.
 - [ ] Did a new tool get added? → Create `skills/<tool-name>/SKILL.md`
 - [ ] Did a status literal gain a new value (e.g. `"proposal"`)? → Update every skill that renders status
 
+## Sociable Testing for UX Paths (Mandatory for Handlers + Ledger)
+
+Default to **sociable unit tests** ([Martin Fowler, "On the Diverse And Fantastical Shape of Testing"](https://martinfowler.com/articles/2021-test-shapes.html)) for anything the MCP agent actually invokes: handlers under `handlers/`, ledger queries in `ledger/`, and the contracts they return. A test is **solitary** when it replaces a collaborator we ship to users (the `ctx`, the `ledger`, a handler in the call graph) with a `MagicMock` / `AsyncMock` / `patch(...)`; it's **sociable** when it runs the real collaborator and only seams off something we genuinely can't run in tests (network, time, external SaaS, an injected failure mode like "symbol disappears").
+
+The motivation is concrete: AI-authored tests skew solitary because mocks are easy to make pass. A solitary test for `get_session_start_banner` stayed green for months while `get_decisions_by_status` was selecting an undefined `decision_id` field and returning `None` for every banner row — agents saw null IDs in production while the suite reported full coverage. The first sociable run caught it.
+
+**Rules**
+
+1. **Handler tests** (`tests/test_<handler>*.py`) — instantiate a real `SurrealDBLedgerAdapter` over `memory://` and seed rows with the production schema. Reference pattern: `tests/test_codegenome_continuity_service.py::_fresh_adapter` and `tests/test_sync_middleware.py::_make_real_adapter`.
+2. **Ledger query tests** — never `MagicMock` the client. Use the real `LedgerClient(url="memory://", ...)` + `init_schema` + `migrate`.
+3. **`ctx` should be `SimpleNamespace`, not `MagicMock`** — when a handler grows a new required field, `SimpleNamespace` raises `AttributeError` and the test fails honestly; `MagicMock` silently invents the field.
+4. **Narrow seams are fine** when the alternative is impossible or fragile: patching `ledger.status.resolve_symbol_lines` to simulate a missing symbol (`tests/test_link_commit_grounding.py:185`), patching `handle_link_commit` when testing the *caller's* cache logic (not link_commit itself), patching `time.monotonic` for TTL math.
+5. **Solitary is correct for** pure helpers (`_check_payload_size` standalone), external boundaries we can't run (`tests/test_backends_google_drive_unit.py`), and concurrency primitives that don't talk to collaborators (`repo_write_barrier` tests).
+
+**Checklist before opening a tests-only PR**
+
+- [ ] Does the test instantiate `MagicMock` for `ctx` or `ledger`? → Replace with `SimpleNamespace` + real adapter unless one of the "solitary is correct" exceptions applies.
+- [ ] Does the test hand-craft a row dict that mimics what the ledger returns? → Seed the real ledger and let it produce the row.
+- [ ] Does an `assert_called_once_with(<exact SQL or arg list>)` mirror the production code? → That's a tautology. Replace it with an assertion on observable behavior (what the user/agent sees).
+- [ ] Does the failure mode under test (e.g. symbol disappeared, ledger crashed) actually require a patch? → Yes is fine; pin the patch to the narrowest seam.
+
 ## Auto-Tick Rule
 
 After completing **any** implementation work in this directory:

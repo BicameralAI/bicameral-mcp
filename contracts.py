@@ -650,6 +650,43 @@ class ResetResponse(BaseModel):
     replay_plan: list[ResetReplayEntry] = []
     replay_errors: list[str] = []
     next_action: str
+    # #296 Layer E — automated rebuild from .bicameral/events/*.jsonl
+    # after wipe. Populated only when `replay_from_events=True` and
+    # `confirm=True`; reports how many events the materializer replayed.
+    events_replayed: int = 0
+
+
+# ── Tool 8 (new): /bicameral_diagnose ────────────────────────────────
+
+
+class DiagnoseResponse(BaseModel):
+    """Read-only diagnostic snapshot. Mirrors the CLI ``bicameral-mcp
+    diagnose`` output but returns structured fields so agents can render
+    a recovery prompt deterministically.
+
+    `recovery_path` classifies the next operator action:
+      - ``clean`` — ledger looks healthy, no remediation needed
+      - ``fixable`` — schema is behind binary; next normal call migrates
+      - ``reset_rebuild`` — ledger broken AND events present → reset
+        with `replay_from_events=True` recovers without data loss
+      - ``reset_destructive`` — ledger broken AND no events → reset
+        loses decision history; user must explicitly accept
+
+    `diagnosis` carries the same structural-metadata-only fields the
+    CLI emits (see ``cli.diagnose.Diagnosis``); empty when the raw
+    client could not connect.
+    """
+
+    ledger_url: str
+    connect_error: str = ""
+    recovery_path: Literal[
+        "clean",
+        "fixable",
+        "reset_rebuild",
+        "reset_destructive",
+    ]
+    diagnosis: dict | None = None
+    next_action: str
 
 
 # ── Tool 9: /bicameral_preflight ─────────────────────────────────────
