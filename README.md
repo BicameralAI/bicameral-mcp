@@ -1,9 +1,5 @@
 ![Bicameral — without vs with](assets/bicameral-hero.png)
 
-<a href="https://github.com/BicameralAI/bicameral-mcp">
-  <img src="assets/star-on-github.svg" alt="Star Bicameral MCP on GitHub" />
-</a>
-
 <img src="assets/logo.png" width="96" align="right" alt="Bicameral logo">
 
 # Bicameral MCP
@@ -68,9 +64,25 @@ bicameral-mcp --smoke-test
     Source: Slack #payments 2026-03-20
 ```
 
-**At any time**, the dashboard gives you the full picture:
+**See it in motion** — the loop in three beats:
 
-![Bicameral Dashboard](assets/dashboard-preview.png)
+**1. Ingest (PM or dev).** A transcript, PRD, or Slack thread comes in; bicameral extracts decisions and writes them to the ledger.
+
+https://github.com/user-attachments/assets/e74ae39f-dd99-485b-8122-8c5211478eb1
+
+**2. Preflight (auto).** Before the agent edits code, bicameral surfaces prior decisions, drifted regions, and open questions for the file in scope.
+
+https://github.com/user-attachments/assets/8a0fdfb8-fc9a-49fc-9521-e5b5faf8646a
+
+**3. Ratify async (product owner).** The product owner reviews captured proposals and ratifies or rejects them on their own cadence. Drift tracking activates on ratification.
+
+https://github.com/user-attachments/assets/206e269e-49d6-407d-b338-ab3f2a2c70ec
+
+<p align="center">
+  <a href="https://github.com/BicameralAI/bicameral-mcp">
+    <img src="assets/star-on-github.svg" alt="Star Bicameral MCP on GitHub" />
+  </a>
+</p>
 
 ---
 
