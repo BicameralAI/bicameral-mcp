@@ -28,7 +28,6 @@ from ledger.adapter import SurrealDBLedgerAdapter
 from ledger.client import LedgerClient
 from ledger.schema import init_schema, migrate
 
-
 # ── Sociable substrate: real ledger over memory:// ──────────────────────────
 
 
