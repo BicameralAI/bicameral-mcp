@@ -128,8 +128,19 @@ async def seed_m6_case_into_fresh_ctx(
     # fresh path / fresh ledger.
     prev_repo = os.environ.get("REPO_PATH")
     prev_surreal = os.environ.get("SURREAL_URL")
+    # #216 LLM-08 — the ingest rate limiter has burst=10 / refill=1/s by
+    # default. The eval runs 25 cases back-to-back in the same process;
+    # the first ~11 cases consume the burst + refills, and cases 12+
+    # raise `_IngestRefused("rate_limit_exceeded")` during seeding,
+    # corrupting the recall measurement (seeder errors aren't agent
+    # misses, but they DO eat the cases' slots). The rate limiter is
+    # for production agent-loop safety, not eval throughput. Disable for
+    # this run via the documented env var (see `handlers.ingest.
+    # _check_rate_limit` docstring).
+    prev_ingest_rate = os.environ.get("BICAMERAL_INGEST_RATE_LIMIT_DISABLE")
     os.environ["REPO_PATH"] = str(repo_root)
     os.environ["SURREAL_URL"] = "memory://"
+    os.environ["BICAMERAL_INGEST_RATE_LIMIT_DISABLE"] = "1"
     reset_ledger_singleton()
     reset_code_locator_cache()
 
@@ -227,5 +238,9 @@ async def seed_m6_case_into_fresh_ctx(
             os.environ.pop("SURREAL_URL", None)
         else:
             os.environ["SURREAL_URL"] = prev_surreal
+        if prev_ingest_rate is None:
+            os.environ.pop("BICAMERAL_INGEST_RATE_LIMIT_DISABLE", None)
+        else:
+            os.environ["BICAMERAL_INGEST_RATE_LIMIT_DISABLE"] = prev_ingest_rate
         reset_ledger_singleton()
         reset_code_locator_cache()
