@@ -165,6 +165,37 @@ jobs:
         continue-on-error: true
         run: python tests/eval_grounding_recall_summary.py test-results/m2-grounding-recall.json >> "$GITHUB_STEP_SUMMARY"
 
+      # ── M6 preflight retrieval recall eval (warn-only, #58 Phase A) ──
+      # Measures whether handle_preflight surfaces the intended decision
+      # given (topic, file_paths). 25 cases balanced across the three miss
+      # modes from #58: vocabulary_mismatch, unbound_decision,
+      # transitive_relevance. Fresh memory:// ledger seeded per case for
+      # isolation (preflight responses depend on full ledger state).
+      #
+      # Warm-up: same pattern as M1 and M2 — warn-only initially so the
+      # first baseline run lands without breaking CI. Flip to --gate-mode
+      # hard in a follow-up PR after one or two stable baseline readings.
+      # No ANTHROPIC_API_KEY needed; preflight retrieval is deterministic
+      # (BM25 + region lookup + 1-hop graph expansion). All-local cost.
+      - name: M6 preflight recall eval (warn-only)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: >
+          python tests/eval_preflight_m6_recall.py
+          --gate-mode warn
+          -o test-results/m6-preflight-recall.json
+
+      # ── Surface M6 metrics on the GitHub run summary (#58 Phase A) ───
+      # Reads test-results/m6-preflight-recall.json and renders the
+      # per-miss-mode breakdown (vocabulary / unbound / transitive) +
+      # missed-case detail so the failure modes Phase B targets are
+      # visible inline on the run page. always() so the summary appears
+      # even when the eval step above warns.
+      - name: M6 metrics summary
+        if: always() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: python tests/eval_preflight_m6_summary.py test-results/m6-preflight-recall.json >> "$GITHUB_STEP_SUMMARY"
+
       # ── Generate rich E2E report from artifacts ────────────────────
       # Ubuntu-only: the script consumes the medusa adversarial corpus
       # (cloned only on Ubuntu above) plus the Phase 3 E2E artifacts
