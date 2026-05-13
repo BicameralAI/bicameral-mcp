@@ -31,7 +31,6 @@ import pytest
 
 from handlers.preflight import _dedup_miss_was_revision_bump
 
-
 # ── _dedup_miss_was_revision_bump classification ─────────────────────
 
 
@@ -84,8 +83,9 @@ def test_classifier_returns_false_when_topic_differs():
 def test_classifier_ignores_entries_outside_ttl(monkeypatch):
     """Stale entries (older than _DEDUP_TTL_SECONDS) don't count as
     prior — the cache would've expired them anyway."""
-    import handlers.preflight as pf
     import time
+
+    import handlers.preflight as pf
 
     ctx = _ctx()
     # Seed cache, then rewind its timestamp past the TTL.
