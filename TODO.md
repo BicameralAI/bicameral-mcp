@@ -166,7 +166,7 @@ From eng review 2026-04-26. Four independent workstreams — A+B+C launch in par
 - [x] Add L1/L2/L3 tiebreaker rule to `skills/bicameral-ingest/SKILL.md`
 - [x] Add eval fixtures: `tests/fixtures/ingest_level_classification/` — 7 JSON fixtures (01–07), each with `{source, expected_level, expected_route, rationale}`
 - [x] Create canonical `skills/bicameral-resolve-collision/SKILL.md`: trigger now caller-LLM post `bicameral.history` — not server keyword search. Tool contract unchanged.
-- [ ] Delete stale `.claude/skills/bicameral-*/SKILL.md` duplicates that have canonical counterparts. Requires deciding whether Claude Code reads from `pilot/mcp/skills/` directly or still needs `.claude/skills/` symlinks.
+- [x] Replace stale `.claude/skills/bicameral-*/SKILL.md` duplicates with symlinks to canonical `skills/bicameral-*` (Claude Code's slash-command resolver follows symlinks transparently; in-vivo confirmed).
 
 **Lane B — Schema v9 migration** ✅
 - [x] Add `decision_level: option<string>` (`L1|L2|L3`) field to `decision` table in `ledger/schema.py`

@@ -154,7 +154,7 @@ The agent also fires these automatically — `preflight` before any code change,
 | `~/.bicameral/google-drive-token.json` | Drive OAuth token cache, mode 0600 (team mode + Drive backend only) |
 | `.gitignore` entry | Ignores `.bicameral/` in solo mode |
 | `.claude/settings.json` | PostToolUse hook (auto-sync after commits) + SessionEnd hook (capture mid-session decisions) |
-| `.claude/skills/bicameral-*/SKILL.md` | Slash commands |
+| `skills/bicameral-*/SKILL.md` | Canonical slash-command definitions (`.claude/skills/bicameral-*` are symlinks for the Claude Code resolver — never edit directly) |
 
 All data stays local. The embedded SurrealDB runs in-process — no separate server.
 

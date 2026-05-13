@@ -2,7 +2,9 @@
 
 ## Canonical Skill Source
 
-`pilot/mcp/skills/` is the **single canonical location** for all skill files in this project. Do not edit `.claude/skills/bicameral-*/SKILL.md` copies — they are stale duplicates and should be deleted. When a skill file changes, commit only the `pilot/mcp/skills/` version.
+`skills/` is the **single canonical location** for all skill files in this project. `.claude/skills/bicameral-*` are symlinks to `../../skills/bicameral-*` — they exist so Claude Code's slash-command resolver finds the skills, but they always resolve to the canonical content. Edit only the `skills/` versions; never write through the symlinks.
+
+> **Windows contributors**: git stores symlinks as mode-120000 entries. Windows defaults to `core.symlinks=false` and stores the symlink *target string* as a plain text file. Set `core.symlinks=true` before cloning (or use WSL) so the symlinks materialize correctly.
 
 ## Tool Changes Require Skill Changes (Mandatory)
 
