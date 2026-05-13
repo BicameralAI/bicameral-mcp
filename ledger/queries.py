@@ -1101,13 +1101,11 @@ async def get_ledger_revision(client: LedgerClient) -> str | None:
     """
     try:
         rows = await client.query(
-            "SELECT math::max(coalesce(updated_at, created_at)) AS rev "
-            "FROM decision GROUP ALL"
+            "SELECT math::max(coalesce(updated_at, created_at)) AS rev FROM decision GROUP ALL"
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "[ledger.get_ledger_revision] revision lookup failed — caller should "
-            "bypass dedup: %s",
+            "[ledger.get_ledger_revision] revision lookup failed — caller should bypass dedup: %s",
             exc,
         )
         return None

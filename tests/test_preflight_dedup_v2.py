@@ -218,8 +218,7 @@ def test_handle_preflight_bypasses_dedup_when_revision_lookup_fails(monkeypatch)
     # Cache must NOT have been populated either — the bypass branch
     # short-circuits before _check_dedup is invoked.
     assert sync_state.get("preflight_topics", {}) == {}, (
-        "bypass branch must not write to the cache; got "
-        f"{sync_state.get('preflight_topics')!r}"
+        f"bypass branch must not write to the cache; got {sync_state.get('preflight_topics')!r}"
     )
 
 
@@ -230,9 +229,7 @@ def test_handle_preflight_dedups_when_revision_lookup_succeeds(monkeypatch):
     import handlers.preflight as pf
     import ledger.queries as lq
 
-    monkeypatch.setattr(
-        lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1")
-    )
+    monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1"))
     monkeypatch.setattr(
         lq,
         "get_collision_pending_decisions",
