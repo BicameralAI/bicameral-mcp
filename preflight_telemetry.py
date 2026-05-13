@@ -400,6 +400,57 @@ def write_fallback_event(reason: str, session_id: str) -> None:
     _append(_EVENTS_FILE, record)
 
 
+# ── #87 Phase 5: preflight dedup-cache decision counters ─────────────
+
+
+def write_dedup_event(
+    reason: str,
+    session_id: str,
+    preflight_id: str | None = None,
+) -> None:
+    """Append a preflight-dedup decision event to
+    ``~/.bicameral/preflight_events.jsonl``.
+
+    Fires on the two dedup outcomes that matter for #87 Phase 5
+    instrumentation:
+
+    - ``invalidated_by_revision_bump`` — a same-(topic, file_paths) call
+      missed the cache because ``ledger_revision`` advanced since the
+      prior call. This is the M7a/M7c signal — proves the new key shape
+      is doing useful work in production (the metric Kevin asked for at
+      signoff: *"so we can tell the new key is doing useful work in
+      production"*).
+
+    - ``bypassed_revision_unknown`` — ``get_ledger_revision()`` returned
+      None and the handler short-circuited the dedup check per Kevin's
+      amendment (correctness over saving a preflight call). Watching
+      this counter lets ops detect transient SurrealDB faults or
+      schema-mismatch incidents — a sustained spike is a "look at the
+      ledger" signal.
+
+    Other dedup outcomes (cache hit, first-call miss, topic-changed,
+    file_paths-shift) are intentionally NOT emitted. Phase 5's scope is
+    the *change-detection signal*; hit/miss baselines are derivable
+    from ``write_preflight_event`` rows with ``reason="recently_checked"``
+    if needed later.
+
+    No-op when telemetry is disabled. Written into the same JSONL file
+    as other preflight events so operator triage joins on a single
+    substrate.
+    """
+    if not telemetry_enabled():
+        return
+    record: dict = {
+        "ts": datetime.now(UTC).isoformat(),
+        "event_type": "preflight_dedup_decision",
+        "reason": reason,
+        "session_id": session_id,
+    }
+    if preflight_id:
+        record["preflight_id"] = preflight_id
+    _append(_EVENTS_FILE, record)
+
+
 # ── Phase 4: #112 HITL bypass flow ───────────────────────────────────
 
 
