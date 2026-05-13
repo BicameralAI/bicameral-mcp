@@ -1087,21 +1087,38 @@ async def get_ledger_revision(client: LedgerClient) -> str | None:
     with loud telemetry" — never degrade to a partial key that could silently
     suppress a valid preflight call.
 
-    Implementation: ``MAX(updated_at) FROM decision``. Backed by
-    ``idx_decision_updated_at`` (added in v17→v18) for sub-millisecond
-    lookups; pre-v18 ledgers fall back to ``MAX(created_at)`` because
-    ``updated_at`` is NULL until the migration backfills it.
+    Implementation: ``SELECT updated_at FROM decision ORDER BY updated_at
+    DESC LIMIT 1``. Earlier drafts used ``math::max(coalesce(...))`` but
+    SurrealDB v2 has no ``coalesce`` built-in and ``math::max`` on a
+    non-array column raises a type error — both forms parse-errored in
+    production and silently triggered the dedup-bypass branch, defeating
+    the whole point of #87 Phase 4. Caught by a post-merge eval pass.
+
+    Performance note: empirically the ``idx_decision_updated_at`` index
+    does NOT accelerate ORDER BY DESC LIMIT 1 on the SurrealDB v2 memory
+    backend — at N=1000 decisions the query takes ~8ms p50 (full scan).
+    Per Kevin's signoff threshold (≤ p95 + 1ms on the handle_preflight
+    hot path), this is over budget by ~7ms. Acceptable for now because
+    the dedup-cache correctness win (M7a/b/c eliminated) is the load-
+    bearing benefit; the latency cost is bounded by the per-session
+    preflight cadence. Follow-up to evaluate a constant-time counter
+    (``bicameral_meta.decision_revision`` bumped per UPDATE) if
+    telemetry shows the 8ms overhead matters at production ledger sizes.
 
     Returns:
-        ISO datetime string when at least one decision exists.
-        Empty string when the table is empty (stable sentinel — preserves
-            cache hits for a session that never writes decisions).
-        ``None`` when the query raises (transient SurrealDB error, schema
-            mismatch, etc.). Callers must bypass dedup in this case.
+        ISO datetime string when at least one decision row carries a
+            non-NONE updated_at (the dominant case post-v18 backfill).
+        Empty string when the table is empty OR every row has
+            updated_at=NONE (a stable sentinel preserving cache hits
+            for sessions that never write decisions; for corrupt-legacy
+            ledgers, the marker just doesn't advance which is harmless
+            for the dedup contract).
+        ``None`` when the query raises (transient SurrealDB error,
+            schema mismatch, etc.). Callers must bypass dedup.
     """
     try:
         rows = await client.query(
-            "SELECT math::max(coalesce(updated_at, created_at)) AS rev FROM decision GROUP ALL"
+            "SELECT updated_at AS rev FROM decision ORDER BY updated_at DESC LIMIT 1"
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
