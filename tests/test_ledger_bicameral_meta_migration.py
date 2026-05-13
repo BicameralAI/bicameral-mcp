@@ -34,8 +34,22 @@ async def test_migrate_v15_to_v16_is_no_op_for_existing_v15_ledger(fresh_client)
     assert rows[0]["version"] == SCHEMA_VERSION
     assert SCHEMA_VERSION >= 16  # current floor — bumps land here as version increments
     bm_rows = await fresh_client.query("SELECT * FROM bicameral_meta")
-    # Migration body is a no-op; sentinel writes happen in adapter.connect, not here.
-    assert bm_rows == []
+    # v15→v16 body is still a no-op (just bumps schema_meta.version). The
+    # singleton row on bicameral_meta is created lazily by
+    # ``adapter.connect()`` → ``_write_wire_format_sentinel`` for v16, and
+    # eagerly by ``_migrate_v18_to_v19`` for v19+ (so the
+    # ``decision_revision_bump`` event has somewhere to bump). At
+    # SCHEMA_VERSION ≥ 19 the row must exist post-migrate with
+    # ``decision_revision`` initialized to 0; at v16–v18 it stays empty.
+    if SCHEMA_VERSION >= 19:
+        assert len(bm_rows) == 1, (
+            f"v19+ migrate must create the bicameral_meta singleton, got {bm_rows!r}"
+        )
+        assert bm_rows[0].get("decision_revision") == 0, (
+            f"singleton must initialize decision_revision=0, got {bm_rows[0]!r}"
+        )
+    else:
+        assert bm_rows == []
 
 
 def test_migration_registry_includes_v15_to_v16():

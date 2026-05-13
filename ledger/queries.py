@@ -1077,49 +1077,41 @@ async def update_decision_status(
 async def get_ledger_revision(client: LedgerClient) -> str | None:
     """Return a monotonic revision marker over the ``decision`` table (#87).
 
-    Used by the preflight dedup cache to detect ledger mutations within the
-    5-minute dedup window — when this changes between successive preflight
-    calls, the cache entry for the same topic/file_paths must invalidate so
-    the freshly-added decision can surface.
+    Used by the preflight dedup cache to detect ledger mutations within
+    the 5-minute dedup window — when this changes between successive
+    preflight calls, the cache entry for the same topic/file_paths must
+    invalidate so the freshly-added decision can surface.
 
-    Returns ``None`` on lookup failure. Per Kevin's amendment on issue #87
-    (B2 signoff comment), callers MUST treat None as "bypass dedup entirely
-    with loud telemetry" — never degrade to a partial key that could silently
-    suppress a valid preflight call.
+    Returns ``None`` on lookup failure. Per Kevin's amendment on issue
+    #87 (B2 signoff comment), callers MUST treat None as "bypass dedup
+    entirely with loud telemetry" — never degrade to a partial key that
+    could silently suppress a valid preflight call.
 
-    Implementation: ``SELECT updated_at FROM decision ORDER BY updated_at
-    DESC LIMIT 1``. Earlier drafts used ``math::max(coalesce(...))`` but
-    SurrealDB v2 has no ``coalesce`` built-in and ``math::max`` on a
-    non-array column raises a type error — both forms parse-errored in
-    production and silently triggered the dedup-bypass branch, defeating
-    the whole point of #87 Phase 4. Caught by a post-merge eval pass.
+    Implementation (v19, #87 Phase 6): ``SELECT decision_revision FROM
+    bicameral_meta LIMIT 1``. The counter is auto-bumped on every
+    decision CREATE/UPDATE by the ``decision_revision_bump`` DEFINE
+    EVENT (see ``ledger/schema.py::_BICAMERAL_META``). Constant-time
+    read, deterministic, ~0.4ms p95 at any ledger size.
 
-    Performance note: empirically the ``idx_decision_updated_at`` index
-    does NOT accelerate ORDER BY DESC LIMIT 1 on the SurrealDB v2 memory
-    backend — at N=1000 decisions the query takes ~8ms p50 (full scan).
-    Per Kevin's signoff threshold (≤ p95 + 1ms on the handle_preflight
-    hot path), this is over budget by ~7ms. Acceptable for now because
-    the dedup-cache correctness win (M7a/b/c eliminated) is the load-
-    bearing benefit; the latency cost is bounded by the per-session
-    preflight cadence. Follow-up to evaluate a constant-time counter
-    (``bicameral_meta.decision_revision`` bumped per UPDATE) if
-    telemetry shows the 8ms overhead matters at production ledger sizes.
+    History — what this replaces:
+      - v18 draft: ``math::max(coalesce(updated_at, created_at))`` —
+        parse-errored on every call (``coalesce`` is not a SurrealDB v2
+        built-in). Production silently bypassed dedup.
+      - v18 post-fix (#311): ``SELECT updated_at ... ORDER BY
+        updated_at DESC LIMIT 1`` — parsed cleanly but was ~8ms p50 at
+        N=1000 (the index doesn't accelerate ORDER BY DESC on
+        memory://) and ~50% flaky under pytest's batch runner.
+      - v19 (this version): counter-based, both problems gone.
 
     Returns:
-        ISO datetime string when at least one decision row carries a
-            non-NONE updated_at (the dominant case post-v18 backfill).
-        Empty string when the table is empty OR every row has
-            updated_at=NONE (a stable sentinel preserving cache hits
-            for sessions that never write decisions; for corrupt-legacy
-            ledgers, the marker just doesn't advance which is harmless
-            for the dedup contract).
-        ``None`` when the query raises (transient SurrealDB error,
-            schema mismatch, etc.). Callers must bypass dedup.
+        Stringified integer counter when the ``bicameral_meta``
+            singleton row exists (the dominant case post-v15 migrate).
+        Empty string when the row is absent — should only happen on a
+            ledger that hasn't run ``adapter.connect()`` once yet.
+        ``None`` when the query raises. Callers must bypass dedup.
     """
     try:
-        rows = await client.query(
-            "SELECT updated_at AS rev FROM decision ORDER BY updated_at DESC LIMIT 1"
-        )
+        rows = await client.query("SELECT decision_revision FROM bicameral_meta LIMIT 1")
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "[ledger.get_ledger_revision] revision lookup failed — caller should bypass dedup: %s",
@@ -1128,7 +1120,7 @@ async def get_ledger_revision(client: LedgerClient) -> str | None:
         return None
     if not rows:
         return ""
-    rev = rows[0].get("rev") if isinstance(rows[0], dict) else None
+    rev = rows[0].get("decision_revision") if isinstance(rows[0], dict) else None
     if rev is None:
         return ""
     return str(rev)
