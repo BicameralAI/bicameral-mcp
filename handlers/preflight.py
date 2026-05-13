@@ -375,7 +375,7 @@ def _dedup_miss_was_revision_bump(
         if now - ts >= _DEDUP_TTL_SECONDS:
             continue
         # Same prefix, different rev, within TTL → revision bump.
-        stored_rev = stored_key[len(prefix):]
+        stored_rev = stored_key[len(prefix) :]
         if stored_rev != current_rev:
             return True
     return False
