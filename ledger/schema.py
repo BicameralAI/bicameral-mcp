@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 18
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -46,6 +46,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     15: "0.15.x",  # decision.governance (#109 — governance metadata)
     16: "0.13.x",  # #252 Layer 2 — wire-format sentinel via bicameral_meta table; placeholder, release-eng pins final value at PR merge
     17: "0.14.x",  # re-runnable yields integrity cleanup; placeholder, release-eng pins final value at PR merge
+    18: "0.14.x",  # decision.updated_at + idx_decision_updated_at (#87 precondition — revision marker for preflight dedup); placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -123,6 +124,14 @@ _TABLES = [
     "DEFINE FIELD status         ON decision TYPE string DEFAULT 'ungrounded' "
     "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON decision TYPE datetime DEFAULT time::now()",
+    # v18 (#87 precondition) — monotonic write marker. Bumped by every
+    # decision UPDATE call site (status/level/signoff/parent/governance/
+    # canonical-dedup-merge). Used by the preflight dedup cache to invalidate
+    # entries whose ledger state changed mid-session. Indexed for cheap
+    # MAX(updated_at) lookups. Optional so pre-v18 rows read back as NONE
+    # at DEFINE time and the migration's UPDATE...WHERE updated_at IS NONE
+    # backfills them to created_at (same precedent as decision_level v8→v9).
+    "DEFINE FIELD updated_at     ON decision TYPE option<datetime> DEFAULT time::now()",
     # v0.4.13-style content-addressable dedup; same derivation, renamed type
     "DEFINE FIELD canonical_id   ON decision TYPE string DEFAULT ''",
     # Double-entry axis — signoff is stored; eng_reflected is derived
@@ -157,6 +166,9 @@ _TABLES = [
     "SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75) HIGHLIGHTS",
     # Powers the "awaiting signoff" PM dashboard queue
     "DEFINE INDEX idx_decision_signoff ON decision FIELDS signoff",
+    # v18 (#87 precondition) — powers cheap MAX(updated_at) revision-marker
+    # queries for the preflight dedup cache key.
+    "DEFINE INDEX idx_decision_updated_at ON decision FIELDS updated_at",
     # ── Shared / unchanged ──────────────────────────────────────────────
     # symbol — a named code entity (function, class, file). Retrieval-tier only.
     "DEFINE TABLE symbol SCHEMAFULL",
@@ -1019,6 +1031,40 @@ async def _migrate_v16_to_v17(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v17_to_v18(client: LedgerClient) -> None:
+    """v17 → v18: Add decision.updated_at + idx_decision_updated_at (#87 precondition).
+
+    The preflight dedup cache (handlers/preflight.py) currently keys on
+    topic alone — a same-topic re-call within 5 min hits the cache even
+    if the underlying ledger state changed mid-session. #87 broadens the
+    key to (topic_norm, file_paths_hash, ledger_revision); ledger_revision
+    derives from MAX(updated_at) over the decision table. This migration
+    is the schema half of that contract — the handler-side work lands in
+    a follow-up PR.
+
+    Additive only — no data loss. Defines the new field and index
+    idempotently (init_schema also applies them on every connect, so this
+    is symmetric with the existing-pre-v18-row backfill below). Backfills
+    ``updated_at = created_at`` for pre-v18 rows so MAX(updated_at) is
+    well-defined immediately after upgrade.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD updated_at ON decision TYPE option<datetime> DEFAULT time::now()",
+    )
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX idx_decision_updated_at ON decision FIELDS updated_at",
+    )
+    # Backfill: any row whose updated_at is NONE (pre-v18) gets created_at.
+    # The DEFAULT only fires on rows created after the DEFINE, so without
+    # this step legacy rows would have NONE forever and MAX() would skip them.
+    await client.query(
+        "UPDATE decision SET updated_at = created_at WHERE updated_at IS NONE"
+    )
+    logger.info("[migration] v17 → v18: decision.updated_at + idx_decision_updated_at added (#87 precondition)")
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1097,6 +1143,7 @@ _MIGRATIONS: dict[int, ...] = {
     15: _migrate_v14_to_v15,
     16: _migrate_v15_to_v16,
     17: _migrate_v16_to_v17,
+    18: _migrate_v17_to_v18,
 }
 
 

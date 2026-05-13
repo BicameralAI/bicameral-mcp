@@ -1391,7 +1391,7 @@ class SurrealDBLedgerAdapter:
         """
         await self._ensure_connected()
         await self._client.query(
-            f"UPDATE {decision_id} SET signoff = $signoff",
+            f"UPDATE {decision_id} SET signoff = $signoff, updated_at = time::now()",
             {"signoff": signoff},
         )
         projected = await project_decision_status(self._client, decision_id)
@@ -1425,7 +1425,7 @@ class SurrealDBLedgerAdapter:
         if rows and isinstance(rows[0], dict):
             old_signoff = rows[0].get("signoff") or {}
         await self._client.execute(
-            f"UPDATE {old_id} SET signoff = $s",
+            f"UPDATE {old_id} SET signoff = $s, updated_at = time::now()",
             {
                 "s": {
                     **old_signoff,
