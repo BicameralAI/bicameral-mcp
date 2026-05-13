@@ -1071,9 +1071,7 @@ async def _migrate_v17_to_v18(client: LedgerClient) -> None:
     # MAX(updated_at) skips them; harmless for the dedup-cache marker
     # (#87) since the marker only needs monotonicity, not coverage.
     try:
-        ids = await client.query(
-            "SELECT id FROM decision WHERE updated_at IS NONE"
-        )
+        ids = await client.query("SELECT id FROM decision WHERE updated_at IS NONE")
     except Exception as exc:
         logger.warning(
             "[migration] v17 → v18: SELECT for backfill failed (%s) — "
@@ -1088,9 +1086,7 @@ async def _migrate_v17_to_v18(client: LedgerClient) -> None:
         if not rid:
             continue
         try:
-            await client.execute(
-                f"UPDATE {rid} SET updated_at = time::now()"
-            )
+            await client.execute(f"UPDATE {rid} SET updated_at = time::now()")
             healed += 1
         except Exception as exc:
             skipped += 1
@@ -1101,12 +1097,13 @@ async def _migrate_v17_to_v18(client: LedgerClient) -> None:
                 exc,
             )
     logger.info(
-        "[migration] v17 → v18: backfilled updated_at on %d row(s), "
-        "skipped %d corrupt row(s)",
+        "[migration] v17 → v18: backfilled updated_at on %d row(s), skipped %d corrupt row(s)",
         healed,
         skipped,
     )
-    logger.info("[migration] v17 → v18: decision.updated_at + idx_decision_updated_at added (#87 precondition)")
+    logger.info(
+        "[migration] v17 → v18: decision.updated_at + idx_decision_updated_at added (#87 precondition)"
+    )
 
 
 async def _write_wire_format_sentinel(

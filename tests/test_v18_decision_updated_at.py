@@ -74,9 +74,7 @@ async def _seed_decision(client: LedgerClient, *, status: str = "ungrounded") ->
 
 
 async def _read_updated_at(client: LedgerClient, decision_id: str) -> str:
-    rows = await client.query(
-        f"SELECT updated_at, created_at FROM {decision_id} LIMIT 1"
-    )
+    rows = await client.query(f"SELECT updated_at, created_at FROM {decision_id} LIMIT 1")
     assert rows, f"decision {decision_id} missing"
     assert "updated_at" in rows[0], "updated_at field absent — schema not migrated"
     return str(rows[0]["updated_at"])
@@ -124,8 +122,7 @@ async def test_v18_update_decision_status_bumps_updated_at() -> None:
         await update_decision_status(c, did, "drifted")
         after = await _read_updated_at(c, did)
         assert after > before, (
-            f"update_decision_status did not bump updated_at "
-            f"(before={before!r}, after={after!r})"
+            f"update_decision_status did not bump updated_at (before={before!r}, after={after!r})"
         )
     finally:
         await c.close()
@@ -141,8 +138,7 @@ async def test_v18_update_decision_level_bumps_updated_at() -> None:
         await update_decision_level(c, did, "L2")
         after = await _read_updated_at(c, did)
         assert after > before, (
-            f"update_decision_level did not bump updated_at "
-            f"(before={before!r}, after={after!r})"
+            f"update_decision_level did not bump updated_at (before={before!r}, after={after!r})"
         )
     finally:
         await c.close()
@@ -161,8 +157,7 @@ async def test_v18_apply_ratify_bumps_updated_at() -> None:
         )
         after = await _read_updated_at(c, did)
         assert after > before, (
-            f"apply_ratify did not bump updated_at "
-            f"(before={before!r}, after={after!r})"
+            f"apply_ratify did not bump updated_at (before={before!r}, after={after!r})"
         )
     finally:
         await c.close()
@@ -230,8 +225,7 @@ async def test_v18_find_or_create_canonical_update_path_bumps_updated_at() -> No
         assert did_first == did_second, "canonical dedup must return same id"
         after = await _read_updated_at(c, did_second)
         assert after > before, (
-            f"canonical UPDATE path did not bump updated_at "
-            f"(before={before!r}, after={after!r})"
+            f"canonical UPDATE path did not bump updated_at (before={before!r}, after={after!r})"
         )
     finally:
         await c.close()
@@ -304,9 +298,7 @@ async def test_v18_index_idx_decision_updated_at_exists() -> None:
         await _seed_decision(c)
         await asyncio.sleep(0.01)
         await _seed_decision(c)
-        rows = await c.query(
-            "SELECT updated_at FROM decision ORDER BY updated_at DESC LIMIT 1"
-        )
+        rows = await c.query("SELECT updated_at FROM decision ORDER BY updated_at DESC LIMIT 1")
         assert rows
         assert rows[0].get("updated_at"), (
             "ORDER BY updated_at returned a row without the field — "
@@ -347,16 +339,13 @@ async def test_v18_migration_backfills_legacy_rows_with_none_updated_at() -> Non
         # of corrupt legacy rows (see _migrate_v17_to_v18 — try/except per
         # row mirroring _clean_yields_legacy_rows).
         await _migrate_v17_to_v18(c)
-        rows = await c.query(
-            f"SELECT updated_at, created_at FROM {did} LIMIT 1"
-        )
+        rows = await c.query(f"SELECT updated_at, created_at FROM {did} LIMIT 1")
         assert rows
         # After backfill, updated_at must be populated and a valid datetime
         # string — exact value depends on wall-clock at migration time, so
         # just assert presence + that MAX(updated_at) is now well-defined.
         assert rows[0].get("updated_at"), (
-            "backfill did not populate updated_at "
-            f"(updated_at={rows[0].get('updated_at')!r})"
+            f"backfill did not populate updated_at (updated_at={rows[0].get('updated_at')!r})"
         )
     finally:
         await c.close()
@@ -402,9 +391,7 @@ async def test_v18_migration_backfill_tolerates_legacy_rows_with_none_created_at
         )
         # Sanity: the live backfill still works on a clean DB.
         await c.execute(f"UPDATE {did} SET updated_at = NONE")
-        await c.query(
-            "UPDATE decision SET updated_at = time::now() WHERE updated_at IS NONE"
-        )
+        await c.query("UPDATE decision SET updated_at = time::now() WHERE updated_at IS NONE")
         rows = await c.query(f"SELECT updated_at FROM {did} LIMIT 1")
         assert rows and rows[0].get("updated_at"), (
             "backfill failed to populate updated_at on the cleared row"
