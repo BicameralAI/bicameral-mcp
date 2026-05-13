@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -47,6 +47,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     16: "0.13.x",  # #252 Layer 2 — wire-format sentinel via bicameral_meta table; placeholder, release-eng pins final value at PR merge
     17: "0.14.x",  # re-runnable yields integrity cleanup; placeholder, release-eng pins final value at PR merge
     18: "0.14.x",  # decision.updated_at + idx_decision_updated_at (#87 precondition — revision marker for preflight dedup); placeholder, release-eng pins final value at PR merge
+    19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -425,6 +426,23 @@ _BICAMERAL_META = [
     "DEFINE FIELD surrealdb_client_version_at_first_write ON bicameral_meta TYPE option<string> DEFAULT NONE",
     "DEFINE FIELD surrealdb_client_version_at_last_write  ON bicameral_meta TYPE option<string> DEFAULT NONE",
     "DEFINE FIELD last_write_at                            ON bicameral_meta TYPE option<datetime> DEFAULT NONE",
+    # v19 (#87 Phase 6) — monotonic counter bumped on every decision
+    # CREATE/UPDATE via the DEFINE EVENT below. Replaces the v18 ORDER BY
+    # DESC LIMIT 1 query as the preflight-dedup revision marker —
+    # constant-time read, deterministic, no full-table scan, no SurrealDB
+    # v2 ordering quirks. Existing v18 `decision.updated_at` stays for
+    # display / debugging.
+    "DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0",
+    # The EVENT auto-bumps the counter on every decision write. Body
+    # UPDATE targets bicameral_meta (a different table), so no risk of
+    # recursive re-firing. SurrealDB v2 evaluates EVENTs inside the same
+    # transaction as the originating write, so the counter advances
+    # atomically with the underlying decision change.
+    (
+        "DEFINE EVENT decision_revision_bump ON TABLE decision "
+        "WHEN $event = 'CREATE' OR $event = 'UPDATE' "
+        "THEN (UPDATE bicameral_meta SET decision_revision = decision_revision + 1)"
+    ),
 ]
 
 
@@ -1106,6 +1124,70 @@ async def _migrate_v17_to_v18(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v18_to_v19(client: LedgerClient) -> None:
+    """v18 → v19: Add bicameral_meta.decision_revision + DEFINE EVENT (#87 Phase 6).
+
+    Phase 4's ``get_ledger_revision`` shipped with two problems caught
+    after merge:
+
+    1. ``SELECT updated_at ... ORDER BY updated_at DESC LIMIT 1`` is a
+       full scan on the SurrealDB v2 memory backend — the v18
+       ``idx_decision_updated_at`` index does NOT accelerate ORDER BY
+       DESC. ~8ms p50 at N=1000, over Kevin's ≤1ms budget by 8x.
+    2. The same query is ~50% flaky under pytest's batch runner
+       (0/20 wrong standalone, ~7/15 wrong under load). Suggests a
+       SurrealDB v2 ordering quirk we don't fully understand.
+
+    Phase 6 fixes both by sidestepping ORDER BY entirely: a counter on
+    the singleton ``bicameral_meta`` row, auto-bumped on every decision
+    CREATE/UPDATE by a ``DEFINE EVENT`` trigger. Constant-time read.
+    Atomic with the originating decision write (events run inside the
+    same transaction in SurrealDB v2). Zero call-site audit needed —
+    the trigger fires unconditionally on every relevant write.
+
+    Additive only — no data loss. The v18 ``decision.updated_at`` field
+    and ``idx_decision_updated_at`` stay for display / debugging /
+    audit-trail purposes. The migration:
+
+    1. Defines the new field + EVENT idempotently (init_schema also
+       applies them on every connect via ``_BICAMERAL_META``).
+    2. Ensures the singleton ``bicameral_meta`` row exists with
+       ``decision_revision = 0``. The v15→v16 migration created the
+       row in some paths but not all; this step is defensive.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0",
+    )
+    await _execute_define_idempotent(
+        client,
+        (
+            "DEFINE EVENT decision_revision_bump ON TABLE decision "
+            "WHEN $event = 'CREATE' OR $event = 'UPDATE' "
+            "THEN (UPDATE bicameral_meta SET decision_revision = decision_revision + 1)"
+        ),
+    )
+    # Ensure the singleton row exists. Without this, the EVENT fires on
+    # decision writes but has no row to UPDATE; the counter stays at 0.
+    # _write_wire_format_sentinel (adapter.connect) creates the row on
+    # first connect, but the migration may run before that path.
+    try:
+        rows = await client.query("SELECT id FROM bicameral_meta LIMIT 1")
+    except Exception:
+        rows = []
+    if not rows:
+        try:
+            await client.execute("CREATE bicameral_meta SET decision_revision = 0")
+        except Exception as exc:
+            logger.warning(
+                "[migration] v18 → v19: could not seed bicameral_meta singleton (%s)",
+                exc,
+            )
+    logger.info(
+        "[migration] v18 → v19: bicameral_meta.decision_revision + decision_revision_bump event added (#87 Phase 6)"
+    )
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1185,6 +1267,7 @@ _MIGRATIONS: dict[int, ...] = {
     16: _migrate_v15_to_v16,
     17: _migrate_v16_to_v17,
     18: _migrate_v17_to_v18,
+    19: _migrate_v18_to_v19,
 }
 
 

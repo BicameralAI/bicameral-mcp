@@ -21,7 +21,6 @@ import pytest
 from ledger.adapter import SurrealDBLedgerAdapter
 from ledger.client import LedgerClient
 from ledger.queries import (
-    get_ledger_revision,
     update_decision_level,
     update_decision_status,
     upsert_decision,
@@ -413,67 +412,20 @@ async def test_v18_migration_backfill_tolerates_legacy_rows_with_none_created_at
 # memory:// SurrealDB so the next regression of this kind fails loudly.
 
 
-@pytest.mark.asyncio
-async def test_get_ledger_revision_returns_iso_string_against_real_ledger() -> None:
-    """The production query must return a non-empty string for a ledger
-    with at least one decision. Pinning this prevents future SurrealQL
-    drafts that pass unit tests (mocked) but parse-fail in production."""
-    c = await _fresh_client()
-    try:
-        await _seed_decision(c)
-        rev = await get_ledger_revision(c)
-        assert rev is not None, (
-            "get_ledger_revision returned None against a non-empty ledger — "
-            "the production SurrealQL failed to parse or execute. "
-            "Phase 4 dedup is broken when this happens."
-        )
-        assert rev, f"get_ledger_revision returned empty against a non-empty ledger (got {rev!r})"
-    finally:
-        await c.close()
-
-
-@pytest.mark.asyncio
-async def test_get_ledger_revision_returns_empty_for_empty_table() -> None:
-    """Empty decision table → empty-string sentinel (preserves cache hits
-    for sessions that never write decisions). NOT None — None is reserved
-    for the BYPASS branch per Kevin's amendment."""
-    c = await _fresh_client()
-    try:
-        rev = await get_ledger_revision(c)
-        assert rev == "", f"empty table must return empty-string sentinel, got {rev!r}"
-    finally:
-        await c.close()
-
-
-@pytest.mark.asyncio
-async def test_get_ledger_revision_advances_after_update() -> None:
-    """Updating a decision must advance the revision marker. This is the
-    core contract Phase 4 relies on — without monotonic advancement, the
-    M7a/M7c invalidation never fires in production."""
-    c = await _fresh_client()
-    try:
-        did = await _seed_decision(c)
-        rev_before = await get_ledger_revision(c)
-        assert rev_before, "seed should produce a non-empty revision"
-        await asyncio.sleep(0.01)
-        await update_decision_status(c, did, "drifted")
-        rev_after = await get_ledger_revision(c)
-        assert rev_after > rev_before, (
-            f"revision must advance after UPDATE (before={rev_before!r}, after={rev_after!r})"
-        )
-    finally:
-        await c.close()
-
-
-# Note: an earlier draft included a test that pinned the ORDER BY DESC
-# ordering with two rows. Empirically that test is ~50% flaky under
-# pytest's batch runner against memory:// SurrealDB — the same query
-# is 0/20 wrong in standalone scripts but ~7/15 wrong when run with
-# the broader Phase 4+5 test cluster. The mechanism is not yet root-
-# caused (likely event-loop / connection-pool contention in pytest-
-# asyncio); see task #8 follow-up for a constant-time counter
-# alternative that sidesteps ORDER BY entirely. The contract this test
-# would have pinned is already covered by
-# test_get_ledger_revision_advances_after_update (above) which uses
-# UPDATE — a single deterministic timestamp bump that doesn't depend
-# on ORDER BY internals.
+# Note: this file previously held three sociable tests against
+# `get_ledger_revision`:
+#   - test_get_ledger_revision_returns_iso_string_against_real_ledger
+#   - test_get_ledger_revision_returns_empty_for_empty_table
+#   - test_get_ledger_revision_advances_after_update
+#
+# All three were ported to ``tests/test_v19_revision_counter.py`` when
+# #87 Phase 6 replaced the ORDER BY DESC LIMIT 1 query shape with a
+# constant-time counter read on the bicameral_meta singleton row. The
+# v19 file pins the new contract end-to-end (counter advances on every
+# decision write via DEFINE EVENT, returns "" when the singleton row
+# is missing, etc.). Keeping the v18 copies would double-cover the
+# same surface area while pinning the obsolete v18 return-shape
+# (datetime string vs stringified integer).
+#
+# The v18 schema work (updated_at field, idx_decision_updated_at,
+# call-site audits) is still pinned by the tests above.
