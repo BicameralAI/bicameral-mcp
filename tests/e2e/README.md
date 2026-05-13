@@ -94,7 +94,7 @@ handler functions and calls them. It's fast and useful for iterating on
 handler logic, but it bypasses three layers we need to validate:
 
 - **MCP protocol** — JSON-RPC over stdio, tool schema marshalling
-- **Skill files** — `.claude/skills/bicameral-*/SKILL.md` parsing, trigger
+- **Skill files** — `skills/bicameral-*/SKILL.md` parsing, trigger
   matching, prompt construction
 - **Caller LLM** — natural-language → tool-call sequencing, auto-chains
   (preflight → capture-corrections → context-sentry → ingest → judge_gaps)

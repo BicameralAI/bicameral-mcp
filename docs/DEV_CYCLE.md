@@ -827,8 +827,9 @@ From `CLAUDE.md`:
 > with a matching update to the relevant `pilot/mcp/skills/*/SKILL.md`** in the
 > same commit.
 
-This is enforced at review time. `pilot/mcp/skills/` is canonical;
-`.claude/skills/bicameral-*/SKILL.md` copies are stale and slated for deletion.
+This is enforced at review time. `skills/` is canonical;
+`.claude/skills/bicameral-*` are symlinks to `../../skills/bicameral-*` for
+Claude Code's slash-command resolver — never edit through them.
 
 ---
 

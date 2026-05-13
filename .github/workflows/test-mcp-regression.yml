@@ -103,7 +103,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       # ── M1 decision relevance: adversarial corpus (warn-only) ────
-      # Runs the current .claude/skills/bicameral-ingest/SKILL.md through
+      # Runs the current skills/bicameral-ingest/SKILL.md through
       # the headless Anthropic extraction driver against the 5 adversarial
       # transcripts (tests/fixtures/transcripts/adv-*.md), then scores
       # extraction P/R/F1 against the committed Opus ground truth via

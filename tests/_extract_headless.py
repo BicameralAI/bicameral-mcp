@@ -1,6 +1,6 @@
 """Headless extraction driver for the bicameral-ingest skill.
 
-Runs Step 1 of `.claude/skills/bicameral-ingest/SKILL.md` (decision extraction)
+Runs Step 1 of `skills/bicameral-ingest/SKILL.md` (decision extraction)
 against the Anthropic Messages API and returns a natural-format payload
 shaped for `handle_ingest`. Phase 5 skill-spec A/B branches simply edit
 SKILL.md and the runner picks the change up automatically — the cache is
@@ -33,11 +33,11 @@ from typing import Any
 import httpx
 
 # The canonical bicameral-ingest skill lives at
-# .claude/skills/bicameral-ingest/SKILL.md. We resolve it relative to
-# this file so CI and local dev agree without any env-var dance. Phase 5
-# skill-spec A/B branches edit this exact file.
+# skills/bicameral-ingest/SKILL.md. We resolve it relative to this file
+# so CI and local dev agree without any env-var dance. Phase 5 skill-spec
+# A/B branches edit this exact file.
 MCP_ROOT = Path(__file__).resolve().parents[1]
-SKILL_MD_PATH = MCP_ROOT / ".claude" / "skills" / "bicameral-ingest" / "SKILL.md"
+SKILL_MD_PATH = MCP_ROOT / "skills" / "bicameral-ingest" / "SKILL.md"
 CACHE_DIR = Path(__file__).resolve().parent / ".extract-cache"
 
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"

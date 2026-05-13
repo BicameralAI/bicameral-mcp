@@ -171,7 +171,7 @@ V1's value is operational confidence + one footgun closed + one race narrowed + 
 | 9 | Cache-aware drift surfacing | `detect_drift` doesn't emit `pending_compliance_checks`. | **C3**: emit `pending_compliance_checks` for every hash-divergent region; cosmetic_hint is metadata only, never a gate. |
 | 10 | Baseline advancement | `code_region.content_hash` updates only via `link_commit` sweep; no caller-driven advancement. | **B3**: `bicameral_advance_baseline(decision_id, region_id, cas_token, verdict_id)` — only accepts a fresh L3 `compliant` verdict matching all five CAS components. Writes to a single `binds_to` edge; never touches shared region state. No `ast_cosmetic` reason. |
 | 11 | Atomic rebind | Rename → `symbol_disappeared` payload (V1 D1). Manual `bicameral.bind` would create duplicate-binding state under N:N `binds_to`. | **D2**: `bicameral_rebind` with `expected_old_binding_version` + `expected_old_tombstone_verdict_id` CAS, **two-phase** semantics (Codex pass-11 #2): create new as pending → fresh L3 verdict on new target → tombstone old. Closes scenario 8. |
-| 12 | Doctor skill rendering | `.claude/skills/bicameral-doctor/SKILL.md` exists (211 lines) but contains zero `pending_grounding_checks` / `cosmetic_hint` / verdict-related prose. | Once V2 has safe atomic rebind, render the new payloads as advisory context with the (now-safe) bind flow for relocation cases. |
+| 12 | Doctor skill rendering | `skills/bicameral-doctor/SKILL.md` exists (211 lines) but contains zero `pending_grounding_checks` / `cosmetic_hint` / verdict-related prose. | Once V2 has safe atomic rebind, render the new payloads as advisory context with the (now-safe) bind flow for relocation cases. |
 | 13 | Branch-aware drift report (GitHub #47) | No handler surfaces drift / ungrounded state across a `base_ref..head_ref` range. PR-time and pre-push consumers (#48, #49) have no signal source. | **Phase 6**: `handlers/scan_branch.py` — read-only branch-aware drift report. Reuses Phase 1–4 machinery (per-binding baseline + full-CAS hash comparison + symbol re-resolution + relocation surfacing). Zero new mutating capabilities. Closes #47. |
 
 ### 4.2 V2 product targets
@@ -488,7 +488,7 @@ V1 A2-light only catches in-process races on `bind`. V2 needs three complementar
 └─────────────────────┬───────────────────────────────┘
                       │
 ┌─ Phase 5 (Polish) ──▼───────────────────────────────┐
-│ .claude/skills/bicameral-doctor/SKILL.md rendering   │
+│ skills/bicameral-doctor/SKILL.md rendering   │
 │ Re-run Codex review (target: pass-13 ships clean)    │
 │ Convert scenario 8 from xfail → expected pass        │
 └─────────────────────┬───────────────────────────────┘
@@ -727,7 +727,7 @@ Phase 2 happens through `record_compliance_verdict` per §5.5 + §5.6: a `compli
 
 ### Phase 5 — Polish (2–3 days)
 
-- **Doctor SKILL.md rendering**: update `.claude/skills/bicameral-doctor/SKILL.md` to render `pending_compliance_checks` and `pending_grounding_checks` as actionable advisories now that V2 has the safe atomic rebind. Update the verification instruction text in `handlers/link_commit.py::_build_verification_instruction` to point at `bicameral_rebind` for relocation cases (replacing the V1 "INFORMATIONAL ONLY — wait for V2" warning).
+- **Doctor SKILL.md rendering**: update `skills/bicameral-doctor/SKILL.md` to render `pending_compliance_checks` and `pending_grounding_checks` as actionable advisories now that V2 has the safe atomic rebind. Update the verification instruction text in `handlers/link_commit.py::_build_verification_instruction` to point at `bicameral_rebind` for relocation cases (replacing the V1 "INFORMATIONAL ONLY — wait for V2" warning).
 - **Codex pass-13**: re-run the adversarial review on the final V2 implementation. Target: clean ship with no remaining critical findings.
 - **Convert scenario 8** in `tests/test_desync_scenarios.py` from `@pytest.mark.xfail(strict=True)` to a normal expected-pass test that exercises the two-phase rebind end-to-end.
 
@@ -887,7 +887,7 @@ Where:
 
 - The v0.6.4 monolithic `_VERIFICATION_INSTRUCTION` indiscriminately routed both ungrounded and `symbol_disappeared` cases to a `bicameral.bind` CTA. For relocation cases, that creates duplicate-binding state.
 - V1 split the instruction into per-`reason` parts. **V2 retains this split** even after atomic rebind ships; the relocation branch is updated to point at `bicameral_rebind` instead of warning callers off.
-- V1's claim that the doctor SKILL.md "is already advisory" was empirically false — the file at `.claude/skills/bicameral-doctor/SKILL.md` (note path; not `skills/bicameral-doctor/`) contains zero references to `pending_grounding_checks`, `relocation`, `symbol_disappeared`, or `bicameral.bind`. V2 Phase 5 polish updates the skill to render these.
+- V1's claim that the doctor SKILL.md "is already advisory" was empirically false — the file at `skills/bicameral-doctor/SKILL.md` contains zero references to `pending_grounding_checks`, `relocation`, `symbol_disappeared`, or `bicameral.bind`. V2 Phase 5 polish updates the skill to render these.
 
 ### 7.10 Pass-13 specific findings (V2 design review)
 
@@ -987,7 +987,7 @@ V2 is shippable when **all** of the following hold:
 - [ ] **Rebind has lease-driven recovery** (pass-14 #2): `rebind_audit.expires_at` populated on phase 1; on-demand expiry sweep at the start of every `bicameral_rebind` phase 1 atomically abandons stale leases (`outcome='abandoned_by_expiry'`); phase 2 lease check rejects verdicts on expired/superseded/abandoned attempts as stale-history-only; `force_supersede=true` on `bicameral_rebind` provides explicit caller-driven supersede. Acceptance test simulates a crashed caller (insert stale `rebind_audit` with `recorded_at - 25h`) and proves the next `bicameral_rebind` succeeds with the prior attempt marked `abandoned_by_expiry`.
 - [ ] **Edge-vs-region terminology audit** (pass-14 #4): grep proves no V2 implementation code mutates `binding_version` on `code_region`. Every `binding_version` write targets a `binds_to` edge.
 - [ ] **`judge_gaps` migration is implicit, not separate** (pass-14 #3): Phase 0a's `resolve_compliance` migration covers the entire `judge_gaps → resolve_compliance` pipeline. No separate code change to `handlers/gap_judge.py` (read-only) is required or made.
-- [ ] `.claude/skills/bicameral-doctor/SKILL.md` renders `pending_compliance_checks` and `pending_grounding_checks` with the (now-safe) bind / rebind flows.
+- [ ] `skills/bicameral-doctor/SKILL.md` renders `pending_compliance_checks` and `pending_grounding_checks` with the (now-safe) bind / rebind flows.
 - [ ] **`bicameral_scan_branch` ships and closes GitHub #47** (Phase 6): `handlers/scan_branch.py` is registered as an MCP tool; calling it with `(base_ref, head_ref)` returns drifted decisions, ungrounded decisions, and `changed_files` between the two refs. Read-only invariant audited by test (table counts unchanged after scan). PR uses `Closes #47`.
 - [ ] CHANGELOG entry summarizes V2 deliverables; the V1 "Unreleased" entry can roll up into a V2 release version (or both can ship as a single release, depending on team preference).
 
@@ -1019,7 +1019,7 @@ V2 is shippable when **all** of the following hold:
 - `tests/test_resolve_compliance.py` — assert tombstone, not deletion
 - New tests: `tests/test_record_compliance_verdict.py`, `tests/test_advance_baseline.py`, `tests/test_rebind.py`, `tests/test_a2a_barrier.py`, `tests/test_v6_migration.py`, `tests/test_scan_branch.py` (Phase 6)
 - New: `handlers/scan_branch.py` — Phase 6 read-only branch-aware drift report, closes GitHub #47
-- `.claude/skills/bicameral-doctor/SKILL.md` — Phase 5 rendering update
+- `skills/bicameral-doctor/SKILL.md` — Phase 5 rendering update
 
 ### V1 commits on this branch
 
