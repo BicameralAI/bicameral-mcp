@@ -45,6 +45,7 @@ from handlers.analysis import _to_brief_decision
 from preflight_telemetry import (
     new_preflight_id,
     telemetry_enabled,
+    write_dedup_event,
     write_preflight_event,
 )
 
@@ -325,6 +326,61 @@ def _check_dedup(
     return False
 
 
+def _dedup_miss_was_revision_bump(
+    ctx,
+    topic: str,
+    file_paths: list[str] | None,
+    ledger_revision: str | None,
+) -> bool:
+    """Classify a dedup miss: did it miss because ``ledger_revision``
+    advanced since the prior same-(topic, file_paths) call?
+
+    Returns True when:
+    - the current (topic, file_paths) prefix has been seen before within
+      ``_DEDUP_TTL_SECONDS``,
+    - but the prior entry's revision component differs from the current
+      ``ledger_revision``.
+
+    This is the M7a/M7c signal — a decision landed (M7a) or HITL state
+    cleared (M7c) between two same-topic/same-paths calls, and the new
+    `ledger_revision` invalidated the cache as intended. Phase 5
+    telemetry (#87) emits a ``preflight_dedup_decision`` event with
+    ``reason=invalidated_by_revision_bump`` on True.
+
+    False for: first-call misses (no prior prefix entry), expired
+    entries (older than TTL), and file_paths-shift misses (the prefix
+    itself differs, not the revision suffix).
+    """
+    sync_state = getattr(ctx, "_sync_state", None)
+    if not isinstance(sync_state, dict):
+        return False
+    topics: dict[str, float] = sync_state.get("preflight_topics") or {}
+    if not topics:
+        return False
+    current_key = _dedup_key_for(topic, file_paths, ledger_revision)
+    parts = current_key.split("||")
+    if len(parts) != 3:
+        return False
+    topic_norm, paths_norm, current_rev = parts
+    if not topic_norm:
+        return False
+    prefix = f"{topic_norm}||{paths_norm}||"
+    now = time.time()
+    for stored_key, ts in topics.items():
+        if not stored_key.startswith(prefix):
+            continue
+        if stored_key == current_key:
+            # Identical key — would have been a cache hit, not a miss.
+            continue
+        if now - ts >= _DEDUP_TTL_SECONDS:
+            continue
+        # Same prefix, different rev, within TTL → revision bump.
+        stored_rev = stored_key[len(prefix) :]
+        if stored_rev != current_rev:
+            return True
+    return False
+
+
 async def _region_anchored_preflight(
     ctx,
     file_paths: list[str],
@@ -549,13 +605,19 @@ async def handle_preflight(
 
     if ledger_revision is None:
         # BYPASS: revision is unknown → cannot safely dedup. Loud warning
-        # for ops visibility; telemetry counter wiring lands in Phase 5
-        # (#87) so dashboards can quantify how often this happens in
-        # production.
+        # for ops visibility; #87 Phase 5 telemetry counter quantifies
+        # how often this happens in production. A sustained spike is the
+        # signal to look at ledger health (transient SurrealDB faults,
+        # schema mismatch, etc.).
         logger.warning(
             "[preflight] dedup bypassed — ledger_revision lookup failed for "
             "topic %r; the next same-topic call will re-evaluate fully",
             topic[:60],
+        )
+        write_dedup_event(
+            reason="bypassed_revision_unknown",
+            session_id=session_id,
+            preflight_id=pid,
         )
     elif _check_dedup(ctx, topic, file_paths, ledger_revision):
         logger.debug(
@@ -579,6 +641,24 @@ async def handle_preflight(
             fired=False,
             reason="recently_checked",
             guided_mode=guided_mode,
+            preflight_id=pid,
+        )
+
+    # Cache-miss classification (#87 Phase 5): if the miss was caused by
+    # a ledger_revision bump (same topic + file_paths seen before but
+    # with a different revision still within TTL), emit the M7a/c
+    # signal. This is the counter Kevin asked for — "so we can tell the
+    # new key is doing useful work in production". File-paths-shift
+    # misses (M7b) are intentionally NOT counted here; the file_paths
+    # component of the key is observable from preflight_events.jsonl
+    # via the existing ``file_paths_hash`` field if a follow-up wants
+    # to backfill that metric.
+    if ledger_revision is not None and _dedup_miss_was_revision_bump(
+        ctx, topic, file_paths, ledger_revision
+    ):
+        write_dedup_event(
+            reason="invalidated_by_revision_bump",
+            session_id=session_id,
             preflight_id=pid,
         )
 
