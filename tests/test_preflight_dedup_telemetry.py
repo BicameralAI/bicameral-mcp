@@ -42,9 +42,7 @@ def _ctx(state: dict | None = None) -> SimpleNamespace:
 def test_classifier_returns_false_when_no_prior_entry():
     """First call → no prefix in cache → not a revision bump."""
     ctx = _ctx()
-    assert _dedup_miss_was_revision_bump(
-        ctx, "topic words", ["a.py"], "rev-1"
-    ) is False
+    assert _dedup_miss_was_revision_bump(ctx, "topic words", ["a.py"], "rev-1") is False
 
 
 def test_classifier_returns_true_when_only_revision_differs():
@@ -55,9 +53,10 @@ def test_classifier_returns_true_when_only_revision_differs():
 
     _check_dedup(ctx, "stripe webhook", ["payments/stripe.py"], "rev-1")
     # Now classify a miss at rev-2 with same prefix.
-    assert _dedup_miss_was_revision_bump(
-        ctx, "stripe webhook", ["payments/stripe.py"], "rev-2"
-    ) is True
+    assert (
+        _dedup_miss_was_revision_bump(ctx, "stripe webhook", ["payments/stripe.py"], "rev-2")
+        is True
+    )
 
 
 def test_classifier_returns_false_when_file_paths_differ():
@@ -67,9 +66,10 @@ def test_classifier_returns_false_when_file_paths_differ():
     from handlers.preflight import _check_dedup
 
     _check_dedup(ctx, "refactor handler", ["auth/login.py"], "rev-1")
-    assert _dedup_miss_was_revision_bump(
-        ctx, "refactor handler", ["billing/subs.py"], "rev-1"
-    ) is False
+    assert (
+        _dedup_miss_was_revision_bump(ctx, "refactor handler", ["billing/subs.py"], "rev-1")
+        is False
+    )
 
 
 def test_classifier_returns_false_when_topic_differs():
@@ -78,9 +78,7 @@ def test_classifier_returns_false_when_topic_differs():
     from handlers.preflight import _check_dedup
 
     _check_dedup(ctx, "stripe webhook", ["a.py"], "rev-1")
-    assert _dedup_miss_was_revision_bump(
-        ctx, "auth jwt", ["a.py"], "rev-1"
-    ) is False
+    assert _dedup_miss_was_revision_bump(ctx, "auth jwt", ["a.py"], "rev-1") is False
 
 
 def test_classifier_ignores_entries_outside_ttl(monkeypatch):
@@ -96,9 +94,7 @@ def test_classifier_ignores_entries_outside_ttl(monkeypatch):
     for k in list(topics.keys()):
         topics[k] = time.time() - (pf._DEDUP_TTL_SECONDS + 60)
 
-    assert _dedup_miss_was_revision_bump(
-        ctx, "stripe webhook", ["a.py"], "rev-2"
-    ) is False
+    assert _dedup_miss_was_revision_bump(ctx, "stripe webhook", ["a.py"], "rev-2") is False
 
 
 def test_classifier_returns_false_for_identical_keys():
@@ -109,17 +105,13 @@ def test_classifier_returns_false_for_identical_keys():
     from handlers.preflight import _check_dedup
 
     _check_dedup(ctx, "stripe webhook", ["a.py"], "rev-1")
-    assert _dedup_miss_was_revision_bump(
-        ctx, "stripe webhook", ["a.py"], "rev-1"
-    ) is False
+    assert _dedup_miss_was_revision_bump(ctx, "stripe webhook", ["a.py"], "rev-1") is False
 
 
 def test_classifier_returns_false_when_sync_state_missing():
     """Defensive — ctx without _sync_state can't have a prior entry."""
     ctx = SimpleNamespace()
-    assert _dedup_miss_was_revision_bump(
-        ctx, "topic", ["a.py"], "rev-1"
-    ) is False
+    assert _dedup_miss_was_revision_bump(ctx, "topic", ["a.py"], "rev-1") is False
 
 
 # ── End-to-end telemetry emission ────────────────────────────────────
@@ -177,9 +169,7 @@ def test_telemetry_bypass_emits_bypassed_revision_unknown(monkeypatch):
     monkeypatch.setattr(pf, "write_dedup_event", _capture)
 
     ctx = _ctx_for_handler({})
-    asyncio.run(
-        pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["a.py"])
-    )
+    asyncio.run(pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["a.py"]))
 
     bypass_events = [e for e in captured if e[0] == "bypassed_revision_unknown"]
     assert len(bypass_events) == 1, (
@@ -212,20 +202,13 @@ def test_telemetry_revision_bump_emits_invalidated_by_revision_bump(monkeypatch)
 
     sync_state: dict = {}
     ctx1 = _ctx_for_handler(sync_state)
-    asyncio.run(
-        pf.handle_preflight(ctx=ctx1, topic="stripe webhook", file_paths=["a.py"])
-    )
+    asyncio.run(pf.handle_preflight(ctx=ctx1, topic="stripe webhook", file_paths=["a.py"]))
     ctx2 = _ctx_for_handler(sync_state)  # reuses sync_state — same session
-    asyncio.run(
-        pf.handle_preflight(ctx=ctx2, topic="stripe webhook", file_paths=["a.py"])
-    )
+    asyncio.run(pf.handle_preflight(ctx=ctx2, topic="stripe webhook", file_paths=["a.py"]))
 
-    bump_events = [
-        e for e in captured if e[0] == "invalidated_by_revision_bump"
-    ]
+    bump_events = [e for e in captured if e[0] == "invalidated_by_revision_bump"]
     assert len(bump_events) == 1, (
-        f"expected exactly one invalidated_by_revision_bump event, "
-        f"got {captured!r}"
+        f"expected exactly one invalidated_by_revision_bump event, got {captured!r}"
     )
 
 
@@ -235,9 +218,7 @@ def test_telemetry_first_call_emits_nothing(monkeypatch):
     import handlers.preflight as pf
     import ledger.queries as lq
 
-    monkeypatch.setattr(
-        lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1")
-    )
+    monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1"))
     _wire_common_mocks(monkeypatch)
 
     captured: list[tuple[str, str, str | None]] = []
@@ -248,13 +229,9 @@ def test_telemetry_first_call_emits_nothing(monkeypatch):
     monkeypatch.setattr(pf, "write_dedup_event", _capture)
 
     ctx = _ctx_for_handler({})
-    asyncio.run(
-        pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["a.py"])
-    )
+    asyncio.run(pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["a.py"]))
 
-    assert captured == [], (
-        f"first call must not emit dedup events, got {captured!r}"
-    )
+    assert captured == [], f"first call must not emit dedup events, got {captured!r}"
 
 
 def test_telemetry_cache_hit_emits_nothing(monkeypatch):
@@ -264,9 +241,7 @@ def test_telemetry_cache_hit_emits_nothing(monkeypatch):
     import handlers.preflight as pf
     import ledger.queries as lq
 
-    monkeypatch.setattr(
-        lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1")
-    )
+    monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1"))
     _wire_common_mocks(monkeypatch)
 
     captured: list[tuple[str, str, str | None]] = []
@@ -294,9 +269,7 @@ def test_telemetry_cache_hit_emits_nothing(monkeypatch):
     # Confirm we got the hit (sanity).
     assert response.reason == "recently_checked"
     # No telemetry events should have fired across both calls.
-    assert captured == [], (
-        f"cache hit must not emit dedup events, got {captured!r}"
-    )
+    assert captured == [], f"cache hit must not emit dedup events, got {captured!r}"
 
 
 def test_telemetry_file_paths_shift_does_not_emit_revision_bump(monkeypatch):
@@ -307,9 +280,7 @@ def test_telemetry_file_paths_shift_does_not_emit_revision_bump(monkeypatch):
     import handlers.preflight as pf
     import ledger.queries as lq
 
-    monkeypatch.setattr(
-        lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1")
-    )
+    monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1"))
     _wire_common_mocks(monkeypatch)
 
     captured: list[tuple[str, str, str | None]] = []
@@ -335,12 +306,9 @@ def test_telemetry_file_paths_shift_does_not_emit_revision_bump(monkeypatch):
         )
     )
 
-    bump_events = [
-        e for e in captured if e[0] == "invalidated_by_revision_bump"
-    ]
+    bump_events = [e for e in captured if e[0] == "invalidated_by_revision_bump"]
     assert bump_events == [], (
-        f"file_paths shift must not be classified as revision bump, "
-        f"got {captured!r}"
+        f"file_paths shift must not be classified as revision bump, got {captured!r}"
     )
 
 
@@ -363,9 +331,7 @@ def test_write_dedup_event_noops_when_telemetry_disabled(monkeypatch, tmp_path):
     assert appended == []
 
 
-def test_write_dedup_event_writes_record_when_telemetry_enabled(
-    monkeypatch, tmp_path
-):
+def test_write_dedup_event_writes_record_when_telemetry_enabled(monkeypatch, tmp_path):
     """When enabled, write one row with the expected shape."""
     import preflight_telemetry as pt
 
@@ -394,9 +360,7 @@ def test_write_dedup_event_writes_record_when_telemetry_enabled(
     assert "ts" in rec
 
 
-def test_write_dedup_event_omits_preflight_id_when_unset(
-    monkeypatch, tmp_path
-):
+def test_write_dedup_event_omits_preflight_id_when_unset(monkeypatch, tmp_path):
     """Empty / None preflight_id is not included in the record (cleaner
     schema for events from sessions without telemetry preflight ids)."""
     import preflight_telemetry as pt
