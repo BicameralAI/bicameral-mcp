@@ -242,24 +242,80 @@ def _validate_topic(topic: str) -> bool:
     return True
 
 
-def _dedup_key_for(topic: str) -> str:
-    """Normalize topic for dedup key — case-insensitive, content-tokens
-    only, sorted. Catches phrasings like 'Stripe webhook' and
-    'webhook stripe' as the same topic."""
-    return " ".join(sorted(_content_tokens(topic)))
+def _normalize_file_paths_for_key(file_paths: list[str] | None) -> str:
+    """Canonicalize file_paths into a stable string component for the dedup
+    cache key. Sorted + lowercased + deduplicated — order-insensitive so
+    callers passing ``["a.py", "b.py"]`` and ``["b.py", "a.py"]`` collide.
+    Empty / None collapse to an empty string (the absent-path sentinel).
+    """
+    if not file_paths:
+        return ""
+    seen: set[str] = set()
+    out: list[str] = []
+    for fp in file_paths:
+        if not fp:
+            continue
+        norm = fp.strip().lower()
+        if norm and norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return "|".join(sorted(out))
 
 
-def _check_dedup(ctx, topic: str) -> bool:
-    """Return True when this topic was already preflight-checked within
-    ``_DEDUP_TTL_SECONDS``. Marks the topic as checked at current time
-    when not deduped (so repeat fires within the window are silenced).
+def _dedup_key_for(
+    topic: str,
+    file_paths: list[str] | None = None,
+    ledger_revision: str | None = None,
+) -> str:
+    """Compose the per-session preflight dedup cache key (#87 Phase 4).
+
+    The key is the 3-tuple ``(normalized_topic, normalized_file_paths,
+    ledger_revision)`` joined by ``||`` (an unambiguous separator that
+    can't appear in any normalized component). All three components must
+    match for a cache hit:
+
+    - **normalized_topic** — case-insensitive, content-tokens, sorted.
+      Catches phrasings like 'Stripe webhook' / 'webhook stripe' as the
+      same topic (legacy v0.4.12 behavior, preserved).
+    - **normalized_file_paths** — sorted + lowercased + deduplicated. A
+      same-topic call against a different region misses the cache.
+    - **ledger_revision** — MAX(updated_at) over the decision table at
+      call time. Any ledger mutation (new decision, status change, HITL
+      signoff write) bumps this and invalidates the cache for prior
+      same-topic calls.
+
+    ``ledger_revision=None`` is reserved for the bypass path: callers MUST
+    NOT pass None and expect dedup to function. The handler checks for
+    None separately and skips dedup entirely (Kevin's amendment).
+    """
+    topic_norm = " ".join(sorted(_content_tokens(topic)))
+    paths_norm = _normalize_file_paths_for_key(file_paths)
+    rev_norm = ledger_revision or ""
+    return f"{topic_norm}||{paths_norm}||{rev_norm}"
+
+
+def _check_dedup(
+    ctx,
+    topic: str,
+    file_paths: list[str] | None = None,
+    ledger_revision: str | None = None,
+) -> bool:
+    """Return True when the (topic, file_paths, ledger_revision) tuple was
+    already preflight-checked within ``_DEDUP_TTL_SECONDS``. Marks the tuple
+    as checked at current time when not deduped (so repeat fires within the
+    window are silenced).
+
+    The cache is keyed in ``ctx._sync_state["preflight_topics"]`` (the dict
+    name is a legacy label kept for backwards-compat — it now holds the
+    3-tuple key, not bare topics).
     """
     sync_state = getattr(ctx, "_sync_state", None)
     if not isinstance(sync_state, dict):
         return False
     topics: dict[str, float] = sync_state.setdefault("preflight_topics", {})
-    key = _dedup_key_for(topic)
-    if not key:
+    key = _dedup_key_for(topic, file_paths, ledger_revision)
+    if not key.split("||")[0]:
+        # Empty topic component → topic too short to dedup on; legacy contract.
         return False
     now = time.time()
     last = topics.get(key, 0.0)
@@ -466,9 +522,48 @@ async def handle_preflight(
             preflight_id=pid,
         )
 
-    # Per-session dedup — same topic within 5 min is silenced.
-    if _check_dedup(ctx, topic):
-        logger.debug("[preflight] dedup hit for topic: %r", topic[:60])
+    # Per-session dedup (#87 Phase 4) — same (topic, file_paths,
+    # ledger_revision) tuple within 5 min is silenced. Revision lookup
+    # failures BYPASS dedup entirely (Kevin's amendment on issue #87, B2
+    # signoff thread) rather than degrade to a partial key that could
+    # silently suppress a valid call. Correctness over saving a preflight
+    # call.
+    ledger_revision: str | None = None
+    try:
+        from ledger.queries import get_ledger_revision
+
+        inner = getattr(ctx.ledger, "_inner", ctx.ledger)
+        _client = getattr(inner, "_client", None)
+        if _client is not None:
+            ledger_revision = await get_ledger_revision(_client)
+    except Exception as exc:  # noqa: BLE001
+        # Defensive — get_ledger_revision already swallows its own
+        # exceptions and returns None, but if accessing ctx.ledger._inner
+        # raises (test stubs without that shape) we still want to bypass
+        # dedup rather than crash the handler.
+        logger.warning(
+            "[preflight] ledger revision lookup raised — bypassing dedup: %s",
+            exc,
+        )
+        ledger_revision = None
+
+    if ledger_revision is None:
+        # BYPASS: revision is unknown → cannot safely dedup. Loud warning
+        # for ops visibility; telemetry counter wiring lands in Phase 5
+        # (#87) so dashboards can quantify how often this happens in
+        # production.
+        logger.warning(
+            "[preflight] dedup bypassed — ledger_revision lookup failed for "
+            "topic %r; the next same-topic call will re-evaluate fully",
+            topic[:60],
+        )
+    elif _check_dedup(ctx, topic, file_paths, ledger_revision):
+        logger.debug(
+            "[preflight] dedup hit for topic=%r file_paths=%s rev=%s",
+            topic[:60],
+            file_paths,
+            ledger_revision[:32] if ledger_revision else "",
+        )
         if pid is not None:
             write_preflight_event(
                 session_id=session_id,

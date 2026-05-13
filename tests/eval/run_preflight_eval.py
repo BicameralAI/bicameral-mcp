@@ -167,6 +167,36 @@ def _apply_setup(monkeypatch, setup: dict, ctx: SimpleNamespace) -> None:
         AsyncMock(return_value=[_make_hitl_row(d) for d in setup.get("context_pending_ready", [])]),
     )
 
+    # #87 Phase 4 — preflight dedup key now includes ledger_revision. The
+    # handler calls ``ledger.queries.get_ledger_revision`` to fingerprint
+    # the decision table's mutation state; for harness scenarios the row
+    # supplies an explicit ``ledger_revision`` value (per-call), or we
+    # derive a deterministic non-empty stand-in from the setup so M7a/c
+    # naturally invalidate the cache between calls. The non-empty default
+    # is critical: returning ``None`` would trip the bypass branch and
+    # mask whatever the row is asserting.
+    explicit_rev = setup.get("ledger_revision")
+    if explicit_rev is not None:
+        rev_value: str | None = str(explicit_rev)
+    else:
+        # Stand-in: hash of (region_decisions + collision_pending +
+        # context_pending_ready) — any setup change between calls produces
+        # a different revision, matching production behavior where any
+        # decision/signoff UPDATE bumps updated_at.
+        import json as _json
+
+        derived = _json.dumps(
+            {
+                "rd": region_decisions,
+                "pd": pinned_decisions,
+                "cp": setup.get("collision_pending", []),
+                "cpr": setup.get("context_pending_ready", []),
+            },
+            sort_keys=True,
+        )
+        rev_value = derived
+    monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value=rev_value))
+
 
 @pytest.fixture(autouse=True)
 def _isolate_handler_environment(monkeypatch, tmp_path):

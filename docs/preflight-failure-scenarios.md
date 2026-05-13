@@ -14,7 +14,7 @@ In v0.10.0, BM25 keyword retrieval was deleted from `handle_preflight` and the r
 
 Two kill switches and a dedup layer also affect what the handler returns:
 - `BICAMERAL_PREFLIGHT_MUTE` env var — silences the handler for the session
-- 5-minute per-session dedup, today keyed on `(topic)` only — a known coarseness; see M7
+- 5-minute per-session dedup, keyed on `(normalized_topic, normalized_file_paths, ledger_revision)` since #87 Phase 4 (see M7 for history)
 
 The catalog tags each row with the layer it originates at.
 
@@ -55,7 +55,7 @@ Status legend:
 | **M4** | skill | Ungrounded decision (no `binds_to`) — only surfaces if skill judges its feature group relevant from history | Decision (status=ungrounded): *"Permission checks always run server-side"* / Topic: `permission middleware client check` | ⚪ |
 | **M5** | handler | Region-anchored miss — caller didn't pass `file_paths` | Topic: `update auth config` / `file_paths=[]` — handler returns no region matches; only HITL/guided can fire | ⚪ acknowledged caller responsibility; HITL still global |
 | **M6** | handler | Transitive — decision pinned to a dependency of `file_paths` | Decision pinned to `auth/jwt.py` / `file_paths=["auth/login_handler.py"]` (imports `jwt`) | ✅ closed by #173/#174 — `_region_anchored_preflight` expands `file_paths` by 1 hop along import edges before the `binds_to` lookup; expansion-only matches surface with `confidence=0.7` and `sources_chained` adds `"graph"` |
-| **M7** | handler | Dedup-key coarseness — current key is `(topic)`; same topic with changed `file_paths`, new HITL state, or a fresh ledger revision is silenced | (a) Topic re-asked after a relevant decision lands; (b) topic kept stable while `file_paths` shifts to a different region; (c) HITL condition resolves mid-window | ❌ open — broaden cache key to `(topic, normalized_file_paths, ledger_revision)` and invalidate on HITL change |
+| **M7** | handler | Dedup-key coarseness — current key is `(topic)`; same topic with changed `file_paths`, new HITL state, or a fresh ledger revision is silenced | (a) Topic re-asked after a relevant decision lands; (b) topic kept stable while `file_paths` shifts to a different region; (c) HITL condition resolves mid-window | ✅ closed by #87 Phase 4 — cache key is now `(normalized_topic, normalized_file_paths, ledger_revision)`. HITL state changes bump `decision.updated_at` via the v18 precondition so they fall out of the cache through the same revision marker. Revision lookup failure BYPASSES dedup entirely per Kevin's amendment (correctness over saving a preflight call). |
 | **M8** | meta | Skill skips `bicameral.history()` despite non-empty ledger (skill-step adherence drift) | Caller LLM jumps straight to `bicameral.preflight` and never reads history | ⛔ skill-conformance, not handler-eval scope |
 | **M9** | meta | `BICAMERAL_PREFLIGHT_MUTE` set, developer forgot it's on | Env var carried over from prior debug session | ⛔ intentional kill switch |
 
@@ -123,8 +123,8 @@ Tick as work lands. Items are independent capabilities — order is suggestive, 
 - [ ] Eval rows for M6 (transitive — decision pinned to dependency of `file_paths`)
 - [ ] File-graph primitive in `code_locator/` (M6 fix)
 - [ ] `_graph_expand_file_paths` in `handlers/preflight.py` (M6 fix)
-- [ ] Eval rows for M7 — three sub-cases: (a) dedup-window swallow after fresh ledger event, (b) topic stable + `file_paths` changes, (c) topic stable + HITL state changes
-- [ ] Broaden dedup cache key to `(topic, normalized_file_paths, ledger_revision)` and invalidate on HITL change (M7 fix)
+- [x] Eval rows for M7 — three sub-cases: (a) dedup-window swallow after fresh ledger event, (b) topic stable + `file_paths` changes, (c) topic stable + HITL state changes (rows landed in #62; flipped xfail → pass by #87 Phase 4)
+- [x] Broaden dedup cache key to `(topic, normalized_file_paths, ledger_revision)` and invalidate on HITL change (M7 fix) — #87 Phase 4. HITL changes invalidate via the same `ledger_revision` marker because signoff UPDATEs bump `decision.updated_at` (v18 precondition).
 
 **Attribution & dedup hardening:**
 - [ ] Emit `preflight_id` (UUIDv4) in `PreflightResponse`

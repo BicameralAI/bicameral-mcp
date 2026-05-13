@@ -1074,6 +1074,49 @@ async def update_decision_status(
     )
 
 
+async def get_ledger_revision(client: LedgerClient) -> str | None:
+    """Return a monotonic revision marker over the ``decision`` table (#87).
+
+    Used by the preflight dedup cache to detect ledger mutations within the
+    5-minute dedup window — when this changes between successive preflight
+    calls, the cache entry for the same topic/file_paths must invalidate so
+    the freshly-added decision can surface.
+
+    Returns ``None`` on lookup failure. Per Kevin's amendment on issue #87
+    (B2 signoff comment), callers MUST treat None as "bypass dedup entirely
+    with loud telemetry" — never degrade to a partial key that could silently
+    suppress a valid preflight call.
+
+    Implementation: ``MAX(updated_at) FROM decision``. Backed by
+    ``idx_decision_updated_at`` (added in v17→v18) for sub-millisecond
+    lookups; pre-v18 ledgers fall back to ``MAX(created_at)`` because
+    ``updated_at`` is NULL until the migration backfills it.
+
+    Returns:
+        ISO datetime string when at least one decision exists.
+        Empty string when the table is empty (stable sentinel — preserves
+            cache hits for a session that never writes decisions).
+        ``None`` when the query raises (transient SurrealDB error, schema
+            mismatch, etc.). Callers must bypass dedup in this case.
+    """
+    try:
+        rows = await client.query(
+            "SELECT math::max(coalesce(updated_at, created_at)) AS rev FROM decision GROUP ALL"
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[ledger.get_ledger_revision] revision lookup failed — caller should bypass dedup: %s",
+            exc,
+        )
+        return None
+    if not rows:
+        return ""
+    rev = rows[0].get("rev") if isinstance(rows[0], dict) else None
+    if rev is None:
+        return ""
+    return str(rev)
+
+
 # ── canonical_id ↔ decision_id resolution (#97 event replay) ──────────
 # Decision rows carry both a SurrealDB-generated ``id`` (e.g. ``decision:abc``)
 # and a content-addressed ``canonical_id`` (UUIDv5 from description +
