@@ -599,7 +599,8 @@ async def upsert_decision(
         }
         set_clause = (
             "rationale = $rationale, feature_hint = $feature_hint, "
-            "meeting_date = $meeting_date, speakers = $speakers, status = $status"
+            "meeting_date = $meeting_date, speakers = $speakers, status = $status, "
+            "updated_at = time::now()"
         )
         if signoff is not None:
             set_clause += ", signoff = $signoff"
@@ -1068,7 +1069,7 @@ async def update_decision_status(
 ) -> None:
     """Update the cached status on a decision node."""
     await client.execute(
-        f"UPDATE {decision_id} SET status = $s",
+        f"UPDATE {decision_id} SET status = $s, updated_at = time::now()",
         {"s": status},
     )
 
@@ -1159,7 +1160,7 @@ async def update_decision_level(
     if not rows:
         raise DecisionNotFound(decision_id)
     await client.execute(
-        f"UPDATE {decision_id} SET decision_level = $level",
+        f"UPDATE {decision_id} SET decision_level = $level, updated_at = time::now()",
         {"level": level},
     )
 
