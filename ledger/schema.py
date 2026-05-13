@@ -1056,11 +1056,55 @@ async def _migrate_v17_to_v18(client: LedgerClient) -> None:
         client,
         "DEFINE INDEX idx_decision_updated_at ON decision FIELDS updated_at",
     )
-    # Backfill: any row whose updated_at is NONE (pre-v18) gets created_at.
-    # The DEFAULT only fires on rows created after the DEFINE, so without
-    # this step legacy rows would have NONE forever and MAX() would skip them.
-    await client.query(
-        "UPDATE decision SET updated_at = created_at WHERE updated_at IS NONE"
+    # Backfill: any decision row whose updated_at is NONE (pre-v18) gets
+    # time::now(). The DEFAULT only fires on rows created after the DEFINE,
+    # so without this step legacy rows would have NONE forever and MAX()
+    # would skip them.
+    #
+    # We deliberately use time::now() rather than created_at — some legacy
+    # fixtures (v3_yields_source_span) hold decision rows where created_at
+    # was never set; the schema's TYPE datetime constraint then trips on
+    # ANY UPDATE that re-validates the row, even one that only writes
+    # updated_at. Per-row try/except mirrors _clean_yields_legacy_rows'
+    # tolerance precedent — a single corrupt row doesn't abort the whole
+    # migration. Rows that fail to update stay with updated_at=NONE and
+    # MAX(updated_at) skips them; harmless for the dedup-cache marker
+    # (#87) since the marker only needs monotonicity, not coverage.
+    try:
+        ids = await client.query(
+            "SELECT id FROM decision WHERE updated_at IS NONE"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[migration] v17 → v18: SELECT for backfill failed (%s) — "
+            "skipping per-row backfill; new rows still get DEFAULT time::now()",
+            exc,
+        )
+        ids = []
+    healed = 0
+    skipped = 0
+    for row in ids or []:
+        rid = row.get("id") if isinstance(row, dict) else None
+        if not rid:
+            continue
+        try:
+            await client.execute(
+                f"UPDATE {rid} SET updated_at = time::now()"
+            )
+            healed += 1
+        except Exception as exc:
+            skipped += 1
+            logger.warning(
+                "[migration] v17 → v18: skipped backfill on %s — row likely "
+                "has other corrupt non-optional fields (%s)",
+                rid,
+                exc,
+            )
+    logger.info(
+        "[migration] v17 → v18: backfilled updated_at on %d row(s), "
+        "skipped %d corrupt row(s)",
+        healed,
+        skipped,
     )
     logger.info("[migration] v17 → v18: decision.updated_at + idx_decision_updated_at added (#87 precondition)")
 
