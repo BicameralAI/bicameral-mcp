@@ -528,7 +528,7 @@ def _session_start_command_for_platform(platform: str) -> str:
             "exit 0"
         )
     return (
-        '[ -d .bicameral ] && '
+        "[ -d .bicameral ] && "
         'bicameral-mcp sync-and-brief 2>>"${HOME}/.bicameral/hook-errors.log" || true; '
         "exit 0"
     )
@@ -723,9 +723,7 @@ def _install_claude_hooks(repo_path: Path) -> bool:
             for h in e.get("hooks", [])
         )
     ]
-    new_ss_entry = {
-        "hooks": [{"type": "command", "command": _BICAMERAL_SESSION_START_COMMAND}]
-    }
+    new_ss_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_START_COMMAND}]}
     if non_bic_ss != session_start or new_ss_entry not in session_start:
         hooks["SessionStart"] = non_bic_ss + [new_ss_entry]
         wrote_anything = True
