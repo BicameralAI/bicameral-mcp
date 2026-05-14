@@ -221,6 +221,36 @@ def test_render_brief_strips_control_chars_in_user_text() -> None:
     assert "beforeafter" in out
 
 
+def test_render_brief_includes_team_sync_section_when_provided() -> None:
+    """#279 Phase 2: when team_sync is supplied, the brief gets a
+    `## Team sync` section showing peer_files_pulled + my_file_pushed."""
+    out = render_brief(
+        [],
+        [],
+        team_sync={"peer_files_pulled": 3, "my_file_pushed": True},
+    )
+    assert "## Team sync" in out
+    assert "peer_files_pulled: 3" in out
+    assert "my_file_pushed: yes" in out
+
+
+def test_render_brief_omits_team_sync_section_when_team_sync_none() -> None:
+    """Solo-mode renders identically to pre-Phase-2: no `## Team sync`."""
+    out = render_brief([], [], team_sync=None)
+    assert "## Team sync" not in out
+
+
+def test_render_brief_team_sync_section_handles_zero_counts_and_false() -> None:
+    """Cosmetic: zero peers + not-pushed renders cleanly, not 'None'/empty."""
+    out = render_brief(
+        [],
+        [],
+        team_sync={"peer_files_pulled": 0, "my_file_pushed": False},
+    )
+    assert "peer_files_pulled: 0" in out
+    assert "my_file_pushed: no" in out
+
+
 def test_render_brief_caps_summary_length() -> None:
     long = "x" * 1000
     decisions = [
