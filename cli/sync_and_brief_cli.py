@@ -118,14 +118,11 @@ async def _run_source(ctx: Any, source: dict, *, watermark_dir: Path) -> None:
 
     try:
         for payload in payloads:
-            await handle_ingest(
-                ctx, payload, source_scope=source_type, cursor=adapter.name
-            )
+            await handle_ingest(ctx, payload, source_scope=source_type, cursor=adapter.name)
     except Exception as exc:  # noqa: BLE001
         # Ingest failure: do NOT advance watermark.
         print(
-            f"[sync-and-brief] {source_type} ingest failed (watermark "
-            f"NOT advanced): {exc}",
+            f"[sync-and-brief] {source_type} ingest failed (watermark NOT advanced): {exc}",
             file=sys.stderr,
         )
         return

@@ -33,9 +33,7 @@ class _FakeClient:
 # ── api-key handling ──────────────────────────────────────────────────────
 
 
-def test_granola_adapter_reads_api_key_from_env_not_config(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_granola_adapter_reads_api_key_from_env_not_config(monkeypatch, tmp_path: Path) -> None:
     """The api_key env var must be set; the config holds only the env name.
     Without the env, the adapter raises MissingApiKeyError before any HTTP call."""
     monkeypatch.delenv("GRANOLA_API_KEY", raising=False)
@@ -94,9 +92,7 @@ def test_granola_pull_no_new_items_does_not_update_watermark(
 
 def test_granola_pull_passes_existing_watermark_as_since(tmp_path: Path) -> None:
     """A prior watermark is forwarded as ``since`` on the next pull."""
-    (tmp_path / "granola.json").write_text(
-        json.dumps({"last_synced_at": "2026-05-10T00:00:00Z"})
-    )
+    (tmp_path / "granola.json").write_text(json.dumps({"last_synced_at": "2026-05-10T00:00:00Z"}))
     client = _FakeClient(items=[])
     adapter = GranolaAdapter(client=client)
     adapter.pull(watermark_dir=tmp_path, config={})
@@ -141,9 +137,7 @@ def test_granola_pull_then_skip_confirm_leaves_watermark_unchanged(
 ) -> None:
     """The two-phase-commit guarantee: pull without confirm does NOT
     advance the watermark, so a subsequent pull re-receives the same items."""
-    (tmp_path / "granola.json").write_text(
-        json.dumps({"last_synced_at": "2026-05-01T00:00:00Z"})
-    )
+    (tmp_path / "granola.json").write_text(json.dumps({"last_synced_at": "2026-05-01T00:00:00Z"}))
     client = _FakeClient(
         items=[{"id": "x", "ended_at": "2026-05-14T01:00:00Z", "transcript_text": "t"}]
     )

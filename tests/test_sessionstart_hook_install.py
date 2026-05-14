@@ -69,8 +69,10 @@ def test_install_claude_hooks_is_idempotent_for_session_start(tmp_path: Path) ->
     bic_entries = [
         e
         for e in session_start
-        if any("bicameral" in h.get("command", "") or "sync-and-brief" in h.get("command", "")
-               for h in e.get("hooks", []))
+        if any(
+            "bicameral" in h.get("command", "") or "sync-and-brief" in h.get("command", "")
+            for h in e.get("hooks", [])
+        )
     ]
     assert len(bic_entries) == 1
 
@@ -87,11 +89,7 @@ def test_install_claude_hooks_preserves_third_party_session_start_entries(
             {
                 "hooks": {
                     "SessionStart": [
-                        {
-                            "hooks": [
-                                {"type": "command", "command": "other-tool-hook --do-thing"}
-                            ]
-                        }
+                        {"hooks": [{"type": "command", "command": "other-tool-hook --do-thing"}]}
                     ]
                 }
             }

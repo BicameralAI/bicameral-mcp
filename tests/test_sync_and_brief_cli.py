@@ -18,9 +18,7 @@ import cli.sync_and_brief_cli as sb
 
 
 def _make_args(*, max_decisions: int = 20, quiet: bool = False) -> argparse.Namespace:
-    return argparse.Namespace(
-        command="sync-and-brief", max_decisions=max_decisions, quiet=quiet
-    )
+    return argparse.Namespace(command="sync-and-brief", max_decisions=max_decisions, quiet=quiet)
 
 
 def _make_ctx(repo_path: Path) -> SimpleNamespace:
@@ -141,9 +139,7 @@ def test_run_source_skips_watermark_advance_on_ingest_failure(
     fake_adapter.confirm_watermark.assert_not_called()
 
 
-def test_run_source_exits_gracefully_on_missing_api_key(
-    tmp_path: Path, capsys
-) -> None:
+def test_run_source_exits_gracefully_on_missing_api_key(tmp_path: Path, capsys) -> None:
     """MissingApiKeyError from pull is caught; other sources should still run."""
     from events.sources import MissingApiKeyError
 
@@ -169,9 +165,7 @@ def test_run_source_exits_gracefully_on_missing_api_key(
     assert "GRANOLA_API_KEY" in err
 
 
-def test_run_source_warns_on_unknown_source_type(
-    tmp_path: Path, capsys
-) -> None:
+def test_run_source_warns_on_unknown_source_type(tmp_path: Path, capsys) -> None:
     ctx = _make_ctx(tmp_path)
     import asyncio
 
