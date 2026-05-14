@@ -187,9 +187,7 @@ def test_open_source_view_renders_related_decisions_with_event_delegation(
     where each link uses `data-decision-id` (no inline onclick) and the link
     text is escaped via `esc(...)`."""
     body = _extract_function_body(html, "openSourceView")
-    assert "src-panel-related" in body, (
-        "openSourceView must render a .src-panel-related list"
-    )
+    assert "src-panel-related" in body, "openSourceView must render a .src-panel-related list"
     # XSS discipline #2: the related-list link must not use inline onclick
     # interpolating the decision id.
     assert "jumpToDecision('${" not in body, (
@@ -215,18 +213,16 @@ def test_related_list_delegated_handler_defined(html: str) -> None:
     assert re.search(
         r"closest\(\s*['\"][^'\"]*\[data-decision-id\][^'\"]*['\"]",
         html,
-    ), (
-        "expected event delegation via closest(...) on a selector containing "
-        "[data-decision-id]"
-    )
-    assert re.search(
-        r"dataset\.decisionId\s*\)?\s*\)?\s*;?\s*$"
-        r"|jumpToDecision\(\s*[\w.]*\.dataset\.decisionId",
-        html,
-        re.MULTILINE,
-    ) or "dataset.decisionId" in html, (
-        "delegated handler must read dataset.decisionId and call jumpToDecision"
-    )
+    ), "expected event delegation via closest(...) on a selector containing [data-decision-id]"
+    assert (
+        re.search(
+            r"dataset\.decisionId\s*\)?\s*\)?\s*;?\s*$"
+            r"|jumpToDecision\(\s*[\w.]*\.dataset\.decisionId",
+            html,
+            re.MULTILINE,
+        )
+        or "dataset.decisionId" in html
+    ), "delegated handler must read dataset.decisionId and call jumpToDecision"
 
 
 def test_jump_to_decision_function_defined(html: str) -> None:
@@ -250,16 +246,12 @@ def test_render_builds_source_index(html: str) -> None:
     keep the index current."""
     body = _extract_function_body(html, "render")
     assert re.search(r"_currentData\s*=\s*data\b", body), (
-        "render(data) must assign _currentData = data so openSourceView can "
-        "resolve indices later"
+        "render(data) must assign _currentData = data so openSourceView can resolve indices later"
     )
     assert re.search(
         r"_sourceIndex\s*=\s*buildSourceIndex\(\s*(features|data\.features\s*\|\|\s*\[\])",
         body,
-    ), (
-        "render(data) must rebuild _sourceIndex = buildSourceIndex(features) "
-        "on every call"
-    )
+    ), "render(data) must rebuild _sourceIndex = buildSourceIndex(features) on every call"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
