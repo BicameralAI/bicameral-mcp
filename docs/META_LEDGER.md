@@ -2732,5 +2732,56 @@ Same pattern as prior downstream-project entries (#28, #33, #36, #41, #43–#47)
 | Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
 
 ---
-*Chain integrity: VALID (49 entries on this branch)*
-*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48) → team-server tier v1 RESEARCH (#49)*
+
+## Entry #50: RESEARCH BRIEF — R1 architecture: limitation & gap remediation strategies
+
+**Date**: 2026-05-14
+**Phase**: RESEARCH
+**Branch**: `devin/1778797415-reconcile-ideation-325` (off `upstream/dev` post-#325 merge)
+**Brief**: `docs/research-brief-r1-limitations-remediation-2026-05-14.md`
+**Risk Grade**: L1 (research artifact; no code mutation)
+
+**Content Hash**:
+```
+SHA256(docs/research-brief-r1-limitations-remediation-2026-05-14.md)
+= 1de00b2fd64c4549f542a1ba07d530853aecd382d35d904b9e98fb77764ab766
+```
+
+**Previous Entry**: #49 (team-server tier v1 RESEARCH BRIEF)
+
+**Trigger**: operator-directed `/qor-research` phase to investigate remediation strategies for all 24 identified constraints of the R1 architecture (MCP local + BackendAdapter file-share, no server process). Per user directive: "include all potential strategies with multiple alternative, including the pros and cons of each."
+
+### Scope
+
+Systematic remediation strategy investigation for:
+
+1. **9 original gaps** (from `research-brief-team-server-tier-v1-2026-05-14.md` §9): HTTP endpoint, auth shim, write coordination, backend health, conflict resolution, per-peer metering, per-backend observability, team-governance tools, source-pull dedup
+2. **15 known limitations** (L1–L15 on issue #215): poll-only sync, no partial sync, no write-time coordination, lossy conflicts, no global ordering, self-asserted identity, no transport ACL, no audit trail, no health signals, no metrics, file-per-author ceiling, no delta sync, LocalFolder filesystem concerns, GoogleDrive API constraints, no version negotiation
+
+### Key findings
+
+- 20 of 24 items are remediable within R1 architecture (BackendAdapter ABC extensions, materializer enhancements, new MCP tools)
+- 4 items (G1 HTTP endpoint, G8 full team governance, L11 scalability ceiling, L12 delta sync) may eventually require managed-service BackendAdapter subclasses (S3, Supabase) — the intended extension path per R1
+- All remediation strategies preserve the `canonical_id` invariant and #242 compliance
+- Prioritized into 4 tiers: Tier 1 (pre-plan, 5 commits), Tier 2 (v1, 4 cycles), Tier 3 (post-v1, 5 cycles), Tier 4 (evidence-gated, 4 cycles)
+
+### Next steps
+
+1. `/qor-plan` consumes this brief to scope the v1 implementation plan (Tier 1 + Tier 2 items)
+2. A6 decision from @jinhongkuan (first-write-wins conflict semantic) gates G5/L4 strategy selection
+3. Track 2 of #215 (auth shim design) consumes G2 strategy analysis
+
+### qor-logic-internal steps skipped
+
+Same pattern as prior entries (#28, #33, #36, #41, #43–#49):
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present here |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 7.4 / 7.5 / 7.6 (SSDF tag / version bump / CHANGELOG) | not run | qor-logic-internal; no version-bump for a research-only artifact |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+
+---
+*Chain integrity: VALID (50 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48) → team-server tier v1 RESEARCH (#49) → R1 limitation remediation RESEARCH (#50)*

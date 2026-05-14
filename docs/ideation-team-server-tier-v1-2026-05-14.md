@@ -163,6 +163,8 @@ The R1 decision (MCP local + BackendAdapter file-share, no server process) trade
 
 **Prioritization for `/qor-plan`**: L4 (lossy conflicts) + L6 (self-asserted identity) bite first, then L9 (no health signal), then L1 (polling latency). The rest are acceptable v1 trade-offs.
 
+**Remediation strategies**: A comprehensive `/qor-research` investigation of 2–5 alternative remediation strategies per item (with pros/cons for each) is documented in [`docs/research-brief-r1-limitations-remediation-2026-05-14.md`](research-brief-r1-limitations-remediation-2026-05-14.md). That brief covers all 15 known limitations (L1–L15) *plus* the 9 original gaps from the upstream research brief (§9), for a total of 24 items with prioritized remediation roadmap across 4 tiers.
+
 ---
 
 ## Section 10 — Readiness Scoring
