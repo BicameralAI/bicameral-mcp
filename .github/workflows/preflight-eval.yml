@@ -95,7 +95,7 @@ jobs:
 
       - name: Surface results in step summary
         if: always()
-        uses: test-summary/action@v2
+        uses: test-summary/action@31493c76ec9e7aa675f1585d3ed6f1da69269a86  # v2.4 (#272 — match test-mcp-regression.yml pin)
         with:
           paths: "test-results/*.xml"
           show: fail, skip
