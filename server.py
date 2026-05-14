@@ -1385,6 +1385,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
         "diagnose",
         help="emit a privacy-preserving operator bug-report (#252 Layer 3)",
     )
+    sync_and_brief = subparsers.add_parser(
+        "sync-and-brief",
+        help="pull from configured sources, ingest new transcripts, scan drift, print brief (#279)",
+    )
+    from cli.sync_and_brief_cli import _build_argparser as _sb_build
+
+    _sb_build(sync_and_brief)
     parser.add_argument(
         "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
     )
@@ -1417,6 +1424,10 @@ def _dispatch(args: Any) -> int:
         from cli.diagnose import main as diagnose_main
 
         return diagnose_main()
+    if args.command == "sync-and-brief":
+        from cli.sync_and_brief_cli import main as sync_and_brief_main
+
+        return sync_and_brief_main(args)
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
