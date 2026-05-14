@@ -107,9 +107,7 @@ def test_remove_decision_button_in_render_dec(html: str) -> None:
     to openRemoveDecisionModal. Gated so already-removed decisions render
     the button as disabled."""
     render_dec_body = _extract_function_body(html, "renderDec")
-    assert 'rm-dec-btn' in render_dec_body, (
-        "renderDec must include a remove-decision button"
-    )
+    assert "rm-dec-btn" in render_dec_body, "renderDec must include a remove-decision button"
     # Button invokes the modal opener
     assert re.search(
         r"openRemoveDecisionModal\(",

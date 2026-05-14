@@ -59,9 +59,7 @@ async def handle_remove_source(
     ``confirm=True`` to perform the mutation.
     """
     if not reason or not reason.strip():
-        raise ValueError(
-            "remove_source requires a non-empty 'reason' (audit-trail obligation)"
-        )
+        raise ValueError("remove_source requires a non-empty 'reason' (audit-trail obligation)")
 
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
@@ -159,14 +157,8 @@ async def _apply_cascading_remove(
         existing = await client.query(
             f"SELECT signoff FROM {did} LIMIT 1",
         )
-        prev = (
-            existing[0].get("signoff")
-            if existing and isinstance(existing[0], dict)
-            else None
-        )
-        previous_state = (
-            prev.get("state") if isinstance(prev, dict) else None
-        )
+        prev = existing[0].get("signoff") if existing and isinstance(existing[0], dict) else None
+        previous_state = prev.get("state") if isinstance(prev, dict) else None
         # Idempotent per-decision: already-removed decisions are not re-written.
         if previous_state == "removed":
             cascaded.append(did)

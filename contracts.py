@@ -869,7 +869,9 @@ class HistorySource(BaseModel):
     date: str  # ISO date
     speaker: str | None = None
     quote: str  # verbatim excerpt from source_span.text
-    input_span_id: str | None = None  # SurrealDB record id of the originating input_span (#278 Phase 2)
+    input_span_id: str | None = (
+        None  # SurrealDB record id of the originating input_span (#278 Phase 2)
+    )
 
 
 class HistoryFulfillment(BaseModel):

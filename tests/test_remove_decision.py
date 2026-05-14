@@ -94,12 +94,8 @@ def _stub_queries(monkeypatch):
         return None
 
     monkeypatch.setattr("handlers.remove_decision.decision_exists", _decision_exists)
-    monkeypatch.setattr(
-        "handlers.remove_decision.project_decision_status", _project
-    )
-    monkeypatch.setattr(
-        "handlers.remove_decision.update_decision_status", _update
-    )
+    monkeypatch.setattr("handlers.remove_decision.project_decision_status", _project)
+    monkeypatch.setattr("handlers.remove_decision.update_decision_status", _update)
 
 
 async def test_remove_decision_rejects_empty_reason() -> None:
@@ -109,9 +105,7 @@ async def test_remove_decision_rejects_empty_reason() -> None:
     ctx = _FakeCtx(ledger)
 
     with pytest.raises(ValueError, match="non-empty 'reason'"):
-        await handle_remove_decision(
-            ctx, decision_id="decision:abc", signer="x@y", reason=""
-        )
+        await handle_remove_decision(ctx, decision_id="decision:abc", signer="x@y", reason="")
 
 
 async def test_remove_decision_rejects_whitespace_only_reason() -> None:
@@ -200,9 +194,7 @@ async def test_remove_decision_emits_event_in_team_mode() -> None:
     )
     ctx = _FakeCtx(ledger)
 
-    await handle_remove_decision(
-        ctx, decision_id="decision:abc", signer="kim@x", reason="cleanup"
-    )
+    await handle_remove_decision(ctx, decision_id="decision:abc", signer="kim@x", reason="cleanup")
 
     assert len(writer.events) == 1
     event_type, payload = writer.events[0]
@@ -239,9 +231,7 @@ async def test_remove_decision_idempotent_does_not_emit_second_event() -> None:
 
     writer = _FakeWriter()
     existing_signoff = {"state": "removed", "signer": "first@x", "reason": "first"}
-    ledger = _FakeLedger(
-        {"decision:abc": {"signoff": existing_signoff}}, writer=writer
-    )
+    ledger = _FakeLedger({"decision:abc": {"signoff": existing_signoff}}, writer=writer)
     ctx = _FakeCtx(ledger)
 
     resp = await handle_remove_decision(

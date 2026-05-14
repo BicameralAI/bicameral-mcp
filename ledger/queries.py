@@ -855,9 +855,7 @@ async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
     return bool(rows)
 
 
-async def get_decisions_for_span(
-    client: LedgerClient, span_id: str
-) -> list[str]:
+async def get_decisions_for_span(client: LedgerClient, span_id: str) -> list[str]:
     """Return decision record ids yielded by the given input_span via the
     ``yields`` graph edge.
 
@@ -879,9 +877,7 @@ async def input_span_exists(client: LedgerClient, span_id: str) -> bool:
     return bool(rows)
 
 
-async def get_input_span_row(
-    client: LedgerClient, span_id: str
-) -> dict | None:
+async def get_input_span_row(client: LedgerClient, span_id: str) -> dict | None:
     """Return the full input_span row (text, source_ref, source_type,
     meeting_date, speakers, created_at) for use in the source_removed.completed
     event payload. Returns None when the row does not exist."""

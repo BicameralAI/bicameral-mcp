@@ -115,18 +115,15 @@ def _stub_project_queries(monkeypatch):
     """Stub the status-projection helpers so tests don't need the full
     schema. These are exercised by other tests (project_decision_status
     is well-covered elsewhere)."""
+
     async def _project(client, did):
         return "ungrounded"
 
     async def _update(client, did, status):
         return None
 
-    monkeypatch.setattr(
-        "handlers.remove_source.project_decision_status", _project
-    )
-    monkeypatch.setattr(
-        "handlers.remove_source.update_decision_status", _update
-    )
+    monkeypatch.setattr("handlers.remove_source.project_decision_status", _project)
+    monkeypatch.setattr("handlers.remove_source.update_decision_status", _update)
 
 
 def _seed_fixture():
@@ -157,14 +154,12 @@ async def test_remove_source_rejects_empty_reason() -> None:
     ctx = _FakeCtx(_FakeLedger(client))
 
     with pytest.raises(ValueError, match="non-empty 'reason'"):
-        await handle_remove_source(
-            ctx, span_id=span_id, signer="x@y", reason="", confirm=True
-        )
+        await handle_remove_source(ctx, span_id=span_id, signer="x@y", reason="", confirm=True)
 
 
 async def test_remove_source_dry_run_returns_plan_with_cascaded_decision_ids() -> None:
-    from handlers.remove_source import handle_remove_source
     from contracts import RemoveSourcePlan
+    from handlers.remove_source import handle_remove_source
 
     span_id, span_row, decisions, edges = _seed_fixture()
     client = _FakeClient({span_id: span_row}, decisions, edges)
@@ -186,8 +181,8 @@ async def test_remove_source_dry_run_returns_plan_with_cascaded_decision_ids() -
 
 
 async def test_remove_source_dry_run_idempotent_on_missing_span() -> None:
-    from handlers.remove_source import handle_remove_source
     from contracts import RemoveSourcePlan
+    from handlers.remove_source import handle_remove_source
 
     client = _FakeClient({}, {}, [])  # empty store
     ctx = _FakeCtx(_FakeLedger(client))
@@ -201,8 +196,8 @@ async def test_remove_source_dry_run_idempotent_on_missing_span() -> None:
 
 
 async def test_remove_source_confirm_true_hard_deletes_span_and_soft_deletes_decisions() -> None:
-    from handlers.remove_source import handle_remove_source
     from contracts import RemoveSourceResponse
+    from handlers.remove_source import handle_remove_source
 
     span_id, span_row, decisions, edges = _seed_fixture()
     client = _FakeClient({span_id: span_row}, decisions, edges)
@@ -279,17 +274,15 @@ async def test_remove_source_dry_run_emits_no_event() -> None:
     client = _FakeClient({span_id: span_row}, decisions, edges)
     ctx = _FakeCtx(_FakeLedger(client, writer=writer))
 
-    await handle_remove_source(
-        ctx, span_id=span_id, signer="x@y", reason="check", confirm=False
-    )
+    await handle_remove_source(ctx, span_id=span_id, signer="x@y", reason="check", confirm=False)
     assert writer.events == []
 
 
 async def test_remove_source_confirm_idempotent_on_missing_span() -> None:
     """confirm=True on a non-existent span returns structured response, not
     an exception. Pins idempotency Discipline #1."""
-    from handlers.remove_source import handle_remove_source
     from contracts import RemoveSourceResponse
+    from handlers.remove_source import handle_remove_source
 
     writer = _FakeWriter()
     client = _FakeClient({}, {}, [])
