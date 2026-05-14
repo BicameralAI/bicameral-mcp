@@ -169,14 +169,12 @@ The R1 decision (MCP local + BackendAdapter file-share, no server process) trade
 
 ## Section 10 — Readiness Scoring
 
-**Readiness status**: `ready` (with one open non-blocking assumption)
+**Readiness status**: `ready` (all operator decisions resolved)
 
 Resolved operator decisions:
 - R1: Option 1 (MCP local server + remote JSONL via BackendAdapter) — no team server now; architectural intent for future BackendAdapter subclasses preserved
 - Coexistence: (c) full migration to BackendAdapter for team-sync repos
-
-Open non-blocking assumption:
-- A6: First-write-wins conflict resolution semantic — awaiting operator decision from @jinhongkuan (does not block `/qor-plan`; plan can proceed with first-write-wins as the default and surface-conflicts-to-human as the alternative)
+- A6: First-write-wins conflict resolution semantic — decided by @jinhongkuan 2026-05-14. Current `canonical_id` UNIQUE first-write-wins behavior is the v1 semantic. Silent skip on collision is accepted.
 
 **Recommended next phase**: `/qor-plan` — scope: extend BackendAdapter pipeline to handle code-grounded decision push for #196, and design auth shim within MCP envelope for #215 Track 2.
 
@@ -185,7 +183,7 @@ Open non-blocking assumption:
 ## Delegation
 
 Per `qor/gates/delegation-table.md`:
-- Current status: `ready` (R1 + coexistence decisions resolved 2026-05-14)
+- Current status: `ready` (R1 + coexistence + A6 decisions resolved 2026-05-14)
 - Route: `/qor-plan` → `/qor-audit` → `/qor-implement`
 
 ---

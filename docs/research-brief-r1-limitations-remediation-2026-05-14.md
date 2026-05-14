@@ -87,7 +87,7 @@ The R1 architecture trades operational complexity for simplicity: each developer
 | **D. Both-survive with link** | Both events are ingested. The second gets a new canonical_id (suffixed with `-conflict-{n}`). A `conflict_of` edge links them. User resolves via existing `bicameral.supersede` tool. | No data loss; leverages existing supersede mechanism; conflict visible in decision graph | Pollutes the decision graph with duplicates; user must actively resolve; doesn't scale if conflicts are frequent |
 | **E. Content-hash merge** | If canonical_id matches but payload differs, merge the payloads deterministically (union of fields, concatenate descriptions with separator, keep latest metadata). | Fully automatic; no UX surface; preserves both inputs | Merge semantics are domain-specific and hard to get right; concatenated descriptions may be nonsensical; loss of authorial intent about which version is "correct" |
 
-**Recommendation**: Strategy B (surface to human) is the strongest alignment with the bicameral philosophy ("the compliance layer every team needs"). Strategy D (both-survive with link) is a pragmatic alternative that requires less new infrastructure. A6 decision from @jinhongkuan will determine the v1 semantic.
+**Recommendation**: **A6 decided by @jinhongkuan (2026-05-14): Strategy A (first-write-wins) is the v1 semantic.** Current `canonical_id` UNIQUE first-write-wins behavior is accepted. Silent skip on collision is the intended behavior. Strategy B (surface to human) remains a viable post-v1 enhancement if operators report silent loss as a pain point.
 
 ---
 
@@ -197,7 +197,7 @@ The R1 architecture trades operational complexity for simplicity: each developer
 
 ### L4. Conflict Resolution Is Lossy
 
-See G5 above — the strategies are identical. The recommended remediation is the same: Strategy B (surface conflicts to human via MCP tool) or Strategy D (both-survive with link).
+See G5 above — the strategies are identical. **A6 decided: Strategy A (first-write-wins) is the v1 semantic.** Post-v1, Strategy B (surface conflicts to human) or Strategy D (both-survive with link) are viable upgrades if operators report silent loss.
 
 ---
 
@@ -376,7 +376,7 @@ See G7 above — the observability strategies directly address this limitation. 
 | Item | Strategy | Effort |
 |------|----------|--------|
 | G2/L6 | Auth shim design (Track 2 of #215) | 1 plan cycle |
-| G5/L4 | Conflict surfacing via MCP tool (pending A6 decision) | 1 plan + implement cycle |
+| G5/L4 | First-write-wins accepted (A6 decided); conflict surfacing deferred to post-v1 if needed | — |
 | G8 | Read-only team governance tools (`bicameral.team_peers`, `bicameral.team_audit`) | 1 implement cycle |
 | L14 | Proactive token refresh for GoogleDriveAdapter | 1 commit |
 

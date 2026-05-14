@@ -2768,7 +2768,7 @@ Systematic remediation strategy investigation for:
 ### Next steps
 
 1. `/qor-plan` consumes this brief to scope the v1 implementation plan (Tier 1 + Tier 2 items)
-2. A6 decision from @jinhongkuan (first-write-wins conflict semantic) gates G5/L4 strategy selection
+2. ~~A6 decision~~ **RESOLVED 2026-05-14**: first-write-wins is the v1 semantic (Strategy A accepted by @jinhongkuan)
 3. Track 2 of #215 (auth shim design) consumes G2 strategy analysis
 
 ### qor-logic-internal steps skipped
