@@ -79,6 +79,8 @@ jobs:
           tests/test_phase3_integration.py
           tests/test_legacy_ledger_fixtures.py
           tests/test_schema_recoverable_errors.py
+          tests/test_replay_helpers_unit.py
+          tests/test_replay_determinism.py
           -v --tb=short
           --junitxml=test-results/results.xml
           --html=test-results/report.html --self-contained-html
