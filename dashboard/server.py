@@ -133,6 +133,9 @@ class DashboardServer:
                 await self._serve_history(writer)
             elif method == "GET" and path == "/events":
                 await self._serve_sse(writer)
+            elif method == "POST" and path == "/admin/query":
+                # #278 Phase 3 — off-by-default admin SurrealQL panel.
+                await self._serve_admin_query(writer, raw)
             else:
                 writer.write(_HTTP_404.encode())
                 await writer.drain()
@@ -169,6 +172,55 @@ class DashboardServer:
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
         writer.write(_send_body(_HTTP_200_JSON, body))
+        await writer.drain()
+
+    async def _serve_admin_query(self, writer: asyncio.StreamWriter, raw: bytes) -> None:
+        """Dispatch a POST /admin/query request to the admin module.
+
+        Parses the Origin header + JSON body from the raw HTTP request,
+        delegates to ``dashboard.admin.process_admin_query``, and writes
+        the JSON response back. The admin module enforces the env-flag
+        gates, origin check, signer requirement, and audit-log emission.
+        """
+        from dashboard.admin import process_admin_query
+
+        # Parse headers to extract Origin
+        head, _, body = raw.partition(b"\r\n\r\n")
+        origin: str | None = None
+        for line in head.split(b"\r\n")[1:]:
+            if line.lower().startswith(b"origin:"):
+                origin = line.split(b":", 1)[1].decode(errors="replace").strip()
+                break
+
+        try:
+            payload_in = json.loads(body.decode("utf-8")) if body else {}
+        except Exception:
+            payload_in = {}
+
+        ctx = self._ctx_factory()
+        status, response_body = await process_admin_query(
+            payload_in=payload_in,
+            origin=origin,
+            dashboard_port=self._port,
+            ledger=ctx.ledger,
+            repo_path=getattr(ctx, "repo_path", "."),
+        )
+
+        body_bytes = json.dumps(response_body, default=str).encode()
+        # No CORS allow-origin on admin responses (Phase 3 Discipline #3).
+        status_line = {
+            200: "HTTP/1.1 200 OK",
+            400: "HTTP/1.1 400 Bad Request",
+            403: "HTTP/1.1 403 Forbidden",
+            404: "HTTP/1.1 404 Not Found",
+        }.get(status, "HTTP/1.1 500 Internal Server Error")
+        headers = (
+            f"{status_line}\r\n"
+            f"Content-Type: application/json; charset=utf-8\r\n"
+            f"Cache-Control: no-store\r\n"
+            f"Content-Length: {len(body_bytes)}\r\n\r\n"
+        )
+        writer.write(headers.encode() + body_bytes)
         await writer.drain()
 
     async def _serve_sse(self, writer: asyncio.StreamWriter) -> None:

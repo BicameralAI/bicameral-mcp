@@ -482,6 +482,90 @@ body {
 .rm-modal-actions button.rm-copy { color: var(--accent); border-color: var(--accent); }
 .rm-modal-actions button.rm-cancel:hover { color: var(--text-dim); }
 
+/* ── ADMIN SURREALQL PANEL (#278 Phase 3) ──────────────────── */
+/* Off by default at server level (env flag); UI panel additionally
+   hidden via data-state="closed". Two-step toggle: Advanced opens
+   the panel; a separate Enable-writes flow requires typing the
+   exact phrase before mutations are allowed. */
+.adm-toggle {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 16px; font-size: 11px;
+  color: var(--text-dim); cursor: pointer; user-select: none;
+}
+#adm-panel {
+  display: none;
+  margin-top: 12px;
+  border: 1px solid var(--border-dark);
+  background: var(--paper);
+  padding: 14px 18px;
+}
+#adm-panel[data-state="open"] { display: block; }
+#adm-panel h3 {
+  font-family: var(--serif); font-size: 13px; font-weight: 700; color: var(--accent);
+  margin-bottom: 4px;
+}
+#adm-panel .adm-warn-banner {
+  font-size: 11px; color: rgb(220, 38, 38);
+  margin: 6px 0 10px;
+}
+#adm-panel label {
+  font-size: 11px; color: var(--text-dim);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  display: block; margin-top: 8px;
+}
+#adm-quickref, #adm-sql {
+  width: 100%; font-family: var(--mono); font-size: 12px;
+  border: 1px solid var(--border); padding: 6px 8px; background: var(--canvas);
+  color: var(--text); margin-top: 4px;
+}
+#adm-sql { min-height: 80px; resize: vertical; }
+.adm-controls {
+  display: flex; gap: 8px; align-items: center; margin-top: 10px;
+}
+.adm-controls button {
+  font-family: var(--mono); font-size: 11px;
+  padding: 5px 12px; border: 1px solid var(--accent); background: var(--paper);
+  color: var(--accent); cursor: pointer; border-radius: 2px;
+}
+.adm-write-warn {
+  display: none;
+  font-size: 11px; color: rgb(220, 38, 38);
+  padding: 4px 8px; border: 1px dashed rgb(220, 38, 38);
+}
+#adm-panel[data-write="enabled"] .adm-write-warn { display: inline-block; }
+.adm-result {
+  margin-top: 14px;
+  background: var(--canvas); border: 1px solid var(--border);
+  padding: 8px 12px; font-family: var(--mono); font-size: 11px;
+}
+.adm-result-hdr {
+  display: flex; gap: 16px; font-size: 11px; color: var(--text-dim);
+  margin-bottom: 6px;
+}
+#adm-result-rows {
+  max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.adm-risk-modal {
+  display: none;
+  position: fixed; inset: 0; z-index: 110;
+  background: rgba(0, 0, 0, 0.5);
+  align-items: center; justify-content: center;
+}
+.adm-risk-modal[data-state="open"] { display: flex; }
+.adm-risk-modal-content {
+  background: var(--paper); border: 2px solid rgb(220, 38, 38);
+  width: min(480px, 90vw); padding: 22px 26px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.adm-risk-modal-content h2 {
+  font-family: var(--serif); font-size: 14px; color: rgb(220, 38, 38);
+}
+.adm-risk-modal-content input {
+  font-family: var(--mono); font-size: 12px;
+  padding: 6px 10px; border: 1px solid var(--border);
+  background: var(--canvas); color: var(--text);
+}
+
 
 </style>
 </head>
@@ -518,6 +602,70 @@ body {
 <main class="main" id="root">
   <div class="empty">Loading decision ledger…</div>
 </main>
+
+<!-- ── ADMIN SURREALQL PANEL (#278 Phase 3) ──────────────────── -->
+<!-- Off by default at the server level (requires BICAMERAL_ENABLE_ADMIN_PANEL=1).
+     The UI additionally hides the panel via data-state="closed" until the
+     operator toggles Advanced mode. Write capability requires a SECOND env
+     flag (BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1) AND typing the literal
+     phrase "I accept the risk" in the risk-confirmation modal. -->
+<div class="main">
+  <label class="adm-toggle">
+    <input type="checkbox" id="adv-toggle" onchange="toggleAdvancedPanel()">
+    Advanced (raw SurrealQL panel)
+  </label>
+  <div id="adm-panel" data-state="closed" data-write="disabled">
+    <h3>Raw SurrealQL admin panel</h3>
+    <div class="adm-warn-banner">
+      ⚠ Direct DB access. Read-only by default. Every query is audit-logged.
+      Mutations require <code>BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1</code> at server start.
+    </div>
+    <label for="adm-quickref">Quickref</label>
+    <select id="adm-quickref" onchange="loadQuickref(this.value)">
+      <option value="">-- pick a starter query --</option>
+      <option value="SELECT * FROM decision LIMIT 50">SELECT * FROM decision LIMIT 50</option>
+      <option value="SELECT count() FROM decision GROUP ALL">SELECT count() FROM decision GROUP ALL</option>
+      <option value="INFO FOR DB">INFO FOR DB</option>
+      <option value="SELECT * FROM input_span LIMIT 50">SELECT * FROM input_span LIMIT 50</option>
+      <option value="SELECT id, signoff FROM decision WHERE signoff.state = 'removed'">SELECT id, signoff FROM decision WHERE signoff.state = 'removed'</option>
+    </select>
+    <label for="adm-sql">SurrealQL</label>
+    <textarea id="adm-sql" placeholder="SELECT * FROM decision LIMIT 10"></textarea>
+    <label for="adm-signer">Signer (required for write mode)</label>
+    <input id="adm-signer" type="text" placeholder="email@example.com" style="width:100%;font-family:var(--mono);font-size:12px;border:1px solid var(--border);padding:6px 8px;background:var(--canvas);margin-top:4px">
+    <div class="adm-controls">
+      <button onclick="runAdminQuery()">execute</button>
+      <button onclick="openWriteRiskModal()">enable writes…</button>
+      <span class="adm-write-warn">⚠ WRITES ENABLED — queries will mutate the ledger</span>
+    </div>
+    <div class="adm-result">
+      <div class="adm-result-hdr">
+        <span id="adm-result-mode"></span>
+        <span id="adm-result-elapsed"></span>
+        <span id="adm-result-error" style="color:rgb(220,38,38)"></span>
+      </div>
+      <div id="adm-result-rows"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADMIN WRITE-MODE RISK CONFIRMATION MODAL ──────────────── -->
+<div id="adm-risk-modal" class="adm-risk-modal" data-state="closed" aria-hidden="true">
+  <div class="adm-risk-modal-content">
+    <h2>Enable write mode</h2>
+    <p style="font-size:12px;color:var(--text)">
+      Write mode will let this panel mutate the ledger directly.
+      Mutations bypass the normal decision/source remove flows but are still
+      audit-logged. To proceed, type the literal phrase below.
+    </p>
+    <label for="adm-risk-input" style="font-size:11px;color:var(--text-dim)">Type: <code>I accept the risk</code></label>
+    <input id="adm-risk-input" type="text" placeholder="">
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="closeWriteRiskModal()" style="font-family:var(--mono);font-size:11px;padding:5px 12px;border:1px solid var(--border);background:var(--paper);cursor:pointer">cancel</button>
+      <button onclick="confirmWriteRisk()" style="font-family:var(--mono);font-size:11px;padding:5px 12px;border:1px solid rgb(220,38,38);background:var(--paper);color:rgb(220,38,38);cursor:pointer">confirm</button>
+    </div>
+  </div>
+</div>
 
 <!-- ── SOURCE VIEW PANEL (#278 Phase 1) ───────────────────────── -->
 <!-- Hidden by default via .src-panel CSS; opens when data-src-panel="open".
@@ -1152,6 +1300,90 @@ function closeRemoveModal(modalId) {
   modal.setAttribute('data-modal', 'closed');
   modal.setAttribute('aria-hidden', 'true');
 }
+
+// ── admin SurrealQL panel (#278 Phase 3) ──────────────────────
+// The server-side route at /admin/query is off by default; this UI is also
+// hidden via data-state="closed" until the operator opens the Advanced
+// toggle. Write capability requires a SECOND env flag at the server AND
+// typing the literal "I accept the risk" phrase below.
+let _writeModeEnabled = false;
+
+function toggleAdvancedPanel() {
+  const panel = document.getElementById('adm-panel');
+  const toggle = document.getElementById('adv-toggle');
+  panel.setAttribute('data-state', toggle.checked ? 'open' : 'closed');
+}
+
+function loadQuickref(value) {
+  if (!value) return;
+  document.getElementById('adm-sql').value = value;
+}
+
+function openWriteRiskModal() {
+  const modal = document.getElementById('adm-risk-modal');
+  document.getElementById('adm-risk-input').value = '';
+  modal.setAttribute('data-state', 'open');
+}
+
+function closeWriteRiskModal() {
+  document.getElementById('adm-risk-modal').setAttribute('data-state', 'closed');
+}
+
+function confirmWriteRisk() {
+  // The literal phrase below is the operator's typed confirmation. It is
+  // pinned by tests/test_dashboard_admin_panel.py::test_admin_panel_write_mode_requires_typed_confirmation —
+  // do not change the wording without updating that test.
+  const typed = (document.getElementById('adm-risk-input').value || '').trim();
+  if (typed === 'I accept the risk') {
+    _writeModeEnabled = true;
+    document.getElementById('adm-panel').setAttribute('data-write', 'enabled');
+    closeWriteRiskModal();
+  } else {
+    document.getElementById('adm-risk-input').placeholder =
+      "Phrase didn't match — try again or cancel";
+  }
+}
+
+async function runAdminQuery() {
+  const sql = document.getElementById('adm-sql').value.trim();
+  const signer = document.getElementById('adm-signer').value.trim();
+  const mode = _writeModeEnabled ? 'write' : 'read';
+  if (!sql) {
+    renderAdminResult({ mode: 'read-only', rows: [], elapsed_ms: 0, error: 'SQL is empty' });
+    return;
+  }
+  let response;
+  try {
+    const res = await fetch('/admin/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql: sql, mode: mode, signer: signer }),
+    });
+    response = await res.json();
+  } catch (e) {
+    response = { mode: 'read-only', rows: [], elapsed_ms: 0, error: String(e) };
+  }
+  renderAdminResult(response);
+}
+
+function renderAdminResult(response) {
+  // XSS discipline: all user-controlled values (rows from the DB, error
+  // messages from the server) written via .textContent. The rows are
+  // JSON.stringify'd and rendered as text in a single <pre>-like block.
+  document.getElementById('adm-result-mode').textContent =
+    'mode: ' + (response.mode || '');
+  document.getElementById('adm-result-elapsed').textContent =
+    'elapsed: ' + (response.elapsed_ms != null ? response.elapsed_ms.toFixed(2) + ' ms' : '');
+  document.getElementById('adm-result-error').textContent =
+    response.error ? ('error: ' + response.error) : '';
+  const rowsEl = document.getElementById('adm-result-rows');
+  if (!response.rows || response.rows.length === 0) {
+    rowsEl.textContent = '(no rows)';
+  } else {
+    rowsEl.textContent = JSON.stringify(response.rows, null, 2);
+  }
+}
+
 
 // Discipline #3: jump-to-decision uses document.getElementById (DOM API, no
 // HTML concatenation). The id namespace is generated by renderDec / orphan
