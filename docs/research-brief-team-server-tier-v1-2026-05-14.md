@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-14
 **Analyst**: The Qor-logic Analyst
-**Target**: bicameral-mcp repo at `G:\MythologIQ\bicameral-mcp`, all components that are currently team-mode-compatible or plausibly extend to a future "team-server tier v1"
+**Target**: `BicameralAI/bicameral-mcp` repo, all components that are currently team-mode-compatible or plausibly extend to a future "team-server tier v1"
 **Scope**: pre-design survey ahead of the team-server runtime reactivation cycle queued by the operator on 2026-05-14. **No implementation in this brief — fact-finding only.**
 
 ---
