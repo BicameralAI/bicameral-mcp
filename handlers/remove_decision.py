@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Literal, cast
 
 from contracts import RemoveDecisionResponse
 from ledger.queries import (
@@ -50,9 +51,7 @@ async def handle_remove_decision(
     "removed" signoff untouched.
     """
     if not reason or not reason.strip():
-        raise ValueError(
-            "remove_decision requires a non-empty 'reason' (audit-trail obligation)"
-        )
+        raise ValueError("remove_decision requires a non-empty 'reason' (audit-trail obligation)")
 
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
@@ -80,17 +79,15 @@ async def handle_remove_decision(
             decision_id=decision_id,
             was_new=False,
             signoff=existing_signoff,
-            projected_status=projected,
+            projected_status=cast(
+                Literal["reflected", "drifted", "pending", "ungrounded"], projected
+            ),
         )
 
     head_ref = getattr(ctx, "authoritative_sha", "") or ""
     session_id = getattr(ctx, "session_id", None) or ""
     now_iso = datetime.now(UTC).isoformat()
-    previous_state = (
-        existing_signoff.get("state")
-        if isinstance(existing_signoff, dict)
-        else None
-    )
+    previous_state = existing_signoff.get("state") if isinstance(existing_signoff, dict) else None
 
     signoff = {
         "state": "removed",
@@ -134,5 +131,5 @@ async def handle_remove_decision(
         decision_id=decision_id,
         was_new=True,
         signoff=signoff,
-        projected_status=projected,
+        projected_status=cast(Literal["reflected", "drifted", "pending", "ungrounded"], projected),
     )
