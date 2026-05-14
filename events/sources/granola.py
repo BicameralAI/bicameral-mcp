@@ -105,9 +105,7 @@ class GranolaAdapter:
         # Compute the maximum ended_at; only items that have it count.
         # Coerce to str so mypy sees a list[str] (dict.get returns Any).
         ended_at_values: list[str] = [
-            str(item["ended_at"])
-            for item in items
-            if item and item.get("ended_at")
+            str(item["ended_at"]) for item in items if item and item.get("ended_at")
         ]
         if ended_at_values:
             self._pending_watermark = max(ended_at_values)
