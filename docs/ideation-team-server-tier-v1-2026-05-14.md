@@ -86,30 +86,30 @@ Tier v1 adds an authenticated transport surface above the v0 substrate to enable
 
 ## Section 7 — Options Matrix
 
-### ⚠️ OPERATOR DECISION REQUIRED: R1 — Transport Boundary Line
+### R1 — Transport Boundary Line (DECIDED)
 
 | Option | Summary | Selected? | Rejection reason |
 |--------|---------|-----------|------------------|
-| **Option 1: In-MCP handler** | New team-mode-aware handler inside the MCP server. Uses BackendAdapter + auth check. Cleanest fit with existing code; bounds surface area; constrains auth shim to MCP envelope shape. Most consistent with v0 doctrine. | **⚠️ TBD** | — |
+| **Option 1: In-MCP handler** | MCP local server remains the only process. Uses BackendAdapter for remote JSONL storage. No separate "team server" process. Most consistent with v0 doctrine. | **Yes** | — |
 | **Option 2: Beside-MCP broker** | Separate broker process per developer; MCP server talks to it over local IPC. | **No** | Reintroduces daemon pattern that #242 warned about. Wrong shape — isolation benefit doesn't justify complexity. Excluded by research brief. |
-| **Option 3: Above-BackendAdapter HTTP** | New BackendAdapter subclass that speaks to a hosted bicameral-team-server over HTTP. Cleanest separation; required if hosted multi-team deployments become a goal. | **⚠️ TBD** | — |
+| **Option 3: Above-BackendAdapter HTTP** | New BackendAdapter subclass that speaks to a hosted bicameral-team-server over HTTP. | **No** | There should be no "team server" — the architecture is MCP local server + JSONL stored remotely via BackendAdapter. A separate server process is the wrong shape. |
 
-**Analysis from research brief**:
-- Option 1 solves the immediate problem: per-developer auth + push/pull within the existing MCP server process. Minimal surface area. Ships faster.
-- Option 3 solves the Stage 2 problem: hosted multi-team requires a separate server. But it requires building an HTTP server runtime (which #242 removed for good reasons — though the warning was about self-hosted OAuth workers, not all HTTP surfaces).
-- These are NOT mutually exclusive long-term. Option 1 can ship as v1; Option 3 can ship as v2 when Stage 2 evidence demands it.
+**Decision by**: @jinhongkuan (2026-05-14)
+**Rationale**: "there shouldnt be a 'team server' — 1. Option 1 2. mcp local server + jsonl stored remotely should be the final setup"
 
-**Operator prompt**: Which option should `/qor-plan` target? Or should we plan Option 1 now with Option 3 as a documented future path?
+**Architectural implication**: The tier-v1 model is *not* a client-server architecture. Each developer runs their own MCP server locally. Team sync happens through the BackendAdapter contract — JSONL files stored on a shared remote backend (LocalFolder, GoogleDrive, or future adapters). The BackendAdapter is the team transport layer; no HTTP server runtime is needed.
 
-### ⚠️ OPERATOR DECISION REQUIRED: Coexistence with git replication (#196)
+### Coexistence with git replication (#196) (DECIDED — follows from R1)
+
+Since R1 selects "MCP local + JSONL stored remotely" as the final architecture, the coexistence question resolves naturally:
 
 | Option | Summary | Selected? | Rejection reason |
 |--------|---------|-----------|------------------|
-| **(a) Additive** | Write JSONL AND push to team-server; consumer dedups on `(source_ref, content_hash)` | **⚠️ TBD** | — |
-| **(b) Primary with fallback** | Team-server primary; JSONL fallback when unreachable | **⚠️ TBD** | — |
-| **(c) Full migration** | JSONL writer off when team-server URL is set; git replication retired for those repos | **⚠️ TBD** | — |
+| **(a) Additive** | Write JSONL AND push to team-server; consumer dedups | **No** | No team-server exists; moot. |
+| **(b) Primary with fallback** | Team-server primary; JSONL when unreachable | **No** | No team-server exists; moot. |
+| **(c) Full migration to BackendAdapter** | JSONL written locally + pushed to remote backend via BackendAdapter. Git replication retired for repos using `team.backend`. | **Yes** | — |
 
-**Operator prompt**: Which coexistence mode should v1 ship with? (a) is safest; (c) is cleanest but highest risk.
+**Implication**: The BackendAdapter `push_events()` / `pull_events()` contract *is* the team sync mechanism. Code-grounded decisions flow through the same JSONL substrate, stored remotely via the configured backend. No separate push adapter needed — the existing `TeamWriteAdapter` + BackendAdapter pipeline handles it.
 
 ---
 
@@ -145,25 +145,22 @@ Tier v1 adds an authenticated transport surface above the v0 substrate to enable
 
 ## Section 10 — Readiness Scoring
 
-**Readiness status**: `research_required` → **blocked on operator R1 decision**
+**Readiness status**: `ready`
 
-The research phase is complete (META_LEDGER #48). The ideation framework is structured. But the two operator decisions (R1 transport boundary + coexistence mode) must be answered before `/qor-plan` can target a concrete scope.
+Both operator decisions are resolved:
+- R1: Option 1 (MCP local server + remote JSONL via BackendAdapter)
+- Coexistence: (c) full migration to BackendAdapter for team-sync repos
 
-**Blocking reasons**:
-1. R1 option selection (Option 1 vs Option 3) — determines the entire implementation shape
-2. Coexistence mode (a/b/c) — determines the push adapter design and test surface
-
-**Recommended next phase**: `/qor-plan` — once R1 and coexistence decisions are made.
+**Recommended next phase**: `/qor-plan` — scope: extend BackendAdapter pipeline to handle code-grounded decision push for #196, and design auth shim within MCP envelope for #215 Track 2.
 
 ---
 
 ## Delegation
 
 Per `qor/gates/delegation-table.md`:
-- Current status: `research_required` (operator decisions pending)
-- On R1 + coexistence answers: status → `ready`, recommended_next_phase → `plan`
+- Current status: `ready` (R1 + coexistence decisions resolved 2026-05-14)
 - Route: `/qor-plan` → `/qor-audit` → `/qor-implement`
 
 ---
 
-_Ideation structured. Operator decisions on R1 (transport boundary) and coexistence mode are required before `/qor-plan` can proceed._
+_Ideation complete. R1 decided: MCP local + remote JSONL via BackendAdapter (no team server). Ready for `/qor-plan`._
