@@ -335,6 +335,75 @@ body {
 .l1-body.collapsed { display: none; }
 .l1-empty { font-size: 11px; color: var(--text-light); font-style: italic; padding: 7px 28px; }
 
+/* ── SOURCE VIEW PANEL (#278 Phase 1) ─────────────────────────── */
+/* Hidden by default; .src-panel[data-src-panel="open"] flips it visible.
+   Toggle attribute name is shared between markup and JS — both pinned
+   by tests/test_dashboard_source_view.py. */
+.src-panel {
+  display: none;
+  position: fixed;
+  top: 64px; right: 24px; bottom: 24px;
+  width: min(540px, 42vw);
+  background: var(--paper);
+  border: 1px solid var(--border-dark);
+  box-shadow: -4px 4px 24px rgba(0,0,0,0.08);
+  z-index: 50;
+  padding: 18px 22px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 14px;
+}
+.src-panel[data-src-panel="open"] { display: flex; }
+.src-panel-hdr {
+  display: flex; align-items: baseline; gap: 10px;
+  border-bottom: 1px solid var(--border); padding-bottom: 10px;
+}
+.src-panel-hdr h2 {
+  font-family: var(--serif); font-size: 14px; font-weight: 700; color: var(--accent);
+}
+.src-panel-close {
+  margin-left: auto;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-dim); font-family: var(--mono); font-size: 11px;
+  padding: 2px 9px; cursor: pointer; border-radius: 2px;
+}
+.src-panel-close:hover { color: var(--text); border-color: var(--border-dark); }
+.src-panel-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; }
+.src-panel-meta .src-type-pill { background: var(--accent-soft); color: var(--accent); padding: 1px 6px; border-radius: 2px; }
+.src-panel-meta .src-date { color: var(--text-dim); }
+.src-panel-meta .src-speaker { color: var(--text-dim); }
+.src-panel-quote {
+  background: var(--canvas); border-left: 3px solid var(--accent);
+  padding: 10px 14px; font-size: 12.5px; line-height: 1.7;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+.src-panel-related-hdr {
+  font-size: 11px; color: var(--text-dim);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  margin-top: 6px;
+}
+.src-panel-related {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.src-panel-related li {
+  border-left: 2px solid var(--border); padding: 4px 10px;
+}
+.src-panel-related .src-related-link {
+  color: var(--accent); text-decoration: none; cursor: pointer; font-size: 12px;
+}
+.src-panel-related .src-related-link:hover { text-decoration: underline; }
+.src-panel-related-empty { font-size: 11px; color: var(--text-light); font-style: italic; }
+.src-view-btn {
+  margin-left: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--mono); font-size: 10px;
+  padding: 1px 7px; border-radius: 2px; cursor: pointer;
+}
+.src-view-btn:hover { color: var(--accent); border-color: var(--accent); }
+
 
 </style>
 </head>
@@ -371,6 +440,25 @@ body {
 <main class="main" id="root">
   <div class="empty">Loading decision ledger…</div>
 </main>
+
+<!-- ── SOURCE VIEW PANEL (#278 Phase 1) ───────────────────────── -->
+<!-- Hidden by default via .src-panel CSS; opens when data-src-panel="open".
+     Field text is populated by openSourceView() via .textContent (XSS-safe). -->
+<div id="src-panel" class="src-panel" data-src-panel="closed" aria-hidden="true">
+  <div class="src-panel-hdr">
+    <h2>Source</h2>
+    <button class="src-panel-close" onclick="closeSourceView()">close</button>
+  </div>
+  <div class="src-panel-meta">
+    <span id="src-panel-type" class="src-type-pill"></span>
+    <span id="src-panel-ref"></span>
+    <span id="src-panel-date" class="src-date"></span>
+    <span id="src-panel-speaker" class="src-speaker"></span>
+  </div>
+  <div id="src-panel-quote" class="src-panel-quote"></div>
+  <div class="src-panel-related-hdr">Decisions from this source</div>
+  <ul id="src-panel-related" class="src-panel-related"></ul>
+</div>
 
 <script>
 // ── helpers ─────────────────────────────────────────────────
@@ -517,6 +605,11 @@ function renderRatPill(d) {
 }
 
 // ── expanded detail body ──────────────────────────────────────
+// renderDetailSources reads the (_fi, _di) tags written by renderFeature so
+// each "View source" button can address the right source via three numeric
+// indices passed to openSourceView. The indices are numeric and safe to
+// interpolate; user-controlled fields (source_type, ref, quote) remain
+// `esc()`'d in the inline list and are written via .textContent in the panel.
 function renderDetailSources(d) {
   const srcs = d.sources || [];
   if (!srcs.length) {
@@ -525,15 +618,18 @@ function renderDetailSources(d) {
       : '~ no meeting source';
     return `<div class="det-no-src">${msg}</div>`;
   }
-  return srcs.map(s => {
+  const featureIdx = d._fi;
+  const decIdx = d._di;
+  return srcs.map((s, i) => {
     const meta = [
       s.source_type ? `<span class="src-type-pill">${esc(s.source_type)}</span>` : '',
       s.source_ref  ? `<span>${esc(s.source_ref)}</span>` : '',
       s.date        ? `<span class="src-date">${esc(s.date.slice(0,10))}</span>` : '',
       s.speaker     ? `<span class="src-speaker">${esc(s.speaker)}</span>` : '',
     ].filter(Boolean).join('');
+    const viewBtn = `<button class="src-view-btn" onclick="openSourceView(${featureIdx}, ${decIdx}, ${i})">View source</button>`;
     return `<div class="det-src">
-  ${meta ? `<div class="det-src-meta">${meta}</div>` : ''}
+  ${meta ? `<div class="det-src-meta">${meta}${viewBtn}</div>` : `<div class="det-src-meta">${viewBtn}</div>`}
   ${s.quote ? `<div class="det-quote">${esc(s.quote)}</div>` : ''}
 </div>`;
   }).join('');
@@ -569,7 +665,7 @@ function renderDec(d, idx, depth) {
   const spacer   = depth > 0 ? `<span class="depth-spacer" style="width:${depth * 18}px"></span>` : '';
   const body     = renderDetailSources(d) + renderCodeChips(d);
   return `
-<div class="dec decision-row ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" data-level="${dataLevel}" id="d${idx}" onclick="toggleDec(this)">
+<div class="dec decision-row ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" data-level="${dataLevel}" data-decision-id="${esc(d.id)}" id="d${idx}" onclick="toggleDec(this)">
   <div class="dec-hdr">
     <div class="d-text-col">
       ${spacer}${lvlBadge}<span class="d-text">${esc(d.summary)}</span>
@@ -631,6 +727,12 @@ function getAllDescendants(childNodes) {
 function renderFeature(f, fi) {
   const decisions = f.decisions || [];
 
+  // Tag each decision with its (featureIdx, decIdx-within-feature) so the
+  // "View source" button rendered later can address the right source via
+  // _currentData.features[fi].decisions[di].sources[si]. Decoration is local
+  // to this render pass; data is rebuilt on every SSE update.
+  decisions.forEach((d, di) => { d._fi = fi; d._di = di; });
+
   // Build full tree from parent_decision_id relationships
   const { roots, map } = buildDecisionTree(decisions);
 
@@ -672,11 +774,117 @@ function renderFeature(f, fi) {
 </div>`;
 }
 
+// ── source view (#278 Phase 1) ────────────────────────────────
+// Cache of the most recent HistoryResponse so openSourceView can resolve
+// (featureIdx, decIdx, srcIdx) into the underlying source object.
+let _currentData = null;
+// Client-side index mapping a source signature → list of decisions that
+// extracted from that source. Rebuilt on every render().
+let _sourceIndex = new Map();
+
+// Stable client-side signature for a HistorySource. Two sources with the same
+// signature are treated as "the same source" for grouping purposes. The slice
+// constant (40) is asserted explicitly by
+// tests/test_dashboard_source_view.py::test_source_signature_function_defined.
+function sourceSignature(src) {
+  return [
+    src.source_type || '',
+    src.source_ref || '',
+    src.date || '',
+    (src.quote || '').slice(0, 40),
+  ].join('|');
+}
+
+// Walk every feature → decision → source and accumulate a
+// Map<signature, {id, summary}[]> so the panel can render "other decisions
+// extracted from this source" with no extra server call.
+function buildSourceIndex(features) {
+  const idx = new Map();
+  (features || []).forEach(f => {
+    (f.decisions || []).forEach(d => {
+      (d.sources || []).forEach(src => {
+        const sig = sourceSignature(src);
+        const entry = { id: d.id, summary: d.summary || '' };
+        const bucket = idx.get(sig);
+        if (bucket) bucket.push(entry);
+        else idx.set(sig, [entry]);
+      });
+    });
+  });
+  return idx;
+}
+
+// Open the source-view panel for a specific (featureIdx, decIdx, srcIdx)
+// triple. All user-controlled values are written via .textContent (XSS-safe);
+// the related-decisions list is built with esc() + event delegation (no inline
+// onclick). See plan-278-phase-1-source-view.md "Security Discipline".
+function openSourceView(featureIdx, decIdx, srcIdx) {
+  if (!_currentData) return;
+  const feat = (_currentData.features || [])[featureIdx];
+  if (!feat) return;
+  const dec = (feat.decisions || [])[decIdx];
+  if (!dec) return;
+  const src = _currentData.features[featureIdx].decisions[decIdx].sources[srcIdx];
+  if (!src) return;
+
+  // Discipline #1: populate user-controlled fields via .textContent.
+  document.getElementById('src-panel-type').textContent = src.source_type || '';
+  document.getElementById('src-panel-ref').textContent = src.source_ref || '';
+  document.getElementById('src-panel-date').textContent =
+    src.date ? src.date.slice(0, 10) : '';
+  document.getElementById('src-panel-speaker').textContent = src.speaker || '';
+  document.getElementById('src-panel-quote').textContent = src.quote || '';
+
+  // Related-decisions list — skip the originating decision itself.
+  const sig = sourceSignature(src);
+  const related = (_sourceIndex.get(sig) || []).filter(e => e.id !== dec.id);
+  const listEl = document.getElementById('src-panel-related');
+  if (!related.length) {
+    listEl.innerHTML =
+      '<li class="src-panel-related-empty">No other decisions from this source.</li>';
+  } else {
+    // Discipline #2: esc() every interpolated value and use data-decision-id
+    // for event delegation — NO inline onclick on the link.
+    listEl.innerHTML = related.map(e =>
+      `<li><a class="src-related-link" data-decision-id="${esc(e.id)}">${esc(e.summary)}</a></li>`
+    ).join('');
+  }
+
+  const panel = document.getElementById('src-panel');
+  panel.setAttribute('data-src-panel', 'open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
+function closeSourceView() {
+  const panel = document.getElementById('src-panel');
+  panel.setAttribute('data-src-panel', 'closed');
+  panel.setAttribute('aria-hidden', 'true');
+}
+
+// Discipline #3: jump-to-decision uses document.getElementById (DOM API, no
+// HTML concatenation). The id namespace is generated by renderDec / orphan
+// rendering, so this also exercises the row-id contract.
+function jumpToDecision(id) {
+  // Decision row ids in the DOM are composed by renderFeature/renderL1Section
+  // ('l1-{fi}-{li}-{di}' for nested, 'ft{fi}-{di}' for orphans). We try a few
+  // resolution strategies because the decision.id is a SurrealDB id, not the
+  // DOM id directly; locate the row by its data-decision-id attribute.
+  const row =
+    document.querySelector(`.decision-row[data-decision-id="${CSS.escape(id)}"]`) ||
+    document.getElementById(id);
+  if (!row) return;
+  closeSourceView();
+  row.classList.add('open');
+  row.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
 // ── render ────────────────────────────────────────────────────
 let _lastFeaturesJson = null;
 
 function render(data) {
+  _currentData = data;
   const features = data.features || [];
+  _sourceIndex = buildSourceIndex(features);
   document.getElementById('tref').textContent =
     data.as_of ? `@ ${String(data.as_of).slice(0, 9)}` : '';
 
@@ -778,6 +986,17 @@ function connect() {
     setTimeout(connect, 4000);
   };
 }
+
+// Single delegated click handler for the related-decisions list.
+// Pinned by tests/test_dashboard_source_view.py::test_related_list_delegated_handler_defined.
+// Replaces the otherwise-tempting inline onclick that would interpolate
+// untrusted decision ids/summaries into an HTML attribute (Security
+// Discipline #2 in plan-278-phase-1-source-view.md).
+document.addEventListener('click', (ev) => {
+  const link = ev.target.closest('.src-panel-related [data-decision-id]');
+  if (!link) return;
+  jumpToDecision(link.dataset.decisionId);
+});
 
 fetch('/history').then(r => r.json()).then(render).catch(() => {});
 connect();
