@@ -1,6 +1,7 @@
 name: Schema Persistence Tests
 
 on:
+  workflow_dispatch:
   push:
     paths:
       - 'ledger/schema.py'
