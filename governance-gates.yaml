@@ -19,4 +19,14 @@
 # sweep that lands real entries; Phase 4 wires the lint into CI as a hard
 # gate.
 
-gates: []
+gates:
+  # #224: deterministic server-side timeout on every ledger query.
+  # Enforces the "queries time out after configured budget" claim
+  # uniformly for all MCP clients (not just Claude — the wrap is
+  # client-agnostic). Operator config can adjust budgets; the wrap
+  # itself is unconditional unless BICAMERAL_QUERY_TIMEOUT_DISABLE=1.
+  - skill: "*"
+    instruction_pattern: "queries time out"
+    backing_gate: ledger/client.py::LedgerClient._run_with_timeout::asyncio.wait_for
+    gate_kind: server
+

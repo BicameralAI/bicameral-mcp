@@ -156,9 +156,21 @@ class SurrealDBLedgerAdapter:
         url: str | None = None,
         ns: str = "bicameral",
         db: str = "ledger",
+        *,
+        query_timeout_read_seconds: float | None = None,
+        query_timeout_drift_seconds: float | None = None,
     ) -> None:
         self._url = url or os.getenv("SURREAL_URL", _default_db_url())
-        self._client = LedgerClient(url=self._url, ns=ns, db=db)
+        # #224: timeout budgets are forwarded into LedgerClient. None →
+        # LedgerClient module defaults (5s read / 30s drift); callers
+        # that wire operator config through get_ledger() pass concrete
+        # floats.
+        client_kwargs: dict = {"url": self._url, "ns": ns, "db": db}
+        if query_timeout_read_seconds is not None:
+            client_kwargs["query_timeout_read_seconds"] = query_timeout_read_seconds
+        if query_timeout_drift_seconds is not None:
+            client_kwargs["query_timeout_drift_seconds"] = query_timeout_drift_seconds
+        self._client = LedgerClient(**client_kwargs)
         self._connected = False
         self._pending_destructive: DestructiveMigrationRequired | None = None
 

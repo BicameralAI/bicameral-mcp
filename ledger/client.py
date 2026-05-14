@@ -7,9 +7,12 @@ back a plain list of dicts — no SDK types leak through.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 import re
-from typing import Any
+import time
+from typing import Any, Literal
 
 from surrealdb import AsyncSurreal, RecordID
 
@@ -19,6 +22,29 @@ except ImportError:
     SurrealError = Exception  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
+
+# #224: per-query wallclock timeout budgets. Defaults match
+# ``context.py::_DEFAULT_QUERY_TIMEOUT_{READ,DRIFT}`` so a
+# bare ``LedgerClient(url)`` constructed in tests / adapters gets
+# safe defaults without requiring a ``BicameralContext`` injection.
+# Operator-configured values flow through
+# ``BicameralContext.query_timeout_{read,drift}_seconds`` → the
+# adapter passes them to ``LedgerClient.__init__``.
+_DEFAULT_QUERY_TIMEOUT_READ_SECONDS = 5.0
+_DEFAULT_QUERY_TIMEOUT_DRIFT_SECONDS = 30.0
+
+# #224: env-override for the timeout wrap. Mirror the
+# ``BICAMERAL_INGEST_RATE_LIMIT_DISABLE`` precedent at
+# ``handlers/ingest.py:368``. Use cases: data export, recovery,
+# intentionally long-running operator query.
+_QUERY_TIMEOUT_DISABLE_ENV = "BICAMERAL_QUERY_TIMEOUT_DISABLE"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _query_timeout_disabled() -> bool:
+    """Read the env-override fresh on every call so test fixtures
+    can toggle it without restarting the module."""
+    return os.getenv(_QUERY_TIMEOUT_DISABLE_ENV, "").strip().lower() in _TRUTHY
 
 
 # Windows-drive-letter detector at the start of an embedded URL path.
@@ -89,6 +115,40 @@ class LedgerError(RuntimeError):
     """
 
 
+class LedgerTimeoutError(LedgerError):
+    """Raised when a ledger query exceeds its wallclock timeout budget.
+
+    Carries the timeout class, elapsed seconds, configured budget,
+    and a 200-char SQL prefix for operator triage. Subclass of
+    ``LedgerError`` so existing ``except LedgerError`` handler blocks
+    catch it by default; callers that need to distinguish a timeout
+    from other ledger errors can match on ``LedgerTimeoutError``.
+
+    The wrap that produces this is the deterministic server-side gate
+    for #224 — it fires identically regardless of which MCP client is
+    on the other end of the transport. Per #205 doctrine, governance
+    is enforced here, not in skill text.
+    """
+
+    def __init__(
+        self,
+        *,
+        sql_prefix: str,
+        timeout_class: str,
+        elapsed_seconds: float,
+        budget_seconds: float,
+    ) -> None:
+        self.sql_prefix = sql_prefix
+        self.timeout_class = timeout_class
+        self.elapsed_seconds = elapsed_seconds
+        self.budget_seconds = budget_seconds
+        super().__init__(
+            f"Ledger query exceeded {timeout_class} timeout "
+            f"({elapsed_seconds:.2f}s > {budget_seconds:.1f}s budget): "
+            f"{sql_prefix}"
+        )
+
+
 def _normalize(value: Any) -> Any:
     """Recursively convert SDK types to plain Python objects."""
     if isinstance(value, RecordID):
@@ -121,6 +181,9 @@ class LedgerClient:
         db: str = "ledger",
         username: str = "root",
         password: str = "root",
+        *,
+        query_timeout_read_seconds: float = _DEFAULT_QUERY_TIMEOUT_READ_SECONDS,
+        query_timeout_drift_seconds: float = _DEFAULT_QUERY_TIMEOUT_DRIFT_SECONDS,
     ) -> None:
         # Normalize embedded Windows paths so the SurrealDB SDK's internal
         # urllib.parse.urlparse() doesn't choke on the drive-letter colon.
@@ -131,6 +194,8 @@ class LedgerClient:
         self._username = username
         self._password = password
         self._db: Any = None
+        self._timeout_read = query_timeout_read_seconds
+        self._timeout_drift = query_timeout_drift_seconds
 
     async def connect(self) -> None:
         self._db = AsyncSurreal(self.url)
@@ -147,7 +212,47 @@ class LedgerClient:
             await self._db.close()
             self._db = None
 
-    async def query(self, sql: str, vars: dict | None = None) -> list[dict]:
+    def _budget_for(self, timeout_class: Literal["read", "drift"]) -> float:
+        return self._timeout_drift if timeout_class == "drift" else self._timeout_read
+
+    async def _run_with_timeout(
+        self,
+        sql: str,
+        vars: dict | None,
+        timeout_class: Literal["read", "drift"],
+    ) -> Any:
+        """Execute the underlying SDK query under the configured timeout
+        wallclock. ``BICAMERAL_QUERY_TIMEOUT_DISABLE=1`` bypasses the
+        wrap (debugging knob for intentionally long-running queries).
+        """
+        if _query_timeout_disabled():
+            return await self._db.query(sql, vars)
+        budget = self._budget_for(timeout_class)
+        started = time.perf_counter()
+        try:
+            return await asyncio.wait_for(self._db.query(sql, vars), timeout=budget)
+        except TimeoutError:
+            elapsed = time.perf_counter() - started
+            _emit_timeout_telemetry(
+                sql=sql,
+                timeout_class=timeout_class,
+                elapsed_seconds=elapsed,
+                budget_seconds=budget,
+            )
+            raise LedgerTimeoutError(
+                sql_prefix=sql[:200],
+                timeout_class=timeout_class,
+                elapsed_seconds=elapsed,
+                budget_seconds=budget,
+            ) from None
+
+    async def query(
+        self,
+        sql: str,
+        vars: dict | None = None,
+        *,
+        timeout_class: Literal["read", "drift"] = "read",
+    ) -> list[dict]:
         """Run a SurrealQL statement and return a list of normalized dicts.
 
         Raises:
@@ -155,18 +260,28 @@ class LedgerClient:
                 error string instead of rows). Common causes: malformed
                 SurrealQL, permission failures, ASSERT violations on the
                 underlying SELECT.
+            LedgerTimeoutError: when the query exceeds the configured
+                wallclock budget for its ``timeout_class`` (default
+                ``"read"`` = 5s; pass ``timeout_class="drift"`` for
+                heavy traversal / replay paths = 30s default). #224.
         """
         if self._db is None:
             raise RuntimeError("LedgerClient not connected — call await client.connect() first")
         try:
-            result = await self._db.query(sql, vars)
+            result = await self._run_with_timeout(sql, vars, timeout_class)
         except SurrealError as exc:
             raise LedgerError(f"SurrealDB rejected query: {exc}\nSQL: {sql[:300]}") from exc
         if isinstance(result, str):
             raise LedgerError(f"SurrealDB rejected query: {result}\nSQL: {sql[:300]}")
         return _normalize(result) if isinstance(result, list) else []
 
-    async def execute(self, sql: str, vars: dict | None = None) -> None:
+    async def execute(
+        self,
+        sql: str,
+        vars: dict | None = None,
+        *,
+        timeout_class: Literal["read", "drift"] = "read",
+    ) -> None:
         """Run a SurrealQL statement, discarding the result (DDL / DML).
 
         Raises:
@@ -174,19 +289,53 @@ class LedgerClient:
                 the class of silent-failure bugs where a UNIQUE violation
                 or ASSERT failure gets returned as an error string and
                 the caller proceeds believing the write succeeded.
+            LedgerTimeoutError: when the statement exceeds the configured
+                wallclock budget. See ``query`` for details.
         """
         if self._db is None:
             raise RuntimeError("LedgerClient not connected")
         try:
-            result = await self._db.query(sql, vars)
+            result = await self._run_with_timeout(sql, vars, timeout_class)
         except SurrealError as exc:
             raise LedgerError(f"SurrealDB rejected statement: {exc}\nSQL: {sql[:300]}") from exc
         if isinstance(result, str):
             raise LedgerError(f"SurrealDB rejected statement: {result}\nSQL: {sql[:300]}")
 
-    async def execute_many(self, statements: list[str]) -> None:
+    async def execute_many(
+        self,
+        statements: list[str],
+        *,
+        timeout_class: Literal["read", "drift"] = "read",
+    ) -> None:
         """Run multiple DDL/DML statements in sequence (one at a time)."""
         for stmt in statements:
             stmt = stmt.strip()
             if stmt:
-                await self.execute(stmt)
+                await self.execute(stmt, timeout_class=timeout_class)
+
+
+def _emit_timeout_telemetry(
+    *,
+    sql: str,
+    timeout_class: str,
+    elapsed_seconds: float,
+    budget_seconds: float,
+) -> None:
+    """Forward a timeout event to the ring-buffer + audit-log telemetry
+    layer. Imported lazily so a ``LedgerClient`` constructed before
+    ``ledger.timeout_telemetry`` is importable (e.g. early in module
+    import) still raises a useful timeout, just without the recorded
+    event. Phase C-pre wires up the ring buffer; Phase C wires up
+    the audit-log emit.
+    """
+    try:
+        from ledger.timeout_telemetry import record_timeout
+
+        record_timeout(
+            sql_prefix=sql[:200],
+            timeout_class=timeout_class,
+            elapsed_seconds=elapsed_seconds,
+            budget_seconds=budget_seconds,
+        )
+    except Exception:  # noqa: BLE001 — telemetry must never break a query
+        pass
