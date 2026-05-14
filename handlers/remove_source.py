@@ -108,8 +108,9 @@ async def handle_remove_source(
     writer = getattr(ledger, "_writer", None)
     event_logged = False
     if writer is not None:
-        writer.write(
-            "source_removed.completed",
+        from events.dogfood import maybe_dogfood_label
+
+        payload = maybe_dogfood_label(
             {
                 "span_id": span_id,
                 "input_span_content": span_content,
@@ -117,8 +118,9 @@ async def handle_remove_source(
                 "signer": signer,
                 "reason": reason,
                 "removed_at": datetime.now(UTC).isoformat(),
-            },
+            }
         )
+        writer.write("source_removed.completed", payload)
         event_logged = True
 
     logger.info(

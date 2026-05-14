@@ -195,14 +195,18 @@ async def process_admin_query(
     elapsed_ms = (time.perf_counter() - started) * 1000.0
 
     # Emit one audit event — success or failure, both modes.
-    audit_payload = {
-        "sql": sql,
-        "mode": response_mode,
-        "elapsed_ms": elapsed_ms,
-        "error": error,
-        "signer": signer,
-        "ts": datetime.now(UTC).isoformat(),
-    }
+    from events.dogfood import maybe_dogfood_label
+
+    audit_payload = maybe_dogfood_label(
+        {
+            "sql": sql,
+            "mode": response_mode,
+            "elapsed_ms": elapsed_ms,
+            "error": error,
+            "signer": signer,
+            "ts": datetime.now(UTC).isoformat(),
+        }
+    )
     _emit_admin_event(ledger, audit_payload, repo_path)
 
     body = {

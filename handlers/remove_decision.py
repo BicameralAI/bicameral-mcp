@@ -111,13 +111,15 @@ async def handle_remove_decision(
     # is satisfied by the ledger row's signoff history itself.
     writer = getattr(ledger, "_writer", None)
     if writer is not None:
-        writer.write(
-            "decision_removed.completed",
+        from events.dogfood import maybe_dogfood_label
+
+        payload = maybe_dogfood_label(
             {
                 "decision_id": decision_id,
                 "signoff": signoff,
-            },
+            }
         )
+        writer.write("decision_removed.completed", payload)
 
     logger.info(
         "[remove_decision] decision=%s signer=%s previous_state=%s projected_status=%s",
