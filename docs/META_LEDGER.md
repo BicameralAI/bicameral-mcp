@@ -2659,5 +2659,78 @@ Same pattern as Entries #28, #33, #36, #41, #43, #44, #45, #46:
 Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks and prior #252 layers.
 
 ---
-*Chain integrity: VALID (48 entries on this branch)*
-*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48)*
+
+## Entry #49: RESEARCH BRIEF — team-server tier v1: existing compatible components (renumbered from #48)
+
+**Date**: 2026-05-14
+**Phase**: RESEARCH
+**Branch**: `research/team-server-tier-v1-survey` (off `upstream/dev` post-#324 merge)
+**Brief**: `docs/research-brief-team-server-tier-v1-2026-05-14.md`
+**Risk Grade**: L1 (research artifact; no code mutation)
+
+**Content Hash**:
+```
+SHA256(docs/research-brief-team-server-tier-v1-2026-05-14.md)
+= 0e15b9d5c7a883f01f515824d9f65c8b8d9861cbf4ea4e20785a37efd136ddb6
+```
+
+**Previous Entry**: #48 (#252 Layer 4 SEAL)
+
+**Trigger**: operator-directed pre-design survey for team-server runtime reactivation cycle. Per the 2026-05-14 team-server priority directive, the next `/qor-auto-dev-1` work targets team-server tier v1; this brief is the fact-finding pass that precedes any plan.
+
+### Scope
+
+Survey of bicameral-mcp at `dev` HEAD for components that are currently team-mode-compatible or plausibly extend to a tier v1 architecture. Six dimensions enumerated:
+
+1. Event-log substrate (`events/writer.py`, `events/materializer.py`, `events/transcript_queue.py`, `events/team_adapter.py`)
+2. BackendAdapter foundation (#279 Phase 2: ABC + LocalFolderAdapter + GoogleDriveAdapter)
+3. Multi-author / multi-peer mechanics (canonical_id dedup, watermarks, `team:` config)
+4. Identity & rate-limit isolation hooks (`context.py::_resolve_agent_identity`, ingest rate-limit registry)
+5. CLI surfaces touching team mode (`cli/sync_and_brief_cli.py`, ledger export/import)
+6. #242 negative-space confirmation (removed HTTP runtime, OAuth workers, Docker assets)
+
+### Key findings
+
+- **No drift between architecture-as-coded and architecture-as-documented at the v0 boundary.** All eight blueprint-alignment checks return MATCH.
+- **The BackendAdapter contract + canonical_id UUIDv5 dedup + per-author JSONL isolation is sufficient as the wire substrate** for tier v1. Tier v1 should be additive on top, not a replacement.
+- **The gaps for tier v1 are above the substrate, not in it**: auth shim (#215 Track 2), HTTP transport surface, per-peer health/rate-limit/observability, multi-author conflict resolution beyond first-write-wins, MCP-tool surface for team membership / audit, source-pull leader-election.
+- **#242's removal is clean.** `team_server/` directory is empty; no `team_server_*` imports anywhere in the main tree; no HTTP framework imports. Cache/pycache artifacts (`.mypy_cache/3.11/events/team_server_bridge.*`) are inert.
+- **Tier-v1 boundary line is the single most important design decision** for the next plan cycle. Three options identified; Option 1 (handler-level, inside MCP server) recommended as most consistent with v0 doctrine; Option 3 (BackendAdapter subclass speaking to hosted bicameral-team-server over HTTP) flagged as required only if Stage-2 hosted multi-team deployments become a goal.
+
+### Recommendations (six, prioritized by dependency)
+
+1. Define the tier-v1 boundary line via `/qor-ideate` or `/qor-plan` — choose between Option 1 (in-MCP handler) and Option 3 (BackendAdapter-over-HTTP).
+2. Track 2 of #215 — design the auth shim (1 plan cycle, no implementation).
+3. Decide multi-author conflict-resolution semantic (paired with R1).
+4. Add `BackendAdapter.health()` and probe-only `list_peers()` (deferred to after R1).
+5. Clean up #242 cache artifacts (chore; bundle into next infra PR).
+6. Defer source-pull leader-election + per-peer quotas until evidence drives the need (YAGNI gate).
+
+### Updated knowledge
+
+- **Substrate vs tier separation**: v0 substrate is well-documented at `docs/v0-architecture-current.md`; tier v1 doc is deliberately not yet written. This brief is the placeholder until R1 picks a design.
+- **Negative space (no HTTP, no auth shim, no conflict resolver) is intentional per #242**, not an omission. Future contributors who see "no HTTP server" should be redirected here + to `docs/policies/threat-model-and-trust-boundary.md`.
+- **`canonical_id` UUIDv5 derivation from `(description, source_type, source_ref)` is a substrate invariant.** Any tier-v1 design that breaks it breaks cross-author replay determinism. Lock it.
+
+### Next required action
+
+Per `qor/gates/delegation-table.md`: research complete → `/qor-plan` (next phase). However, the brief identifies that a *design selection step* is needed before `/qor-plan` can target a concrete scope (R1 selection between Option 1 and Option 3). Recommended sequencing:
+
+1. Operator reviews this brief, picks R1's option (or directs further discovery).
+2. `/qor-ideate` cycle scopes the chosen option into a concrete plan input.
+3. `/qor-plan` consumes that scope; `/qor-audit` gates; `/qor-implement` ships.
+
+### qor-logic-internal steps skipped
+
+Same pattern as prior downstream-project entries (#28, #33, #36, #41, #43–#47):
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present here |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 7.4 / 7.5 / 7.6 (SSDF tag / version bump / CHANGELOG) | not run | qor-logic-internal; no version-bump for a research-only artifact |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+
+---
+*Chain integrity: VALID (49 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48) → team-server tier v1 RESEARCH (#49)*
