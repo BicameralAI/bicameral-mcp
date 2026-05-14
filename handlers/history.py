@@ -112,6 +112,10 @@ def _row_to_history_decision(
             raw_type = str(span.get("source_type") or row.get("source_type") or "manual")
             speakers = span.get("speakers") or []
             speaker = speakers[0] if speakers else None
+            # #278 Phase 2: propagate the input_span record id through to the
+            # HistorySource so remove_source can target the cascade.
+            span_id_raw = span.get("id")
+            input_span_id = str(span_id_raw) if span_id_raw else None
             sources.append(
                 HistorySource(
                     source_ref=str(span.get("source_ref") or row.get("source_ref") or ""),
@@ -119,6 +123,7 @@ def _row_to_history_decision(
                     date=str(span.get("meeting_date") or row.get("meeting_date") or ""),
                     speaker=speaker,
                     quote=text,
+                    input_span_id=input_span_id,
                 )
             )
     else:
@@ -209,7 +214,7 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
                     purpose,
                     content_hash
                 } AS code_regions,
-                <-yields<-input_span.{text, source_ref, source_type, meeting_date, speakers} AS _source_spans
+                <-yields<-input_span.{id, text, source_ref, source_type, meeting_date, speakers} AS _source_spans
             FROM decision
             ORDER BY created_at ASC
             """,
