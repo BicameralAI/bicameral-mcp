@@ -507,6 +507,43 @@ def _session_end_command_for_platform(platform: str) -> str:
     )
 
 
+def _session_start_command_for_platform(platform: str) -> str:
+    """Return the SessionStart hook command for the target platform (#279
+    Phase 1).
+
+    The hook invokes ``bicameral-mcp sync-and-brief`` so the synthesized
+    brief is injected into Claude's context BEFORE the first user prompt.
+    Stderr is appended to ``~/.bicameral/hook-errors.log`` so failures
+    surface in the operator's log without polluting the agent's context.
+
+    The trailing ``exit 0`` (POSIX) / ``& exit 0`` (Windows) is mandatory:
+    SessionStart MUST NEVER block session start. If the CLI fails for any
+    reason — missing config, missing API key, network error — the
+    operator's session still proceeds.
+    """
+    if platform == "win32":
+        return (
+            "if exist .bicameral "
+            'bicameral-mcp sync-and-brief 2>>"%USERPROFILE%\\.bicameral\\hook-errors.log" & '
+            "exit 0"
+        )
+    return (
+        '[ -d .bicameral ] && '
+        'bicameral-mcp sync-and-brief 2>>"${HOME}/.bicameral/hook-errors.log" || true; '
+        "exit 0"
+    )
+
+
+def _build_session_start_command(platform: str | None = None) -> str:
+    """Canonical SessionStart hook command (#279 Phase 1).
+
+    Pinned by tests/test_sessionstart_hook_install.py. Cross-platform via
+    sys.platform; explicit override exists for test rendering.
+    """
+    target = platform if platform is not None else sys.platform
+    return _session_start_command_for_platform(target)
+
+
 def _build_session_end_command(
     mcp_config_path: str | None = None,
     platform: str | None = None,
@@ -542,6 +579,10 @@ def _build_session_end_command(
 # end-user's ``.claude/settings.json``. Re-derived from the helper so the
 # function is the single source of truth.
 _BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
+
+# #279 Phase 1 — SessionStart hook command. Opt-in via the setup wizard.
+# Stdout from the CLI becomes Claude's pre-session context envelope.
+_BICAMERAL_SESSION_START_COMMAND = _build_session_start_command()
 
 # Fires after every Bash tool use. When the command is a git write-op
 # (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
@@ -603,6 +644,7 @@ def _install_claude_hooks(repo_path: Path) -> bool:
         "claude:PostToolUse:Bash",
         "claude:PostToolUse:bicameral_preflight",
         "claude:SessionEnd",
+        "claude:SessionStart",
         "claude:UserPromptSubmit",
     )
     settings_path = repo_path / ".claude" / "settings.json"
@@ -666,6 +708,26 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     new_se_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}]}
     if non_bic_se != session_end or new_se_entry not in session_end:
         hooks["SessionEnd"] = non_bic_se + [new_se_entry]
+        wrote_anything = True
+
+    # ── SessionStart — pull-based meeting ingestion brief (#279) ────────
+    # Auto-runs `bicameral-mcp sync-and-brief` and injects the resulting
+    # markdown brief into Claude's pre-session context.
+    # MUST NEVER block session start — the command ends with `exit 0`.
+    session_start: list = hooks.setdefault("SessionStart", [])
+    non_bic_ss = [
+        e
+        for e in session_start
+        if not any(
+            "bicameral" in h.get("command", "") or "sync-and-brief" in h.get("command", "")
+            for h in e.get("hooks", [])
+        )
+    ]
+    new_ss_entry = {
+        "hooks": [{"type": "command", "command": _BICAMERAL_SESSION_START_COMMAND}]
+    }
+    if non_bic_ss != session_start or new_ss_entry not in session_start:
+        hooks["SessionStart"] = non_bic_ss + [new_ss_entry]
         wrote_anything = True
 
     # ── UserPromptSubmit — preflight auto-fire reinforcement ─────────
