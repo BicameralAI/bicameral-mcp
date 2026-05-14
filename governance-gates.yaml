@@ -1,0 +1,22 @@
+# governance-gates.yaml — registry of deterministic gates backing the
+# privacy / security / compliance defaults claimed in skills/**/SKILL.md.
+#
+# Read by scripts/lint_skill_governance.py. Each entry declares one
+# SKILL.md instruction pattern and the deterministic gate that enforces
+# the corresponding default at runtime / config-load / server-side.
+#
+# Schema (Phase 1 minimal — see docs/governance/doctrine-deterministic-governance.md):
+#   gates:
+#     - skill: <skill-folder-name-under-skills/>
+#       instruction_pattern: <substring of the SKILL.md sentence claiming a default>
+#       backing_gate: <file:path::function or descriptive identifier>
+#       gate_kind: <one of: env | config | server | schema>
+#
+# Phase 1 starts empty; per the doctrine, skills with default claims will
+# light up as advisory lint findings until either (a) the SKILL.md text is
+# revised to drop the claim, or (b) a gate entry is added here pointing to
+# the deterministic enforcement code. Phase 3 of #205 is the retroactive
+# sweep that lands real entries; Phase 4 wires the lint into CI as a hard
+# gate.
+
+gates: []
