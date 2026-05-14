@@ -148,6 +148,71 @@ Since R1 selects "MCP local + JSONL stored remotely" as the final architecture, 
 
 ---
 
+## Section 9a — Known Limitations of the R1 Architecture
+
+The R1 decision (MCP local + BackendAdapter file-share, no server process) trades operational complexity for simplicity. The following are inherent architectural constraints — not bugs, but boundaries that `/qor-plan` should acknowledge and that future iterations may address through new BackendAdapter subclasses.
+
+### Sync & Latency
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L1 | **Poll-only, no push notifications** — peers see changes only on next `pull_events()` call (via `sync-and-brief` CLI or hook). Latency = polling interval, not network round-trip. | Decisions ingested at 2:01 may not be visible to peers until next poll (e.g. 2:15). | Acceptable for v1. Could add filesystem watchers (inotify/FSEvents) or backend-specific webhooks (Google Drive push notifications) in future adapters. |
+| L2 | **No partial sync** — `pull_events()` copies every peer's entire author file (hash-skip optimization avoids redundant transfers, but the granularity is per-file, not per-event). | Can't pull only events related to a specific module or decision area. All-or-nothing per author. | Acceptable for v1 event-log sizes. Partitioning by time window or topic is a future adapter concern. |
+
+### Consistency & Conflicts
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L3 | **No write-time coordination** — two developers can write conflicting decisions simultaneously. No distributed lock. Coordination is `canonical_id` first-write-wins evaluated at *replay* time (materializer), not write time. | Silent divergence window between write and replay. | Acceptable for v1; `canonical_id` UNIQUE constraint catches it at replay. Surface-to-human tool (A6 option 2) would close the UX gap. |
+| L4 | **Conflict resolution is lossy** — when two peers write the "same" decision (same `canonical_id`) with different rationales, the second writer's intent is silently dropped during replay. No merge, no notification. | Risk of silent loss of conflicting peer intent. | A6 decision (posted to @jinhongkuan) will determine v1 semantic. Options: accept lossy skip, surface conflicts, or deterministic merge rule. |
+| L5 | **No global event ordering across authors** — each author's events are ordered within their own JSONL file (append-only), but no global ordering. Events from different authors interleave in whatever order the materializer encounters them. | Causal ordering across authors is not guaranteed. | Acceptable for v1: decisions are independently meaningful. Causal ordering (vector clocks, Lamport timestamps) is a future concern. |
+
+### Identity & Access
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L6 | **Identity is self-asserted** — author identity comes from `git config user.email` (`events/writer.py:82-97`). A developer can change their git email and appear as a different author. No server-side verification. | Impersonation possible; audit trail unreliable for compliance. | Auth shim (Track 2 of #215) is designed to close this gap. Under file-share-only, there's nothing to verify against. |
+| L7 | **No access control at the transport layer** — if you can read/write to the shared folder or Google Drive folder, you have full access. No per-developer read/write restrictions, no role-based access. | All team members are equal peers; no admin/read-only roles. Revocation requires revoking filesystem/Drive permissions. | Acceptable for v1 (small trusted teams). RBAC is a future BackendAdapter concern. |
+
+### Observability & Operations
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L8 | **No transport-layer audit trail** — push/pull operations are fire-and-forget. No log of who pushed when, no receipt confirmation, no integrity verification at the transport layer. | Event-log has author fields, but the transport doesn't verify them. | Add push/pull event logging to BackendAdapter ABC in a future version. |
+| L9 | **No health or presence signals** — no way to know who is actively working. `list_peers()` shows who has *ever* pushed files, not who is online. No backend health probe (`BackendAdapter` has no `health()` method). | No team awareness; no "is the backend reachable?" check at session start. | Research brief R4 recommends `BackendAdapter.health()`. Defer to post-R1. |
+| L10 | **No metrics** — no instrumentation for sync frequency, sync latency, sync failures, data volume. Only stderr logging via `cli-errors.log`. | Operational blind spot; failures are silent unless the developer checks stderr. | Add structured telemetry hooks to BackendAdapter pipeline. |
+
+### Scalability
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L11 | **File-per-author ceiling** — `pull_events()` iterates over every peer's file on every pull. | O(N) in team size per pull. Works for small teams; increasingly expensive as team grows. No sharding or partitioning. | Acceptable for v1 team sizes (< 20). Future adapters could shard by time window or topic. |
+| L12 | **No delta sync** — `push_events()` copies the entire author file (SHA256 hash-skip avoids redundant copies, but the hash computation itself scales with file size). | As event logs grow, hash computation becomes a bottleneck. No incremental append-only transport. | Content-addressed chunking or byte-offset watermarks on the remote side could enable delta sync. |
+
+### Backend-Specific
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L13 | **LocalFolderAdapter** — requires shared filesystem access (NFS, SMB, mounted volume). | Introduces filesystem-specific reliability concerns: NFS stale file handles, SMB locking semantics, latency over WAN. | Acceptable for co-located teams. Remote teams should prefer GoogleDriveAdapter or future cloud adapters. |
+| L14 | **GoogleDriveAdapter** — OAuth token management, Google API rate limits (300 queries/min default), 15GB free tier ceiling, eventual consistency. | MD5 etag matching can miss rapid successive writes. Token refresh failures break sync silently. | Acceptable for v1. S3/Supabase adapters would avoid Drive-specific constraints. |
+
+### Schema & Versioning
+
+| # | Limitation | Impact | Mitigation path |
+|---|-----------|--------|-----------------|
+| L15 | **No version negotiation** — if one developer updates their MCP server (new event types, new fields), their events may not be understood by peers running older versions. `schema_version` field in `EventEnvelope` exists but there's no enforcement that a peer can process a newer version. | Forward-compatibility not guaranteed. | Acceptable for v1 (teams typically coordinate upgrades). Version negotiation is a future adapter concern. |
+
+### Prioritization for `/qor-plan`
+
+The limitations most likely to bite first in practice:
+1. **L4 (lossy conflicts)** + **L6 (self-asserted identity)** — these are the A6 and #215 Track 2 priorities already identified
+2. **L9 (no health signal)** — easy win; research brief R4 recommends `BackendAdapter.health()`
+3. **L1 (polling latency)** — acceptable for v1 but will surface as a UX complaint in active multi-developer sessions
+
+The remaining limitations (L2, L3, L5, L7, L8, L10-L15) are acceptable trade-offs for v1 team sizes and usage patterns.
+
+---
+
 ## Section 10 — Readiness Scoring
 
 **Readiness status**: `ready` (with one open non-blocking assumption)
