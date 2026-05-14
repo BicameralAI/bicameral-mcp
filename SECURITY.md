@@ -8,6 +8,12 @@ Bicameral runs **entirely on your laptop**. Code, decisions, transcripts, and se
 - **Opt out of telemetry**: `export BICAMERAL_TELEMETRY=0` or set it in your `.mcp.json` `env` block.
 - **Full compliance posture** — host-trust model, acceptable use, install-trust model, audit log, diagnose output, availability stance — lives in [`docs/policies/`](docs/policies/).
 
+## Threat model and trust boundary
+
+bicameral-mcp is a local-install developer tool. **The trust boundary is the OS user account.** Multi-user, hosted, or shared-machine deployments are out of scope; team-mode requires a future auth shim before such activation.
+
+See [`docs/policies/threat-model-and-trust-boundary.md`](docs/policies/threat-model-and-trust-boundary.md) for the canonical scope statement, in/out-of-scope deployment examples, the v0 team-mode posture, and the deferred Track 2 auth-shim design space.
+
 ## Software supply chain
 
 Each release ships signed artifacts on the [Releases page](https://github.com/BicameralAI/bicameral-mcp/releases):

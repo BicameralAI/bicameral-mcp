@@ -4,6 +4,8 @@
 **Closes gap**: MCP-01 (OWASP LLM-07) per `docs/research-brief-compliance-audit-2026-05-06.md` § 1.1, § 2.4
 **Doctrine**: #205 deterministic-governance hard rule
 
+> For the MCP-transport trust boundary specifically (SOC2-01 gap, single-tenant scope statement, team-mode posture), see [`threat-model-and-trust-boundary.md`](threat-model-and-trust-boundary.md). This document is about *host-side* surface dependencies; that document is about *transport-side* tenancy scope.
+
 ## Why this document exists
 
 bicameral-mcp's design assumes specific MCP-host UX behaviors (the operator sees tool calls, can deny them, sees server output, can intervene mid-call). **Those surfaces are external to the server** — they live in the MCP host (Claude Code, Cursor, Codex, etc.), not in bicameral-mcp itself. A host that auto-approves tool calls, fails to surface stdout, or lacks a denial path silently bypasses any "the operator will see this" assumption baked into bicameral-mcp's design.

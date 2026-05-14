@@ -40,6 +40,8 @@ Do not deploy bicameral-mcp on a shared multi-tenant filesystem (e.g., shared de
 
 The team-server activation track addresses this (cross-developer correlation needs server-side auth); until then, single-tenant deployment is the supported posture.
 
+See [`docs/policies/threat-model-and-trust-boundary.md`](threat-model-and-trust-boundary.md) for the canonical scope statement and team-mode boundary.
+
 ### 4. Automated decisions affecting people without human-in-the-loop review
 
 Do not use bicameral-mcp's outputs to drive automated decisions about people without an explicit human-in-the-loop (HITL) review step. The preflight gate is a context-surfacing primitive; it is not a decision-making oracle. Outputs are advisory; operators reviewing the surfaced context are the deciders.

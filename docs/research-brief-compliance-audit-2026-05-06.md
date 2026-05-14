@@ -675,7 +675,7 @@ Initial P0 gaps were filed individually (4 new issues + #205 covering OWASP-04).
 | LLM-06 | #214 | LLM05 supply chain — sign skills/ payload (scope-narrowed P1) |
 | LLM-11 | folded into epic #218 | signed hook/config manifest for host-config writes (P0 sub-task of supply-chain epic) |
 | MCP-01 | #220 | LLM07 — MCP host UX is not a security gate |
-| SOC2-01 | #215 | SOC2 CC1/CC6 — declare MCP trust boundary + auth shim plan |
+| SOC2-01 | #215 | SOC2 CC1/CC6 — declare MCP trust boundary + auth shim plan. **Track 1 completed 2026-05-14**: `docs/policies/threat-model-and-trust-boundary.md`. Track 2 (auth-shim design) remains open; gated on team-mode evolution to server-mediated tier. |
 | GDPR-01 | #221 | GDPR Art. 17 — right-to-erasure procedure for Merkle ledger |
 | GDPR-02 | #222 | GDPR Art. 15 — data-subject-access CLI |
 | GDPR-05 | #223 | GDPR Art. 5(1)(c) — signer-email default review |
