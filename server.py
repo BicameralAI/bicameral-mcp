@@ -1477,6 +1477,20 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.sync_and_brief_cli import _build_argparser as _sb_build
 
     _sb_build(sync_and_brief)
+    subparsers.add_parser(
+        "ledger-export",
+        help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
+    )
+    import_parser = subparsers.add_parser(
+        "ledger-import",
+        help="import a JSON-Lines ledger dump (#252 Layer 4)",
+    )
+    import_parser.add_argument(
+        "--from-file",
+        default=None,
+        metavar="PATH",
+        help="read JSONL from file instead of stdin",
+    )
     parser.add_argument(
         "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
     )
@@ -1513,6 +1527,14 @@ def _dispatch(args: Any) -> int:
         from cli.sync_and_brief_cli import main as sync_and_brief_main
 
         return sync_and_brief_main(args)
+    if args.command == "ledger-export":
+        from cli.ledger_export_cli import main as export_main
+
+        return export_main()
+    if args.command == "ledger-import":
+        from cli.ledger_import_cli import main as import_main
+
+        return import_main(getattr(args, "from_file", None))
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")
