@@ -45,6 +45,7 @@ from handlers.ingest import _IngestRefused, handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
+from handlers.remove_decision import handle_remove_decision
 from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
@@ -144,6 +145,8 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.judge_gaps",
     "bicameral.resolve_compliance",
     "bicameral.ratify",
+    "bicameral.remove_decision",
+    "bicameral.remove_source",
     "bicameral.resolve_collision",
     "bicameral.history",
     "bicameral.dashboard",
@@ -577,6 +580,71 @@ async def list_tools() -> list[Tool]:
                     },
                 },
                 "required": ["decision_id", "signer"],
+            },
+        ),
+        Tool(
+            name="bicameral.remove_decision",
+            description=(
+                "Soft-delete a decision: signoff.state -> 'removed' + reason + audit event "
+                "(#278 Phase 2). The decision row stays as a negative signal (like rejection), "
+                "agents consult removed decisions to avoid re-introducing the same wrong "
+                "decision. Reason is required for audit-trail. Idempotent — calling on an "
+                "already-removed decision returns was_new=false. Restoration requires a "
+                "superseding decision, not a restore op (no unremove)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "The decision to soft-delete (UUIDv5 decision ID from the ledger).",
+                    },
+                    "signer": {
+                        "type": "string",
+                        "description": "Identity of the operator or agent performing the removal.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Why this decision is being removed. Required (audit-trail obligation).",
+                    },
+                },
+                "required": ["decision_id", "signer", "reason"],
+            },
+        ),
+        Tool(
+            name="bicameral.remove_source",
+            description=(
+                "Hard-delete an input_span row + cascade-soft-delete every decision derived "
+                "from it (#278 Phase 2). confirm=false (default) returns a dry-run plan listing "
+                "the full span content and the cascaded decision ids; confirm=true performs the "
+                "mutation and emits source_removed.completed event carrying the full pre-deletion "
+                "span content (recoverable from event log). Reason is required. Idempotent on "
+                "missing spans."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "span_id": {
+                        "type": "string",
+                        "description": "The input_span record id to remove.",
+                    },
+                    "signer": {
+                        "type": "string",
+                        "description": "Identity of the operator or agent performing the removal.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Why this source is being removed. Required (audit-trail obligation).",
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "False (default) = dry-run returning the cascade plan; True = perform the mutation.",
+                    },
+                },
+                "required": ["span_id", "signer", "reason"],
             },
         ),
         Tool(
@@ -1089,6 +1157,23 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 note=arguments.get("note", ""),
                 action=arguments.get("action", "ratify"),
                 preflight_id=arguments.get("preflight_id"),
+            )
+        elif name in ("bicameral.remove_decision", "remove_decision"):
+            result = await handle_remove_decision(
+                ctx,
+                decision_id=arguments["decision_id"],
+                signer=arguments["signer"],
+                reason=arguments["reason"],
+            )
+        elif name in ("bicameral.remove_source", "remove_source"):
+            from handlers.remove_source import handle_remove_source
+
+            result = await handle_remove_source(
+                ctx,
+                span_id=arguments["span_id"],
+                signer=arguments["signer"],
+                reason=arguments["reason"],
+                confirm=bool(arguments.get("confirm", False)),
             )
         elif name in ("bicameral.resolve_collision", "resolve_collision"):
             result = await handle_resolve_collision(

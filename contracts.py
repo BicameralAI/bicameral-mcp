@@ -785,6 +785,53 @@ class RatifyResponse(BaseModel):
     was_new: bool  # True if this call set the signoff; False if already set
     signoff: dict
     projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
+
+
+# #278 Phase 2 — remove flows
+class RemoveDecisionResponse(BaseModel):
+    """Response envelope for bicameral.remove_decision.
+
+    Soft-delete: decision row stays; signoff.state flips to "removed";
+    a decision_removed.completed event is appended to the event log when
+    team mode is active. Idempotent: calling remove_decision twice on the
+    same target returns was_new=False on the second call without
+    re-emitting an event.
+    """
+
+    decision_id: str
+    was_new: bool  # True if this call set state=removed; False if already removed
+    signoff: dict
+    projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
+
+
+class RemoveSourcePlan(BaseModel):
+    """Dry-run response for bicameral.remove_source (confirm=False).
+
+    Returned BEFORE any mutation. Lists the full input_span content and the
+    decision ids that would be soft-deleted on a subsequent confirm=True
+    call. The operator inspects this plan, then re-invokes with confirm=True.
+    """
+
+    span_id: str
+    span_existed: bool  # False if span is already gone (idempotent dry-run)
+    input_span_content: dict  # full row as-is (text, source_ref, source_type, ...)
+    decision_ids: list[str]  # decisions yielded by this span that will cascade
+    confirm_required: Literal[True] = True
+
+
+class RemoveSourceResponse(BaseModel):
+    """Post-confirm response for bicameral.remove_source (confirm=True).
+
+    The input_span row is hard-deleted; cascaded_decision_ids are
+    soft-deleted with signoff.state="removed" + removed_by_source=<span_id>.
+    A single source_removed.completed event carries the full pre-deletion
+    span content so the action is recoverable from the event log.
+    """
+
+    span_id: str
+    span_existed: bool  # False if span was already gone (idempotent confirm)
+    cascaded_decision_ids: list[str]
+    event_logged: bool
     # #65 — preflight telemetry plumb-through.
     preflight_id: str | None = None
 
@@ -822,6 +869,7 @@ class HistorySource(BaseModel):
     date: str  # ISO date
     speaker: str | None = None
     quote: str  # verbatim excerpt from source_span.text
+    input_span_id: str | None = None  # SurrealDB record id of the originating input_span (#278 Phase 2)
 
 
 class HistoryFulfillment(BaseModel):

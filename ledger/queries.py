@@ -855,6 +855,45 @@ async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
     return bool(rows)
 
 
+async def get_decisions_for_span(
+    client: LedgerClient, span_id: str
+) -> list[str]:
+    """Return decision record ids yielded by the given input_span via the
+    ``yields`` graph edge.
+
+    Used by ``bicameral.remove_source`` (#278 Phase 2) to compute the
+    cascade: every decision derived from a removed source is soft-deleted.
+    Returns an empty list when the span has no derived decisions or does
+    not exist.
+    """
+    rows = await client.query(
+        f"SELECT type::string(id) AS decision_id FROM decision "
+        f"WHERE <-yields<-input_span CONTAINS {span_id}",
+    )
+    return [str(r["decision_id"]) for r in (rows or []) if r.get("decision_id")]
+
+
+async def input_span_exists(client: LedgerClient, span_id: str) -> bool:
+    """Return True iff an input_span row exists with the given record id."""
+    rows = await client.query(f"SELECT id FROM {span_id} LIMIT 1")
+    return bool(rows)
+
+
+async def get_input_span_row(
+    client: LedgerClient, span_id: str
+) -> dict | None:
+    """Return the full input_span row (text, source_ref, source_type,
+    meeting_date, speakers, created_at) for use in the source_removed.completed
+    event payload. Returns None when the row does not exist."""
+    rows = await client.query(
+        f"SELECT text, source_ref, source_type, meeting_date, speakers, created_at "
+        f"FROM {span_id} LIMIT 1",
+    )
+    if not rows:
+        return None
+    return dict(rows[0])
+
+
 async def get_decision_level(client: LedgerClient, decision_id: str) -> str | None:
     """Return ``decision.decision_level`` (one of ``"L1"``, ``"L2"``, ``"L3"``)
     or ``None`` if the row does not exist or the field is unset.
