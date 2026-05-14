@@ -832,6 +832,29 @@ class RemoveSourceResponse(BaseModel):
     span_existed: bool  # False if span was already gone (idempotent confirm)
     cascaded_decision_ids: list[str]
     event_logged: bool
+
+
+# #278 Phase 3 — raw SurrealQL admin panel
+class AdminQueryRequest(BaseModel):
+    """Request envelope for the dashboard /admin/query endpoint.
+
+    The admin panel is off-by-default; reachability requires
+    BICAMERAL_ENABLE_ADMIN_PANEL=1 at MCP server start. Write mode requires
+    BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1 AND an in-UI typed confirmation.
+    """
+
+    sql: str
+    mode: Literal["read", "write"] = "read"
+    signer: str = ""  # Required for write mode (handler rejects empty)
+
+
+class AdminQueryResponse(BaseModel):
+    """Response envelope for the /admin/query endpoint."""
+
+    mode: Literal["read-only", "write"]
+    rows: list[dict]
+    elapsed_ms: float
+    error: str | None = None
     # #65 — preflight telemetry plumb-through.
     preflight_id: str | None = None
 
