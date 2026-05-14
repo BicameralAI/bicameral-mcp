@@ -3,6 +3,14 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.14.6 — Hotfix: resolve hooks dir for submodule `.git` pointer (triage)
+
+Hotfix on v0.14.5. Unblocks `bicameral-mcp setup` inside any submodule or linked-worktree layout — where `.git` is a *file* containing `gitdir: …` rather than a directory. The hook installer was synthesizing `<repo>/.git/hooks` unconditionally and crashing with `NotADirectoryError` before the wizard could finish.
+
+### Fixed
+
+- **`setup_wizard._install_git_post_commit_hook` + `_install_git_pre_push_hook`: route through new `_resolve_git_hooks_dir()` helper that handles the submodule `.git`-file case.** Pre-fix, both installers built `<root>/.git/hooks` directly and `mkdir(parents=True)` aborted with `NotADirectoryError: [Errno 20] Not a directory: '<repo>/.git/hooks'` whenever the repo was a submodule (e.g. `bicameral/pilot/mcp`'s own `.git` file pointing at `../../.git/modules/pilot/mcp`). New helper parses the `gitdir:` pointer (absolute or relative-to-`.git`) and returns the real hooks directory; plain repos resolve to `<root>/.git/hooks` exactly as before. Regression test in `tests/test_setup_pre_push_hook.py` constructs a realistic super-repo + submodule layout and asserts the pre-push hook lands under the gitdir, not the submodule worktree. Cherry-picked from dev #326 (commit `32a2c1a`).
+
 ## v0.14.5 — bicameral_diagnose tool + reset --replay-from-events + README polish (triage)
 
 Triages the #296 ledger-resilience track and the #299 README pass onto main. New `bicameral_diagnose` MCP tool gives operators a privacy-preserving structural read of their ledger (recovery_path classification + table counts + recent audit events) without crashing on init when the ledger is corrupt — pairs with `bicameral_reset --replay-from-events` for the dataloss-avoidant recovery path. README opens with a position-take pitch + three-scene demo video drop-in (ingest → preflight → ratify async).
