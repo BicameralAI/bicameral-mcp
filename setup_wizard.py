@@ -225,6 +225,38 @@ def _find_git_root(start: Path) -> Path | None:
     return None
 
 
+def _resolve_git_hooks_dir(repo_path: Path) -> Path | None:
+    """Return the actual git hooks directory for ``repo_path``.
+
+    For a normal repo this is ``<root>/.git/hooks``. For a submodule or
+    linked worktree, ``.git`` is a *file* containing a ``gitdir:`` pointer
+    to the real git directory (e.g. ``<super>/.git/modules/<name>``); the
+    hooks live there, not under the submodule's working tree. The previous
+    implementation built ``<root>/.git/hooks`` unconditionally and crashed
+    with ``NotADirectoryError`` on submodule installs.
+    """
+    git_root = _find_git_root(repo_path)
+    if git_root is None:
+        return None
+    git_marker = git_root / ".git"
+    if git_marker.is_dir():
+        return git_marker / "hooks"
+    if git_marker.is_file():
+        try:
+            content = git_marker.read_text()
+        except OSError:
+            return None
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("gitdir:"):
+                gitdir_str = stripped.split(":", 1)[1].strip()
+                gitdir = Path(gitdir_str)
+                if not gitdir.is_absolute():
+                    gitdir = (git_root / gitdir).resolve()
+                return gitdir / "hooks"
+    return None
+
+
 def _detect_agents() -> list[str]:
     """Auto-detect which coding agents are available."""
     found = []
@@ -715,11 +747,11 @@ def _install_git_post_commit_hook(repo_path: Path) -> bool:
     Returns True if anything was written.
     """
     _verify_intended_writes("git:post-commit")
-    git_root = _find_git_root(repo_path)
-    if git_root is None:
+    hooks_dir = _resolve_git_hooks_dir(repo_path)
+    if hooks_dir is None:
         return False
 
-    hook_path = git_root / ".git" / "hooks" / "post-commit"
+    hook_path = hooks_dir / "post-commit"
     hook_path.parent.mkdir(parents=True, exist_ok=True)
 
     if hook_path.exists():
@@ -768,11 +800,11 @@ def _install_git_pre_push_hook(repo_path: Path) -> bool:
     Returns True if anything was written.
     """
     _verify_intended_writes("git:pre-push")
-    git_root = _find_git_root(repo_path)
-    if git_root is None:
+    hooks_dir = _resolve_git_hooks_dir(repo_path)
+    if hooks_dir is None:
         return False
 
-    hook_path = git_root / ".git" / "hooks" / "pre-push"
+    hook_path = hooks_dir / "pre-push"
     hook_path.parent.mkdir(parents=True, exist_ok=True)
 
     if hook_path.exists():
