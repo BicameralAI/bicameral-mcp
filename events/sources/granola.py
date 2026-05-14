@@ -103,7 +103,12 @@ class GranolaAdapter:
 
         payloads = [_transform(item) for item in items if item]
         # Compute the maximum ended_at; only items that have it count.
-        ended_at_values = [item.get("ended_at") for item in items if item and item.get("ended_at")]
+        # Coerce to str so mypy sees a list[str] (dict.get returns Any).
+        ended_at_values: list[str] = [
+            str(item["ended_at"])
+            for item in items
+            if item and item.get("ended_at")
+        ]
         if ended_at_values:
             self._pending_watermark = max(ended_at_values)
         else:

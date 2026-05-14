@@ -137,7 +137,10 @@ async def _synthesize_brief(ctx: Any, *, max_decisions: int) -> str:
 
     drift_findings: list[dict] = []
     try:
-        preflight_resp = await handle_preflight(ctx)
+        # `topic` is the operator-facing label for what this preflight is
+        # about. Sync-and-brief runs at session-start with no specific
+        # implementation intent yet, so we use a stable sentinel string.
+        preflight_resp = await handle_preflight(ctx, topic="session-start-brief")
         # handle_preflight's response shape varies; pull findings defensively.
         findings = getattr(preflight_resp, "findings", None)
         if findings is None and isinstance(preflight_resp, dict):
