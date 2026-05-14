@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -106,6 +106,12 @@ _TABLES = [
     "DEFINE FIELD speakers       ON input_span TYPE array<string> DEFAULT []",
     "DEFINE FIELD meeting_date   ON input_span TYPE string DEFAULT ''",
     "DEFINE FIELD created_at     ON input_span TYPE datetime DEFAULT time::now()",
+    # #221 Phase A: additive slot for the PII archive key. Phase A ships
+    # the slot only; Phase B wires ingest to populate it and Phase B
+    # introduces the ASSERT enforcing archive_key != '' OR text != ''.
+    # For Phase A new rows continue to leave archive_key = '' (legacy
+    # fallback).
+    "DEFINE FIELD archive_key    ON input_span TYPE string DEFAULT ''",
     "DEFINE INDEX idx_input_span_ref   ON input_span FIELDS source_type, source_ref",
     # Dedup: same excerpt from same source is the same span
     "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text UNIQUE",
@@ -1188,6 +1194,28 @@ async def _migrate_v18_to_v19(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v19_to_v20(client: LedgerClient) -> None:
+    """v19 → v20: Add ``input_span.archive_key`` field (#221 Phase A).
+
+    Phase A of GDPR Art. 17 right-to-erasure (#221). The new field is the
+    forthcoming reference into the operator-local PII archive
+    (``pii_archive/store.py``). This migration adds the field only; it
+    does NOT relax the existing ``input_span.text`` ASSERT or the
+    UNIQUE-on-text index. Those changes land in Phase B alongside the
+    ingest cutover.
+
+    Additive only — existing rows get ``archive_key = ''`` per the
+    DEFAULT, and the legacy read-path (preferring ``input_span.text``)
+    continues to function unchanged. Phase B introduces the schema
+    ASSERT that makes the PII archive the load-bearing store.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD archive_key ON input_span TYPE string DEFAULT ''",
+    )
+    logger.info("[migration] v19 → v20: input_span.archive_key field added (#221 Phase A)")
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1268,6 +1296,7 @@ _MIGRATIONS: dict[int, ...] = {
     17: _migrate_v16_to_v17,
     18: _migrate_v17_to_v18,
     19: _migrate_v18_to_v19,
+    20: _migrate_v19_to_v20,
 }
 
 
