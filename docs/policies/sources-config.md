@@ -58,3 +58,42 @@ Per the #279 issue scope:
 - **Slack pull** — P2 follow-up. Pull from a Slack channel (not a webhook).
 - **Local meeting-notes paths** — P2 follow-up. Watch a local directory for new transcript files.
 - **Calendar invites, email webhooks** — explicitly deferred per #279 ("Push-only sources are deferred").
+
+## Team backend (#279 Phase 2)
+
+`bicameral-mcp sync-and-brief` can optionally sync the shared per-author event log via a `BackendAdapter` configured under the `team:` top-level key.
+
+When configured:
+1. **Before source pull**: `backend.pull_events()` copies every peer's `<email>.jsonl` into the local `.bicameral/events/` cache. The materializer picks them up alongside the operator's own events.
+2. **After source ingest succeeds**: `backend.push_events()` uploads each local `<email>.jsonl` to the shared backend. The backend's sha-match skip keeps the second invocation a noop until the file content changes.
+
+Failures during pull/push are logged to stderr + `~/.bicameral/cli-errors.log` but do NOT block the brief — sync-and-brief continues with the local-only path. The hook wrapper's `exit 0` framing makes this completely invisible to SessionStart users on a network outage.
+
+### Config shape
+
+```yaml
+team:
+  backend: local_folder       # or: google_drive
+  author: alice@example.com   # required; the operator's email
+  remote_root: /shared/events # local_folder only
+  # folder_id: 1abc...        # google_drive only
+```
+
+If `team.backend` is set but `team.author` is empty or missing, the CLI logs a warning and skips team sync — preventing the partial-config case where the adapter can't determine which file belongs to the operator.
+
+### Failure modes
+
+| Scenario | Behavior |
+|---|---|
+| `team:` absent from config | Solo mode. No backend constructed. |
+| `team.backend` set, `team.author` empty | Warning to stderr; team sync skipped; CLI continues local-only. |
+| Backend `pull_events` raises | Logged; continues with current local events_dir state. |
+| Backend `push_events` raises for one file | Logged; other files still pushed. |
+| Source ingest raises | Watermark NOT advanced (Phase 1 invariant); push still runs for unrelated files. |
+
+### Adapter implementations
+
+- **`local_folder`** — shared filesystem path (NFS, Dropbox, syncthing, etc.). Useful as an integration-test backend and as a fallback for orgs that already have a synced folder. Sha-match skip on upload.
+- **`google_drive`** — Google Drive folder. Requires OAuth credentials per the standard `google-auth` flow.
+
+To add a new backend, see `events/backends/__init__.py` for the `BackendAdapter` ABC.

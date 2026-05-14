@@ -53,11 +53,17 @@ def render_brief(
     max_decisions: int = 20,
     now: datetime | None = None,
     signer_fallback_mode: str = "local-part-only",
+    team_sync: dict | None = None,
 ) -> str:
     """Render a session brief to markdown.
 
     ``decisions`` items may be pydantic models (HistoryDecision) or plain
     dicts; both shapes are tolerated. Same for ``drift_findings``.
+
+    ``team_sync`` (optional) carries the per-run team-backend stats from
+    #279 Phase 2 — when present, a "## Team sync" section is appended so
+    the operator can see at a glance how many peer files arrived and
+    whether their own file was pushed.
     """
     when = (now or datetime.now(UTC)).strftime("%Y-%m-%d")
     lines: list[str] = [
@@ -83,6 +89,14 @@ def render_brief(
         lines.extend(drift_lines)
     else:
         lines.append("_(no drift findings)_")
+
+    if team_sync is not None:
+        lines.append("")
+        lines.append("## Team sync")
+        peers = int(team_sync.get("peer_files_pulled") or 0)
+        pushed = "yes" if team_sync.get("my_file_pushed") else "no"
+        lines.append(f"- peer_files_pulled: {peers}")
+        lines.append(f"- my_file_pushed: {pushed}")
 
     return _cap_lines(lines)
 

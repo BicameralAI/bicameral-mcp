@@ -62,8 +62,18 @@ async def _run(args: argparse.Namespace) -> int:
     ctx = BicameralContext.from_env()
     config = _read_config(ctx)
     sources = (config or {}).get("sources") or []
+    events_dir = Path(getattr(ctx, "repo_path", ".")) / ".bicameral" / "events"
+    watermark_dir = Path.home() / ".bicameral" / "source-watermarks"
 
-    if not sources:
+    # #279 Phase 2: team-backend pull BEFORE source pull, so peer events
+    # land in the local cache for the materializer to replay alongside
+    # source-pulled content. See plan-279-phase2-team-mode-integration.md.
+    backend = _resolve_team_backend(config)
+    team_stats: dict[str, Any] = {"peer_files_pulled": 0, "my_file_pushed": False}
+    if backend is not None:
+        team_stats["peer_files_pulled"] = await _team_sync_pull(backend, events_dir)
+
+    if not sources and backend is None:
         if not args.quiet:
             print(
                 "No sources configured. Add a `sources:` block to "
@@ -72,14 +82,90 @@ async def _run(args: argparse.Namespace) -> int:
             )
         return 0
 
-    watermark_dir = Path.home() / ".bicameral" / "source-watermarks"
     for source in sources:
         await _run_source(ctx, source, watermark_dir=watermark_dir)
 
-    brief = await _synthesize_brief(ctx, max_decisions=args.max_decisions)
+    # #279 Phase 2: push every local author's JSONL to the shared backend
+    # AFTER source ingest completed. The backend's sha-match skip keeps
+    # this idempotent across noop runs.
+    if backend is not None:
+        team_stats["my_file_pushed"] = await _team_sync_push(backend, events_dir)
+
+    brief = await _synthesize_brief(
+        ctx,
+        max_decisions=args.max_decisions,
+        team_sync=team_stats if backend is not None else None,
+    )
     if not args.quiet:
         print(brief)
     return 0
+
+
+def _resolve_team_backend(config: dict | None):
+    """Build the configured `BackendAdapter` or return None.
+
+    Returns None when:
+      * No `team:` section in config (solo mode);
+      * `team.backend` is absent or unrecognized;
+      * `team.author` is empty (logs a stderr warning so the operator
+        knows their team config is incomplete).
+    """
+    from events.backends import get_backend
+
+    cfg = config or {}
+    team = (cfg.get("team") or {}) if isinstance(cfg, dict) else {}
+    if isinstance(team, dict) and team.get("backend") and not (team.get("author") or "").strip():
+        print(
+            "[sync-and-brief] team.backend is set but team.author is empty; "
+            "skipping team sync. Set team.author in .bicameral/config.yaml.",
+            file=sys.stderr,
+        )
+        return None
+    try:
+        return get_backend(cfg)
+    except Exception as exc:  # noqa: BLE001 — backend construction must never block the brief
+        print(f"[sync-and-brief] team backend init failed: {exc}", file=sys.stderr)
+        return None
+
+
+async def _team_sync_pull(backend, events_dir: Path) -> int:
+    """Pull peer event-log files into the local events_dir.
+
+    Failures are logged but do not raise — the rest of sync-and-brief
+    continues with the local-only path.
+    """
+    try:
+        await backend.pull_events(events_dir, since_token=None)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[sync-and-brief] team backend pull failed: {exc}", file=sys.stderr)
+        _log_to_errors_file(exc)
+        return 0
+    # Count the peer files now present (caller's own author file excluded
+    # by the backend implementation).
+    if not events_dir.exists():
+        return 0
+    return sum(1 for _ in events_dir.glob("*.jsonl"))
+
+
+async def _team_sync_push(backend, events_dir: Path) -> bool:
+    """Push every local author's JSONL file to the shared backend.
+
+    Returns True iff at least one file was pushed without error.
+    """
+    if not events_dir.exists():
+        return False
+    pushed = False
+    for path in sorted(events_dir.glob("*.jsonl")):
+        try:
+            await backend.push_events(path, path.name)
+            pushed = True
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[sync-and-brief] team backend push failed for {path.name}: {exc}",
+                file=sys.stderr,
+            )
+            _log_to_errors_file(exc)
+    return pushed
 
 
 async def _run_source(ctx: Any, source: dict, *, watermark_dir: Path) -> None:
@@ -130,7 +216,12 @@ async def _run_source(ctx: Any, source: dict, *, watermark_dir: Path) -> None:
     adapter.confirm_watermark()
 
 
-async def _synthesize_brief(ctx: Any, *, max_decisions: int) -> str:
+async def _synthesize_brief(
+    ctx: Any,
+    *,
+    max_decisions: int,
+    team_sync: dict | None = None,
+) -> str:
     """Compute drift findings, fetch recent decisions, render the brief."""
     from cli.brief_renderer import render_brief
     from handlers.preflight import handle_preflight
@@ -170,6 +261,7 @@ async def _synthesize_brief(ctx: Any, *, max_decisions: int) -> str:
         drift_findings,
         max_decisions=max_decisions,
         signer_fallback_mode=signer_mode,
+        team_sync=team_sync,
     )
 
 
