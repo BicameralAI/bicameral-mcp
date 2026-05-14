@@ -749,6 +749,17 @@ async def handle_preflight(
     fired = bool(region_matches or unresolved_collisions or context_pending_ready or guided_mode)
     action_hints = generate_hints_from_findings([], drift_candidates, [], guided_mode)
 
+    # #224 Phase C-pre: surface recent timeout counts so a Claude
+    # PreToolUse / SessionStart hook can read current gate posture
+    # without a separate MCP roundtrip. Defaults to {"read": 0, "drift": 0}
+    # if the telemetry buffer is unavailable.
+    try:
+        from ledger.timeout_telemetry import recent_timeout_counts
+
+        recent_timeouts = recent_timeout_counts()
+    except Exception:
+        recent_timeouts = {"read": 0, "drift": 0}
+
     response = PreflightResponse(
         topic=topic,
         fired=fired,
@@ -765,6 +776,7 @@ async def handle_preflight(
         sync_metrics=sync_metrics,
         product_stage=_PRODUCT_STAGE_MSG if _should_show_product_stage() else None,
         preflight_id=pid,
+        recent_timeout_count=recent_timeouts,
     )
 
     # #65 — capture-loop event. surfaced_ids is the union of decision_ids the

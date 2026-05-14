@@ -58,13 +58,22 @@ def get_ledger():
     global _real_ledger_instance
 
     if _real_ledger_instance is None:
+        from context import (
+            _read_query_timeout_drift_seconds,
+            _read_query_timeout_read_seconds,
+        )
         from ledger.adapter import SurrealDBLedgerAdapter
 
+        repo_path = os.getenv("REPO_PATH", ".")
+        # #224: operator-configured query timeout budgets, with the
+        # fail-closed reader (clamps to safe range; falls back to
+        # default on malformed config).
         inner = SurrealDBLedgerAdapter(
             url=os.getenv("SURREAL_URL", None),
+            query_timeout_read_seconds=_read_query_timeout_read_seconds(repo_path),
+            query_timeout_drift_seconds=_read_query_timeout_drift_seconds(repo_path),
         )
 
-        repo_path = os.getenv("REPO_PATH", ".")
         cfg = _read_team_config(repo_path)
         mode = cfg.get("mode", "solo")
 

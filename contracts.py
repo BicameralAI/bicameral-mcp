@@ -721,6 +721,16 @@ class PreflightResponse(BaseModel):
     # csv list excludes "preflight"; legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still
     # honored via the #192 deprecation overlay).
     preflight_id: str | None = None
+    # #224 Phase C-pre — count of ledger-query timeout events recorded in
+    # the last 1 hour, per ``timeout_class``. Populated from the
+    # process-local ring buffer in ``ledger/timeout_telemetry.py`` so
+    # the Claude Code ``PreToolUse`` / ``SessionStart`` hooks can surface
+    # current timeout posture to the model without a SurrealDB roundtrip.
+    # Shape: ``{"read": int, "drift": int}``. Defaults to all-zero so
+    # older response consumers ignore the field cleanly. Reset on
+    # process restart (per-session granularity is correct for the
+    # session-start hook surfacing).
+    recent_timeout_count: dict[str, int] = Field(default_factory=lambda: {"read": 0, "drift": 0})
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────

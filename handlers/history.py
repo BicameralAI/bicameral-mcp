@@ -218,6 +218,9 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
             FROM decision
             ORDER BY created_at ASC
             """,
+            # #224: full-tree enriched query with graph traversal on
+            # every decision row. Heavy traversal path → drift budget.
+            timeout_class="drift",
         )
     except Exception as exc:
         logger.warning("[history] enriched query failed, falling back: %s", exc)

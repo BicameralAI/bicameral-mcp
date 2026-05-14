@@ -48,6 +48,20 @@ _INGEST_RATE_LIMIT_BURST_MAX = 1000
 _INGEST_RATE_LIMIT_REFILL_MIN = 0.01
 _INGEST_RATE_LIMIT_REFILL_MAX = 100.0
 
+# #224: SurrealDB ledger-query timeout budgets. Two classes only —
+# ``read`` (default 5s) for point queries / shallow selects, ``drift``
+# (default 30s) for heavy graph traversal / event-replay paths. Both
+# are clamped to safe ranges; out-of-range / NaN / Inf / malformed
+# yaml fall back to defaults. Enforced server-side via
+# ``asyncio.wait_for`` in ``ledger/client.py::LedgerClient.query``.
+# ``BICAMERAL_QUERY_TIMEOUT_DISABLE=1`` env bypasses the wrap entirely.
+_DEFAULT_QUERY_TIMEOUT_READ = 5.0
+_DEFAULT_QUERY_TIMEOUT_DRIFT = 30.0
+_QUERY_TIMEOUT_READ_MIN = 0.5
+_QUERY_TIMEOUT_READ_MAX = 120.0
+_QUERY_TIMEOUT_DRIFT_MIN = 1.0
+_QUERY_TIMEOUT_DRIFT_MAX = 600.0
+
 
 def _read_yaml_string_field(repo_path: str, key: str, valid: frozenset[str], default: str) -> str:
     """Generic reader for a `.bicameral/config.yaml` string field with a
@@ -235,6 +249,73 @@ def _read_ingest_rate_limit_refill_per_sec(repo_path: str) -> float:
     return val_f
 
 
+def _read_query_timeout_seconds(
+    repo_path: str,
+    key: str,
+    default: float,
+    min_val: float,
+    max_val: float,
+) -> float:
+    """Resolve a query-timeout-seconds field from ``.bicameral/config.yaml``.
+
+    Out-of-range values are **clamped** to ``[min_val, max_val]`` (preserve
+    operator intent for "long but bounded" — silently substituting the
+    default discards their stated preference). Negative / NaN / Inf /
+    non-numeric / bool / malformed-yaml all fall back to the documented
+    default (those aren't operator intent; they're config errors).
+    """
+    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    if not config_path.exists():
+        return default
+    try:
+        import yaml
+
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        val = config.get(key, default)
+    except Exception:
+        return default
+    if isinstance(val, bool) or not isinstance(val, (int, float)):
+        return default
+    val_f = float(val)
+    import math
+
+    if not math.isfinite(val_f):
+        return default
+    if val_f <= 0:
+        return default
+    # Clamp to the safe range — preserves operator intent vs. silently
+    # rewriting their value to the default.
+    if val_f < min_val:
+        return min_val
+    if val_f > max_val:
+        return max_val
+    return val_f
+
+
+def _read_query_timeout_read_seconds(repo_path: str) -> float:
+    """Resolve ``query_timeout_read_seconds`` (default 5.0). Clamped to
+    ``[_QUERY_TIMEOUT_READ_MIN, _QUERY_TIMEOUT_READ_MAX]``."""
+    return _read_query_timeout_seconds(
+        repo_path,
+        "query_timeout_read_seconds",
+        _DEFAULT_QUERY_TIMEOUT_READ,
+        _QUERY_TIMEOUT_READ_MIN,
+        _QUERY_TIMEOUT_READ_MAX,
+    )
+
+
+def _read_query_timeout_drift_seconds(repo_path: str) -> float:
+    """Resolve ``query_timeout_drift_seconds`` (default 30.0). Clamped to
+    ``[_QUERY_TIMEOUT_DRIFT_MIN, _QUERY_TIMEOUT_DRIFT_MAX]``."""
+    return _read_query_timeout_seconds(
+        repo_path,
+        "query_timeout_drift_seconds",
+        _DEFAULT_QUERY_TIMEOUT_DRIFT,
+        _QUERY_TIMEOUT_DRIFT_MIN,
+        _QUERY_TIMEOUT_DRIFT_MAX,
+    )
+
+
 def _read_guided_mode(repo_path: str) -> bool:
     """Resolve guided-mode flag for this MCP call.
 
@@ -369,6 +450,13 @@ class BicameralContext:
     # bypasses the gate entirely (local debugging knob).
     ingest_rate_limit_burst: int = _DEFAULT_INGEST_RATE_LIMIT_BURST
     ingest_rate_limit_refill_per_sec: float = _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
+    # #224: SurrealDB ledger-query timeout budgets in seconds. Two
+    # classes — ``read`` (5s) for point queries; ``drift`` (30s) for
+    # heavy graph traversal / event-replay paths. Enforced by
+    # ``ledger/client.py::LedgerClient.query`` via ``asyncio.wait_for``.
+    # ``BICAMERAL_QUERY_TIMEOUT_DISABLE=1`` env bypasses the wrap.
+    query_timeout_read_seconds: float = _DEFAULT_QUERY_TIMEOUT_READ
+    query_timeout_drift_seconds: float = _DEFAULT_QUERY_TIMEOUT_DRIFT
     # v0.4.8: mutable cache for within-call sync dedup. Frozen-dataclass-safe
     # because the reference stays pinned; only the dict's contents mutate.
     # Keys: ``last_sync_sha`` (str). Cleared by any handler that mutates
@@ -412,6 +500,8 @@ class BicameralContext:
         ingest_max_bytes = _read_ingest_max_bytes(repo_path)
         ingest_rate_limit_burst = _read_ingest_rate_limit_burst(repo_path)
         ingest_rate_limit_refill_per_sec = _read_ingest_rate_limit_refill_per_sec(repo_path)
+        query_timeout_read_seconds = _read_query_timeout_read_seconds(repo_path)
+        query_timeout_drift_seconds = _read_query_timeout_drift_seconds(repo_path)
         # #231: per-developer agent identity (salted email-hash); falls back
         # to _SESSION_ID UUID on git/salt failure.
         session_id = _resolve_agent_identity(repo_path)
@@ -433,6 +523,8 @@ class BicameralContext:
             ingest_max_bytes=ingest_max_bytes,
             ingest_rate_limit_burst=ingest_rate_limit_burst,
             ingest_rate_limit_refill_per_sec=ingest_rate_limit_refill_per_sec,
+            query_timeout_read_seconds=query_timeout_read_seconds,
+            query_timeout_drift_seconds=query_timeout_drift_seconds,
         )
         _emit_config_load_once(instance)
         return instance
