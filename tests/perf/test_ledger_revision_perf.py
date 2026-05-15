@@ -108,7 +108,9 @@ async def test_get_ledger_revision_p95_under_threshold(surrealkv_client, n_decis
         "p95_threshold_ms": P95_THRESHOLD_MS,
     }
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    (RESULTS_DIR / f"get_ledger_revision_n{n_decisions}.json").write_text(json.dumps(result, indent=2))
+    (RESULTS_DIR / f"get_ledger_revision_n{n_decisions}.json").write_text(
+        json.dumps(result, indent=2)
+    )
 
     assert p95 < P95_THRESHOLD_MS, (
         f"get_ledger_revision p95 regression at N={n_decisions} on file-backed SurrealKV.\n"
