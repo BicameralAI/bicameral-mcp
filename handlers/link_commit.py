@@ -550,6 +550,24 @@ async def handle_link_commit(
         sync_state["pending_flow_id"] = flow_id
         sync_state["pending_ephemeral"] = is_ephemeral
 
+    # #332/#338 — compute bind_effective_ref (same logic as bind handler)
+    head_sha = getattr(ctx, "head_sha", "") or ""
+    bind_eff_ref = head_sha if is_ephemeral else (getattr(ctx, "authoritative_sha", "") or "")
+
+    # #338 — codegenome indexed ref: the commit at which the SQLite
+    # code-locator index was last built. Empty when unavailable.
+    cg_indexed_ref = ""
+    try:
+        code_graph = getattr(ctx, "code_graph", None)
+        if code_graph is not None:
+            cg_config = getattr(code_graph, "_config", None)
+            if cg_config is not None:
+                from code_locator_runtime import _get_meta
+
+                cg_indexed_ref = _get_meta(cg_config.sqlite_db, "head_commit")
+    except Exception:
+        pass  # best-effort
+
     response = LinkCommitResponse(
         commit_hash=result["commit_hash"],
         synced=result["synced"],
@@ -568,6 +586,8 @@ async def handle_link_commit(
         continuity_resolutions=continuity_resolutions,
         auto_resolved_count=auto_resolved_count,
         preflight_id=preflight_id,
+        bind_effective_ref=bind_eff_ref,
+        codegenome_indexed_ref=cg_indexed_ref,
     )
     _store_sync_cache(ctx, commit_hash, response)
 
