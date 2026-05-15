@@ -1,6 +1,6 @@
 # Notifications layer — implementation roadmap
 
-**Status: Phase 1 of N shipped (2026-05-15). Neither #330 (FC-1) nor #335 (FC-4) is closed by this cycle.**
+**Status: Phase 1 + Phase 2a shipped (2026-05-15). Neither #330 (FC-1) nor #335 (FC-4) is closed by this cycle.**
 
 This document is the operator-facing roadmap for the outbound-notification layer. Two open feature epics share the same channel-routing infrastructure:
 
@@ -33,17 +33,37 @@ Per the cycle pairing rationale: "Building FC-1's channel adapter layer first gi
 
 **Gap-closure status after Phase 1:** #330 and #335 remain OPEN.
 
-## Phase 2 — Slack adapter + event-hub wiring (next cycle)
+## Phase 2a — Slack adapter + hub + `decision_ratified` wiring (this cycle, 2026-05-15)
+
+**Shipped:**
+
+- `notifications/slack.py` (`SlackChannelAdapter`) — webhook-based. Reads URL from `os.environ[webhook_url_env]` at delivery time; env-var-only-secret pattern mirroring `events/sources/granola.py`.
+- `notifications/config.py` (`NotificationsConfig` parser) — reads `~/.bicameral/notifications.yml`; fail-closed on missing/malformed/unknown-channel-type.
+- `notifications/hub.py` (`NotificationHub`) — fan-out orchestrator with per-channel fail-isolation; iterates subscribed channels; returns success count; never raises.
+- `get_hub()` process-singleton accessor + `reset_hub_for_testing()` (mirrors `adapters/ledger.py::get_ledger` pattern).
+- Wiring at `handlers/ratify.py:122-145` — `await get_hub().notify(...)` after `apply_ratify()` succeeds, guarded by `if action == "ratify"`. Belt-and-suspenders try/except: hub-construction failures never block the ratify return.
+- 41 sociable tests (10 Slack + 8 config + 10 hub + 5 ratify-integration + 8 PII-and-feature-area pins).
+- `docs/policies/notifications-config.md` — operator-facing config doc + responsibilities.
+
+**Explicitly NOT shipped in Phase 2a:**
+
+- Only `decision_ratified` event wired; other event types (`proposal_captured`, `drift_detected`, `decision_rejected`, `decision_superseded`, `compliance_recorded`, `gap_judgment`) remain un-wired. Phase 2b lands them with handler-level emits.
+- No `feature_area` resolution; Phase 2a wires empty-string by design (BicameralContext has no such field today). Phase 2b adds decision-row lookup.
+- No filtering by `feature_areas` / `min_severity` / role-defaults.
+- No fire-and-forget; `notify()` is awaited inline.
+
+**Gap-closure status after Phase 2a:** #330 partially closes (one channel + one event type); #335 still entirely open (metrics + digest pending Phase 3).
+
+## Phase 2b — remaining event types + filtering (next cycle)
 
 **Will ship:**
 
-- `notifications/slack.py` (`SlackChannelAdapter`) — webhook-shaped or bot-token-shaped, TBD by Phase 2's plan cycle.
-- `.bicameral/notifications.yml` config schema + parser (operator config flows from `notification_policy.channels` block in #330's body).
-- Event-hub trigger wiring — handler-level emits + audit-log integration. When a ledger event fires (`proposal_captured`, `decision_ratified`, `drift_detected`, `compliance_recorded`, `decision_superseded`), the hub constructs a `NotificationEvent` and fans out to every registered channel that opted in via config.
-- Fan-out loop owns the catch-and-log discipline declared in `ChannelDeliveryError`'s docstring: one channel's failure NEVER blocks delivery to other channels.
-- Filtering: `feature_areas`, `min_severity`, `events` selectors per #330's config example.
+- Handler-level `get_hub().notify(...)` emits at: `handlers/ingest.py` (proposal_captured), `handlers/resolve_compliance.py` (compliance_recorded), `handlers/resolve_collision.py` (decision_superseded), `handlers/detect_drift.py` or `sync_middleware.py` (drift_detected), `handlers/judge_gaps.py` (gap_judgment), and `handlers/ratify.py` reject branch (decision_rejected).
+- `feature_area` resolution: read from `decision.feature_group` at notify time so the channel payload carries the real feature area.
+- `feature_areas` / `min_severity` / role-defaults filtering per #330's config example.
+- (Maybe) `governance-gates.yaml` entry once the event-hub becomes load-bearing for the configured channel set.
 
-**Gap-closure status after Phase 2:** #330 substantively closes for Slack delivery; #335 still open.
+**Gap-closure status after Phase 2b:** #330 substantively closes for the Slack-only deployment shape; #335 still open (metrics + digest).
 
 ## Phase 3 — Email adapter + #335 metrics + digest delivery (cycle after)
 

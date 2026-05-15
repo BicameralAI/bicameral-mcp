@@ -119,6 +119,31 @@ async def handle_ratify(
         projected,
     )
 
+    # #330 + #335 Phase 2a: fan-out to configured notification channels.
+    # Best-effort — failures log but never break the ratify call.
+    # Phase 2a wires only ``decision_ratified`` (not reject); other event
+    # types arrive in Phase 2b alongside their handler-level emit points.
+    # ``feature_area`` is intentionally empty in Phase 2a — Phase 2b
+    # owns decision-row resolution (read decision.feature_group at notify
+    # time).
+    if action == "ratify":
+        try:
+            from notifications import NotificationEvent, get_hub
+
+            await get_hub().notify(
+                NotificationEvent(
+                    event_type="decision_ratified",
+                    decision_id=decision_id,
+                    feature_area=getattr(ctx, "feature_area", "") or "",
+                    summary=note or "Decision ratified",
+                    severity="info",
+                    source_ref=head_ref,
+                    occurred_at=now_iso,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[ratify] notification fan-out failed silently: %s", exc)
+
     if telemetry_enabled():
         write_engagement(
             session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
