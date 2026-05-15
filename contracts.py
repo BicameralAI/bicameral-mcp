@@ -323,6 +323,10 @@ class LinkCommitResponse(BaseModel):
     # preflight_id (from a prior bicameral.preflight call), the response
     # echoes it so downstream telemetry rows can be attributed.
     preflight_id: str | None = None
+    # #338 — expose the refs the system used so the caller can detect
+    # snapshot gaps before hitting a bind rejection.
+    bind_effective_ref: str = ""
+    codegenome_indexed_ref: str = ""
 
 
 class ActionHint(BaseModel):
@@ -905,6 +909,10 @@ class BindResponse(BaseModel):
     sync_metrics: SyncMetrics | None = None  # V1 A3 — write-barrier hold time
     # #65 — preflight telemetry plumb-through.
     preflight_id: str | None = None
+    # #332 — the git ref actually used for symbol resolution and content_hash
+    # computation. Equals authoritative_sha on the authoritative branch;
+    # equals head_sha on ephemeral (feature) branches.
+    bind_effective_ref: str = ""
 
 
 # ── Session-start banner ─────────────────────────────────────────────
