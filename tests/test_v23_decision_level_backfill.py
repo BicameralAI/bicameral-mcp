@@ -83,9 +83,7 @@ async def _seed_bound_decision(
         {"fp": f"src/{description}.py"},
     )
     rid = regions[0]["id"]
-    await c.execute(
-        f"RELATE {did}->binds_to->{rid} SET confidence = 0.9, created_at = time::now()"
-    )
+    await c.execute(f"RELATE {did}->binds_to->{rid} SET confidence = 0.9, created_at = time::now()")
     return did
 
 
@@ -243,9 +241,7 @@ async def test_v23_bound_product_source_still_l2() -> None:
     takes priority over source_type)."""
     c = await _fresh_client()
     try:
-        did = await _seed_bound_decision(
-            c, description="bound-product", source_type="transcript"
-        )
+        did = await _seed_bound_decision(c, description="bound-product", source_type="transcript")
         await c.execute(f"UPDATE {did} SET decision_level = NONE")
         assert await _get_level(c, did) is None
 

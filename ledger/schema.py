@@ -1346,9 +1346,7 @@ async def _migrate_v22_to_v23(client: LedgerClient) -> None:
     # Use a SELECT + per-row UPDATE. The bound decision IDs come from the
     # binds_to edge table (not ``->binds_to->code_region IS NOT EMPTY``,
     # which returns True for all rows in SurrealDB v2 embedded — known quirk).
-    bound_ids = await client.query(
-        "SELECT type::string(`in`) AS id FROM binds_to"
-    )
+    bound_ids = await client.query("SELECT type::string(`in`) AS id FROM binds_to")
     bound_id_set = {r["id"] for r in (bound_ids or []) if r.get("id")}
     bound_rows = await client.query(
         "SELECT type::string(id) AS id FROM decision WHERE decision_level IS NONE"
@@ -1359,9 +1357,7 @@ async def _migrate_v22_to_v23(client: LedgerClient) -> None:
         did = row.get("id", "")
         if not did:
             continue
-        await client.execute(
-            f"UPDATE {did} SET decision_level = 'L2', updated_at = time::now()"
-        )
+        await client.execute(f"UPDATE {did} SET decision_level = 'L2', updated_at = time::now()")
         bound_count += 1
 
     # Step 2: product-source decisions without bindings → L1.
