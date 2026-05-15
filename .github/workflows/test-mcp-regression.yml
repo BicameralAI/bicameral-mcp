@@ -35,6 +35,66 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[test]" pytest-html
 
+      # ── Symlink materialization gate (#357 sub-task 4) ─────────────
+      # PR #307 replaced .claude/skills/bicameral-* duplicates with symlinks
+      # to canonical skills/. On Windows, git stores these as mode-120000
+      # entries but checks them out as plain text files containing the
+      # target path string UNLESS core.symlinks=true was set before clone.
+      # The result is silent breakage — Claude Code's slash-command resolver
+      # can't follow the broken symlinks. The runtime tests pass because
+      # they don't go through the slash-command surface, so this needs a
+      # dedicated gate.
+      #
+      # `git ls-files -s` shows mode-120000 for tracked symlinks on every
+      # platform; that's our cross-platform source of truth. We then check
+      # actual materialization differs by platform: POSIX should see a
+      # real symlink (Path.is_symlink()), Windows with core.symlinks=true
+      # should also see a real symlink, Windows without should see a plain
+      # file. Failing this catches misconfigured Windows clones AND any
+      # regression that drops a tracked symlink to a plain file.
+      - name: Assert .claude/skills/ symlinks are mode-120000 in git
+        shell: bash
+        run: |
+          count=$(git ls-files -s .claude/skills/ | awk '$1 == "120000"' | wc -l | tr -d ' ')
+          echo "Tracked symlink entries in .claude/skills/: $count"
+          if [ "$count" -lt 22 ]; then
+            echo "::error::Expected at least 22 mode-120000 entries under .claude/skills/, got $count."
+            echo "::error::PR #307 established the symlink contract; a regression here means a"
+            echo "::error::skill mirror has been re-committed as a plain file (or was deleted)."
+            exit 1
+          fi
+      - name: Assert symlinks materialize on this platform
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, sys
+          from pathlib import Path
+          probe = Path(".claude/skills/bicameral-preflight")
+          if not probe.exists():
+              print(f"::error::{probe} missing entirely")
+              sys.exit(1)
+          if probe.is_symlink():
+              print(f"OK — {probe} resolves as a symlink → {os.readlink(probe)}")
+              sys.exit(0)
+          # If we land here on Windows, core.symlinks=false swallowed the
+          # symlink and the file now contains the target path as text.
+          content = probe.read_text().strip() if probe.is_file() else "<missing>"
+          if content.startswith("../../skills/"):
+              print(
+                  "::error::Windows clone without core.symlinks=true — "
+                  ".claude/skills/bicameral-preflight is a plain file containing the "
+                  f"path string {content!r} instead of resolving to the canonical "
+                  "skills/ directory. Set `core.symlinks=true` before cloning (or "
+                  "clone via WSL). See CLAUDE.md §'Canonical Skill Source'."
+              )
+              sys.exit(1)
+          print(
+              f"::error::Unexpected state — {probe} is neither a symlink nor a "
+              f"path-string text file: {content!r}"
+          )
+          sys.exit(1)
+          PY
+
       # ── Build code locator index ───────────────────────────────────
       - name: Build code locator index
         run: |

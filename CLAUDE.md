@@ -4,7 +4,7 @@
 
 `skills/` is the **single canonical location** for all skill files in this project. `.claude/skills/bicameral-*` are symlinks to `../../skills/bicameral-*` — they exist so Claude Code's slash-command resolver finds the skills, but they always resolve to the canonical content. Edit only the `skills/` versions; never write through the symlinks.
 
-> **Windows contributors**: git stores symlinks as mode-120000 entries. Windows defaults to `core.symlinks=false` and stores the symlink *target string* as a plain text file. Set `core.symlinks=true` before cloning (or use WSL) so the symlinks materialize correctly.
+> **Windows contributors (required)**: git stores symlinks as mode-120000 entries. Windows defaults to `core.symlinks=false` and stores the symlink *target string* as a plain text file — this breaks slash-command resolution silently. Before cloning, run `git config --global core.symlinks true` (or develop via WSL). If you've already cloned with the default, fix in-place: `git rm --cached .claude/skills/bicameral-* && git checkout -- .claude/skills/`. CI enforces this contract via `tests/test_skills_symlink_integrity.py` and a dedicated step in `test-mcp-regression.yml` (#357 sub-task 4); a Windows clone without `core.symlinks=true` will fail both gates.
 
 ## Tool Changes Require Skill Changes (Mandatory)
 
