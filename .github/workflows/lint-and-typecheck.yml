@@ -17,11 +17,37 @@ jobs:
       - name: Install
         run: pip install -e ".[test]"
       - name: Ruff check
+        id: ruff_check
         run: ruff check .
       - name: Ruff format check
+        id: ruff_format
         run: ruff format --check .
       - name: Mypy
+        id: mypy
         run: mypy .
+      - name: Pre-commit install hint (on lint failure)
+        if: failure() && (steps.ruff_check.outcome == 'failure' || steps.ruff_format.outcome == 'failure')
+        # #357 sub-task 3: many of the historical `style:` cleanup commits
+        # (eb32e80, ee24395, 0cf574b, 1d752cc, 1690a30, cacfb62) could
+        # have been caught at commit time by `pre-commit`. Surface this
+        # to the developer when the lint step fails so the next push is
+        # the fixed one, not a follow-up `style:` cleanup commit.
+        run: |
+          echo "::error::Lint failed. Install the pre-commit hook locally to catch this before push:"
+          echo "::error::    pip install pre-commit && pre-commit install"
+          echo "::error::Then either re-stage and re-commit, or run: pre-commit run --all-files"
+          echo "## Lint failed — pre-commit hook would have caught this" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Install once per clone:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "pip install pre-commit && pre-commit install" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "Then fix:" >> $GITHUB_STEP_SUMMARY
+          echo '```bash' >> $GITHUB_STEP_SUMMARY
+          echo "pre-commit run --all-files" >> $GITHUB_STEP_SUMMARY
+          echo "git add -u && git commit --amend --no-edit  # or new commit" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          exit 1
       - name: Plan-grounding lint (#114 Check A)
         # Only lints plan-*.md files modified in this PR — historical
         # plans that referenced now-deleted files would otherwise block
