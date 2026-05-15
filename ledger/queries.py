@@ -431,6 +431,22 @@ async def get_decisions_for_file(
     return results
 
 
+async def has_decisions_for_files(
+    client: LedgerClient,
+    file_paths: list[str],
+) -> bool:
+    """Lightweight existence check: return True if ANY decision is bound to a
+    code_region in the given files. Used by the preflight fast-path (#343) to
+    skip expensive sync + queries when the files have never been ingested."""
+    if not file_paths:
+        return False
+    rows = await client.query(
+        "SELECT id FROM code_region WHERE file_path IN $fps LIMIT 1",
+        {"fps": file_paths},
+    )
+    return bool(rows)
+
+
 async def get_decisions_for_files(
     client: LedgerClient,
     file_paths: list[str],
