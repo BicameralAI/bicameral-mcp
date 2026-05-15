@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -48,6 +48,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     17: "0.14.x",  # re-runnable yields integrity cleanup; placeholder, release-eng pins final value at PR merge
     18: "0.14.x",  # decision.updated_at + idx_decision_updated_at (#87 precondition — revision marker for preflight dedup); placeholder, release-eng pins final value at PR merge
     19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
+    23: "0.15.x",  # decision_level backfill for legacy rows; placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -1322,6 +1323,80 @@ async def _migrate_v21_to_v22(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v22_to_v23(client: LedgerClient) -> None:
+    """v22 → v23: Backfill decision_level for legacy decisions.
+
+    The v8→v9 migration added the decision_level field (DEFAULT NONE) but
+    did not classify existing rows. The #340 auto-classify heuristic only
+    runs on newly ingested decisions, so all pre-#340 rows remain NONE
+    (unclassified). Per the tolerant policy, NONE is treated as L3 — this
+    silently excludes legacy decisions from the codegenome identity graph.
+
+    This migration applies the same deterministic heuristic used by
+    ``ledger.adapter._classify_decision_level`` at ingest time:
+
+      1. Has binds_to edge → L2 (architecture, code-grounded).
+      2. source_type ∈ {transcript, notion, slack, document} → L1.
+      3. source_type ∈ {implementation_choice, agent_session} → L3.
+      4. Remaining → L2 (safe default — enters identity graph).
+
+    Idempotent: only touches rows WHERE decision_level IS NONE.
+    """
+    # Step 1: decisions with code-region bindings → L2.
+    # Use a SELECT + per-row UPDATE. The bound decision IDs come from the
+    # binds_to edge table (not ``->binds_to->code_region IS NOT EMPTY``,
+    # which returns True for all rows in SurrealDB v2 embedded — known quirk).
+    bound_ids = await client.query(
+        "SELECT type::string(`in`) AS id FROM binds_to"
+    )
+    bound_id_set = {r["id"] for r in (bound_ids or []) if r.get("id")}
+    bound_rows = await client.query(
+        "SELECT type::string(id) AS id FROM decision WHERE decision_level IS NONE"
+    )
+    bound_rows = [r for r in (bound_rows or []) if r.get("id") in bound_id_set]
+    bound_count = 0
+    for row in bound_rows or []:
+        did = row.get("id", "")
+        if not did:
+            continue
+        await client.execute(
+            f"UPDATE {did} SET decision_level = 'L2', updated_at = time::now()"
+        )
+        bound_count += 1
+
+    # Step 2: product-source decisions without bindings → L1.
+    product_result = await client.execute(
+        "UPDATE decision SET decision_level = 'L1', updated_at = time::now() "
+        "WHERE decision_level IS NONE "
+        "AND source_type IN ['transcript', 'notion', 'slack', 'document']"
+    )
+    product_count = len(product_result) if isinstance(product_result, list) else 0
+
+    # Step 3: implementation-source decisions without bindings → L3.
+    impl_result = await client.execute(
+        "UPDATE decision SET decision_level = 'L3', updated_at = time::now() "
+        "WHERE decision_level IS NONE "
+        "AND source_type IN ['implementation_choice', 'agent_session']"
+    )
+    impl_count = len(impl_result) if isinstance(impl_result, list) else 0
+
+    # Step 4: remaining unclassified → L2 (safe default).
+    fallback_result = await client.execute(
+        "UPDATE decision SET decision_level = 'L2', updated_at = time::now() "
+        "WHERE decision_level IS NONE"
+    )
+    fallback_count = len(fallback_result) if isinstance(fallback_result, list) else 0
+
+    logger.info(
+        "[migration] v22 → v23: decision_level backfill — "
+        "%d bound→L2, %d product→L1, %d impl→L3, %d fallback→L2",
+        bound_count,
+        product_count,
+        impl_count,
+        fallback_count,
+    )
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1405,6 +1480,7 @@ _MIGRATIONS: dict[int, ...] = {
     20: _migrate_v19_to_v20,
     21: _migrate_v20_to_v21,
     22: _migrate_v21_to_v22,
+    23: _migrate_v22_to_v23,
 }
 
 
