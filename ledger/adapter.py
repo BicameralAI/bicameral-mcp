@@ -1038,6 +1038,11 @@ class SurrealDBLedgerAdapter:
             )
             regions_updated += eph_extra
 
+        # #157 — prune orphaned ephemeral decisions on authoritative branch.
+        decisions_pruned: list[str] = []
+        if is_authoritative:
+            decisions_pruned = await self._prune_orphaned_decisions(repo_path, commit_hash)
+
         if is_authoritative:
             await upsert_sync_state(self._client, repo_path, commit_hash)
 
@@ -1053,6 +1058,7 @@ class SurrealDBLedgerAdapter:
             "range_size": range_size,
             "pending_compliance_checks": pending_checks,
             "pending_grounding_checks": pending_grounding_checks,
+            "decisions_pruned": decisions_pruned,
         }
 
     async def _repair_ephemeral_regions(
@@ -1139,6 +1145,72 @@ class SurrealDBLedgerAdapter:
                 len(affected_decisions),
             )
         return repaired
+
+    async def _prune_orphaned_decisions(
+        self,
+        repo_path: str,
+        commit_hash: str,
+    ) -> list[str]:
+        """Prune proposed decisions whose bindings didn't survive merge (#157).
+
+        After returning to the authoritative branch, checks all proposed
+        (un-ratified) decisions.  For each, verifies whether ANY bound
+        region's file still exists at the authoritative ref.  If ALL
+        bound regions point to absent files, the decision is pruned
+        (signoff.state='pruned') — it was born on a feature branch and
+        the code never landed.
+
+        Half-survived merges (some regions present, some absent) are NOT
+        pruned — the decision is still partially grounded.
+
+        Returns a list of pruned decision IDs.
+        """
+        from ledger.queries import get_proposed_decisions_with_bindings, set_decision_pruned
+        from ledger.status import get_git_content
+
+        try:
+            rows = await get_proposed_decisions_with_bindings(self._client)
+        except Exception as exc:
+            logger.warning("[link_commit] orphan prune query failed: %s", exc)
+            return []
+
+        if not rows:
+            return []
+
+        # Group bindings by decision_id
+        decision_regions: dict[str, list[dict]] = {}
+        for row in rows:
+            did = row.get("decision_id", "")
+            if not did:
+                continue
+            decision_regions.setdefault(did, []).append(row)
+
+        pruned: list[str] = []
+        for did, regions in decision_regions.items():
+            all_absent = True
+            for reg in regions:
+                fp = reg.get("file_path", "")
+                if not fp:
+                    continue
+                content = get_git_content(fp, 1, 1, repo_path, ref=commit_hash)
+                if content is not None:
+                    all_absent = False
+                    break
+
+            if all_absent:
+                try:
+                    await set_decision_pruned(self._client, did)
+                    pruned.append(did)
+                except Exception as exc:
+                    logger.warning("[link_commit] prune failed for %s: %s", did, exc)
+
+        if pruned:
+            logger.info(
+                "[link_commit] pruned %d orphaned ephemeral decisions: %s",
+                len(pruned),
+                pruned,
+            )
+        return pruned
 
     async def backfill_empty_hashes(
         self,

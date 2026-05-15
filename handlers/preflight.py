@@ -519,6 +519,9 @@ async def _region_anchored_preflight(
             surfaced_via_expansion = True
 
         _sf = d.get("signoff") or {}
+        # #157 — pruned decisions are excluded from preflight surfaces.
+        if isinstance(_sf, dict) and _sf.get("state") == "pruned":
+            continue
         matches.append(
             DecisionMatch(
                 decision_id=d.get("decision_id", ""),
