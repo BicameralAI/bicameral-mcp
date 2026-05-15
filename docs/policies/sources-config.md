@@ -16,6 +16,7 @@ Each entry is a dict. Required fields per type:
 | `type` | Required keys | Optional keys |
 |---|---|---|
 | `granola` | `api_key_env` | `base_url` |
+| `local_directory` | `path` | `extensions`, `source_type_label`, `max_file_bytes` |
 
 ## API key handling (rationale)
 
@@ -40,6 +41,47 @@ Per-source watermarks live at `~/.bicameral/source-watermarks/<source-name>.json
 
 The watermark only advances on **two-phase commit**: the source pulls items, the CLI ingests them, and only after every ingest succeeds does the adapter persist the new watermark. If ingest fails, the watermark stays put so the next run re-receives the un-ingested items.
 
+## `local_directory` source (#344)
+
+Captures decisions made outside the IDE — planning sessions, brainstorms, design docs, meeting notes — by watching a configured local directory. Drop a file into the directory; the next `bicameral-mcp sync-and-brief` ingests it.
+
+```yaml
+sources:
+  - type: local_directory
+    path: ~/.bicameral/captured-notes
+    # extensions: [.md, .txt, .json]    # defaults shown
+    # source_type_label: planning        # default; override e.g. design-doc
+    # max_file_bytes: 1048576            # 1 MiB default; oversized files skipped
+```
+
+### Behavior
+
+- **Non-recursive.** Only files directly inside `path` are considered. Subdirectories and their contents are ignored. Hidden files (`.`-prefixed) are ignored.
+- **Extension-filtered.** Default extensions are `.md`, `.txt`, `.json`. Override via `extensions`. Matching is case-insensitive on the file suffix.
+- **Watermark-driven.** Each pull returns only files whose mtime is strictly greater than the last confirmed watermark. The watermark stores the maximum mtime seen, as an ISO 8601 string, in `~/.bicameral/source-watermarks/local_directory.json`.
+- **Two-phase commit.** The watermark only advances after the CLI confirms every ingest succeeded — failed ingest = watermark stays put = next run retries the same files.
+- **Size-capped.** Files larger than `max_file_bytes` (default 1 MiB, matching the ingest payload-size cap) are skipped with a stderr warning; their mtime is **not** added to the watermark-candidate set, so a future run after the file shrinks will pick them up.
+- **No file mutation.** The adapter never deletes, moves, or modifies files in the source directory. Operators manage file lifecycle (manual archive, `rm`, etc.).
+- **No symlink-following inside the directory.** The top-level `path` may itself be a symlink to a directory (common for Dropbox / Drive mirror dirs), but symlinked files inside the directory are read like regular files (no recursion through them).
+
+### Workflow example
+
+A planning workflow that emits decisions:
+
+1. Operator runs a Superpower brainstorm session that outputs to `~/.bicameral/captured-notes/2026-05-14-auth-design.md`.
+2. Operator runs `bicameral-mcp sync-and-brief`.
+3. The adapter sees the new file, emits an ingest payload with `source_type: "planning"` (or operator-set label), the full file content as `span.text`, and the file path as `source_ref`.
+4. The decision lands in the ledger.
+5. Watermark advances to the file's mtime; future runs skip it unless edited.
+
+In-place editing the file advances its mtime → next run re-ingests it. To avoid re-ingestion, `cp` to a new filename rather than editing in place.
+
+### What this does NOT do
+
+- No watch-mode / daemon. Operators run the CLI on demand.
+- No content-type-aware parsing. A markdown file becomes one ingest payload with the full content as `span.text`; bicameral doesn't try to segment by H1, parse frontmatter, or detect speakers.
+- No remote source support. For meeting transcripts pulled from a SaaS API, see `granola` and future adapters.
+
 ## Adding a new adapter
 
 To add a source adapter (Drive, Slack, local-folder, etc.):
@@ -56,7 +98,7 @@ Per the #279 issue scope:
 - **Granola** (this phase) — shipped.
 - **Drive folder reader** — P2 follow-up. Read meeting transcripts from a Google Drive folder.
 - **Slack pull** — P2 follow-up. Pull from a Slack channel (not a webhook).
-- **Local meeting-notes paths** — P2 follow-up. Watch a local directory for new transcript files.
+- **Local meeting-notes paths** — shipped via `local_directory` adapter (#344). Watches a configured local directory for new files; emits one ingest payload per file.
 - **Calendar invites, email webhooks** — explicitly deferred per #279 ("Push-only sources are deferred").
 
 ## Team backend (#279 Phase 2)
