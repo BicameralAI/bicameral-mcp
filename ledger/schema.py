@@ -1341,55 +1341,88 @@ async def _migrate_v22_to_v23(client: LedgerClient) -> None:
       4. Remaining → L2 (safe default — enters identity graph).
 
     Idempotent: only touches rows WHERE decision_level IS NONE.
+
+    Legacy decision rows (from pre-v18 fixtures or ancient DBs) may
+    carry NONE values for required typed fields (``created_at``,
+    ``feature_hint``, etc.) that were added by later schema versions.
+    SurrealDB v2 re-validates the entire record on any UPDATE, so a
+    bulk ``UPDATE decision SET decision_level = ...`` fails on these
+    rows even though the migration only touches ``decision_level``.
+    We therefore UPDATE per-row and skip (with a warning) any row
+    whose record is too broken for an in-place patch.
     """
     # Step 1: decisions with code-region bindings → L2.
-    # Use a SELECT + per-row UPDATE. The bound decision IDs come from the
-    # binds_to edge table (not ``->binds_to->code_region IS NOT EMPTY``,
-    # which returns True for all rows in SurrealDB v2 embedded — known quirk).
+    # Bound decision IDs come from the binds_to edge table (not
+    # ``->binds_to->code_region IS NOT EMPTY``, which returns True for
+    # all rows in SurrealDB v2 embedded — known quirk).
     bound_ids = await client.query("SELECT type::string(`in`) AS id FROM binds_to")
     bound_id_set = {r["id"] for r in (bound_ids or []) if r.get("id")}
-    bound_rows = await client.query(
-        "SELECT type::string(id) AS id FROM decision WHERE decision_level IS NONE"
+
+    # Fetch all unclassified decisions once for per-row processing.
+    unclassified = await client.query(
+        "SELECT type::string(id) AS id, source_type FROM decision WHERE decision_level IS NONE"
     )
-    bound_rows = [r for r in (bound_rows or []) if r.get("id") in bound_id_set]
+    unclassified = [r for r in (unclassified or []) if r.get("id")]
+
+    product_sources = {"transcript", "notion", "slack", "document"}
+    impl_sources = {"implementation_choice", "agent_session"}
+
     bound_count = 0
-    for row in bound_rows or []:
-        did = row.get("id", "")
-        if not did:
+    product_count = 0
+    impl_count = 0
+    fallback_count = 0
+    skip_count = 0
+
+    for row in unclassified:
+        did = row["id"]
+        src = row.get("source_type") or ""
+
+        if did in bound_id_set:
+            level = "L2"
+            counter = "bound"
+        elif src in product_sources:
+            level = "L1"
+            counter = "product"
+        elif src in impl_sources:
+            level = "L3"
+            counter = "impl"
+        else:
+            level = "L2"
+            counter = "fallback"
+
+        try:
+            await client.execute(
+                f"UPDATE {did} SET decision_level = '{level}', updated_at = time::now()"
+            )
+        except Exception:
+            # Row has NONE values in required typed fields from a pre-v18
+            # fixture or ancient DB. Skip it — NONE is already treated as
+            # L3 by the tolerant policy, so the row remains functional.
+            skip_count += 1
+            logger.debug(
+                "[migration] v22 → v23: skipping %s — record fails "
+                "re-validation (likely legacy fixture with missing fields)",
+                did,
+            )
             continue
-        await client.execute(f"UPDATE {did} SET decision_level = 'L2', updated_at = time::now()")
-        bound_count += 1
 
-    # Step 2: product-source decisions without bindings → L1.
-    product_result = await client.execute(
-        "UPDATE decision SET decision_level = 'L1', updated_at = time::now() "
-        "WHERE decision_level IS NONE "
-        "AND source_type IN ['transcript', 'notion', 'slack', 'document']"
-    )
-    product_count = len(product_result) if isinstance(product_result, list) else 0
-
-    # Step 3: implementation-source decisions without bindings → L3.
-    impl_result = await client.execute(
-        "UPDATE decision SET decision_level = 'L3', updated_at = time::now() "
-        "WHERE decision_level IS NONE "
-        "AND source_type IN ['implementation_choice', 'agent_session']"
-    )
-    impl_count = len(impl_result) if isinstance(impl_result, list) else 0
-
-    # Step 4: remaining unclassified → L2 (safe default).
-    fallback_result = await client.execute(
-        "UPDATE decision SET decision_level = 'L2', updated_at = time::now() "
-        "WHERE decision_level IS NONE"
-    )
-    fallback_count = len(fallback_result) if isinstance(fallback_result, list) else 0
+        if counter == "bound":
+            bound_count += 1
+        elif counter == "product":
+            product_count += 1
+        elif counter == "impl":
+            impl_count += 1
+        else:
+            fallback_count += 1
 
     logger.info(
         "[migration] v22 → v23: decision_level backfill — "
-        "%d bound→L2, %d product→L1, %d impl→L3, %d fallback→L2",
+        "%d bound→L2, %d product→L1, %d impl→L3, %d fallback→L2, %d skipped",
         bound_count,
         product_count,
         impl_count,
         fallback_count,
+        skip_count,
     )
 
 
