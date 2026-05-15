@@ -119,7 +119,10 @@ async def seed_context_pending_ready(
     # value so the real query matches.
     canonical_signoff = {**signoff, "state": "context_pending"}
     decision_id = await seed_decision_with_signoff(
-        client, description=description, status=status, signoff=canonical_signoff,
+        client,
+        description=description,
+        status=status,
+        signoff=canonical_signoff,
     )
     span_rows = await client.query(
         "CREATE input_span SET text='eval_seed', source_type='test', "
@@ -149,9 +152,7 @@ async def reset_for_next_call(client: LedgerClient) -> None:
     await client.execute("DELETE binds_to")
     await client.execute("DELETE context_for")
     await client.execute("DELETE yields")
-    await client.execute(
-        "UPDATE bicameral_meta SET decision_revision = decision_revision + 1"
-    )
+    await client.execute("UPDATE bicameral_meta SET decision_revision = decision_revision + 1")
 
 
 async def apply_setup_to_ledger(

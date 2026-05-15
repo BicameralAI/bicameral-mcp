@@ -51,15 +51,15 @@ def test_no_new_ledger_query_mock_traps():
         f"Current trap functions ({trap_count}):\n"
         + "\n".join(f"  - {n}" for n in trap_names)
         + "\n\n"
-        f"A 'solitary trap' is a SurrealQL function whose only direct "
-        f"tests use AsyncMock/MagicMock — the #309-class risk this gate "
-        f"prevents. Run `python3 scripts/audit_sociable_coverage.py` to "
-        f"see the full report.\n\n"
-        f"Fix one of these ways:\n"
-        f"  1. Backfill a sociable test against memory:// SurrealDB. "
-        f"     Pattern: tests/test_codegenome_continuity_service.py::_fresh_adapter.\n"
-        f"  2. If you genuinely added a new function that needs a narrow-seam "
-        f"     mock per CLAUDE.md, document the seam in the test docstring."
+        "A 'solitary trap' is a SurrealQL function whose only direct "
+        "tests use AsyncMock/MagicMock — the #309-class risk this gate "
+        "prevents. Run `python3 scripts/audit_sociable_coverage.py` to "
+        "see the full report.\n\n"
+        "Fix one of these ways:\n"
+        "  1. Backfill a sociable test against memory:// SurrealDB. "
+        "     Pattern: tests/test_codegenome_continuity_service.py::_fresh_adapter.\n"
+        "  2. If you genuinely added a new function that needs a narrow-seam "
+        "     mock per CLAUDE.md, document the seam in the test docstring."
     )
 
 
@@ -85,11 +85,19 @@ def test_audit_runs_clean():
     """
     audit = compute_audit()
     required_keys = {
-        "rows", "sql_rows", "direct", "traps", "indirect", "uncovered",
-        "direct_count", "trap_count", "indirect_count", "uncovered_count",
+        "rows",
+        "sql_rows",
+        "direct",
+        "traps",
+        "indirect",
+        "uncovered",
+        "direct_count",
+        "trap_count",
+        "indirect_count",
+        "uncovered_count",
     }
     missing = required_keys - audit.keys()
     assert not missing, f"compute_audit() missing keys: {missing}"
-    assert audit["direct_count"] + audit["trap_count"] + audit["indirect_count"] + audit["uncovered_count"] == len(audit["sql_rows"]), (
-        "compute_audit() row categorization is non-partitioning"
-    )
+    assert audit["direct_count"] + audit["trap_count"] + audit["indirect_count"] + audit[
+        "uncovered_count"
+    ] == len(audit["sql_rows"]), "compute_audit() row categorization is non-partitioning"

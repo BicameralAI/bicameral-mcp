@@ -35,7 +35,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tests.eval._preflight_eval_seed import (
+from ledger.adapter import SurrealDBLedgerAdapter
+from ledger.client import LedgerClient
+
+from ._preflight_eval_seed import (
     apply_setup_to_ledger,
     make_real_ledger,
     reset_for_next_call,
@@ -74,7 +77,7 @@ async def _build_ctx(
     guided_mode: bool,
     sync_state: dict,
     suffix: str,
-) -> tuple[SimpleNamespace, "object", "object"]:
+) -> tuple[SimpleNamespace, SurrealDBLedgerAdapter, LedgerClient]:
     """Build a SimpleNamespace ctx backed by a real memory:// ledger.
 
     Returns (ctx, adapter, client) — caller owns the lifecycle. The

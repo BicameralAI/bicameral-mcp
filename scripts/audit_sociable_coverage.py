@@ -148,7 +148,7 @@ def compute_audit() -> dict:
             for caller_path in callers:
                 caller_module = caller_path.replace("/", ".").removesuffix(".py")
                 caller_basename = Path(caller_path).stem
-                for tpath, ttext, tclass in test_files_classified:
+                for _tpath, ttext, tclass in test_files_classified:
                     if tclass not in ("sociable", "mixed"):
                         continue
                     if caller_module in ttext or caller_basename in ttext:
@@ -174,11 +174,13 @@ def compute_audit() -> dict:
     direct = [r for r in sql_rows if r["sociable_count"] > 0]
     traps = [r for r in sql_rows if r["solitary_only"]]
     indirect = [
-        r for r in sql_rows
+        r
+        for r in sql_rows
         if r["sociable_count"] == 0 and r["indirect_sociable"] and not r["solitary_only"]
     ]
     uncovered = [
-        r for r in sql_rows
+        r
+        for r in sql_rows
         if r["sociable_count"] == 0 and not r["indirect_sociable"] and not r["solitary_only"]
     ]
 
@@ -215,13 +217,22 @@ def main() -> int:
     print()
     print("Coverage breakdown (SurrealQL-bearing functions only):")
     print()
-    print(f"| Category | Count | Risk |")
-    print(f"|---|---|---|")
-    print(f"| **Direct sociable** (has at least one test using `memory://` or real adapter) | {len(direct)} | safe |")
-    print(f"| **Solitary trap** (tests exist but ALL use `Mock`/`Fake` — #309-class) | {len(traps)} | **HIGH** |")
-    print(f"| **Indirect sociable** (no direct test, but caller has sociable handler test) | {len(indirect)} | low |")
-    print(f"| **Uncovered** (no direct test and no indirect coverage detected) | {len(uncovered)} | medium |")
+    print("| Category | Count | Risk |")
+    print("|---|---|---|")
+    print(
+        f"| **Direct sociable** (has at least one test using `memory://` or real adapter) | {len(direct)} | safe |"
+    )
+    print(
+        f"| **Solitary trap** (tests exist but ALL use `Mock`/`Fake` — #309-class) | {len(traps)} | **HIGH** |"
+    )
+    print(
+        f"| **Indirect sociable** (no direct test, but caller has sociable handler test) | {len(indirect)} | low |"
+    )
+    print(
+        f"| **Uncovered** (no direct test and no indirect coverage detected) | {len(uncovered)} | medium |"
+    )
     print()
+
     def category(r: dict) -> str:
         if not r["sql"]:
             return "—"
