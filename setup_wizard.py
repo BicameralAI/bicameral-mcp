@@ -235,12 +235,27 @@ def _resolve_git_hooks_dir(repo_path: Path) -> Path | None:
     implementation built ``<root>/.git/hooks`` unconditionally and crashed
     with ``NotADirectoryError`` on submodule installs.
     """
+    gitdir = _resolve_git_pointer(repo_path)
+    if gitdir is None:
+        return None
+    return gitdir / "hooks"
+
+
+def _resolve_git_pointer(repo_path: Path) -> Path | None:
+    """Return the real gitdir for ``repo_path`` regardless of layout.
+
+    For a normal repo this is ``<root>/.git``. For a linked worktree or
+    submodule, ``.git`` is a *file* containing a ``gitdir:`` pointer; we
+    parse the pointer and return the resolved target. Shared between
+    ``_resolve_git_hooks_dir`` and the worktree-detection notice in
+    ``run_setup`` so the two paths stay in lockstep.
+    """
     git_root = _find_git_root(repo_path)
     if git_root is None:
         return None
     git_marker = git_root / ".git"
     if git_marker.is_dir():
-        return git_marker / "hooks"
+        return git_marker
     if git_marker.is_file():
         try:
             content = git_marker.read_text()
@@ -253,8 +268,92 @@ def _resolve_git_hooks_dir(repo_path: Path) -> Path | None:
                 gitdir = Path(gitdir_str)
                 if not gitdir.is_absolute():
                     gitdir = (git_root / gitdir).resolve()
-                return gitdir / "hooks"
+                return gitdir
     return None
+
+
+def _detect_linked_worktree(repo_path: Path) -> Path | None:
+    """Return the real gitdir if ``repo_path`` is a linked worktree (or
+    submodule, same shape), else None.
+
+    Used in ``run_setup`` to print a one-line heads-up so a user surveying
+    the wizard output understands that hooks land under the real gitdir,
+    not the working-tree-local ``.git`` (which is a pointer file, not a
+    directory). The per-worktree setup model is intentional under v0.14.x —
+    each worktree gets its own hooks; the v0.15.0 Ledger Locator (#368)
+    will share the ledger across worktrees while keeping hooks per-worktree.
+    """
+    git_root = _find_git_root(repo_path)
+    if git_root is None:
+        return None
+    git_marker = git_root / ".git"
+    if not git_marker.is_file():
+        return None
+    return _resolve_git_pointer(repo_path)
+
+
+def _probe_origin_head(repo_path: Path) -> str | None:
+    """Probe ``git symbolic-ref refs/remotes/origin/HEAD`` for the remote
+    default branch name.
+
+    Returns the bare branch name (e.g. ``"main"``, ``"master"``, ``"trunk"``)
+    or None if the ref isn't set (fresh clones, self-hosted remotes, repos
+    without an ``origin`` remote). The ledger's runtime detector
+    (``code_locator_runtime.detect_authoritative_ref``) silently falls back
+    to ``"main"`` when this ref is missing, which is wrong for any project
+    whose default branch is something else. The setup wizard surfaces this
+    so the user can pin ``BICAMERAL_AUTHORITATIVE_REF`` once.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_path), "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    out = (result.stdout or "").strip()
+    if "/" not in out:
+        return None
+    branch = out.rsplit("/", 1)[-1]
+    return branch or None
+
+
+def _resolve_authoritative_ref(repo_path: Path) -> tuple[str, bool]:
+    """Return ``(branch, needs_env_override)`` for the project's default branch.
+
+    Resolution order:
+      1. ``BICAMERAL_AUTHORITATIVE_REF`` env (caller already pinned it):
+         honour it; no env override needed in the written config.
+      2. Probe ``origin/HEAD``; if it resolves, use that and skip override.
+      3. Interactive prompt (default ``main``); only write the env override
+         when the answer is non-default.
+      4. Non-interactive fallback: ``main``, no override.
+
+    The override is only load-bearing when probe (2) fails *and* the
+    project's default branch is not ``main`` — otherwise the runtime
+    detector already falls back to ``main``.
+    """
+    explicit = os.environ.get("BICAMERAL_AUTHORITATIVE_REF", "").strip()
+    if explicit:
+        return explicit, False
+
+    probed = _probe_origin_head(repo_path)
+    if probed:
+        return probed, False
+
+    if not _is_interactive():
+        return "main", False
+
+    print()
+    print("  Couldn't auto-detect authoritative branch (no `origin/HEAD` ref).")
+    raw = input("  What's your default branch? [main]: ").strip()
+    branch = raw or "main"
+    needs_override = branch != "main"
+    return branch, needs_override
 
 
 def _detect_agents() -> list[str]:
@@ -341,6 +440,7 @@ def _build_config(
     data_path: Path | None = None,
     mode: str = "solo",
     telemetry: bool = False,
+    authoritative_ref: str | None = None,
 ) -> dict:
     """Build the MCP server config object.
 
@@ -350,6 +450,12 @@ def _build_config(
 
     In team mode, local DBs go under .bicameral/local/ (gitignored)
     so they don't leak into the tracked events directory.
+
+    authoritative_ref: when set, written into the config env as
+    ``BICAMERAL_AUTHORITATIVE_REF`` so the runtime detector pins the
+    project's default branch even when ``origin/HEAD`` isn't available.
+    Pass None to let runtime auto-detection handle it (the common case
+    when origin/HEAD resolves cleanly).
     """
     command, args = _detect_runner()
     data_root = (data_path or repo_path) / ".bicameral"
@@ -371,6 +477,8 @@ def _build_config(
         # History lives in a separate private repo — tell the adapter where
         # to read/write events and config.
         env["BICAMERAL_DATA_PATH"] = str(data_path)
+    if authoritative_ref:
+        env["BICAMERAL_AUTHORITATIVE_REF"] = authoritative_ref
 
     return {"command": command, "args": args, "env": env}
 
@@ -381,9 +489,16 @@ def _write_json_config(
     data_path: Path | None = None,
     mode: str = "solo",
     telemetry: bool = False,
+    authoritative_ref: str | None = None,
 ) -> None:
     """Write MCP server config to a JSON file (Claude Code / Cursor)."""
-    config = _build_config(repo_path, data_path=data_path, mode=mode, telemetry=telemetry)
+    config = _build_config(
+        repo_path,
+        data_path=data_path,
+        mode=mode,
+        telemetry=telemetry,
+        authoritative_ref=authoritative_ref,
+    )
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     existing = {}
@@ -403,9 +518,16 @@ def _write_toml_config(
     data_path: Path | None = None,
     mode: str = "solo",
     telemetry: bool = False,
+    authoritative_ref: str | None = None,
 ) -> None:
     """Write MCP server config to a TOML file (Codex)."""
-    config = _build_config(repo_path, data_path=data_path, mode=mode, telemetry=telemetry)
+    config = _build_config(
+        repo_path,
+        data_path=data_path,
+        mode=mode,
+        telemetry=telemetry,
+        authoritative_ref=authoritative_ref,
+    )
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Build the [mcp_servers.bicameral] TOML section
@@ -449,6 +571,7 @@ def _install_for_agent(
     data_path: Path | None = None,
     mode: str = "solo",
     telemetry: bool = False,
+    authoritative_ref: str | None = None,
 ) -> bool:
     """Install MCP config for a specific coding agent."""
     agent = AGENTS[agent_key]
@@ -456,7 +579,13 @@ def _install_for_agent(
 
     # For Claude Code, try CLI first
     if agent_key == "claude" and shutil.which("claude"):
-        config = _build_config(repo_path, data_path=data_path, mode=mode, telemetry=telemetry)
+        config = _build_config(
+            repo_path,
+            data_path=data_path,
+            mode=mode,
+            telemetry=telemetry,
+            authoritative_ref=authoritative_ref,
+        )
         config_json = json.dumps(config)
         subprocess.run(
             ["claude", "mcp", "remove", "bicameral", "--scope", "project"],
@@ -478,7 +607,13 @@ def _install_for_agent(
 
     # For Codex, try CLI first
     if agent_key == "codex" and shutil.which("codex"):
-        config = _build_config(repo_path, data_path=data_path, mode=mode, telemetry=telemetry)
+        config = _build_config(
+            repo_path,
+            data_path=data_path,
+            mode=mode,
+            telemetry=telemetry,
+            authoritative_ref=authoritative_ref,
+        )
         env_args = []
         for k, v in config["env"].items():
             env_args.extend(["--env", f"{k}={v}"])
@@ -500,11 +635,21 @@ def _install_for_agent(
     # Fallback: write config file directly
     if agent.get("config_format") == "toml":
         _write_toml_config(
-            repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry
+            repo_path,
+            config_path,
+            data_path=data_path,
+            mode=mode,
+            telemetry=telemetry,
+            authoritative_ref=authoritative_ref,
         )
     else:
         _write_json_config(
-            repo_path, config_path, data_path=data_path, mode=mode, telemetry=telemetry
+            repo_path,
+            config_path,
+            data_path=data_path,
+            mode=mode,
+            telemetry=telemetry,
+            authoritative_ref=authoritative_ref,
         )
 
     print(f"  {agent['name']}: wrote {config_path}")
@@ -1490,10 +1635,30 @@ def run_setup(
     repo_path = _detect_repo(repo_hint)
     print(f"\n  Repo: {repo_path}")
 
+    # Step 1a: Linked-worktree / submodule heads-up (#368 stopgap). When
+    # `.git` is a pointer file (worktree or submodule layout), hooks land
+    # under the resolved gitdir, NOT under the working tree. The v0.14.6
+    # fix made this work; v0.14.7 makes it visible. The v0.15.0 Ledger
+    # Locator will share the ledger across worktrees; for now each
+    # worktree needs its own setup run for its hooks.
+    linked_gitdir = _detect_linked_worktree(repo_path)
+    if linked_gitdir is not None:
+        print(f"  Note: linked worktree / submodule detected → hooks → {linked_gitdir}/hooks/")
+        print("        Re-run `bicameral-mcp setup` from each worktree to install its hooks.")
+
     # Step 1b: Optionally separate history storage (e.g. private parent repo)
     data_path = _detect_history_path(repo_path, history_hint)
     if data_path != repo_path:
         print(f"  History: {data_path}")
+
+    # Step 1c: Pin authoritative branch when origin/HEAD isn't auto-detectable.
+    # The runtime detector silently falls back to "main" — wrong for any
+    # project whose default is master/trunk/develop. We surface the ambiguity
+    # and write BICAMERAL_AUTHORITATIVE_REF into the config only when needed.
+    auth_ref, auth_ref_needs_override = _resolve_authoritative_ref(repo_path)
+    config_auth_ref: str | None = auth_ref if auth_ref_needs_override else None
+    if auth_ref_needs_override:
+        print(f"  Authoritative branch pinned: {auth_ref}")
 
     # Step 2: Select coding agents
     print()
@@ -1533,7 +1698,12 @@ def run_setup(
     print()
     for agent_key in agents:
         _install_for_agent(
-            agent_key, repo_path, data_path=data_path, mode=collab_mode, telemetry=telemetry
+            agent_key,
+            repo_path,
+            data_path=data_path,
+            mode=collab_mode,
+            telemetry=telemetry,
+            authoritative_ref=config_auth_ref,
         )
 
     # Step 6: Install skills + hooks (Claude Code only)
