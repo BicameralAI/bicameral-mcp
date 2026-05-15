@@ -74,6 +74,27 @@ def get_ledger():
             query_timeout_drift_seconds=_read_query_timeout_drift_seconds(repo_path),
         )
 
+        # #221 Phase B-1: wire the PiiArchive (Phase A primitive) onto
+        # the adapter. ingest writes verbatim text to the archive and
+        # leaves input_span.text=''; reads route through
+        # _resolve_span_text(archive, row). Path is operator-erasable.
+        try:
+            from pii_archive import PiiArchive
+
+            archive_path = os.environ.get(
+                "BICAMERAL_PII_ARCHIVE_PATH",
+                str(Path.home() / ".bicameral" / "pii-archive.db"),
+            )
+            inner._pii_archive = PiiArchive(archive_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[ledger] PII archive init failed (%s) — ingest will fall "
+                "back to inline-text shape; erasure not available for "
+                "spans ingested this session",
+                exc,
+            )
+            inner._pii_archive = None
+
         cfg = _read_team_config(repo_path)
         mode = cfg.get("mode", "solo")
 

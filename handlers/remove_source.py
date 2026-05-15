@@ -73,6 +73,15 @@ async def handle_remove_source(
     decision_ids: list[str] = []
     if span_existed:
         span_content = await get_input_span_row(client, span_id) or {}
+        # #221 Phase B-1: route the captured-text field through
+        # _resolve_span_text so audit telemetry records archive content
+        # (pre-erasure) or the [ERASED] sentinel (post-erasure) rather
+        # than the empty-string slot used by the new ingest path.
+        from ledger.queries import _resolve_span_text
+
+        archive = getattr(inner, "_pii_archive", None)
+        if archive is not None and span_content:
+            span_content = {**span_content, "text": _resolve_span_text(archive, span_content)}
         decision_ids = await get_decisions_for_span(client, span_id)
 
     if not confirm:
