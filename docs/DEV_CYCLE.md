@@ -533,6 +533,39 @@ land.
 
 Red CI blocks merge. Don't ask reviewers to look at red PRs.
 
+#### 4.5.5 Local enforcement — `pre-commit` (mandatory for committers)
+
+The lint gate (`ruff check` + `ruff format --check`) lives in CI, but
+running it only at PR time has produced a recurring tax: between #279
+and #310, six commits (`eb32e80`, `ee24395`, `0cf574b`, `1d752cc`,
+`1690a30`, `cacfb62`) were `style:` cleanups whose only purpose was
+appeasing CI after the actual feature commit landed unformatted. PR #357
+sub-task 3 closes this loop by enforcing the same checks at commit time.
+
+**Install once per clone:**
+
+```bash
+pip install pre-commit                  # already in [project.optional-dependencies] test
+pre-commit install                      # writes .git/hooks/pre-commit
+```
+
+The hook now runs `ruff check --fix` + `ruff format` on every staged
+Python file. Auto-fixable issues (F541, B007, etc.) are repaired in
+place and re-staged; non-fixable issues abort the commit so you can fix
+them before the commit lands.
+
+**To run on the whole repo** (e.g., one-shot cleanup):
+
+```bash
+pre-commit run --all-files
+```
+
+**CI fallback.** If you push without `pre-commit install` and the CI
+lint step fails, the workflow now emits an explicit install hint to
+`$GITHUB_STEP_SUMMARY` and to the job log via `::error::`. That hint
+exists exclusively to break the "push → red CI → push `style:` fixup"
+loop — see PR #357 commit message for the failure history.
+
 ### 4.6 Review feedback discipline
 
 CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
