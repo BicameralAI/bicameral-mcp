@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import logging
 import sys
+from typing import cast
 
+from .channel import ChannelAdapter
 from .config import ChannelConfig, NotificationsConfig
 from .contracts import NotificationEvent
 
@@ -33,7 +35,7 @@ class NotificationHub:
     def __init__(self, config: NotificationsConfig) -> None:
         from . import CHANNELS
 
-        self._channels: list[tuple[ChannelConfig, object]] = []
+        self._channels: list[tuple[ChannelConfig, ChannelAdapter]] = []
         for ch_cfg in config.channels:
             adapter_cls = CHANNELS.get(ch_cfg.type)
             if adapter_cls is None:
@@ -46,7 +48,14 @@ class NotificationHub:
                 )
                 continue
             try:
-                adapter = adapter_cls(config=ch_cfg.extra)
+                # ``CHANNELS`` registry is ``dict[str, type]``; the
+                # ``@runtime_checkable`` Protocol means mypy can't
+                # statically prove the constructed instance satisfies
+                # ChannelAdapter, but the registry guarantees it. Cast
+                # to keep the static signature accurate; the actual
+                # protocol check is the test suite's
+                # ``test_*_satisfies_channel_adapter_protocol``.
+                adapter = cast("ChannelAdapter", adapter_cls(config=ch_cfg.extra))
             except Exception as exc:  # noqa: BLE001
                 print(
                     f"[notifications] hub: channel {ch_cfg.type!r} failed to construct: {exc}",
