@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from .granola import GranolaAdapter, MissingApiKeyError
+from .local_directory import LocalDirectoryAdapter
 
 
 @runtime_checkable
@@ -42,7 +43,14 @@ class SourceAdapter(Protocol):
 
 ADAPTERS: dict[str, type] = {
     "granola": GranolaAdapter,
+    "local_directory": LocalDirectoryAdapter,
 }
 
 
-__all__ = ["SourceAdapter", "ADAPTERS", "GranolaAdapter", "MissingApiKeyError"]
+__all__ = [
+    "ADAPTERS",
+    "GranolaAdapter",
+    "LocalDirectoryAdapter",
+    "MissingApiKeyError",
+    "SourceAdapter",
+]
