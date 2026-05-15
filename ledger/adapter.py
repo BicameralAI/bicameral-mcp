@@ -1077,12 +1077,8 @@ class SurrealDBLedgerAdapter:
                 continue
 
             try:
-                actual = compute_content_hash(
-                    er_fp, er_sl, er_el, repo_path, ref=commit_hash
-                )
-                await update_region_hash(
-                    self._client, er_id, actual or "", commit_hash
-                )
+                actual = compute_content_hash(er_fp, er_sl, er_el, repo_path, ref=commit_hash)
+                await update_region_hash(self._client, er_id, actual or "", commit_hash)
                 for dec in er.get("decisions") or []:
                     if dec is None:
                         continue
@@ -1090,15 +1086,14 @@ class SurrealDBLedgerAdapter:
                     if not did:
                         continue
                     if actual:
-                        await promote_ephemeral_verdict(
-                            self._client, did, er_id, actual
-                        )
+                        await promote_ephemeral_verdict(self._client, did, er_id, actual)
                     affected_decisions.add(did)
                 repaired += 1
             except Exception as exc:
                 logger.warning(
                     "[link_commit] ephemeral stale-repair failed for %s: %s",
-                    er_id, exc,
+                    er_id,
+                    exc,
                 )
 
         for did in affected_decisions:
@@ -1108,13 +1103,15 @@ class SurrealDBLedgerAdapter:
             except Exception as exc:
                 logger.warning(
                     "[link_commit] status re-projection failed for %s: %s",
-                    did, exc,
+                    did,
+                    exc,
                 )
 
         if repaired:
             logger.info(
                 "[link_commit] ephemeral stale-repair: %d regions, %d decisions",
-                repaired, len(affected_decisions),
+                repaired,
+                len(affected_decisions),
             )
         return repaired
 
