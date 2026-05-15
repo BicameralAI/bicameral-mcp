@@ -4,7 +4,9 @@ Each row in `preflight_dataset.jsonl` describes a deterministic handler-layer
 scenario from `docs/preflight-failure-scenarios.md`. This runner:
 
 - Loads all rows
-- Builds a mocked context per row (or per call, for multi-call dedup tests)
+- Builds a SimpleNamespace ctx with a REAL memory:// SurrealDB adapter
+  per row (or per call, for multi-call dedup tests) seeded via
+  `tests.eval._ledger_seed`
 - Calls `handle_preflight` and asserts the response matches `expect`
 - Marks rows with non-null `xfail` as expected failures with strict mode —
   when an underlying fix lands and the test starts passing, strict-xfail
@@ -12,19 +14,35 @@ scenario from `docs/preflight-failure-scenarios.md`. This runner:
 
 Skill-layer scenarios (M1–M4, FF1, FF3 in the catalog) are deferred to
 phase 2 (LLM-in-the-loop) and are not included here.
+
+History — #357 Phase B (this file): the prior version monkeypatched
+`ledger.queries.get_ledger_revision` with an AsyncMock. That AsyncMock
+made every Phase 4 + Phase 5 test pass against #309's coalesce parse
+error — production silently bypassed dedup for the entire window between
+merge and #311. With a real adapter in the loop, that class of failure
+is no longer expressible: every SurrealQL call in the handler executes
+against memory:// for real.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
+
+from ledger.adapter import SurrealDBLedgerAdapter
+from ledger.client import LedgerClient
+
+from ._preflight_eval_seed import (
+    apply_setup_to_ledger,
+    make_real_ledger,
+    reset_for_next_call,
+)
 
 DATASET = Path(__file__).parent / "preflight_dataset.jsonl"
 CATALOG = Path(__file__).parent.parent.parent / "docs" / "preflight-failure-scenarios.md"
@@ -54,152 +72,74 @@ def _validate_row(row: dict) -> None:
             raise AssertionError(f"row {row['id']}: single-call rows must define input and expect")
 
 
-def _make_decision_dict(d: dict) -> dict:
-    """Format expected by `ledger.get_decisions_for_files`."""
-    return {
-        "decision_id": d["decision_id"],
-        "description": d["description"],
-        "status": d.get("status", "reflected"),
-        "source_type": "transcript",
-        "source_ref": "test",
-        "source_excerpt": "",
-        "meeting_date": "",
-        "ingested_at": "2026-04-27",
-        "signoff": d.get("signoff"),
-        "code_region": {
-            "file_path": d.get("file_path", "test.py"),
-            "symbol": d.get("symbol", "test_symbol"),
-            "lines": (1, 10),
-            "purpose": d["description"],
-            "content_hash": "test",
-        },
-    }
+async def _build_ctx(
+    *,
+    guided_mode: bool,
+    sync_state: dict,
+    suffix: str,
+) -> tuple[SimpleNamespace, SurrealDBLedgerAdapter, LedgerClient]:
+    """Build a SimpleNamespace ctx backed by a real memory:// ledger.
 
-
-def _make_hitl_row(d: dict) -> dict:
-    """Format expected by `get_collision_pending_decisions` /
-    `get_context_for_ready_decisions`."""
-    return {
-        "decision_id": d["decision_id"],
-        "description": d["description"],
-        "status": d.get("status", "pending"),
-        "signoff": d.get("signoff", {}),
-    }
-
-
-def _make_ctx(*, guided_mode: bool, sync_state: dict) -> SimpleNamespace:
-    ledger = MagicMock()
-    ledger.get_decisions_for_files = AsyncMock(return_value=[])
-    inner = MagicMock()
-    inner._client = MagicMock()
-    ledger._inner = inner
-    return SimpleNamespace(
-        ledger=ledger,
+    Returns (ctx, adapter, client) — caller owns the lifecycle. The
+    adapter and client references are returned so the test fixture can
+    keep them in scope (the SurrealDB connection is per-client).
+    """
+    adapter, client = await make_real_ledger(suffix)
+    ctx = SimpleNamespace(
+        ledger=adapter,
         guided_mode=guided_mode,
         _sync_state=sync_state,
     )
+    return ctx, adapter, client
 
 
-def _apply_setup(monkeypatch, setup: dict, ctx: SimpleNamespace) -> None:
-    region_decisions = setup.get("region_decisions") or []
-    pinned_decisions = setup.get("region_decisions_pinned_to") or {}
+def _attach_graph_neighbors(ctx: SimpleNamespace, graph_neighbors: dict) -> None:
+    """M6 graph-expansion stub. Not a ledger mock — this is a deterministic
+    code-graph injection for the 1-hop expansion path tested by M6. Real
+    production code reads from a code-graph index; the test scenarios
+    supply a hand-curated topology to make the test deterministic.
+    """
+    if not graph_neighbors:
+        return
 
-    if pinned_decisions:
-        # Path-aware mock — used by M6 (graph expansion). The handler may call
-        # get_decisions_for_files with the caller's original paths or with
-        # those paths plus 1-hop neighbors; only return decisions whose
-        # pinned file is among the paths supplied in *this* call. That makes
-        # the test honest: M6 passes only when the expansion supplies the
-        # neighbor path that the decision is pinned to.
-        async def _path_aware_lookup(paths):
-            out: list[dict] = []
-            for fp in paths or []:
-                for d in pinned_decisions.get(fp, []):
-                    out.append(_make_decision_dict({**d, "file_path": fp}))
-            return out
+    class _DatasetCodeGraph:
+        def expand_file_paths_via_graph(
+            self, file_paths: list[str], hops: int = 1
+        ) -> tuple[list[str], list[str]]:
+            expanded: list[str] = []
+            added: list[str] = []
+            seen: set[str] = set()
+            for fp in file_paths or []:
+                if fp and fp not in seen:
+                    seen.add(fp)
+                    expanded.append(fp)
+            for fp in file_paths or []:
+                for n in graph_neighbors.get(fp, []):
+                    if n and n not in seen:
+                        seen.add(n)
+                        expanded.append(n)
+                        added.append(n)
+            return expanded, added
 
-        ctx.ledger.get_decisions_for_files = AsyncMock(side_effect=_path_aware_lookup)
-    else:
-        ctx.ledger.get_decisions_for_files = AsyncMock(
-            return_value=[_make_decision_dict(d) for d in region_decisions]
-        )
-
-    # Optional graph-neighbor topology for M6-style scenarios. When set, attach
-    # a stub code_graph adapter to ctx that expands file_paths by 1 hop using
-    # the supplied dict (file_path → list[neighbor_file_path]). When absent,
-    # leave ctx without a code_graph attribute — preflight's expansion path
-    # is defensive (`getattr(ctx, "code_graph", None)`) and falls back to
-    # exact-match-only retrieval.
-    graph_neighbors = setup.get("graph_neighbors") or {}
-    if graph_neighbors:
-
-        class _DatasetCodeGraph:
-            def expand_file_paths_via_graph(
-                self, file_paths: list[str], hops: int = 1
-            ) -> tuple[list[str], list[str]]:
-                expanded: list[str] = []
-                added: list[str] = []
-                seen: set[str] = set()
-                for fp in file_paths or []:
-                    if fp and fp not in seen:
-                        seen.add(fp)
-                        expanded.append(fp)
-                for fp in file_paths or []:
-                    for n in graph_neighbors.get(fp, []):
-                        if n and n not in seen:
-                            seen.add(n)
-                            expanded.append(n)
-                            added.append(n)
-                return expanded, added
-
-        ctx.code_graph = _DatasetCodeGraph()
-
-    import ledger.queries as lq
-
-    monkeypatch.setattr(
-        lq,
-        "get_collision_pending_decisions",
-        AsyncMock(return_value=[_make_hitl_row(d) for d in setup.get("collision_pending", [])]),
-    )
-    monkeypatch.setattr(
-        lq,
-        "get_context_for_ready_decisions",
-        AsyncMock(return_value=[_make_hitl_row(d) for d in setup.get("context_pending_ready", [])]),
-    )
-
-    # #87 Phase 4 — preflight dedup key now includes ledger_revision. The
-    # handler calls ``ledger.queries.get_ledger_revision`` to fingerprint
-    # the decision table's mutation state; for harness scenarios the row
-    # supplies an explicit ``ledger_revision`` value (per-call), or we
-    # derive a deterministic non-empty stand-in from the setup so M7a/c
-    # naturally invalidate the cache between calls. The non-empty default
-    # is critical: returning ``None`` would trip the bypass branch and
-    # mask whatever the row is asserting.
-    explicit_rev = setup.get("ledger_revision")
-    if explicit_rev is not None:
-        rev_value: str | None = str(explicit_rev)
-    else:
-        # Stand-in: hash of (region_decisions + collision_pending +
-        # context_pending_ready) — any setup change between calls produces
-        # a different revision, matching production behavior where any
-        # decision/signoff UPDATE bumps updated_at.
-        import json as _json
-
-        derived = _json.dumps(
-            {
-                "rd": region_decisions,
-                "pd": pinned_decisions,
-                "cp": setup.get("collision_pending", []),
-                "cpr": setup.get("context_pending_ready", []),
-            },
-            sort_keys=True,
-        )
-        rev_value = derived
-    monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value=rev_value))
+    ctx.code_graph = _DatasetCodeGraph()
 
 
 @pytest.fixture(autouse=True)
 def _isolate_handler_environment(monkeypatch, tmp_path):
+    """Two narrow seams permitted by CLAUDE.md sociable-testing rules.
+
+    `ensure_ledger_synced` (handlers/sync_middleware.py) auto-runs
+    `link_commit` against the working tree on every preflight call. Inside
+    the eval harness there is no real git tree to sync against — the
+    ledger is a per-test in-memory instance — so the auto-sync would
+    either crash or no-op noisily. We seam it off here. CLAUDE.md's
+    explicit example of an allowed narrow seam: "patching handle_link_commit
+    when testing the *caller's* cache logic (not link_commit itself)."
+    Same shape — we're testing preflight, not sync middleware.
+
+    `_should_show_product_stage` is a session-level UX flag; off-by-default
+    for tests so the response shape is deterministic.
+    """
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     import handlers.sync_middleware as sm
@@ -247,41 +187,66 @@ def _params() -> list:
     return out
 
 
-@pytest.mark.parametrize("row", _params())
-def test_preflight_failure_mode(row, monkeypatch):
+async def _run_row_async(row: dict):
+    """Async core for a single dataset row. Returns the response to assert.
+
+    Owns the ledger lifecycle: a single adapter/client persists across
+    all calls in a multi-call row so the `bicameral_meta.decision_revision`
+    counter advances naturally between calls (the M7a/b/c invariant). The
+    `ctx._sync_state` dict also persists so the dedup cache survives across
+    calls within a row.
+    """
     from handlers.preflight import handle_preflight
+
+    suffix = row["id"].replace(":", "_").replace("-", "_")
 
     if "calls" in row:
         sync_state: dict = {}
-        last_response = None
-        for call in row["calls"]:
-            ctx = _make_ctx(
-                guided_mode=call.get("setup", {}).get("guided_mode", False),
-                sync_state=sync_state,
-            )
-            _apply_setup(monkeypatch, call.get("setup", {}), ctx)
-            last_response = asyncio.run(
-                handle_preflight(
+        ctx, adapter, client = await _build_ctx(
+            guided_mode=row["calls"][0].get("setup", {}).get("guided_mode", False),
+            sync_state=sync_state,
+            suffix=suffix,
+        )
+        try:
+            last_response = None
+            for i, call in enumerate(row["calls"]):
+                setup = call.get("setup", {})
+                if i > 0:
+                    await reset_for_next_call(client)
+                _attach_graph_neighbors(ctx, setup.get("graph_neighbors") or {})
+                ctx.guided_mode = setup.get("guided_mode", False)
+                await apply_setup_to_ledger(client, setup)
+                last_response = await handle_preflight(
                     ctx=ctx,
                     topic=call["input"]["topic"],
                     file_paths=call["input"].get("file_paths"),
                 )
-            )
-        _assert_expect(last_response, row["expect_final"])
+            return last_response, row["expect_final"]
+        finally:
+            await client.close()
     else:
-        ctx = _make_ctx(
+        ctx, adapter, client = await _build_ctx(
             guided_mode=row["setup"].get("guided_mode", False),
             sync_state={},
+            suffix=suffix,
         )
-        _apply_setup(monkeypatch, row["setup"], ctx)
-        response = asyncio.run(
-            handle_preflight(
+        try:
+            _attach_graph_neighbors(ctx, row["setup"].get("graph_neighbors") or {})
+            await apply_setup_to_ledger(client, row["setup"])
+            response = await handle_preflight(
                 ctx=ctx,
                 topic=row["input"]["topic"],
                 file_paths=row["input"].get("file_paths"),
             )
-        )
-        _assert_expect(response, row["expect"])
+            return response, row["expect"]
+        finally:
+            await client.close()
+
+
+@pytest.mark.parametrize("row", _params())
+def test_preflight_failure_mode(row):
+    response, expect = asyncio.run(_run_row_async(row))
+    _assert_expect(response, expect)
 
 
 def test_dataset_schema_valid():
