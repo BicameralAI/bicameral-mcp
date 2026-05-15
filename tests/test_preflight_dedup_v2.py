@@ -8,17 +8,22 @@ those exercise the end-to-end behavior; these pin the helper shape and
 the bypass semantics that Kevin's signoff specifically called out
 (issue #87 — "correctness over saving a preflight call").
 
-Mostly solitary (the unit under test is a pure key-formatter and a
-small dict-cache check). The integration test for the revision-lookup
-bypass uses a real ``handle_preflight`` call against a SimpleNamespace
-ctx; the underlying ``get_ledger_revision`` is the only seam.
+Helper-fn tests are solitary by design (pure functions). The two
+integration tests use a real ``memory://`` SurrealDB adapter (#357 sub-
+task 1 backfill — the preflight cluster's solitary-trap rows for
+``get_decisions_for_files``, ``get_collision_pending_decisions``, and
+``get_context_for_ready_decisions``). The only retained mock is on
+``ledger.queries.get_ledger_revision`` — the SPECIFIC behavior under
+test in both integration cases is "what happens when revision returns
+None / a stable value", and that's exactly the narrow seam CLAUDE.md
+permits (matches the ``patch time.monotonic for TTL math`` example).
 """
 
 from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -27,6 +32,37 @@ from handlers.preflight import (
     _dedup_key_for,
     _normalize_file_paths_for_key,
 )
+from ledger.adapter import SurrealDBLedgerAdapter
+from ledger.client import LedgerClient
+from ledger.schema import init_schema, migrate
+
+_NS_COUNTER = 0
+
+
+async def _fresh_real_ctx(*, sync_state: dict) -> tuple[SimpleNamespace, LedgerClient]:
+    """Build a SimpleNamespace ctx backed by a real memory:// SurrealDB.
+
+    Mirrors the pre-#357 MagicMock pattern but executes real SurrealQL on
+    every call. Each test gets its own namespace so rows don't bleed
+    across tests. Returns (ctx, client); caller is responsible for closing
+    the client.
+    """
+    global _NS_COUNTER
+    _NS_COUNTER += 1
+    client = LedgerClient(url="memory://", ns=f"dedup_v2_{_NS_COUNTER}", db="ledger_test")
+    await client.connect()
+    await init_schema(client)
+    await migrate(client, allow_destructive=True)
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    adapter._client = client
+    adapter._connected = True
+    ctx = SimpleNamespace(
+        ledger=adapter,
+        guided_mode=False,
+        _sync_state=sync_state,
+    )
+    return ctx, client
+
 
 # ── _normalize_file_paths_for_key ─────────────────────────────────────
 
@@ -156,116 +192,96 @@ def test_check_dedup_does_not_dedup_when_topic_too_short():
 # ── Bypass path: ledger_revision=None ────────────────────────────────
 
 
-def test_handle_preflight_bypasses_dedup_when_revision_lookup_fails(monkeypatch):
+async def test_handle_preflight_bypasses_dedup_when_revision_lookup_fails(monkeypatch):
     """Kevin's amendment (#87 B2 signoff): when ``get_ledger_revision``
     returns None, ``handle_preflight`` MUST skip the dedup check entirely
     rather than degrade to a partial key. Verified end-to-end: two
     successive same-topic calls both reach the post-dedup region/HITL
     lookup, neither returns ``recently_checked``.
+
+    Runs against a real memory:// ledger so ``get_decisions_for_files``
+    and the HITL queries execute real SurrealQL on an empty ledger.
+    The retained mock on ``get_ledger_revision`` is a narrow seam
+    (per CLAUDE.md) — it's the SPECIFIC failure mode under test.
     """
     import handlers.preflight as pf
+    import handlers.sync_middleware as sm
     import ledger.queries as lq
 
-    # Force revision lookup to fail (simulates transient SurrealDB error).
+    # Narrow seam: force revision lookup to return None to simulate
+    # the transient SurrealDB failure mode Kevin's amendment is about.
     monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value=None))
-    monkeypatch.setattr(
-        lq,
-        "get_collision_pending_decisions",
-        AsyncMock(return_value=[]),
-    )
-    monkeypatch.setattr(
-        lq,
-        "get_context_for_ready_decisions",
-        AsyncMock(return_value=[]),
-    )
-    import handlers.sync_middleware as sm
-
+    # Narrow seam: keep the auto-sync stubbed so the test doesn't try
+    # to link_commit against the working tree. CLAUDE.md explicitly
+    # permits this pattern ("patching handle_link_commit when testing
+    # the caller's cache logic, not link_commit itself").
     monkeypatch.setattr(sm, "ensure_ledger_synced", AsyncMock(return_value=None))
     monkeypatch.setattr(pf, "_should_show_product_stage", lambda: False)
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
 
-    ledger = MagicMock()
-    ledger.get_decisions_for_files = AsyncMock(return_value=[])
-    inner = MagicMock()
-    inner._client = MagicMock()
-    ledger._inner = inner
-
     sync_state: dict = {}
-    ctx = SimpleNamespace(
-        ledger=ledger,
-        guided_mode=False,
-        _sync_state=sync_state,
-    )
+    ctx, client = await _fresh_real_ctx(sync_state=sync_state)
+    try:
+        # Two consecutive same-topic calls — without bypass, the second
+        # would be silenced. With bypass, both proceed to real evaluation.
+        r1 = await pf.handle_preflight(
+            ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"]
+        )
+        r2 = await pf.handle_preflight(
+            ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"]
+        )
 
-    # Two consecutive same-topic calls — without bypass, the second
-    # would be silenced. With bypass, both proceed to real evaluation.
-    r1 = asyncio.run(
-        pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"])
-    )
-    r2 = asyncio.run(
-        pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"])
-    )
-
-    assert r1.reason != "recently_checked", (
-        f"first call should not dedup-hit (clean cache), got reason={r1.reason!r}"
-    )
-    assert r2.reason != "recently_checked", (
-        "BYPASS broken: second call returned recently_checked despite revision "
-        f"lookup returning None (got reason={r2.reason!r}). Kevin's amendment "
-        "requires bypass over partial-key degrade."
-    )
-    # Cache must NOT have been populated either — the bypass branch
-    # short-circuits before _check_dedup is invoked.
-    assert sync_state.get("preflight_topics", {}) == {}, (
-        f"bypass branch must not write to the cache; got {sync_state.get('preflight_topics')!r}"
-    )
+        assert r1.reason != "recently_checked", (
+            f"first call should not dedup-hit (clean cache), got reason={r1.reason!r}"
+        )
+        assert r2.reason != "recently_checked", (
+            "BYPASS broken: second call returned recently_checked despite revision "
+            f"lookup returning None (got reason={r2.reason!r}). Kevin's amendment "
+            "requires bypass over partial-key degrade."
+        )
+        # Cache must NOT have been populated either — the bypass branch
+        # short-circuits before _check_dedup is invoked.
+        assert sync_state.get("preflight_topics", {}) == {}, (
+            f"bypass branch must not write to the cache; got {sync_state.get('preflight_topics')!r}"
+        )
+    finally:
+        await client.close()
 
 
-def test_handle_preflight_dedups_when_revision_lookup_succeeds(monkeypatch):
+async def test_handle_preflight_dedups_when_revision_lookup_succeeds(monkeypatch):
     """Mirror of the bypass test: when revision lookup returns a value,
     same-input second call hits the cache (legacy dedup behavior with
-    the broadened key)."""
+    the broadened key).
+
+    Same sociable-with-narrow-seam pattern as the bypass test above.
+    """
     import handlers.preflight as pf
+    import handlers.sync_middleware as sm
     import ledger.queries as lq
 
+    # Narrow seam: pin revision to a stable value so the second call's
+    # cache key matches the first. With a real ledger this would also
+    # naturally hold (no decisions added → counter unchanged), but the
+    # explicit pin keeps the test's intent legible and isolates the
+    # dedup-key contract from any future counter-mechanism changes.
     monkeypatch.setattr(lq, "get_ledger_revision", AsyncMock(return_value="stable-rev-1"))
-    monkeypatch.setattr(
-        lq,
-        "get_collision_pending_decisions",
-        AsyncMock(return_value=[]),
-    )
-    monkeypatch.setattr(
-        lq,
-        "get_context_for_ready_decisions",
-        AsyncMock(return_value=[]),
-    )
-    import handlers.sync_middleware as sm
-
     monkeypatch.setattr(sm, "ensure_ledger_synced", AsyncMock(return_value=None))
     monkeypatch.setattr(pf, "_should_show_product_stage", lambda: False)
     monkeypatch.delenv("BICAMERAL_PREFLIGHT_MUTE", raising=False)
 
-    ledger = MagicMock()
-    ledger.get_decisions_for_files = AsyncMock(return_value=[])
-    inner = MagicMock()
-    inner._client = MagicMock()
-    ledger._inner = inner
-
     sync_state: dict = {}
-    ctx = SimpleNamespace(
-        ledger=ledger,
-        guided_mode=False,
-        _sync_state=sync_state,
-    )
+    ctx, client = await _fresh_real_ctx(sync_state=sync_state)
+    try:
+        r1 = await pf.handle_preflight(
+            ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"]
+        )
+        r2 = await pf.handle_preflight(
+            ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"]
+        )
 
-    r1 = asyncio.run(
-        pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"])
-    )
-    r2 = asyncio.run(
-        pf.handle_preflight(ctx=ctx, topic="stripe webhook", file_paths=["payments/stripe.py"])
-    )
-
-    assert r1.reason != "recently_checked"
-    assert r2.reason == "recently_checked", (
-        f"expected dedup hit on identical-input second call, got reason={r2.reason!r}"
-    )
+        assert r1.reason != "recently_checked"
+        assert r2.reason == "recently_checked", (
+            f"expected dedup hit on identical-input second call, got reason={r2.reason!r}"
+        )
+    finally:
+        await client.close()
