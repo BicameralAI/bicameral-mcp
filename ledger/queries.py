@@ -1465,6 +1465,21 @@ async def project_decision_status(
     )
 
     if not binding_rows:
+        # #281 — prevent regression to "ungrounded" when all binds_to edges
+        # have been pruned (via not_relevant verdicts).  If compliance history
+        # exists, the decision was previously grounded and the caller-LLM
+        # intentionally removed the bindings.  Returning "ungrounded" would
+        # re-surface it in the grounding-gap loop.  "pending" signals "needs
+        # re-binding" without triggering re-discovery.
+        try:
+            history = await client.query(
+                "SELECT id FROM compliance_check WHERE decision_id = $d LIMIT 1",
+                {"d": decision_id},
+            )
+            if history:
+                return "pending"
+        except Exception:
+            pass
         return "ungrounded"
 
     all_compliant = True

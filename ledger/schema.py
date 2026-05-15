@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 21
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -1216,6 +1216,62 @@ async def _migrate_v19_to_v20(client: LedgerClient) -> None:
     logger.info("[migration] v19 → v20: input_span.archive_key field added (#221 Phase A)")
 
 
+async def _migrate_v20_to_v21(client: LedgerClient) -> None:
+    """v20 → v21: Backfill compliance_check rows for pre-verdict reflected decisions (#342).
+
+    Before the compliance-verdict gate was introduced (v0.5.0), decisions
+    could reach status='reflected' via hash-comparison alone — no
+    compliance_check row was written.  The new project_decision_status
+    requires a compliant verdict row to derive 'reflected', so these
+    pre-verdict-era decisions silently regressed to 'pending' or 'drifted'
+    on the next status re-projection.
+
+    This migration creates a synthetic compliance_check(verdict='compliant')
+    for each (decision, region) pair where the decision is 'reflected' but
+    no compliance_check exists.  The synthetic row uses the region's current
+    content_hash and is marked phase='migration' for traceability.
+
+    Idempotent: skips decisions that already have compliance_check rows.
+    """
+    reflected_rows = await client.query(
+        "SELECT type::string(id) AS did FROM decision WHERE status = 'reflected'"
+    )
+    if not reflected_rows:
+        logger.info("[migration] v20 → v21: no reflected decisions to backfill")
+        return
+
+    backfilled = 0
+    for row in reflected_rows:
+        did = row.get("did", "")
+        if not did:
+            continue
+        existing = await client.query(
+            "SELECT id FROM compliance_check WHERE decision_id = $d LIMIT 1",
+            {"d": did},
+        )
+        if existing:
+            continue
+        bindings = await client.query(
+            f"SELECT type::string(out) AS rid, out.content_hash AS ch "
+            f"FROM binds_to WHERE in = {did}",
+        )
+        for b in bindings or []:
+            rid = b.get("rid", "")
+            ch = b.get("ch", "")
+            if not rid or not ch:
+                continue
+            await client.execute(
+                "CREATE compliance_check SET "
+                "decision_id = $d, region_id = $r, content_hash = $h, "
+                "verdict = 'compliant', confidence = 'migrated', "
+                "explanation = 'backfilled by v20→v21 migration: pre-verdict-era reflected decision', "
+                "phase = 'migration', pruned = false, ephemeral = false",
+                {"d": did, "r": rid, "h": ch},
+            )
+            backfilled += 1
+    logger.info("[migration] v20 → v21: backfilled %d compliance_check rows", backfilled)
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1297,6 +1353,7 @@ _MIGRATIONS: dict[int, ...] = {
     18: _migrate_v17_to_v18,
     19: _migrate_v18_to_v19,
     20: _migrate_v19_to_v20,
+    21: _migrate_v20_to_v21,
 }
 
 

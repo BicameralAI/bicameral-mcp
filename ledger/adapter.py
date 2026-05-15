@@ -27,6 +27,7 @@ from .queries import (
     get_pending_decisions_with_regions,
     get_region_metadata,
     get_regions_for_files,
+    get_regions_with_ephemeral_verdicts,
     get_regions_without_hash,
     get_source_cursor,
     get_sync_state,
@@ -687,11 +688,19 @@ class SurrealDBLedgerAdapter:
                 logger.warning(
                     "[link_commit] could not surface pending decisions on already_synced: %s", exc
                 )
+
+            # #341 — ephemeral stale-repair on the already_synced path.
+            eph_repaired = 0
+            if is_authoritative:
+                eph_repaired = await self._repair_ephemeral_regions(
+                    repo_path, commit_hash, exclude_files=set()
+                )
+
             return {
                 "synced": True,
                 "commit_hash": commit_hash,
                 "reason": "already_synced",
-                "regions_updated": 0,
+                "regions_updated": eph_repaired,
                 "decisions_reflected": 0,
                 "decisions_drifted": 0,
                 "undocumented_symbols": [],
@@ -994,6 +1003,16 @@ class SurrealDBLedgerAdapter:
         except Exception as exc:
             logger.warning("[link_commit] could not surface stale pending decisions: %s", exc)
 
+        # #341 — ephemeral stale-repair on the main sweep path.
+        # Regions with ephemeral verdicts whose files were NOT in changed_files
+        # retain stale content_hash from the feature branch.
+        if is_authoritative:
+            swept_files = set(changed_files)
+            eph_extra = await self._repair_ephemeral_regions(
+                repo_path, commit_hash, exclude_files=swept_files
+            )
+            regions_updated += eph_extra
+
         if is_authoritative:
             await upsert_sync_state(self._client, repo_path, commit_hash)
 
@@ -1010,6 +1029,94 @@ class SurrealDBLedgerAdapter:
             "pending_compliance_checks": pending_checks,
             "pending_grounding_checks": pending_grounding_checks,
         }
+
+    async def _repair_ephemeral_regions(
+        self,
+        repo_path: str,
+        commit_hash: str,
+        exclude_files: set[str] | None = None,
+    ) -> int:
+        """Re-hash ephemeral-tainted regions at the authoritative ref.
+
+        After returning from a feature branch to the authoritative branch,
+        regions that were bound/verified on the feature branch retain a stale
+        content_hash (set from the feature-branch code).  project_decision_status
+        then finds the ephemeral verdict for that stale hash and incorrectly
+        reports "reflected".
+
+        This method:
+        1. Finds all regions with at least one ephemeral compliance verdict.
+        2. Skips regions already processed in the current sweep (exclude_files).
+        3. Re-computes content_hash at the authoritative ref.
+        4. Updates code_region.content_hash and promotes matching ephemeral verdicts.
+        5. Re-projects decision status.
+
+        Returns the number of regions repaired.
+
+        Fixes #341 (status stuck at pending/reflected after branch switch)
+        and prevents the stale-reflected bug documented by test E22.
+        """
+        try:
+            eph_regions = await get_regions_with_ephemeral_verdicts(self._client)
+        except Exception as exc:
+            logger.warning("[link_commit] ephemeral stale-repair query failed: %s", exc)
+            return 0
+
+        exclude = exclude_files or set()
+        repaired = 0
+        affected_decisions: set[str] = set()
+
+        for er in eph_regions:
+            er_id = er.get("region_id", "")
+            er_fp = er.get("file_path", "")
+            er_sl = er.get("start_line", 0)
+            er_el = er.get("end_line", 0)
+            if not er_id or not er_fp:
+                continue
+            if er_fp in exclude:
+                continue
+
+            try:
+                actual = compute_content_hash(
+                    er_fp, er_sl, er_el, repo_path, ref=commit_hash
+                )
+                await update_region_hash(
+                    self._client, er_id, actual or "", commit_hash
+                )
+                for dec in er.get("decisions") or []:
+                    if dec is None:
+                        continue
+                    did = str(dec.get("id", ""))
+                    if not did:
+                        continue
+                    if actual:
+                        await promote_ephemeral_verdict(
+                            self._client, did, er_id, actual
+                        )
+                    affected_decisions.add(did)
+                repaired += 1
+            except Exception as exc:
+                logger.warning(
+                    "[link_commit] ephemeral stale-repair failed for %s: %s",
+                    er_id, exc,
+                )
+
+        for did in affected_decisions:
+            try:
+                projected = await project_decision_status(self._client, did)
+                await update_decision_status(self._client, did, projected)
+            except Exception as exc:
+                logger.warning(
+                    "[link_commit] status re-projection failed for %s: %s",
+                    did, exc,
+                )
+
+        if repaired:
+            logger.info(
+                "[link_commit] ephemeral stale-repair: %d regions, %d decisions",
+                repaired, len(affected_decisions),
+            )
+        return repaired
 
     async def backfill_empty_hashes(
         self,
