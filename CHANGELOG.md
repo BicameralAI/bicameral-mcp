@@ -3,6 +3,20 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.14.7 — Worktree-setup polish: linked-worktree notice + authoritative-branch prompt (triage)
+
+Stopgap on the v0.14.x line ahead of the v0.15.0 Ledger Locator (#368). Makes the existing per-worktree setup model **intentional and visible** so users running `bicameral-mcp setup` from a linked worktree or submodule understand where their hooks land and which branch the runtime treats as authoritative. No behavior change for plain-repo installs; the v0.14.6 submodule `.git`-pointer fix still load-bears underneath.
+
+### Added
+
+- **Linked-worktree / submodule detection notice in `setup_wizard.run_setup` (#368).** After repo detection, the wizard now checks whether `<repo>/.git` is a file pointer (worktree or submodule layout) and, if so, prints a one-line notice naming the real gitdir path where hooks will be installed, plus a hint to re-run setup from each worktree. New helper `_detect_linked_worktree()` reuses the same `gitdir:` parser as `_resolve_git_hooks_dir()` (factored out into a shared `_resolve_git_pointer()`). Five test cases in `tests/test_setup_worktree_polish.py`.
+- **`origin/HEAD` probe + authoritative-branch prompt (#368).** When `git symbolic-ref refs/remotes/origin/HEAD` doesn't resolve (fresh clones, self-hosted remotes, repos without an `origin`), the wizard now prompts the user for their default branch instead of silently letting the runtime fall back to `"main"` — which is wrong for any project whose default is `master` / `trunk` / `develop`. `BICAMERAL_AUTHORITATIVE_REF` is only written into the MCP config when load-bearing: explicit env wins, then probe, then prompt; if the answer is `"main"` (or the probe succeeds), no override is written and the runtime auto-detector handles it. Non-interactive runs silently default to `"main"` to preserve install-script behavior. Seven test cases in `tests/test_setup_worktree_polish.py`.
+- **`_build_config` gains `authoritative_ref` parameter.** Threaded through `_write_json_config`, `_write_toml_config`, and `_install_for_agent` so the wizard's resolved branch reaches Claude / Cursor / Codex configs uniformly. Three integration tests confirm the env key only appears when pinned.
+
+### Context
+
+The v0.15.0 Ledger Locator (RFC: `docs/state-partition-rfc.md`, issue #368) replaces the per-worktree ledger with one user-home project-keyed ledger and supersedes most of this surface. v0.14.7 ships the smallest patch that unblocks worktree users on the *current* architecture without waiting for the architectural shift.
+
 ## v0.14.6 — Hotfix: resolve hooks dir for submodule `.git` pointer (triage)
 
 Hotfix on v0.14.5. Unblocks `bicameral-mcp setup` inside any submodule or linked-worktree layout — where `.git` is a *file* containing `gitdir: …` rather than a directory. The hook installer was synthesizing `<repo>/.git/hooks` unconditionally and crashing with `NotADirectoryError` before the wizard could finish.
