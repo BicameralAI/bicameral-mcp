@@ -1407,6 +1407,50 @@ async def delete_binds_to_edge(
         logger.warning("[delete_binds_to] %s → %s failed: %s", decision_id, region_id, exc)
 
 
+async def get_proposed_decisions_with_bindings(
+    client: LedgerClient,
+) -> list[dict]:
+    """Return proposed (un-ratified) decisions and their bound regions.
+
+    Used by the ephemeral prune step (#157) to identify decisions whose
+    bindings may not have survived a merge to the authoritative branch.
+    Only returns decisions with signoff.state in {proposed, collision_pending}
+    — ratified decisions are never pruned.
+    """
+    rows = await client.query(
+        """
+        SELECT
+            type::string(in)     AS decision_id,
+            in.signoff           AS signoff,
+            in.source_type       AS source_type,
+            type::string(out)    AS region_id,
+            out.file_path        AS file_path,
+            out.symbol_name      AS symbol_name,
+            out.start_line       AS start_line,
+            out.end_line         AS end_line
+        FROM binds_to
+        WHERE in.signoff.state IN ['proposed', 'collision_pending']
+        """,
+    )
+    return rows or []
+
+
+async def set_decision_pruned(
+    client: LedgerClient,
+    decision_id: str,
+    reason: str = "binding_didnt_survive_merge",
+) -> None:
+    """Transition a decision's signoff to 'pruned' terminal state (#157)."""
+    from datetime import datetime
+
+    now = datetime.now(UTC).isoformat()
+    await client.execute(
+        f"UPDATE {decision_id} SET signoff.state = 'pruned', "
+        f"signoff.pruned_at = $ts, signoff.prune_reason = $r",
+        {"ts": now, "r": reason},
+    )
+
+
 async def has_prior_compliant_verdict(
     client: LedgerClient,
     decision_id: str,
@@ -1465,10 +1509,13 @@ async def project_decision_status(
 
     signoff = dec_rows[0].get("signoff")
 
-    # Guard: superseded decisions are retired from code tracking.
-    # resolve_collision writes signoff.state='superseded' and this function
-    # must never overwrite that by re-deriving compliance status.
-    if isinstance(signoff, dict) and signoff.get("state") == "superseded":
+    # Guard: superseded / pruned decisions are retired from code tracking.
+    # resolve_collision writes signoff.state='superseded'; prune step (#157)
+    # writes signoff.state='pruned'.  Neither should be overwritten.
+    if isinstance(signoff, dict) and signoff.get("state") in (
+        "superseded",
+        "pruned",
+    ):
         return dec_rows[0].get("status") or "ungrounded"
 
     # Get all non-pruned bound regions + their current content_hash

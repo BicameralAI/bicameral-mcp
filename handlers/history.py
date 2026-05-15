@@ -294,6 +294,7 @@ async def handle_history(
     ctx,
     feature_filter: str | None = None,
     include_superseded: bool = True,
+    include_pruned: bool = False,
     as_of: str | None = None,
 ) -> HistoryResponse:
     """Read-only dump of the full decision ledger grouped by feature area.
@@ -338,6 +339,14 @@ async def handle_history(
             hist_dec = _row_to_history_decision(row, feature_id=feature_id)
             # Filter superseded if requested
             if not include_superseded and hist_dec.status == "superseded":
+                continue
+            # #157 — exclude pruned decisions by default
+            signoff_obj = row.get("signoff")
+            if (
+                not include_pruned
+                and isinstance(signoff_obj, dict)
+                and signoff_obj.get("state") == "pruned"
+            ):
                 continue
             decisions.append(hist_dec)
 

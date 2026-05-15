@@ -718,6 +718,11 @@ async def list_tools() -> list[Tool]:
                         "default": True,
                         "description": "Include superseded decisions in the response",
                     },
+                    "include_pruned": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include pruned decisions (ephemeral bindings that didn't survive merge). Default excludes them.",
+                    },
                     "as_of": {
                         "type": "string",
                         "description": "Git ref to evaluate against (default: HEAD)",
@@ -1196,6 +1201,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 ctx,
                 feature_filter=arguments.get("feature_filter"),
                 include_superseded=arguments.get("include_superseded", True),
+                include_pruned=arguments.get("include_pruned", False),
                 as_of=arguments.get("as_of"),
             )
             # Inject empty-ledger guidance so the caller-LLM doesn't bypass ingest.
