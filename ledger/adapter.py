@@ -1326,17 +1326,48 @@ class SurrealDBLedgerAdapter:
             governance = mapping.get("governance") or None
 
             # Create input_span node only when verbatim text is available.
-            # Per v0.5.0 contract: span.text must be non-empty; the schema
-            # ASSERT constraint enforces this at the DB level too.
+            # Per v0.5.0 contract: span.text must be non-empty; the v22
+            # schema ASSERT enforces "text != '' OR archive_key != ''"
+            # at the DB level.
+            #
+            # #221 Phase B-1: when a PiiArchive is configured on the
+            # adapter, write the verbatim text to the archive instead
+            # of inline. The input_span row carries only the
+            # archive_key (content-addressable reference) and text=''.
+            # If archive.put() fails, the row falls back to the legacy
+            # inline-text shape — best-effort segregation. A future
+            # cycle can promote this to fail-closed per the plan's
+            # ``_IngestRefused('archive_unwritable')`` semantic; for
+            # Phase B-1 we ship the dual-path to avoid breaking
+            # existing flows.
             span_id = ""
             if span_text:
+                archive_key = ""
+                archive = getattr(self, "_pii_archive", None)
+                if archive is not None:
+                    try:
+                        archive_key = archive.put(
+                            text=span_text,
+                            speakers=list(span.get("speakers", []) or []),
+                            source_ref=source_ref,
+                            meeting_date=span.get("meeting_date", "") or "",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[ingest] PII archive write failed for span "
+                            "(source_ref=%s); falling back to inline text: %s",
+                            source_ref,
+                            exc,
+                        )
+                        archive_key = ""
                 span_id = await upsert_input_span(
                     self._client,
-                    text=span_text,
+                    text=span_text if not archive_key else "",
                     source_type=source_type,
                     source_ref=source_ref,
                     speakers=span.get("speakers", []),
                     meeting_date=span.get("meeting_date", ""),
+                    archive_key=archive_key,
                 )
 
             # Stamp discovered on new decisions when signoff not explicitly provided.

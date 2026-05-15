@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 21
+SCHEMA_VERSION = 22
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -100,21 +100,34 @@ _TABLES = [
     # at the ingest contract boundary (IngestDecision.source_excerpt must be
     # non-empty). See v0.5.0 plan §Core Principle.
     "DEFINE TABLE input_span SCHEMAFULL",
-    "DEFINE FIELD text           ON input_span TYPE string ASSERT string::len($value) > 0",
+    # #221 Phase B-1: text is now optional-via-DEFAULT-empty + the ASSERT
+    # enforces "either text or archive_key is non-empty." New ingests
+    # write to the PII archive and leave text=''; legacy rows have
+    # text!='' and archive_key=''. The ASSERT is the deterministic gate
+    # (#205 doctrine, gate_kind: schema) — refactor-resistant; the row
+    # cannot land if BOTH are empty.
+    "DEFINE FIELD text           ON input_span TYPE string DEFAULT '' "
+    "ASSERT $value != '' OR $this.archive_key != ''",
     "DEFINE FIELD source_type    ON input_span TYPE string",  # transcript | notion | slack | document | manual | implementation_choice
     "DEFINE FIELD source_ref     ON input_span TYPE string DEFAULT ''",  # meeting ID, page URL, etc.
     "DEFINE FIELD speakers       ON input_span TYPE array<string> DEFAULT []",
     "DEFINE FIELD meeting_date   ON input_span TYPE string DEFAULT ''",
     "DEFINE FIELD created_at     ON input_span TYPE datetime DEFAULT time::now()",
-    # #221 Phase A: additive slot for the PII archive key. Phase A ships
-    # the slot only; Phase B wires ingest to populate it and Phase B
-    # introduces the ASSERT enforcing archive_key != '' OR text != ''.
-    # For Phase A new rows continue to leave archive_key = '' (legacy
-    # fallback).
+    # #221 Phase A: PII archive key. Phase B-1 wires ingest to populate
+    # it as the load-bearing PII surface; Phase B-2 will extend the
+    # pattern to decision.speakers/source_ref pseudonymization.
     "DEFINE FIELD archive_key    ON input_span TYPE string DEFAULT ''",
     "DEFINE INDEX idx_input_span_ref   ON input_span FIELDS source_type, source_ref",
-    # Dedup: same excerpt from same source is the same span
+    # Legacy dedup index — applies to pre-Phase-B-1 rows where text was
+    # the dedup key. Stays in place for backward-compat.
     "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text UNIQUE",
+    # #221 Phase B-1: schema-level UNIQUE on archive_key is NOT enforced
+    # at the index layer because legacy rows have archive_key='' (multiple
+    # empty values would violate UNIQUE). Dedup for new-ingest rows is
+    # enforced in Python by ``ledger/queries.py::get_input_span_id`` —
+    # the lookup queries by archive_key and returns the existing row
+    # before any CREATE. A future cycle can add a schema-level partial
+    # UNIQUE index after legacy-row backfill completes.
     # decision — extracted decision / requirement. "What was decided."
     # Denormalized source fields (source_type, source_ref, speakers, meeting_date)
     # are kept for query speed; they mirror the linked input_span but are never
@@ -1272,6 +1285,43 @@ async def _migrate_v20_to_v21(client: LedgerClient) -> None:
     logger.info("[migration] v20 → v21: backfilled %d compliance_check rows", backfilled)
 
 
+async def _migrate_v21_to_v22(client: LedgerClient) -> None:
+    """v21 → v22: PII archive cutover (#221 Phase B-1).
+
+    Relaxes the ``input_span.text`` ASSERT from ``string::len > 0`` to
+    ``$value != '' OR $this.archive_key != ''``. This is the
+    deterministic gate per the #205 doctrine — DB-engine-enforced;
+    handler-side bypass is structurally impossible because the row
+    cannot land if BOTH columns are empty.
+
+    Phase B-1 also wires ``handlers/ingest.py`` to write PII into the
+    PiiArchive (from Phase A) and leave ``text=''`` on new rows. The
+    ASSERT permits this because ``archive_key`` is set.
+
+    Legacy rows (v21 and earlier) have ``text!=''`` and ``archive_key=''``
+    and continue to satisfy the new ASSERT via the text clause. They
+    remain readable via the legacy fallback path in
+    ``ledger/queries.py::_resolve_span_text``.
+
+    Schema-level UNIQUE-on-archive_key is NOT added at this layer
+    because legacy rows have ``archive_key=''`` and multiple empty
+    values would violate UNIQUE. Dedup for new ingests is enforced in
+    Python via ``ledger/queries.py::get_input_span_id``. A future
+    cycle (post-legacy-row-backfill) can add a partial UNIQUE index.
+
+    Idempotent: ``DEFINE FIELD`` is overwrite-semantic on SurrealDB v2.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD text ON input_span TYPE string DEFAULT '' "
+        "ASSERT $value != '' OR $this.archive_key != ''",
+    )
+    logger.info(
+        "[migration] v21 → v22: input_span.text ASSERT relaxed for "
+        "PII archive cutover (#221 Phase B-1)"
+    )
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1354,6 +1404,7 @@ _MIGRATIONS: dict[int, ...] = {
     19: _migrate_v18_to_v19,
     20: _migrate_v19_to_v20,
     21: _migrate_v20_to_v21,
+    22: _migrate_v21_to_v22,
 }
 
 

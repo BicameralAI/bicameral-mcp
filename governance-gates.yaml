@@ -30,3 +30,13 @@ gates:
     backing_gate: ledger/client.py::LedgerClient._run_with_timeout::asyncio.wait_for
     gate_kind: server
 
+  # #221 Phase B-1: deterministic gate at the schema layer. The
+  # input_span.text ASSERT ($value != '' OR $this.archive_key != '')
+  # is enforced by SurrealDB itself — handler-side code cannot bypass
+  # it. This is the strongest gate variant; the row cannot land if
+  # BOTH text and archive_key are empty.
+  - skill: "*"
+    instruction_pattern: "PII goes to a separate archive"
+    backing_gate: ledger/schema.py::_TABLES::input_span::ASSERT
+    gate_kind: schema
+

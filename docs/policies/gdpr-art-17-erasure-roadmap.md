@@ -1,6 +1,6 @@
 # GDPR Art. 17 right-to-erasure — implementation roadmap
 
-**Status: Phase 1 of 3 shipped (2026-05-14). GDPR-01 audit gap remains OPEN until Phase 3 completes and backfill runs.**
+**Status: Phase 1 (PR #329) + Phase B-1 (this cycle) shipped (2026-05-15). GDPR-01 audit gap remains OPEN until Phase B-2 (speakers/source_ref pseudonymization), Phase B-3 (cross-author replay sanitizer), Phase C (erase-subject CLI + backfill) complete.**
 
 This document is the operator-facing roadmap for closing the
 **GDPR-01** audit gap identified in
@@ -48,31 +48,28 @@ is the first line of defense.
 
 **Gap-closure status after Phase 1**: GDPR-01 remains OPEN.
 
-## Phase 2 — ingest cutover (next cycle)
+## Phase B-1 — ingest cutover (this cycle, 2026-05-15)
 
-**Will ship:**
+**Shipped:**
 
-- Schema change: `input_span.text` becomes optional; new ASSERT
-  `archive_key != '' OR text != ''`; UNIQUE index swaps from
-  `(source_type, source_ref, text)` to a conditional UNIQUE on
-  `archive_key` where `archive_key != ''`.
-- `handlers/ingest.py` writes PII to the archive (sets `archive_key`)
-  and stores `''` in `input_span.text` for new rows.
-- Speakers and `source_ref` pseudonymization for new `decision` rows
-  (`decision.speakers` becomes a list of archive-keyed handles, not
-  raw names/emails).
-- Read-path migration: `ledger/queries.py` introduces
-  `_resolve_span_text(row, archive)` and all consumers route through
-  it. Empty-text-but-archive-key-set rows return archive content; legacy
-  rows fall back to `input_span.text`.
-- Cross-author replay sanitizer: `events/materializer.py` pushes peer
-  event text into the **local** archive before write, never inline-
-  persists peer PII into the structural ledger.
-- Governance gate (`governance-gates.yaml`) declared: the schema ASSERT
-  is the deterministic enforcement point.
+- Schema migration v21→v22: `input_span.text` becomes optional; new ASSERT `$value != '' OR $this.archive_key != ''`. Legacy UNIQUE-on-(source_type, source_ref, text) index preserved during transition. Schema-level UNIQUE-on-archive_key deferred — legacy rows have `archive_key=''` which would violate UNIQUE; Python-side dedup via `get_input_span_id` is the gate.
+- `SurrealDBLedgerAdapter.ingest_payload` writes PII to the archive (via `archive.put()`) and sets `archive_key` on the new `input_span` row; legacy text-fallback path preserved for archive-write failure.
+- `ledger/queries.py::_resolve_span_text(archive, row)` helper — single point of truth for text reads.
+- `_ERASED_SENTINEL = "[ERASED]"` constant hoisted; load-bearing in both the helper return value and the `real_spans` filter exclusion.
+- All 7 read sites refactored: 4 graph projections in `queries.py` (`get_all_decisions`, `search_by_bm25`, `get_decisions_for_file`, `get_decisions_for_files`), `handlers/history.py::_fetch_all_decisions_enriched` site, `handlers/remove_source.py` audit-telemetry consumer of `get_input_span_row`.
+- `governance-gates.yaml` entry: `gate_kind: schema` pointing at the input_span.text ASSERT.
+- `PiiArchive` instance plumbed onto `SurrealDBLedgerAdapter._pii_archive` via `adapters/ledger.py::get_ledger()`.
 
-**Gap-closure status after Phase 2**: GDPR-01 still OPEN. New ingests
-are erasable in principle but the CLI surface hasn't shipped yet.
+**Phase B-1 explicitly does NOT ship:**
+
+- `decision.speakers` / `decision.source_ref` pseudonymization (Phase B-2).
+- Cross-author replay sanitizer in `events/materializer.py` (Phase B-3).
+- `bicameral-mcp erase-subject` CLI (Phase C).
+- Backfill of legacy rows with `archive_key=''` (Phase C, separate sub-cycle).
+
+**Gap-closure status after Phase B-1**: GDPR-01 still OPEN. The largest PII surface (`input_span.text`) is now operator-erasable for new ingests; but speakers/source_ref still hold raw operator-supplied PII, the CLI to actually erase hasn't shipped, and legacy rows aren't migrated yet.
+
+## Phase B-2 — speakers/source_ref pseudonymization (next cycle)
 
 ## Phase 3 — operator-facing erasure (cycle after)
 

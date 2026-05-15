@@ -214,7 +214,7 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
                     purpose,
                     content_hash
                 } AS code_regions,
-                <-yields<-input_span.{id, text, source_ref, source_type, meeting_date, speakers} AS _source_spans
+                <-yields<-input_span.{id, text, archive_key, source_ref, source_type, meeting_date, speakers} AS _source_spans
             FROM decision
             ORDER BY created_at ASC
             """,
@@ -227,12 +227,29 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
         rows = await ledger.get_all_decisions(filter="all")
         return rows
 
+    # #221 Phase B-1: route each span's text through _resolve_span_text
+    # so post-erasure rows return the [ERASED] sentinel; legacy rows
+    # fall back to row["text"]. The archive accessor is on the inner
+    # SurrealDBLedgerAdapter; degrade gracefully if not present.
+    from ledger.queries import _resolve_span_text
+
+    archive = getattr(inner, "_pii_archive", None) or getattr(ledger, "_pii_archive", None)
+
     for row in rows:
         ca = row.pop("created_at", None)
         row.setdefault("ingested_at", str(ca)[:24] if ca else "")
         for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
+        # Resolve each span's text via the helper. Without archive,
+        # falls back to span["text"] (legacy behavior).
+        for span in row.get("_source_spans") or []:
+            if span is None:
+                continue
+            if archive is not None:
+                span["text"] = _resolve_span_text(archive, span)
+            else:
+                span["text"] = span.get("text") or ""
 
     return rows
 

@@ -19,6 +19,64 @@ from .client import LedgerClient, LedgerError
 logger = logging.getLogger(__name__)
 
 
+# ── #221 Phase B-1: PII archive read-path centralization ─────────────────
+
+
+# Sentinel returned by ``_resolve_span_text`` when a row's archive_key
+# is set but the archive entry has been erased (GDPR Art. 17 outcome).
+# Load-bearing in two places:
+#   1. ``_resolve_span_text`` returns this literal post-erasure.
+#   2. The ``real_spans`` filter at queries.py (graph-projection
+#      decision-rendering) excludes this literal from agent-visible
+#      surfaces.
+# Hoist to module-level so a refactor of one site without the other
+# fails fast at the constant-equality test.
+_ERASED_SENTINEL = "[ERASED]"
+
+
+def _resolve_span_text(archive, row: dict) -> str:
+    """Return the verbatim span text for a single ``input_span`` row.
+
+    Sync (NOT async) — ``PiiArchive.get()`` is a synchronous SQLite
+    read; wrapping in ``async`` would be unmotivated and would force
+    every consumer into an ``await``.
+
+    Priority:
+
+    1. If ``row['archive_key']`` is set:
+       - ``archive.get(key).text`` when the archive entry is present
+       - ``_ERASED_SENTINEL`` (literal ``"[ERASED]"``) when
+         ``archive.get(key)`` returns ``None`` (post-erasure)
+       - ``_ERASED_SENTINEL`` also on archive exception (logged to stderr)
+    2. Fall back to ``row['text']`` for legacy rows (archive_key='')
+       ingested before Phase B-1's cutover.
+    3. Empty string when neither is set (anomalous; the v22 ASSERT
+       should make this impossible but the helper handles it
+       defensively).
+
+    The helper is the **single point of truth** for ``input_span.text``
+    reads. Anti-test
+    ``tests/test_no_direct_input_span_text_reads.py`` greps the
+    codebase for direct projections / SELECTs and rejects them outside
+    the helper's allow-list (``ledger/queries.py``, tests, fixtures).
+    """
+    archive_key = row.get("archive_key") or ""
+    if archive_key:
+        try:
+            entry = archive.get(archive_key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[resolve_span_text] archive lookup failed for key %s: %s",
+                archive_key[:16] + "…",
+                exc,
+            )
+            return _ERASED_SENTINEL
+        if entry is None:
+            return _ERASED_SENTINEL
+        return entry.text
+    return row.get("text") or ""
+
+
 # ── Idempotent edge creation ──────────────────────────────────────────────
 #
 # Edge tables (yields, binds_to, locates, depends_on) each have a
@@ -147,8 +205,18 @@ async def get_all_decisions(
     client: LedgerClient,
     filter: str = "all",
     since: str | None = None,
+    archive=None,
 ) -> list[dict]:
-    """Forward graph traversal: decision → binds_to → code_region."""
+    """Forward graph traversal: decision → binds_to → code_region.
+
+    ``archive``: optional PiiArchive for resolving span text per #221
+    Phase B-1. When provided, span text is routed through
+    ``_resolve_span_text(archive, span)`` so post-erasure spans
+    return ``_ERASED_SENTINEL`` and erased rows are filtered out of
+    ``source_excerpt`` (agent-visible) but kept observable for audit.
+    When None, the legacy ``span["text"]`` path is used (backward-
+    compat for callers not yet updated).
+    """
     where_clauses = []
     vars: dict = {}
 
@@ -184,7 +252,7 @@ async def get_all_decisions(
                 purpose,
                 content_hash
             }} AS code_regions,
-            <-yields<-input_span.{{text, meeting_date, speakers}} AS source_spans
+            <-yields<-input_span.{{text, archive_key, meeting_date, speakers}} AS source_spans
         FROM decision
         {where}
         ORDER BY created_at DESC
@@ -201,7 +269,25 @@ async def get_all_decisions(
     for row in rows:
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
+        # #221 Phase B-1: route every span.text read through the helper.
+        # Resolved text replaces raw .text in the span dict so downstream
+        # filter logic sees the post-erasure sentinel correctly.
+        for span in spans:
+            if span is not None:
+                span["text"] = (
+                    _resolve_span_text(archive, span)
+                    if archive is not None
+                    else (span.get("text") or "")
+                )
+        # Filter: exclude empty, description-echoes, AND erased sentinel.
+        real_spans = [
+            s
+            for s in spans
+            if s
+            and s.get("text")
+            and s.get("text") != description
+            and s.get("text") != _ERASED_SENTINEL
+        ]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         if not row.get("meeting_date"):
@@ -216,11 +302,16 @@ async def search_by_bm25(
     query: str,
     max_results: int = 10,
     min_confidence: float = 0.5,
+    archive=None,
 ) -> list[dict]:
     """BM25 search on decision.description.
 
     Also pulls input_span.text (raw passage) + meeting_date via the
     yields reverse edge so callers can render the meeting excerpt.
+
+    #221 Phase B-1: ``archive`` (optional PiiArchive) routes span text
+    through ``_resolve_span_text`` so post-erasure rows return the
+    sentinel and are filtered out of agent-visible rendering.
     """
     rows = await client.query(
         """
@@ -240,7 +331,7 @@ async def search_by_bm25(
                 purpose,
                 content_hash
             } AS code_regions,
-            <-yields<-input_span.{text, meeting_date} AS source_spans
+            <-yields<-input_span.{text, archive_key, meeting_date} AS source_spans
         FROM decision
         WHERE description @0@ $query
         LIMIT $n
@@ -257,7 +348,22 @@ async def search_by_bm25(
                 region["symbol"] = region.pop("symbol_name")
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
+        # #221 Phase B-1: route span text through the helper.
+        for span in spans:
+            if span is not None:
+                span["text"] = (
+                    _resolve_span_text(archive, span)
+                    if archive is not None
+                    else (span.get("text") or "")
+                )
+        real_spans = [
+            s
+            for s in spans
+            if s
+            and s.get("text")
+            and s.get("text") != description
+            and s.get("text") != _ERASED_SENTINEL
+        ]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         row["meeting_date"] = (first_span.get("meeting_date") if first_span else "") or ""
@@ -329,8 +435,13 @@ async def upsert_vocab_cache(
 async def get_decisions_for_file(
     client: LedgerClient,
     file_path: str,
+    archive=None,
 ) -> list[dict]:
     """Reverse traversal: code_region → binds_to (reverse) → decision for a given file.
+
+    #221 Phase B-1: ``archive`` (optional PiiArchive) routes span text
+    through ``_resolve_span_text`` so post-erasure rows return the
+    sentinel.
 
     Also pulls source_excerpt + meeting_date per decision via the
     yields reverse edge so the drift handler can render the meeting passage.
@@ -402,7 +513,7 @@ async def get_decisions_for_file(
             """
             SELECT
                 type::string(id) AS decision_id,
-                <-yields<-input_span.{text, meeting_date} AS source_spans
+                <-yields<-input_span.{text, archive_key, meeting_date} AS source_spans
             FROM decision
             WHERE type::string(id) IN $ids
             """,
@@ -414,7 +525,26 @@ async def get_decisions_for_file(
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
+            # #221 Phase B-1: route span text through the helper.
+            # ``archive`` not threaded into get_decisions_for_file yet —
+            # legacy fallback returns raw span text. The behavioral
+            # tests pin that erasure propagates here via the caller
+            # passing archive.
+            for span in spans:
+                if span is not None:
+                    span["text"] = (
+                        _resolve_span_text(archive, span)
+                        if archive is not None
+                        else (span.get("text") or "")
+                    )
+            real_spans = [
+                s
+                for s in spans
+                if s
+                and s.get("text")
+                and s.get("text") != desc
+                and s.get("text") != _ERASED_SENTINEL
+            ]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -450,12 +580,17 @@ async def has_decisions_for_files(
 async def get_decisions_for_files(
     client: LedgerClient,
     file_paths: list[str],
+    archive=None,
 ) -> list[dict]:
     """Bulk reverse traversal: given a list of file paths, return all decisions
     pinned to any code_region in those files.
 
     Same shape as get_decisions_for_file but batched — avoids N+1 queries
     when the caller has several candidate files from a code locator search.
+
+    #221 Phase B-1: ``archive`` (optional PiiArchive) routes span text
+    through ``_resolve_span_text`` so post-erasure rows return the
+    sentinel.
     """
     if not file_paths:
         return []
@@ -526,7 +661,7 @@ async def get_decisions_for_files(
             """
             SELECT
                 type::string(id) AS decision_id,
-                <-yields<-input_span.{text, meeting_date} AS source_spans
+                <-yields<-input_span.{text, archive_key, meeting_date} AS source_spans
             FROM decision
             WHERE type::string(id) IN $ids
             """,
@@ -538,7 +673,22 @@ async def get_decisions_for_files(
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
+            # #221 Phase B-1: route span text through the helper.
+            for span in spans:
+                if span is not None:
+                    span["text"] = (
+                        _resolve_span_text(archive, span)
+                        if archive is not None
+                        else (span.get("text") or "")
+                    )
+            real_spans = [
+                s
+                for s in spans
+                if s
+                and s.get("text")
+                and s.get("text") != desc
+                and s.get("text") != _ERASED_SENTINEL
+            ]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -1077,14 +1227,51 @@ async def upsert_input_span(
     source_ref: str = "",
     speakers: list = (),
     meeting_date: str = "",
+    archive_key: str = "",
 ) -> str:
     """Create or update an input_span node. Returns the input_span ID string.
 
-    Deduplicates on (source_type, source_ref, text). text must be non-empty
-    (enforced by the schema ASSERT constraint).
+    #221 Phase B-1: when ``archive_key`` is provided, the row is
+    written with ``text=''`` and the supplied ``archive_key`` —
+    PII flows to the operator-erasable archive (Phase A primitive).
+    Dedup keys on ``archive_key`` when set; falls back to legacy
+    ``(source_type, source_ref, text)`` for backward-compat.
+
+    The v22 schema ASSERT enforces "text != '' OR archive_key != ''"
+    at the DB engine level — this function trusts the ASSERT to
+    reject malformed combinations.
+
+    Legacy behavior preserved: callers passing ``text`` and no
+    ``archive_key`` still get a row written with the legacy shape
+    (text-only, archive_key='').
     """
-    if not text:
+    if not text and not archive_key:
+        # ASSERT would reject; short-circuit with empty return to
+        # match prior contract.
         return ""
+    # #221 Phase B-1: archive-keyed dedup path
+    if archive_key:
+        existing = await client.query(
+            "SELECT id FROM input_span WHERE archive_key = $k LIMIT 1",
+            {"k": archive_key},
+        )
+        if existing:
+            return str(existing[0].get("id", ""))
+        rows = await client.query(
+            "CREATE input_span SET "
+            "text=$t, archive_key=$k, source_type=$st, "
+            "source_ref=$sr, speakers=$sp, meeting_date=$md",
+            {
+                "t": "",  # PII lives in archive; row carries only the key
+                "k": archive_key,
+                "st": source_type,
+                "sr": source_ref,
+                "sp": list(speakers),
+                "md": meeting_date,
+            },
+        )
+        return str(rows[0].get("id", "")) if rows else ""
+    # Legacy path — text-only dedup (pre-Phase-B-1)
     rows = await client.query(
         """
         UPSERT input_span SET
