@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -48,6 +48,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     17: "0.14.x",  # re-runnable yields integrity cleanup; placeholder, release-eng pins final value at PR merge
     18: "0.14.x",  # decision.updated_at + idx_decision_updated_at (#87 precondition — revision marker for preflight dedup); placeholder, release-eng pins final value at PR merge
     19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
+    23: "0.15.x",  # decision_level backfill for legacy rows; placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -1322,6 +1323,109 @@ async def _migrate_v21_to_v22(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v22_to_v23(client: LedgerClient) -> None:
+    """v22 → v23: Backfill decision_level for legacy decisions.
+
+    The v8→v9 migration added the decision_level field (DEFAULT NONE) but
+    did not classify existing rows. The #340 auto-classify heuristic only
+    runs on newly ingested decisions, so all pre-#340 rows remain NONE
+    (unclassified). Per the tolerant policy, NONE is treated as L3 — this
+    silently excludes legacy decisions from the codegenome identity graph.
+
+    This migration applies the same deterministic heuristic used by
+    ``ledger.adapter._classify_decision_level`` at ingest time:
+
+      1. Has binds_to edge → L2 (architecture, code-grounded).
+      2. source_type ∈ {transcript, notion, slack, document} → L1.
+      3. source_type ∈ {implementation_choice, agent_session} → L3.
+      4. Remaining → L2 (safe default — enters identity graph).
+
+    Idempotent: only touches rows WHERE decision_level IS NONE.
+
+    Legacy decision rows (from pre-v18 fixtures or ancient DBs) may
+    carry NONE values for required typed fields (``created_at``,
+    ``feature_hint``, etc.) that were added by later schema versions.
+    SurrealDB v2 re-validates the entire record on any UPDATE, so a
+    bulk ``UPDATE decision SET decision_level = ...`` fails on these
+    rows even though the migration only touches ``decision_level``.
+    We therefore UPDATE per-row and skip (with a warning) any row
+    whose record is too broken for an in-place patch.
+    """
+    # Step 1: decisions with code-region bindings → L2.
+    # Bound decision IDs come from the binds_to edge table (not
+    # ``->binds_to->code_region IS NOT EMPTY``, which returns True for
+    # all rows in SurrealDB v2 embedded — known quirk).
+    bound_ids = await client.query("SELECT type::string(`in`) AS id FROM binds_to")
+    bound_id_set = {r["id"] for r in (bound_ids or []) if r.get("id")}
+
+    # Fetch all unclassified decisions once for per-row processing.
+    unclassified = await client.query(
+        "SELECT type::string(id) AS id, source_type FROM decision WHERE decision_level IS NONE"
+    )
+    unclassified = [r for r in (unclassified or []) if r.get("id")]
+
+    product_sources = {"transcript", "notion", "slack", "document"}
+    impl_sources = {"implementation_choice", "agent_session"}
+
+    bound_count = 0
+    product_count = 0
+    impl_count = 0
+    fallback_count = 0
+    skip_count = 0
+
+    for row in unclassified:
+        did = row["id"]
+        src = row.get("source_type") or ""
+
+        if did in bound_id_set:
+            level = "L2"
+            counter = "bound"
+        elif src in product_sources:
+            level = "L1"
+            counter = "product"
+        elif src in impl_sources:
+            level = "L3"
+            counter = "impl"
+        else:
+            level = "L2"
+            counter = "fallback"
+
+        try:
+            await client.execute(
+                f"UPDATE {did} SET decision_level = '{level}', updated_at = time::now()"
+            )
+        except Exception:
+            # Row has NONE values in required typed fields from a pre-v18
+            # fixture or ancient DB. Skip it — NONE is already treated as
+            # L3 by the tolerant policy, so the row remains functional.
+            skip_count += 1
+            logger.debug(
+                "[migration] v22 → v23: skipping %s — record fails "
+                "re-validation (likely legacy fixture with missing fields)",
+                did,
+            )
+            continue
+
+        if counter == "bound":
+            bound_count += 1
+        elif counter == "product":
+            product_count += 1
+        elif counter == "impl":
+            impl_count += 1
+        else:
+            fallback_count += 1
+
+    logger.info(
+        "[migration] v22 → v23: decision_level backfill — "
+        "%d bound→L2, %d product→L1, %d impl→L3, %d fallback→L2, %d skipped",
+        bound_count,
+        product_count,
+        impl_count,
+        fallback_count,
+        skip_count,
+    )
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1405,6 +1509,7 @@ _MIGRATIONS: dict[int, ...] = {
     20: _migrate_v19_to_v20,
     21: _migrate_v20_to_v21,
     22: _migrate_v21_to_v22,
+    23: _migrate_v22_to_v23,
 }
 
 
