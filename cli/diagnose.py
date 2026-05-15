@@ -43,6 +43,7 @@ _ALLOWED_FIELDS = frozenset(
         "drift_status",
         "audit_log_channel",
         "table_counts",
+        "row_probe_warnings",
         "recent_events",
         "suggestions",
     }
@@ -62,6 +63,7 @@ _CANONICAL_TABLES = (
     "locates",
     "schema_meta",
     "bicameral_meta",
+    "ledger_sync",
 )
 
 
@@ -85,6 +87,7 @@ class Diagnosis:
     drift_status: str
     audit_log_channel: str
     table_counts: dict[str, int]
+    row_probe_warnings: list[str]
     recent_events: list[dict[str, Any]]
     suggestions: list[str]
 
@@ -135,6 +138,15 @@ def _format_table_counts_section(d: Diagnosis) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _format_row_probe_section(d: Diagnosis) -> str:
+    if not d.row_probe_warnings:
+        return "## Row-level probe\n\nAll operational tables readable.\n"
+    lines = ["## Row-level probe\n"]
+    for w in d.row_probe_warnings:
+        lines.append(f"- ⚠ {w}")
+    return "\n".join(lines) + "\n"
+
+
 def _format_recent_events_section(d: Diagnosis) -> str:
     header = f"## Recent events (warn|error, last {len(d.recent_events)})\n\n"
     header += f"_Audit log channel: {d.audit_log_channel} (redact if path is sensitive)_\n\n"
@@ -177,6 +189,8 @@ def format_diagnosis(d: Diagnosis) -> str:
         + _format_schema_section(d)
         + "\n"
         + _format_table_counts_section(d)
+        + "\n"
+        + _format_row_probe_section(d)
         + "\n"
         + _format_recent_events_section(d)
         + "\n"

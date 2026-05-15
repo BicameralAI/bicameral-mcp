@@ -3,20 +3,8 @@ name: Schema Persistence Tests
 on:
   workflow_dispatch:
   push:
-    paths:
-      - 'ledger/schema.py'
-      - 'ledger/client.py'
-      - 'ledger/adapter.py'
-      - 'tests/test_schema_persistence.py'
-      - 'pyproject.toml'
   pull_request:
     branches: [main, dev]
-    paths:
-      - 'ledger/schema.py'
-      - 'ledger/client.py'
-      - 'ledger/adapter.py'
-      - 'tests/test_schema_persistence.py'
-      - 'pyproject.toml'
 
 defaults:
   run:
@@ -30,17 +18,38 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # #122 — detect whether any schema-relevant paths changed.
+      # The job always runs (satisfying branch-protection required-checks)
+      # but skips the expensive install+test when no relevant files changed.
+      - uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            schema:
+              - 'ledger/schema.py'
+              - 'ledger/client.py'
+              - 'ledger/adapter.py'
+              - 'tests/test_schema_persistence.py'
+              - 'pyproject.toml'
+
       - uses: actions/setup-python@v5
+        if: steps.changes.outputs.schema == 'true'
         with:
           python-version: '3.13'
 
       - name: Install dependencies
+        if: steps.changes.outputs.schema == 'true'
         run: pip install -e ".[test]"
 
       - name: Run schema persistence tests
+        if: steps.changes.outputs.schema == 'true'
         run: pytest tests/test_schema_persistence.py -v --tb=short
         env:
           # tests construct their own surrealkv:// paths via tmp_path;
           # this fallback prevents any fixture from defaulting to a shared db
           SURREAL_URL: 'memory://'
           REPO_PATH: ${{ github.workspace }}
+
+      - name: Schema paths unchanged — skip
+        if: steps.changes.outputs.schema != 'true'
+        run: echo "No schema-relevant files changed; skipping tests."

@@ -198,7 +198,7 @@ def _check_canary(payload: dict) -> None:
     env-disable shortcuts the detector cost (does not even serialize the
     payload).
     """
-    if os.getenv("BICAMERAL_INGEST_CANARY_DISABLE", "").strip() == "1":
+    if os.getenv("BICAMERAL_INGEST_CANARY_DISABLE", "").strip().lower() in _GUIDED_MODE_TRUTHY:
         return
     from handlers import canary_patterns
 
@@ -235,7 +235,7 @@ def _check_sensitive(payload: dict) -> None:
     disables in v1). The env disable shortcuts the detector cost
     (does not even serialize the payload).
     """
-    if os.getenv("BICAMERAL_INGEST_SECRET_DISABLE", "").strip() == "1":
+    if os.getenv("BICAMERAL_INGEST_SECRET_DISABLE", "").strip().lower() in _GUIDED_MODE_TRUTHY:
         return
     from handlers import sensitive_patterns
 

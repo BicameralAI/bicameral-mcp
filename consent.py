@@ -108,7 +108,10 @@ def telemetry_allowed() -> bool:
 
 def _should_notify() -> bool:
     """True iff the notice has not been emitted for the current policy version."""
-    if os.getenv("BICAMERAL_SKIP_CONSENT_NOTICE", "").strip() == "1":
+    # #232 — use unified truthy vocabulary (1/true/yes/on)
+    from context import _GUIDED_MODE_TRUTHY
+
+    if os.getenv("BICAMERAL_SKIP_CONSENT_NOTICE", "").strip().lower() in _GUIDED_MODE_TRUTHY:
         return False
     marker = read_consent()
     if marker is None:
