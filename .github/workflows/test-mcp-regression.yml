@@ -65,6 +65,9 @@ jobs:
           fi
       - name: Assert symlinks materialize on this platform
         shell: bash
+        # ASCII-only print messages — Windows Python defaults to cp1252 for
+        # stdout and crashes with UnicodeEncodeError on em-dash / arrow chars.
+        # PYTHONIOENCODING=utf-8 would also work but ASCII is simpler.
         run: |
           python - <<'PY'
           import os, sys
@@ -74,22 +77,22 @@ jobs:
               print(f"::error::{probe} missing entirely")
               sys.exit(1)
           if probe.is_symlink():
-              print(f"OK — {probe} resolves as a symlink → {os.readlink(probe)}")
+              print(f"OK - {probe} resolves as a symlink -> {os.readlink(probe)}")
               sys.exit(0)
           # If we land here on Windows, core.symlinks=false swallowed the
           # symlink and the file now contains the target path as text.
           content = probe.read_text().strip() if probe.is_file() else "<missing>"
           if content.startswith("../../skills/"):
               print(
-                  "::error::Windows clone without core.symlinks=true — "
+                  "::error::Windows clone without core.symlinks=true - "
                   ".claude/skills/bicameral-preflight is a plain file containing the "
                   f"path string {content!r} instead of resolving to the canonical "
                   "skills/ directory. Set `core.symlinks=true` before cloning (or "
-                  "clone via WSL). See CLAUDE.md §'Canonical Skill Source'."
+                  "clone via WSL). See CLAUDE.md 'Canonical Skill Source' section."
               )
               sys.exit(1)
           print(
-              f"::error::Unexpected state — {probe} is neither a symlink nor a "
+              f"::error::Unexpected state - {probe} is neither a symlink nor a "
               f"path-string text file: {content!r}"
           )
           sys.exit(1)
