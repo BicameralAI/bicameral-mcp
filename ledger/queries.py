@@ -1142,7 +1142,16 @@ async def get_ledger_revision(client: LedgerClient) -> str | None:
     bicameral_meta LIMIT 1``. The counter is auto-bumped on every
     decision CREATE/UPDATE by the ``decision_revision_bump`` DEFINE
     EVENT (see ``ledger/schema.py::_BICAMERAL_META``). Constant-time
-    read, deterministic, ~0.4ms p95 at any ledger size.
+    read, deterministic.
+
+    SLO: p95 < 5ms on file-backed SurrealKV, constant-time wrt N.
+    Gated by ``tests/perf/test_ledger_revision_perf.py`` running in
+    ``.github/workflows/perf-gate.yml`` (#357 sub-task 2). The pre-#357
+    docstring claimed "~0.4ms p95 at any ledger size" but was measured
+    on ``memory://`` — a CPU-cache benchmark, not a storage benchmark.
+    Local file-backed measurements land at p95~0.15-0.20ms; the 5ms SLO
+    leaves CI-runner-noise headroom and will tighten once the gate has
+    landed enough green runs to learn the actual baseline.
 
     History — what this replaces:
       - v18 draft: ``math::max(coalesce(updated_at, created_at))`` —
