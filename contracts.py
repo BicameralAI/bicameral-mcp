@@ -494,6 +494,7 @@ class IngestDecision(BaseModel):
     source_excerpt: str = ""
     signoff: dict | None = None
     feature_group: str | None = None
+    decision_level: str | None = None  # L1 | L2 | L3 — #340 auto-classified when omitted
     # #109 — optional governance metadata threaded to the ledger.
     governance: dict | None = None
 

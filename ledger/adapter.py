@@ -78,6 +78,31 @@ from .status import (
 
 _CODE_BODY_LINE_CAP = 200
 
+# #340 — source types whose decisions originate from human product/business
+# conversations (meetings, PRDs, Slack threads, Notion pages). These map to
+# L1 (product commitment) when no code regions are present. When code regions
+# ARE present, the decision is architectural (L2) regardless of source.
+_PRODUCT_SOURCE_TYPES = frozenset({"transcript", "notion", "slack", "document"})
+_IMPL_SOURCE_TYPES = frozenset({"implementation_choice", "agent_session"})
+
+
+def _classify_decision_level(source_type: str, code_regions: list) -> str:
+    """Deterministic heuristic for decision_level when the caller omits it.
+
+    Rules (applied in order):
+    1. Code regions present → L2 (architecture, code-grounded).
+    2. Source is a product conversation → L1 (product commitment).
+    3. Source is an implementation choice → L3 (technical detail).
+    4. Fallback → L2 (safe default — enters codegenome identity graph).
+    """
+    if code_regions:
+        return "L2"
+    if source_type in _PRODUCT_SOURCE_TYPES:
+        return "L1"
+    if source_type in _IMPL_SOURCE_TYPES:
+        return "L3"
+    return "L2"
+
 
 def _extract_code_body(
     file_path: str,
@@ -1115,6 +1140,9 @@ class SurrealDBLedgerAdapter:
             initial_status = "ungrounded" if not code_regions else "pending"
             feature_group = mapping.get("feature_group") or None
             decision_level = mapping.get("decision_level") or None
+            # #340 — auto-classify when caller omits decision_level.
+            if not decision_level:
+                decision_level = _classify_decision_level(source_type, code_regions)
             parent_decision_id = mapping.get("parent_decision_id") or None
             # #109 — optional governance metadata; threaded into the
             # decision row's ``governance`` flexible-object field. None
