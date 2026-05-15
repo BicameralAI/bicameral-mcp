@@ -83,6 +83,14 @@ SOCIABLE_SIGNALS = (
     "SurrealDBLedgerAdapter",
     "from adapters.ledger import",
     "adapters.ledger.get_ledger",
+    # Test files that import from a sociable seed helper inherit
+    # sociability — the helper instantiates the real adapter on the
+    # caller's behalf. Listed seed helpers all live in tests/eval/ and
+    # use memory:// internally.
+    "from tests.eval._preflight_eval_seed",
+    "from tests.eval._seed_ledger",
+    "make_real_ledger",
+    "apply_setup_to_ledger",
 )
 SOLITARY_SIGNALS = (
     r"\bAsyncMock\b",
@@ -113,7 +121,16 @@ def find_refs(func_name: str, test_files: list[tuple[Path, str, str]]) -> list[t
     return out
 
 
-def main() -> int:
+def compute_audit() -> dict:
+    """Programmatic audit entry point — used by both `main` (for the
+    markdown report) and `tests/test_ledger_mock_regression.py` (for the
+    Phase C regression-counter test).
+
+    Returns a dict with keys:
+      - rows: per-function detail list
+      - direct_count, trap_count, indirect_count, uncovered_count
+      - trap_rows: list of trap row detail (function name, line, refs)
+    """
     funcs = extract_functions(QUERIES)
     test_files_classified = [(p, p.read_text(), classify_test(p)) for p in collect_test_files()]
 
@@ -165,11 +182,35 @@ def main() -> int:
         if r["sociable_count"] == 0 and not r["indirect_sociable"] and not r["solitary_only"]
     ]
 
+    return {
+        "rows": rows,
+        "sql_rows": sql_rows,
+        "direct": direct,
+        "traps": traps,
+        "indirect": indirect,
+        "uncovered": uncovered,
+        "direct_count": len(direct),
+        "trap_count": len(traps),
+        "indirect_count": len(indirect),
+        "uncovered_count": len(uncovered),
+    }
+
+
+def main() -> int:
+    a = compute_audit()
+    funcs_total = len([r for r in a["rows"] if True])
+    rows = a["rows"]
+    sql_rows = a["sql_rows"]
+    direct = a["direct"]
+    traps = a["traps"]
+    indirect = a["indirect"]
+    uncovered = a["uncovered"]
+
     print("# Sociable test coverage audit — `ledger/queries.py`")
     print()
     print("**Issue #357 sub-task 1 — Phase A deliverable.**")
     print()
-    print(f"- Total functions in `ledger/queries.py`: **{len(funcs)}**")
+    print(f"- Total functions in `ledger/queries.py`: **{funcs_total}**")
     print(f"- Functions issuing raw SurrealQL: **{len(sql_rows)}**")
     print()
     print("Coverage breakdown (SurrealQL-bearing functions only):")
