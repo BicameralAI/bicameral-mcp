@@ -662,6 +662,40 @@ async def handle_preflight(
             preflight_id=pid,
         )
 
+    # #343 — ledger-awareness fast-path. When the caller supplied file_paths
+    # and guided_mode is off, check whether ANY decisions are bound to those
+    # files BEFORE the expensive sync + full query chain. If zero decisions
+    # exist, the preflight has no value to surface — return immediately.
+    # This eliminates noise on un-ingested code paths.
+    if file_paths and not guided_mode:
+        try:
+            inner = getattr(ctx.ledger, "_inner", ctx.ledger)
+            _client = getattr(inner, "_client", None)
+            if _client is not None:
+                from ledger.queries import has_decisions_for_files
+
+                has_any = await has_decisions_for_files(_client, file_paths)
+                if not has_any:
+                    if pid is not None:
+                        write_preflight_event(
+                            session_id=session_id,
+                            preflight_id=pid,
+                            topic=topic,
+                            file_paths=file_paths,
+                            fired=False,
+                            surfaced_ids=[],
+                            reason="no_relevant_decisions",
+                        )
+                    return PreflightResponse(
+                        topic=topic,
+                        fired=False,
+                        reason="no_relevant_decisions",
+                        guided_mode=guided_mode,
+                        preflight_id=pid,
+                    )
+        except Exception as exc:
+            logger.debug("[preflight] ledger-awareness fast-path failed: %s", exc)
+
     # V1 A3: time the call locally so the metric reflects THIS handler's catch-up.
     import time as _time
 

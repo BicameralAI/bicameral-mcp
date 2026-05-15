@@ -56,6 +56,18 @@ SKIP_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\bfix\b.*\btypo\b", re.IGNORECASE),
     re.compile(r"\bbump\b.*\b(?:to|from)\b.*\d+\.\d+", re.IGNORECASE),
     re.compile(r"\bhow does\b", re.IGNORECASE),
+    # #343 — suppress preflight for clearly non-decision-related work.
+    re.compile(r"\b(?:lint|format|prettier|eslint|ruff)\b", re.IGNORECASE),
+    re.compile(r"\breadme\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:fix|update|add|edit|configure)\b.*\b(?:ci|github.actions?|workflow)\b"
+        r"|\b(?:ci|github.actions?|workflow)\b.*\b(?:fix|update|add|edit|configure)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\btest(?:s|ing)?\b.*\b(?:fix|add|update|write)\b", re.IGNORECASE),
+    re.compile(r"\b(?:fix|add|update|write)\b.*\btest(?:s|ing)?\b", re.IGNORECASE),
+    re.compile(r"\b(?:changelog|release.notes?)\b", re.IGNORECASE),
+    re.compile(r"\b(?:docker|dockerfile|compose)\b", re.IGNORECASE),
 )
 
 _VERB_REGEX = re.compile(
