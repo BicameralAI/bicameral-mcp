@@ -1805,12 +1805,20 @@ async def get_context_for_ready_decisions(
         WHERE signoff.state = 'context_pending'
         """,
     )
+    # #358 — preserve the row's actual decision.status (one of {reflected,
+    # drifted, pending, ungrounded} per schema v10+) instead of hardcoding
+    # "context_pending". The signoff state is already surfaced separately
+    # via the signoff dict; duplicating it into the status field violated
+    # BriefDecision.status's Literal contract and the handler's downstream
+    # try/except swallowed the ValidationError silently — production
+    # behavior: context_pending_ready always returned empty. Pattern
+    # matches the sibling get_collision_pending_decisions at line 1781.
     return [
         {
             "decision_id": str(r.get("decision_id", "")),
             "description": str(r.get("description", "")),
             "signoff": r.get("signoff"),
-            "status": "context_pending",
+            "status": str(r.get("status", "ungrounded")),
         }
         for r in (rows or [])
         if r.get("decision_id") and int(r.get("confirmed_ctx_count") or 0) > 0
