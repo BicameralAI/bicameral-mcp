@@ -1225,7 +1225,12 @@ async def relate_locates(
 # explicitly signals retry-safety in the message. Pinned by
 # ``tests/test_input_span_safe_upsert.py::test_mvcc_conflict_substring_pinned``.
 _MVCC_RETRY_SUBSTRING = "failed to commit transaction"
-_UPSERT_MAX_RETRIES = 5
+# 10 absorbs MVCC bursts under heavy embedded-DB load (test suite running
+# dozens of memory:// instances in the same process produces transient
+# storms). Conflicting writer has already committed by the time we see
+# the error, so each retry's SELECT short-circuits — wall-clock cost of
+# extra retries is one RTT each, negligible.
+_UPSERT_MAX_RETRIES = 10
 
 
 async def upsert_input_span(
