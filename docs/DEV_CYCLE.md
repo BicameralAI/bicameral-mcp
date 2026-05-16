@@ -400,6 +400,10 @@ The squash commit message inherits this; loose PR titles produce ugly history.
 Closes #61
 Refs #60 (depends on continuity matcher landed there)
 
+## Linked decisions
+Closes decision:ko8efq3z1zwhbof7kecq — Name "Ledger Locator"
+Refs decision:c2eqcwimhe4lpaexrddw — Supported environments scope lock
+
 ## Plan / Audit / Seal
 - Plan: docs/Planning/plan-codegenome-phase-4.md (v3, content hash sha256:911171cf…)
 - Audit: META_LEDGER Entry #13, chain hash 21ac210f… — verdict PASS
@@ -413,6 +417,25 @@ Refs #60 (depends on continuity matcher landed there)
 
 The Plan/Audit/Seal section is **mandatory for any PR > 100 LOC or risk:L2+**.
 Smaller PRs may use `Plan: trivial; risk:L1`.
+
+> **Linked decisions are required on PRs authored by BicameralAI org
+> members.** Every load-bearing change should trace to at least one
+> decision in the bicameral ledger — the PR body cites the
+> `decision:<surrealdb-id>` so reviewers can verify the change is
+> grounded in an explicit decision rather than ambient assumption. If
+> no relevant decision exists yet, run `bicameral.ingest` (or capture
+> via the dashboard's Ingest panel) **before** opening the PR; if the
+> change *was* the decision-of-record, ingest it then reference it
+> here. Use the same keyword vocabulary as `## Linked issues`:
+> `Closes decision:<id>` for the decision this PR satisfies / closes
+> the gap for, `Refs decision:<id>` for decisions that constrain or
+> motivate the change without being directly closed.
+>
+> **External contributors are exempt.** Bicameral access is
+> org-internal; gating community contributions on internal tooling is
+> not the goal. A maintainer shepherding an external PR SHOULD ingest
+> the load-bearing decision on the contributor's behalf at merge time
+> and add a post-merge comment linking it for the audit trail.
 
 > **PR-body issue references (Issue #114)**: every PR body that
 > mentions `#NUMBER` tokens should wrap them with one of:
