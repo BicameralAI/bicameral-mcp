@@ -1,0 +1,8 @@
+{
+  "invoked_history": true,
+  "submitted": true,
+  "reasoning": "Fetched bicameral_history to check for cross-cutting decisions on theming, styling, or UI state management; ledger contains only billing, auth, and permissions decisions with no relevance to dark mode implementation.",
+  "turns": 2,
+  "tokens_in": 956,
+  "tokens_out": 565
+}
