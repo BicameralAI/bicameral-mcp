@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "billing"
+  ],
+  "reasoning": "The billing feature's decision about preventing duplicate charges (\"Customers cannot be billed twice for the same order\") directly describes idempotent payment processing behavior — ensuring the same payment is not processed more than once."
+}

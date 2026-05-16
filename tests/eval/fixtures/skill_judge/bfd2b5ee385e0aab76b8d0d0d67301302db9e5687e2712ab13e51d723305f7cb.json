@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "billing"
+  ],
+  "reasoning": "The \"billing\" feature group contains a decision explicitly about pro-rate refunds on plan downgrade, which directly describes behavior the current task (billing proration logic for plan downgrade) will touch."
+}

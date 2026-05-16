@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "auth"
+  ],
+  "reasoning": "The \"auth\" feature contains a decision about JWT token TTL (60-minute expiration), which directly describes behavior the JWT token expiration handling task will touch."
+}
