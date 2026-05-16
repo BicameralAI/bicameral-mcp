@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
+import threading
 from pathlib import Path
 
 from code_locator_runtime import (
@@ -77,12 +79,43 @@ class RealCodeLocatorAdapter:
         self._initialized = False
         self._validate_tool = None
         self._neighbors_tool = None
+        # #380 — lock makes ``_ensure_initialized`` safe to call concurrently
+        # from the background-init asyncio Task (running in the default
+        # executor thread pool) AND from worker threads spawned by tool
+        # handlers via ``asyncio.to_thread(ctx.code_graph.validate_symbols, ...)``.
+        # First holder runs init; everyone else blocks until it finishes,
+        # then sees ``self._initialized = True`` and returns immediately.
+        self._init_lock = threading.Lock()
+        # #380 — handle to the background init Task (set by
+        # ``initialize_in_background``). ``wait_until_ready`` awaits it
+        # without re-running init; failure is re-raised to the caller so
+        # the fail-loud contract from #243 is preserved (relocated from
+        # boot-time to first-tool-call-time).
+        self._init_task: asyncio.Task | None = None
 
     def _ensure_initialized(self) -> None:
-        """Lazy init of SymbolDB, config, and tool instances."""
+        """Lazy init of SymbolDB, config, and tool instances.
+
+        Thread-safe (#380): the body is serialized via ``self._init_lock``
+        so a sync caller on a worker thread (from ``asyncio.to_thread``)
+        will block on the background init Task instead of racing it.
+        Whichever thread acquires the lock first runs the init body; the
+        loser sees ``self._initialized`` True and returns.
+        """
         if self._initialized:
             return
 
+        with self._init_lock:
+            # Re-check after lock acquire — another thread may have
+            # finished init while we were waiting for the lock.
+            if self._initialized:
+                return
+            self._run_init_body()
+
+    def _run_init_body(self) -> None:
+        """Actual init work — extracted so tests can monkey-patch this
+        without bypassing the lock/state contract in ``_ensure_initialized``.
+        """
         ensure_runtime_env()
         from code_locator.config import load_config
         from code_locator.indexing.sqlite_store import SymbolDB
@@ -106,24 +139,117 @@ class RealCodeLocatorAdapter:
         self._initialized = True
 
     async def initialize(self) -> None:
-        """Async wrapper around ``_ensure_initialized()`` for the
-        ``server.py:serve_stdio`` startup hook (#243 Piece B).
+        """Async wrapper around ``_ensure_initialized()`` — awaits the
+        sync init in a thread-pool executor so the event loop stays
+        responsive.
 
-        Runs the sync init in a thread-pool executor so the event loop
-        stays responsive while sqlite-vec opens + tree-sitter loads —
-        the cold-init path can take several seconds on larger repos.
+        Pre-#380 this was the only path ``server.py:serve_stdio`` used,
+        and it was awaited inline before opening the MCP stdio
+        transport — every cold boot paid the index-load cost (sqlite-vec
+        + tree-sitter + BM25 pickle, ~45s on a 150MB graph) BEFORE the
+        ``initialize`` JSON-RPC reply could land, which exceeded Claude
+        Code's 30s MCP startup timeout on real-world repos.
 
-        **Fail-loud contract** (per #243 phase-2 signoff Q3): caller MUST
-        NOT swallow the ``RuntimeError("Code locator index is empty...")``
-        — the server should refuse to start when index init fails rather
-        than silently degrade every preflight call. Lazy init via
-        ``_ensure_initialized`` remains for test contexts where mock
-        adapters bypass this path.
+        Post-#380 the startup hook calls ``initialize_in_background()``
+        instead, which schedules the same work but returns immediately.
+        This method remains for tests + lazy-init paths that genuinely
+        want a synchronous wait.
         """
         if self._initialized:
             return
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._ensure_initialized)
+
+    def initialize_in_background(self) -> None:
+        """Schedule index init as a background asyncio Task and return
+        immediately (#380).
+
+        Called from ``server.py:serve_stdio`` AFTER the dashboard sidecar
+        starts but BEFORE ``stdio_server()`` opens the MCP transport, so
+        the JSON-RPC ``initialize`` reply lands inside Claude Code's 30s
+        startup timeout regardless of how large the symbol index is.
+
+        Concurrency model (#380):
+        - The Task runs ``_ensure_initialized`` in the default executor
+          (thread pool), so the event loop stays free to serve protocol
+          traffic.
+        - Tool handlers reach the index via ``asyncio.to_thread(
+          ctx.code_graph.validate_symbols, ...)`` — those worker threads
+          call ``_ensure_initialized`` synchronously, which lock-blocks
+          on the background Task. First tool call (typically preflight)
+          eats the latency that boot used to.
+        - If the background Task raises, the exception is captured by
+          the Task; a ``done_callback`` logs the bare error to stderr so
+          operators see the failure even before any tool call lands.
+          The next ``_ensure_initialized`` call re-runs init and raises
+          the same error to its caller — preserving #243's fail-loud
+          contract (relocated, not removed).
+
+        Idempotent: subsequent calls before the Task completes are
+        no-ops; calls after a successful init are no-ops; calls after a
+        failed init schedule a fresh retry attempt.
+        """
+        if self._initialized:
+            return
+        if self._init_task is not None and not self._init_task.done():
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop — caller is in a sync context (e.g., tests
+            # that import the adapter without running an event loop).
+            # Fall back to a synchronous init so the caller's next
+            # public-method call works.
+            self._ensure_initialized()
+            return
+
+        async def _run_in_executor() -> None:
+            # ``loop.run_in_executor`` returns a Future, not a coroutine, so
+            # we wrap it so ``loop.create_task`` (which requires a coroutine)
+            # accepts it. The awaited Future propagates the executor-thread
+            # exception back into the Task, which the done_callback then
+            # logs to stderr.
+            await loop.run_in_executor(None, self._ensure_initialized)
+
+        self._init_task = loop.create_task(_run_in_executor())
+
+        def _log_failure(task: asyncio.Task) -> None:
+            try:
+                exc = task.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is not None:
+                # Match the boot-time stderr format the operator was
+                # already trained to look for. Tool calls will surface
+                # the same error to the client when they hit the lock.
+                print(
+                    f"[code_locator] background init FAILED (#380) — first tool "
+                    f"call will surface this to the client: {exc}\n"
+                    "Run: python -m code_locator index <repo_path>",
+                    file=sys.stderr,
+                )
+
+        self._init_task.add_done_callback(_log_failure)
+
+    async def wait_until_ready(self) -> None:
+        """Await pending background init, raising on failure (#380).
+
+        Optional explicit gate for callers that want to *await* readiness
+        from an async context rather than rely on sync ``_ensure_initialized``
+        blocking inside ``asyncio.to_thread``. Re-raises the original
+        ``RuntimeError`` so a code-locator tool dispatcher can return a
+        structured error response to the MCP client.
+        """
+        if self._initialized:
+            return
+        if self._init_task is not None:
+            # Awaiting a done Task re-raises its exception; awaiting a
+            # pending Task waits for completion first. Either way the
+            # caller gets fail-loud semantics.
+            await self._init_task
+            return
+        await self.initialize()
 
     def validate_symbols(self, candidates: list[str]) -> list[dict]:
         """Fuzzy-match candidate symbol names against the codebase index."""
