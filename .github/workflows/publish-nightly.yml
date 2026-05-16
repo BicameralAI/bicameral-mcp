@@ -1,0 +1,112 @@
+name: Publish nightly to PyPI
+
+# Nightly pre-release channel for design partners.
+#
+# Publishes whatever is on `dev` to PyPI as a PEP 440 dev release, so testers
+# can pull bug fixes the day they land without waiting on the main-branch
+# review cycle. Stable installs are unaffected: `pip install bicameral-mcp`
+# never picks up a `.devN` version unless `--pre` is passed.
+#
+# Versioning: BASE.dev<UTC-YYYYMMDDHHMM>, where BASE is the next patch above
+# whatever is currently in pyproject.toml. Example: pyproject says 0.14.6 →
+# nightly publishes 0.14.7.dev202605151430. PyPI sorts dev releases below
+# their target final, so the nightly is always "newer than current stable,
+# older than next stable."
+#
+# Heavy supply-chain ceremony (cosign signing, SBOM attestation, hooks/skills
+# manifests) is intentionally skipped here. Stable releases via publish.yml
+# remain the signed artifact of record; nightly is best-effort for pilots.
+
+on:
+  schedule:
+    - cron: '0 7 * * *'   # 07:00 UTC daily (~midnight PT)
+  workflow_dispatch:
+  # No push-to-dev trigger: classic "nightly" cadence is one build/day from
+  # the cron, with workflow_dispatch as the manual override for urgent fixes.
+  # Publishing on every dev commit was considered and dropped — too much
+  # version churn for pilots, no real benefit over a daily snapshot.
+  # Cron requires this file to exist on the default branch (`main`) for
+  # GitHub to register the schedule — see chore/nightly-cron-registration.
+
+permissions:
+  id-token: write    # PyPI trusted publishing
+  contents: write    # commit RECOMMENDED_NIGHTLY_VERSION back to dev
+
+concurrency:
+  group: publish-nightly
+  cancel-in-progress: false   # let queued runs finish; trusted publishing is serial
+
+jobs:
+  build-and-publish:
+    name: Build dev release + publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: pip install hatchling build
+
+      - name: Compute nightly version
+        id: ver
+        run: |
+          BASE=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+          IFS=. read -r MAJ MIN PAT <<<"$BASE"
+          NEXT_PATCH=$((PAT + 1))
+          STAMP=$(date -u +%Y%m%d%H%M)
+          NIGHTLY="${MAJ}.${MIN}.${NEXT_PATCH}.dev${STAMP}"
+          echo "version=$NIGHTLY" >>"$GITHUB_OUTPUT"
+          echo "Nightly version: $NIGHTLY"
+
+      - name: Rewrite pyproject version (in-CI only)
+        env:
+          NIGHTLY_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          p = pathlib.Path('pyproject.toml')
+          s = p.read_text()
+          v = os.environ['NIGHTLY_VERSION']
+          s2 = re.sub(r'^version\s*=\s*".*"', f'version = "{v}"', s, count=1, flags=re.M)
+          if s == s2:
+              raise SystemExit("Failed to rewrite version line in pyproject.toml")
+          p.write_text(s2)
+          PY
+
+      - name: Build wheel + sdist
+        run: python -m build
+
+      - name: Publish to PyPI (pre-release)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+
+      - name: Update RECOMMENDED_NIGHTLY_VERSION on dev
+        env:
+          NIGHTLY_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # `bicameral.update` on a tester's machine fetches this file from the
+          # dev branch to decide whether a newer nightly is out. Update it last,
+          # only after PyPI publish succeeded, so we never advertise a version
+          # that isn't actually installable.
+          #
+          # Restore pyproject.toml first — we mutated it in-CI for the build,
+          # and that mutation must NOT end up in the commit we push back.
+          git checkout -- pyproject.toml
+          echo "$NIGHTLY_VERSION" > RECOMMENDED_NIGHTLY_VERSION
+          if git diff --quiet RECOMMENDED_NIGHTLY_VERSION; then
+            echo "RECOMMENDED_NIGHTLY_VERSION unchanged; skipping commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add RECOMMENDED_NIGHTLY_VERSION
+          git commit -m "nightly: bump RECOMMENDED_NIGHTLY_VERSION to $NIGHTLY_VERSION [skip ci]"
+          git push origin HEAD:dev
