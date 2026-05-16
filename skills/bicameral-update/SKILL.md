@@ -33,14 +33,16 @@ bicameral.update(action="check", current_version=<SERVER_VERSION>)
 - `status: "update_available"` → proceed to Step 2.
 - `status: "unknown"` → could not reach version endpoint; tell the user and stop.
 
+Every response also carries `channel` (`"stable"` or `"nightly"`), resolved from `.bicameral/config.yaml`. The same call returns different recommendations depending on which channel the user opted into: stable tracks `RECOMMENDED_VERSION` on `main`; nightly tracks `RECOMMENDED_NIGHTLY_VERSION` on `dev` and serves PEP 440 dev releases.
+
 ## Step 2 — Confirm with the user
 
 Tell the user:
 
-> `bicameral-mcp v{recommended_version}` is available (you are on `v{current_version}`).
+> `bicameral-mcp v{recommended_version}` is available (you are on `v{current_version}`, channel=`{channel}`).
 > Upgrade now?
 
-Wait for explicit confirmation ("yes" / "no") before proceeding.
+If `channel` is `"nightly"`, also note that the recommended version is a pre-release build for design partners. Wait for explicit confirmation ("yes" / "no") before proceeding.
 
 ## Step 3 — Apply the update
 

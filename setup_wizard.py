@@ -684,6 +684,43 @@ def _session_end_command_for_platform(platform: str) -> str:
     )
 
 
+def _session_start_command_for_platform(platform: str) -> str:
+    """Return the SessionStart hook command for the target platform (#279
+    Phase 1).
+
+    The hook invokes ``bicameral-mcp sync-and-brief`` so the synthesized
+    brief is injected into Claude's context BEFORE the first user prompt.
+    Stderr is appended to ``~/.bicameral/hook-errors.log`` so failures
+    surface in the operator's log without polluting the agent's context.
+
+    The trailing ``exit 0`` (POSIX) / ``& exit 0`` (Windows) is mandatory:
+    SessionStart MUST NEVER block session start. If the CLI fails for any
+    reason — missing config, missing API key, network error — the
+    operator's session still proceeds.
+    """
+    if platform == "win32":
+        return (
+            "if exist .bicameral "
+            'bicameral-mcp sync-and-brief 2>>"%USERPROFILE%\\.bicameral\\hook-errors.log" & '
+            "exit 0"
+        )
+    return (
+        "[ -d .bicameral ] && "
+        'bicameral-mcp sync-and-brief 2>>"${HOME}/.bicameral/hook-errors.log" || true; '
+        "exit 0"
+    )
+
+
+def _build_session_start_command(platform: str | None = None) -> str:
+    """Canonical SessionStart hook command (#279 Phase 1).
+
+    Pinned by tests/test_sessionstart_hook_install.py. Cross-platform via
+    sys.platform; explicit override exists for test rendering.
+    """
+    target = platform if platform is not None else sys.platform
+    return _session_start_command_for_platform(target)
+
+
 def _build_session_end_command(
     mcp_config_path: str | None = None,
     platform: str | None = None,
@@ -719,6 +756,10 @@ def _build_session_end_command(
 # end-user's ``.claude/settings.json``. Re-derived from the helper so the
 # function is the single source of truth.
 _BICAMERAL_SESSION_END_COMMAND = _build_session_end_command()
+
+# #279 Phase 1 — SessionStart hook command. Opt-in via the setup wizard.
+# Stdout from the CLI becomes Claude's pre-session context envelope.
+_BICAMERAL_SESSION_START_COMMAND = _build_session_start_command()
 
 # Fires after every Bash tool use. When the command is a git write-op
 # (commit / merge / pull / rebase --continue), emits a hookSpecificOutput
@@ -780,6 +821,7 @@ def _install_claude_hooks(repo_path: Path) -> bool:
         "claude:PostToolUse:Bash",
         "claude:PostToolUse:bicameral_preflight",
         "claude:SessionEnd",
+        "claude:SessionStart",
         "claude:UserPromptSubmit",
     )
     settings_path = repo_path / ".claude" / "settings.json"
@@ -843,6 +885,24 @@ def _install_claude_hooks(repo_path: Path) -> bool:
     new_se_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_END_COMMAND}]}
     if non_bic_se != session_end or new_se_entry not in session_end:
         hooks["SessionEnd"] = non_bic_se + [new_se_entry]
+        wrote_anything = True
+
+    # ── SessionStart — pull-based meeting ingestion brief (#279) ────────
+    # Auto-runs `bicameral-mcp sync-and-brief` and injects the resulting
+    # markdown brief into Claude's pre-session context.
+    # MUST NEVER block session start — the command ends with `exit 0`.
+    session_start: list = hooks.setdefault("SessionStart", [])
+    non_bic_ss = [
+        e
+        for e in session_start
+        if not any(
+            "bicameral" in h.get("command", "") or "sync-and-brief" in h.get("command", "")
+            for h in e.get("hooks", [])
+        )
+    ]
+    new_ss_entry = {"hooks": [{"type": "command", "command": _BICAMERAL_SESSION_START_COMMAND}]}
+    if non_bic_ss != session_start or new_ss_entry not in session_start:
+        hooks["SessionStart"] = non_bic_ss + [new_ss_entry]
         wrote_anything = True
 
     # ── UserPromptSubmit — preflight auto-fire reinforcement ─────────
@@ -1403,7 +1463,8 @@ def _select_telemetry() -> bool:
     print('     "diagnostic": {"decisions_ingested": 3}}')
     print()
     print("    No code. No decision text. No file paths. No personal data.")
-    print("    Change anytime: BICAMERAL_TELEMETRY=0")
+    print("    Change anytime: BICAMERAL_TELEMETRY=0  (turns off all telemetry)")
+    print("    Per-source control (#192): BICAMERAL_TELEMETRY=relay,preflight,raw")
     print()
 
     if not _is_interactive():
@@ -1426,12 +1487,51 @@ def _select_telemetry() -> bool:
     return choice
 
 
+def _detect_install_channel() -> str:
+    """Return ``"nightly"`` when the running package is a PEP 440 dev release.
+
+    Why: a user who runs ``pipx install --pip-args=--pre bicameral-mcp`` (or
+    ``uv tool install bicameral-mcp --prerelease=allow``) lands on a CalVer
+    ``.devN`` build. Without this detection the wizard would hardcode
+    ``channel: stable`` into ``.bicameral/config.yaml``, and
+    ``bicameral.update`` would then compare that install against PyPI's stable
+    ``info.version`` — which hides ``.devN`` by design — and silently never
+    offer an upgrade, stranding nightly users on whatever build they happened
+    to ``--pre`` install. See ``handlers/update.py:_fetch_latest_stable_from_pypi``.
+
+    How to apply: called by ``_write_collaboration_config`` when its caller
+    doesn't pin ``channel`` explicitly. Tests/internal callers can still pass
+    a literal to override.
+    """
+    version = ""
+    try:
+        from importlib.metadata import version as _pkg_version
+
+        version = _pkg_version("bicameral-mcp")
+    except Exception:
+        # Source-checkout install (no distribution metadata) — fall back to
+        # reading pyproject.toml so a `python -m setup_wizard` from a dev
+        # tree still detects the channel correctly.
+        import re
+
+        for candidate in (Path(__file__).parent, Path(__file__).parent.parent):
+            toml = candidate / "pyproject.toml"
+            if not toml.exists():
+                continue
+            m = re.search(r'^version\s*=\s*"([^"]+)"', toml.read_text(), re.MULTILINE)
+            if m:
+                version = m.group(1)
+                break
+    return "nightly" if ".dev" in version else "stable"
+
+
 def _write_collaboration_config(
     data_path: Path,
     mode: str,
     guided: bool = False,
     telemetry: bool = False,
     team_backend: dict | None = None,
+    channel: str | None = None,
 ) -> None:
     """Write .bicameral/config.yaml with collaboration mode, guided-mode, telemetry,
     signer-email fallback, and (optionally) the team-backend block.
@@ -1445,7 +1545,13 @@ def _write_collaboration_config(
     `team_backend` (#277): when present, persists `team:` block with
     `backend`, `role`, and either `folder_id` (Drive) or `remote_root`
     (LocalFolder).
+
+    `channel`: release channel for ``bicameral.update``. Defaults to
+    auto-detect via ``_detect_install_channel()`` — a ``.devN`` install
+    writes ``channel: nightly``, anything else writes ``channel: stable``.
+    Tests pass an explicit value to lock behavior.
     """
+    resolved_channel = channel if channel is not None else _detect_install_channel()
     config_path = data_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
     base = (
@@ -1453,6 +1559,7 @@ def _write_collaboration_config(
         f"mode: {mode}\n"
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
+        f"channel: {resolved_channel}\n"
         "signer_email_fallback: local-part-only\n"
         "render_source_attribution: redacted\n"  # #209: privacy-positive default
     )
@@ -1467,6 +1574,13 @@ def _write_collaboration_config(
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
+    if resolved_channel == "nightly":
+        print(
+            "  Release channel: nightly (auto-detected from .dev version — "
+            "bicameral.update will track RECOMMENDED_NIGHTLY_VERSION on dev)"
+        )
+    else:
+        print("  Release channel: stable")
     print("  Signer-email fallback: local-part-only (privacy-positive default)")
     print(
         "  Source-attribution rendering: redacted (privacy-positive default — "
@@ -1736,11 +1850,18 @@ def run_config_wizard() -> int:
     cur_mode = cfg.get("mode", "team")
     cur_guided = cfg.get("guided", True)
     cur_telemetry = cfg.get("telemetry", True)
+    # Preserve the channel field across the config-wizard rewrite. Without
+    # this, re-running `bicameral-mcp config` after the user opted into
+    # nightly would silently drop `channel: nightly` and the rewrite would
+    # default to stable — re-stranding nightly installs (the exact bug the
+    # auto-detect in `_write_collaboration_config` fixed for fresh setups).
+    cur_channel = cfg.get("channel") or _detect_install_channel()
 
     print(f"  Current config ({config_path}):")
     print(f"    mode:      {cur_mode}")
     print(f"    guided:    {cur_guided}")
     print(f"    telemetry: {cur_telemetry}")
+    print(f"    channel:   {cur_channel}")
     print()
 
     new_mode = _select_collaboration_mode_with_default(cur_mode)
@@ -1753,7 +1874,8 @@ def run_config_wizard() -> int:
         "# Bicameral configuration\n"
         f"mode: {new_mode}\n"
         f"guided: {'true' if new_guided else 'false'}\n"
-        f"telemetry: {'true' if new_telemetry else 'false'}\n",
+        f"telemetry: {'true' if new_telemetry else 'false'}\n"
+        f"channel: {cur_channel}\n",
         encoding="utf-8",
     )
 

@@ -66,6 +66,9 @@ async def handle_search_decisions(
             suggested_review.append(m["decision_id"])
 
         _signoff = m.get("signoff") or {}
+        # #157 — pruned decisions are excluded from search surfaces.
+        if isinstance(_signoff, dict) and _signoff.get("state") == "pruned":
+            continue
         matches.append(
             DecisionMatch(
                 decision_id=m["decision_id"],

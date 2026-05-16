@@ -2552,5 +2552,236 @@ Same pattern as Entries #28, #33, #36, #41, #43, #44, #45, #46:
 Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks #234 / #235 / #236 / #241 / #248 / #249 / #251 / #253 / #255 / #256.
 
 ---
-*Chain integrity: VALID (47 entries on this branch)*
-*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47)*
+
+## Entry #48: SESSION SEAL — #252 Layer 4 substantiated (portable JSON-Lines ledger export/import)
+
+**Date**: 2026-05-07
+**Phase**: SUBSTANTIATE
+**Branch**: `plan/252-layer-4-export-import` (off `upstream/dev` post-Layer-2-merge)
+**Plan**: `plan-252-layer-4-export-import.md` (round 2 PASS)
+**Audit**: round 1 VETO `specification-drift` (`bicameral_meta` + `schema_meta` round-trip break) → round 2 PASS via Path B (DELETE meta tables before data-records pass; preserves source-provenance + singleton invariant)
+**Verdict**: PASS
+
+### Reality vs Promise audit
+
+| Plan element | Reality | Status |
+|---|---|---|
+| `cli/ledger_io.py` (new) | 132 LOC; constants + frozensets + `ImportSummary` dataclass + custom exceptions + `_canonical_record` + `_record_sort_key` | EXISTS |
+| `cli/_ledger_io_engine.py` (new — split per Razor mandate) | 197 LOC; `_gather_table_rows` + `export_jsonl` + `_validate_records` + `_assert_ledger_empty` + `_delete_meta_tables` + `_strip_meta` + `_maybe_parse_datetime` + `_rehydrate` + `_write_data_records` + `_write_edge_records` + `import_jsonl` orchestrator (~12 LOC). Under 250 file ceiling | EXISTS-w/-deviation (datetime helpers added) |
+| `cli/ledger_export_cli.py` (new) | 22 LOC; thin shim that streams `export_jsonl(adapter)` to stdout | EXISTS |
+| `cli/ledger_import_cli.py` (new) | 47 LOC; thin shim reading from stdin or `--from-file <path>` | EXISTS |
+| `server.py` (modified) | new `ledger-export` + `ledger-import` subparsers + dispatch arms | EXISTS |
+| `docs/policies/ledger-export.md` (new) | Operator-readable policy with canonical record-shape table + 4 workflow recipes (backup, GDPR Art. 17 erasure, Art. 15 DSAR, migration vehicle) + two-pass import rationale + meta-table special case section + privacy posture + error-mode catalog | EXISTS |
+| `tests/test_ledger_io_canonical_record.py` (new) | 9 functional tests | EXISTS |
+| `tests/test_ledger_io_export.py` (new) | 7 functional tests | EXISTS |
+| `tests/test_ledger_io_import.py` (new) | 12 functional tests (incl. 3 Path B contract + skip-set discipline + RELATE edge write) | EXISTS |
+| `tests/test_ledger_export_cli.py` (new) | 3 functional tests | EXISTS |
+| `tests/test_ledger_import_cli.py` (new) | 4 functional tests | EXISTS |
+| `tests/test_compliance_policy_docs.py` (extended) | 2 new content-contract tests | EXISTS |
+| `README.md` (modified) | "Compliance posture" section bumped 5 → 6 policy files; new `ledger-export.md` row added | EXISTS |
+
+### Logged deviations
+
+1. **Helper-extraction split executed per round-1 audit mandate**: `cli/ledger_io.py` 132 LOC + `cli/_ledger_io_engine.py` 197 LOC. Both well under 250. Mirror of Layer 3's `cli/_diagnose_gather.py` precedent.
+
+2. **`_maybe_parse_datetime` + `_rehydrate` helpers added during implementation**: discovered during smoke-test that SurrealDB rejects ISO datetime strings for `option<datetime>` fields; the JSON round-trip flattens datetimes to strings via `json.dumps(default=str)`, which then fail at write-time. Fix: heuristic-detect ISO format via 4-digit-year-prefix + parse via `datetime.fromisoformat()`. Adds ~20 LOC to `_ledger_io_engine.py`. Doctrine-positive expansion — the plan didn't anticipate the JSON-roundtrip type-erasure issue.
+
+3. **Test count expansion (30 → 45)**: plan estimated ~30 functional + 2 content-contract; implementation shipped 45 + 2. Doctrine-positive expansion covering edge cases + per-helper unit boundary.
+
+### Section 4 Razor final
+
+| File | LOC | Longest function | Status |
+|---|---|---|---|
+| `cli/ledger_io.py` | 132 | `_canonical_record` (~15) | OK |
+| `cli/_ledger_io_engine.py` | 197 | `_validate_records` (~38) | OK (close to 40 ceiling) |
+| `cli/ledger_export_cli.py` | 22 | `main` (~17) | OK |
+| `cli/ledger_import_cli.py` | 47 | `main` (~30) | OK |
+| `import_jsonl` orchestrator | — | ~12 | OK (well under 40 per round-1 mandate) |
+| `_assert_ledger_empty` / `_delete_meta_tables` / `_write_data_records` / `_write_edge_records` | each <20 | — | OK |
+| `server.py` modifications | — | +~15 LOC additive | OK |
+| Max nesting depth | ≤3 | function → for → if → continue/append | OK |
+| Nested ternaries | 0 | 0 | OK |
+
+PASS.
+
+### Functional verification
+
+- **45 new functional tests** across 5 test files + 2 content-contract tests in `test_compliance_policy_docs.py`. All PASS.
+- Each test invokes the unit under test and asserts on returned value, raised exception, captured stdout/stderr, parsed JSON, persisted row count, or document content. No presence-only descriptions.
+- **Compliance content-contract regression**: 11 tests pass (8 prior + 2 new for #252 Layer 4 + 1 from #227 audit-log).
+- **Path B contract verified end-to-end**: 4 dedicated tests + smoke-test confirm meta tables end with exactly 1 row each post-import; source's `at_first_write` survives the round-trip.
+
+### Path B (round-1 audit central finding) closed by construction
+
+End-to-end smoke test against `memory://` ledger:
+
+```
+exported 2 lines (bicameral_meta + schema_meta auto-populated by Layer 2 sentinel + migrate)
+re-imported: data={'bicameral_meta': 1, 'schema_meta': 1}, edges={}, total=2
+post-import: bicameral_meta has 1 row; schema_meta has 1 row
+```
+
+Sequencing: `bicameral-mcp reset` wipes ledger → `ledger-import --from-file <path>`: (1) `adapter.connect()` populates meta tables (destination-side); (2) Phase A `_validate_records` validates every JSONL line; (3) Phase B step 1 `_delete_meta_tables` clears destination-side rows; (4) step 2 `_write_data_records` writes source rows (incl. source's meta tables); (5) step 3 `_write_edge_records` writes RELATE edges. End state: each meta table has exactly the source's row.
+
+### Closes / unlocks
+
+- **Closes**: #252 Layer 4 (portable JSON-Lines export/import vehicle)
+- **Substantively closes #222**: GDPR Art. 15 DSAR CLI — Layer 4 export IS the implementation. Mark #222 `merged-to-dev` once #252 closes.
+- **Substantively closes #221 substrate**: GDPR Art. 17 right-to-erasure escape hatch — operator workflow recipe (`export → edit → reset → import`) documented in `docs/policies/ledger-export.md`.
+- **Substrate for #252 Layer 5** (opt-in auto-migrate): Layer 4 provides the migration mechanism; Layer 5 will gate on `drift_status` from Layer 2/3.
+
+### Timing note
+
+Numbered as **#48** assuming PR #257 (Layer 3 SEAL #47) merges first. If PR #252-Layer-4 merges first, renumber at #257's merge-conflict resolution.
+
+### qor-logic-internal steps skipped (downstream-project rationale)
+
+Same pattern as Entries #28, #33, #36, #41, #43, #44, #45, #46:
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 2.5 | partial | Plan declared no Target Version |
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present |
+| Step 4.6.5 (secret scanner) | not run | TruffleHog runs in CI |
+| Step 4.6.6 (procedural-fidelity) | not run | qor-logic-internal check |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 6.5 (doc-currency) | not run | No system-tier docs maintained here |
+| Step 7.4 (SSDF tag emission) | not run | qor-logic-internal SSDF tagger |
+| Step 7.5 / 7.6 (version bump + CHANGELOG stamp) | not run | No `## [Unreleased]` block convention |
+| Step 7.7 (seal-entry-check) | not run | qor-logic-internal verifier |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+| Step 8 (cleanup .agent/staging) | deferred | `AUDIT_REPORT.md` preserved |
+| Step 8.5 (dist-compile) | n/a | qor-logic-internal |
+| Step 9.5.5 (annotated seal-tag) | n/a | No version bump → no tag |
+
+### Next required action
+
+Push branch and open PR against `dev`. Recommended: Option 2 (push + open PR), same pattern as #218 sub-tasks and prior #252 layers.
+
+---
+
+## Entry #49: RESEARCH BRIEF — team-server tier v1: existing compatible components (renumbered from #48)
+
+**Date**: 2026-05-14
+**Phase**: RESEARCH
+**Branch**: `research/team-server-tier-v1-survey` (off `upstream/dev` post-#324 merge)
+**Brief**: `docs/research-brief-team-server-tier-v1-2026-05-14.md`
+**Risk Grade**: L1 (research artifact; no code mutation)
+
+**Content Hash**:
+```
+SHA256(docs/research-brief-team-server-tier-v1-2026-05-14.md)
+= 0e15b9d5c7a883f01f515824d9f65c8b8d9861cbf4ea4e20785a37efd136ddb6
+```
+
+**Previous Entry**: #48 (#252 Layer 4 SEAL)
+
+**Trigger**: operator-directed pre-design survey for team-server runtime reactivation cycle. Per the 2026-05-14 team-server priority directive, the next `/qor-auto-dev-1` work targets team-server tier v1; this brief is the fact-finding pass that precedes any plan.
+
+### Scope
+
+Survey of bicameral-mcp at `dev` HEAD for components that are currently team-mode-compatible or plausibly extend to a tier v1 architecture. Six dimensions enumerated:
+
+1. Event-log substrate (`events/writer.py`, `events/materializer.py`, `events/transcript_queue.py`, `events/team_adapter.py`)
+2. BackendAdapter foundation (#279 Phase 2: ABC + LocalFolderAdapter + GoogleDriveAdapter)
+3. Multi-author / multi-peer mechanics (canonical_id dedup, watermarks, `team:` config)
+4. Identity & rate-limit isolation hooks (`context.py::_resolve_agent_identity`, ingest rate-limit registry)
+5. CLI surfaces touching team mode (`cli/sync_and_brief_cli.py`, ledger export/import)
+6. #242 negative-space confirmation (removed HTTP runtime, OAuth workers, Docker assets)
+
+### Key findings
+
+- **No drift between architecture-as-coded and architecture-as-documented at the v0 boundary.** All eight blueprint-alignment checks return MATCH.
+- **The BackendAdapter contract + canonical_id UUIDv5 dedup + per-author JSONL isolation is sufficient as the wire substrate** for tier v1. Tier v1 should be additive on top, not a replacement.
+- **The gaps for tier v1 are above the substrate, not in it**: auth shim (#215 Track 2), HTTP transport surface, per-peer health/rate-limit/observability, multi-author conflict resolution beyond first-write-wins, MCP-tool surface for team membership / audit, source-pull leader-election.
+- **#242's removal is clean.** `team_server/` directory is empty; no `team_server_*` imports anywhere in the main tree; no HTTP framework imports. Cache/pycache artifacts (`.mypy_cache/3.11/events/team_server_bridge.*`) are inert.
+- **Tier-v1 boundary line is the single most important design decision** for the next plan cycle. Three options identified; Option 1 (handler-level, inside MCP server) recommended as most consistent with v0 doctrine; Option 3 (BackendAdapter subclass speaking to hosted bicameral-team-server over HTTP) flagged as required only if Stage-2 hosted multi-team deployments become a goal.
+
+### Recommendations (six, prioritized by dependency)
+
+1. Define the tier-v1 boundary line via `/qor-ideate` or `/qor-plan` — choose between Option 1 (in-MCP handler) and Option 3 (BackendAdapter-over-HTTP).
+2. Track 2 of #215 — design the auth shim (1 plan cycle, no implementation).
+3. Decide multi-author conflict-resolution semantic (paired with R1).
+4. Add `BackendAdapter.health()` and probe-only `list_peers()` (deferred to after R1).
+5. Clean up #242 cache artifacts (chore; bundle into next infra PR).
+6. Defer source-pull leader-election + per-peer quotas until evidence drives the need (YAGNI gate).
+
+### Updated knowledge
+
+- **Substrate vs tier separation**: v0 substrate is well-documented at `docs/v0-architecture-current.md`; tier v1 doc is deliberately not yet written. This brief is the placeholder until R1 picks a design.
+- **Negative space (no HTTP, no auth shim, no conflict resolver) is intentional per #242**, not an omission. Future contributors who see "no HTTP server" should be redirected here + to `docs/policies/threat-model-and-trust-boundary.md`.
+- **`canonical_id` UUIDv5 derivation from `(description, source_type, source_ref)` is a substrate invariant.** Any tier-v1 design that breaks it breaks cross-author replay determinism. Lock it.
+
+### Next required action
+
+Per `qor/gates/delegation-table.md`: research complete → `/qor-plan` (next phase). However, the brief identifies that a *design selection step* is needed before `/qor-plan` can target a concrete scope (R1 selection between Option 1 and Option 3). Recommended sequencing:
+
+1. Operator reviews this brief, picks R1's option (or directs further discovery).
+2. `/qor-ideate` cycle scopes the chosen option into a concrete plan input.
+3. `/qor-plan` consumes that scope; `/qor-audit` gates; `/qor-implement` ships.
+
+### qor-logic-internal steps skipped
+
+Same pattern as prior downstream-project entries (#28, #33, #36, #41, #43–#47):
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present here |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 7.4 / 7.5 / 7.6 (SSDF tag / version bump / CHANGELOG) | not run | qor-logic-internal; no version-bump for a research-only artifact |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+
+---
+
+## Entry #50: RESEARCH BRIEF — R1 architecture: limitation & gap remediation strategies
+
+**Date**: 2026-05-14
+**Phase**: RESEARCH
+**Branch**: `devin/1778797415-reconcile-ideation-325` (off `upstream/dev` post-#325 merge)
+**Brief**: `docs/research-brief-r1-limitations-remediation-2026-05-14.md`
+**Risk Grade**: L1 (research artifact; no code mutation)
+
+**Content Hash**:
+```
+SHA256(docs/research-brief-r1-limitations-remediation-2026-05-14.md)
+= 1de00b2fd64c4549f542a1ba07d530853aecd382d35d904b9e98fb77764ab766
+```
+
+**Previous Entry**: #49 (team-server tier v1 RESEARCH BRIEF)
+
+**Trigger**: operator-directed `/qor-research` phase to investigate remediation strategies for all 24 identified constraints of the R1 architecture (MCP local + BackendAdapter file-share, no server process). Per user directive: "include all potential strategies with multiple alternative, including the pros and cons of each."
+
+### Scope
+
+Systematic remediation strategy investigation for:
+
+1. **9 original gaps** (from `research-brief-team-server-tier-v1-2026-05-14.md` §9): HTTP endpoint, auth shim, write coordination, backend health, conflict resolution, per-peer metering, per-backend observability, team-governance tools, source-pull dedup
+2. **15 known limitations** (L1–L15 on issue #215): poll-only sync, no partial sync, no write-time coordination, lossy conflicts, no global ordering, self-asserted identity, no transport ACL, no audit trail, no health signals, no metrics, file-per-author ceiling, no delta sync, LocalFolder filesystem concerns, GoogleDrive API constraints, no version negotiation
+
+### Key findings
+
+- 20 of 24 items are remediable within R1 architecture (BackendAdapter ABC extensions, materializer enhancements, new MCP tools)
+- 4 items (G1 HTTP endpoint, G8 full team governance, L11 scalability ceiling, L12 delta sync) may eventually require managed-service BackendAdapter subclasses (S3, Supabase) — the intended extension path per R1
+- All remediation strategies preserve the `canonical_id` invariant and #242 compliance
+- Prioritized into 4 tiers: Tier 1 (pre-plan, 5 commits), Tier 2 (v1, 4 cycles), Tier 3 (post-v1, 5 cycles), Tier 4 (evidence-gated, 4 cycles)
+
+### Next steps
+
+1. `/qor-plan` consumes this brief to scope the v1 implementation plan (Tier 1 + Tier 2 items)
+2. ~~A6 decision~~ **RESOLVED 2026-05-14**: first-write-wins is the v1 semantic (Strategy A accepted by @jinhongkuan)
+3. Track 2 of #215 (auth shim design) consumes G2 strategy analysis
+
+### qor-logic-internal steps skipped
+
+Same pattern as prior entries (#28, #33, #36, #41, #43–#49):
+
+| Step | Outcome | Rationale |
+|---|---|---|
+| Step 4.6 (intent-lock + skill-admission + gate-skill-matrix) | not run | qor-logic harness reliability gates not present here |
+| Step 4.7 (doc-integrity) | not run | qor-logic phase-plan path convention not used |
+| Step 7.4 / 7.5 / 7.6 (SSDF tag / version bump / CHANGELOG) | not run | qor-logic-internal; no version-bump for a research-only artifact |
+| Step 7.8 (gate-chain completeness) | n/a | Phase ≤ 51 grandfathered |
+
+---
+*Chain integrity: VALID (50 entries on this branch)*
+*Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48) → team-server tier v1 RESEARCH (#49) → R1 limitation remediation RESEARCH (#50)*

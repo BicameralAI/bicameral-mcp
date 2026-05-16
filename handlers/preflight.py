@@ -45,6 +45,7 @@ from handlers.analysis import _to_brief_decision
 from preflight_telemetry import (
     new_preflight_id,
     telemetry_enabled,
+    write_dedup_event,
     write_preflight_event,
 )
 
@@ -242,24 +243,80 @@ def _validate_topic(topic: str) -> bool:
     return True
 
 
-def _dedup_key_for(topic: str) -> str:
-    """Normalize topic for dedup key — case-insensitive, content-tokens
-    only, sorted. Catches phrasings like 'Stripe webhook' and
-    'webhook stripe' as the same topic."""
-    return " ".join(sorted(_content_tokens(topic)))
+def _normalize_file_paths_for_key(file_paths: list[str] | None) -> str:
+    """Canonicalize file_paths into a stable string component for the dedup
+    cache key. Sorted + lowercased + deduplicated — order-insensitive so
+    callers passing ``["a.py", "b.py"]`` and ``["b.py", "a.py"]`` collide.
+    Empty / None collapse to an empty string (the absent-path sentinel).
+    """
+    if not file_paths:
+        return ""
+    seen: set[str] = set()
+    out: list[str] = []
+    for fp in file_paths:
+        if not fp:
+            continue
+        norm = fp.strip().lower()
+        if norm and norm not in seen:
+            seen.add(norm)
+            out.append(norm)
+    return "|".join(sorted(out))
 
 
-def _check_dedup(ctx, topic: str) -> bool:
-    """Return True when this topic was already preflight-checked within
-    ``_DEDUP_TTL_SECONDS``. Marks the topic as checked at current time
-    when not deduped (so repeat fires within the window are silenced).
+def _dedup_key_for(
+    topic: str,
+    file_paths: list[str] | None = None,
+    ledger_revision: str | None = None,
+) -> str:
+    """Compose the per-session preflight dedup cache key (#87 Phase 4).
+
+    The key is the 3-tuple ``(normalized_topic, normalized_file_paths,
+    ledger_revision)`` joined by ``||`` (an unambiguous separator that
+    can't appear in any normalized component). All three components must
+    match for a cache hit:
+
+    - **normalized_topic** — case-insensitive, content-tokens, sorted.
+      Catches phrasings like 'Stripe webhook' / 'webhook stripe' as the
+      same topic (legacy v0.4.12 behavior, preserved).
+    - **normalized_file_paths** — sorted + lowercased + deduplicated. A
+      same-topic call against a different region misses the cache.
+    - **ledger_revision** — MAX(updated_at) over the decision table at
+      call time. Any ledger mutation (new decision, status change, HITL
+      signoff write) bumps this and invalidates the cache for prior
+      same-topic calls.
+
+    ``ledger_revision=None`` is reserved for the bypass path: callers MUST
+    NOT pass None and expect dedup to function. The handler checks for
+    None separately and skips dedup entirely (Kevin's amendment).
+    """
+    topic_norm = " ".join(sorted(_content_tokens(topic)))
+    paths_norm = _normalize_file_paths_for_key(file_paths)
+    rev_norm = ledger_revision or ""
+    return f"{topic_norm}||{paths_norm}||{rev_norm}"
+
+
+def _check_dedup(
+    ctx,
+    topic: str,
+    file_paths: list[str] | None = None,
+    ledger_revision: str | None = None,
+) -> bool:
+    """Return True when the (topic, file_paths, ledger_revision) tuple was
+    already preflight-checked within ``_DEDUP_TTL_SECONDS``. Marks the tuple
+    as checked at current time when not deduped (so repeat fires within the
+    window are silenced).
+
+    The cache is keyed in ``ctx._sync_state["preflight_topics"]`` (the dict
+    name is a legacy label kept for backwards-compat — it now holds the
+    3-tuple key, not bare topics).
     """
     sync_state = getattr(ctx, "_sync_state", None)
     if not isinstance(sync_state, dict):
         return False
     topics: dict[str, float] = sync_state.setdefault("preflight_topics", {})
-    key = _dedup_key_for(topic)
-    if not key:
+    key = _dedup_key_for(topic, file_paths, ledger_revision)
+    if not key.split("||")[0]:
+        # Empty topic component → topic too short to dedup on; legacy contract.
         return False
     now = time.time()
     last = topics.get(key, 0.0)
@@ -269,10 +326,65 @@ def _check_dedup(ctx, topic: str) -> bool:
     return False
 
 
+def _dedup_miss_was_revision_bump(
+    ctx,
+    topic: str,
+    file_paths: list[str] | None,
+    ledger_revision: str | None,
+) -> bool:
+    """Classify a dedup miss: did it miss because ``ledger_revision``
+    advanced since the prior same-(topic, file_paths) call?
+
+    Returns True when:
+    - the current (topic, file_paths) prefix has been seen before within
+      ``_DEDUP_TTL_SECONDS``,
+    - but the prior entry's revision component differs from the current
+      ``ledger_revision``.
+
+    This is the M7a/M7c signal — a decision landed (M7a) or HITL state
+    cleared (M7c) between two same-topic/same-paths calls, and the new
+    `ledger_revision` invalidated the cache as intended. Phase 5
+    telemetry (#87) emits a ``preflight_dedup_decision`` event with
+    ``reason=invalidated_by_revision_bump`` on True.
+
+    False for: first-call misses (no prior prefix entry), expired
+    entries (older than TTL), and file_paths-shift misses (the prefix
+    itself differs, not the revision suffix).
+    """
+    sync_state = getattr(ctx, "_sync_state", None)
+    if not isinstance(sync_state, dict):
+        return False
+    topics: dict[str, float] = sync_state.get("preflight_topics") or {}
+    if not topics:
+        return False
+    current_key = _dedup_key_for(topic, file_paths, ledger_revision)
+    parts = current_key.split("||")
+    if len(parts) != 3:
+        return False
+    topic_norm, paths_norm, current_rev = parts
+    if not topic_norm:
+        return False
+    prefix = f"{topic_norm}||{paths_norm}||"
+    now = time.time()
+    for stored_key, ts in topics.items():
+        if not stored_key.startswith(prefix):
+            continue
+        if stored_key == current_key:
+            # Identical key — would have been a cache hit, not a miss.
+            continue
+        if now - ts >= _DEDUP_TTL_SECONDS:
+            continue
+        # Same prefix, different rev, within TTL → revision bump.
+        stored_rev = stored_key[len(prefix) :]
+        if stored_rev != current_rev:
+            return True
+    return False
+
+
 async def _region_anchored_preflight(
     ctx,
     file_paths: list[str],
-) -> tuple[list[DecisionMatch], bool]:
+) -> tuple[list[DecisionMatch], bool, str | None]:
     """file_paths (caller-supplied) → decisions pinned to those regions.
 
     The caller LLM is responsible for resolving which files a proposed change
@@ -284,14 +396,20 @@ async def _region_anchored_preflight(
     operation/reorder.tsx``. Expansion is deterministic, no LLM in the path,
     bounded by ``code_locator/config.py::max_neighbors_per_result``.
 
-    Returns ``(matches, expanded)`` where ``expanded`` is True iff the graph
-    expansion produced extra paths beyond the caller-supplied set, so the
-    caller can record ``"graph"`` in ``sources_chained``. Direct-pin matches
-    carry ``confidence=0.9``; matches surfaced only via expanded paths carry
-    ``confidence=0.7``.
+    Returns ``(matches, expanded, fallback_reason)``:
+      - ``expanded`` is True iff the graph expansion produced extra paths
+        beyond the caller-supplied set, so the caller can record ``"graph"``
+        in ``sources_chained``. Direct-pin matches carry ``confidence=0.9``;
+        matches surfaced only via expanded paths carry ``confidence=0.7``.
+      - ``fallback_reason`` is non-None iff expansion was attempted but
+        couldn't run cleanly (#243). Possible values: ``"absent"`` (no
+        ``code_graph`` on ctx), ``"missing_method"`` (``code_graph`` lacks
+        ``expand_file_paths_via_graph``), ``"exception:<type>"`` (expander
+        raised). Caller adds ``"graph_unavailable"`` to ``sources_chained``
+        when non-None; the granular reason flows to the telemetry counter.
     """
     if not file_paths:
-        return [], False
+        return [], False, None
 
     # Dedup + normalize while preserving caller-supplied order.
     seen_paths: set[str] = set()
@@ -302,30 +420,62 @@ async def _region_anchored_preflight(
             seen_paths.add(fp)
             ordered.append(fp)
     if not ordered:
-        return [], False
+        return [], False, None
 
-    # Graph expansion. Defensive: code_graph may be absent (mock contexts) or
-    # the adapter may not implement the method (older deployments). Either
-    # case falls back to direct file_paths only.
+    # Graph expansion. #243: surface the silent fallback as a loud signal —
+    # response carries `"graph_unavailable"` (added by caller), exception
+    # case logs at WARN, telemetry counter increments. Three fallback
+    # reasons distinguished for the telemetry signal:
+    #   - absent          : no `code_graph` on ctx (mock contexts, older
+    #                       deployments without the adapter wired)
+    #   - missing_method  : `code_graph` set but no
+    #                       `expand_file_paths_via_graph` attribute
+    #   - exception:<typ> : expander raised at runtime (uninitialized
+    #                       index, sqlite locked, missing repo, etc.)
     direct_paths: set[str] = set(ordered)
     expanded_paths = list(ordered)
     expanded_only_paths: set[str] = set()
+    fallback_reason: str | None = None
     code_graph = getattr(ctx, "code_graph", None)
-    expander = getattr(code_graph, "expand_file_paths_via_graph", None) if code_graph else None
-    if expander is not None:
+    if code_graph is None:
+        fallback_reason = "absent"
+    else:
+        expander = getattr(code_graph, "expand_file_paths_via_graph", None)
+        if expander is None:
+            fallback_reason = "missing_method"
+        else:
+            try:
+                expanded_paths, added_paths = expander(ordered, hops=1)
+                expanded_only_paths = set(added_paths)
+            except Exception as exc:
+                fallback_reason = f"exception:{type(exc).__name__}"
+                logger.warning(
+                    "[preflight:fallback] graph expansion raised %s: %s — "
+                    "recall degraded for this call (#243)",
+                    type(exc).__name__,
+                    exc,
+                )
+                expanded_paths = list(ordered)
+                expanded_only_paths = set()
+
+    if fallback_reason is not None:
         try:
-            expanded_paths, added_paths = expander(ordered, hops=1)
-            expanded_only_paths = set(added_paths)
+            from preflight_telemetry import write_fallback_event
+
+            write_fallback_event(
+                reason=fallback_reason,
+                session_id=str(getattr(ctx, "session_id", "unknown") or "unknown"),
+            )
         except Exception as exc:
-            logger.debug("[preflight:region] graph expansion failed: %s", exc)
-            expanded_paths = list(ordered)
-            expanded_only_paths = set()
+            # Telemetry must never break the hot path. Silent on failure
+            # (counter just won't increment for this call).
+            logger.debug("[preflight:fallback] telemetry emit failed: %s", exc)
 
     try:
         raw = await ctx.ledger.get_decisions_for_files(expanded_paths)
     except Exception as exc:
         logger.debug("[preflight:region] ledger region lookup failed: %s", exc)
-        return [], False
+        return [], False, fallback_reason
 
     matches: list[DecisionMatch] = []
     seen_ids: set[str] = set()
@@ -369,6 +519,9 @@ async def _region_anchored_preflight(
             surfaced_via_expansion = True
 
         _sf = d.get("signoff") or {}
+        # #157 — pruned decisions are excluded from preflight surfaces.
+        if isinstance(_sf, dict) and _sf.get("state") == "pruned":
+            continue
         matches.append(
             DecisionMatch(
                 decision_id=d.get("decision_id", ""),
@@ -386,7 +539,7 @@ async def _region_anchored_preflight(
             )
         )
 
-    return matches, surfaced_via_expansion
+    return matches, surfaced_via_expansion, fallback_reason
 
 
 async def handle_preflight(
@@ -428,9 +581,54 @@ async def handle_preflight(
             preflight_id=pid,
         )
 
-    # Per-session dedup — same topic within 5 min is silenced.
-    if _check_dedup(ctx, topic):
-        logger.debug("[preflight] dedup hit for topic: %r", topic[:60])
+    # Per-session dedup (#87 Phase 4) — same (topic, file_paths,
+    # ledger_revision) tuple within 5 min is silenced. Revision lookup
+    # failures BYPASS dedup entirely (Kevin's amendment on issue #87, B2
+    # signoff thread) rather than degrade to a partial key that could
+    # silently suppress a valid call. Correctness over saving a preflight
+    # call.
+    ledger_revision: str | None = None
+    try:
+        from ledger.queries import get_ledger_revision
+
+        inner = getattr(ctx.ledger, "_inner", ctx.ledger)
+        _client = getattr(inner, "_client", None)
+        if _client is not None:
+            ledger_revision = await get_ledger_revision(_client)
+    except Exception as exc:  # noqa: BLE001
+        # Defensive — get_ledger_revision already swallows its own
+        # exceptions and returns None, but if accessing ctx.ledger._inner
+        # raises (test stubs without that shape) we still want to bypass
+        # dedup rather than crash the handler.
+        logger.warning(
+            "[preflight] ledger revision lookup raised — bypassing dedup: %s",
+            exc,
+        )
+        ledger_revision = None
+
+    if ledger_revision is None:
+        # BYPASS: revision is unknown → cannot safely dedup. Loud warning
+        # for ops visibility; #87 Phase 5 telemetry counter quantifies
+        # how often this happens in production. A sustained spike is the
+        # signal to look at ledger health (transient SurrealDB faults,
+        # schema mismatch, etc.).
+        logger.warning(
+            "[preflight] dedup bypassed — ledger_revision lookup failed for "
+            "topic %r; the next same-topic call will re-evaluate fully",
+            topic[:60],
+        )
+        write_dedup_event(
+            reason="bypassed_revision_unknown",
+            session_id=session_id,
+            preflight_id=pid,
+        )
+    elif _check_dedup(ctx, topic, file_paths, ledger_revision):
+        logger.debug(
+            "[preflight] dedup hit for topic=%r file_paths=%s rev=%s",
+            topic[:60],
+            file_paths,
+            ledger_revision[:32] if ledger_revision else "",
+        )
         if pid is not None:
             write_preflight_event(
                 session_id=session_id,
@@ -448,6 +646,58 @@ async def handle_preflight(
             guided_mode=guided_mode,
             preflight_id=pid,
         )
+
+    # Cache-miss classification (#87 Phase 5): if the miss was caused by
+    # a ledger_revision bump (same topic + file_paths seen before but
+    # with a different revision still within TTL), emit the M7a/c
+    # signal. This is the counter Kevin asked for — "so we can tell the
+    # new key is doing useful work in production". File-paths-shift
+    # misses (M7b) are intentionally NOT counted here; the file_paths
+    # component of the key is observable from preflight_events.jsonl
+    # via the existing ``file_paths_hash`` field if a follow-up wants
+    # to backfill that metric.
+    if ledger_revision is not None and _dedup_miss_was_revision_bump(
+        ctx, topic, file_paths, ledger_revision
+    ):
+        write_dedup_event(
+            reason="invalidated_by_revision_bump",
+            session_id=session_id,
+            preflight_id=pid,
+        )
+
+    # #343 — ledger-awareness fast-path. When the caller supplied file_paths
+    # and guided_mode is off, check whether ANY decisions are bound to those
+    # files BEFORE the expensive sync + full query chain. If zero decisions
+    # exist, the preflight has no value to surface — return immediately.
+    # This eliminates noise on un-ingested code paths.
+    if file_paths and not guided_mode:
+        try:
+            inner = getattr(ctx.ledger, "_inner", ctx.ledger)
+            _client = getattr(inner, "_client", None)
+            if _client is not None:
+                from ledger.queries import has_decisions_for_files
+
+                has_any = await has_decisions_for_files(_client, file_paths)
+                if not has_any:
+                    if pid is not None:
+                        write_preflight_event(
+                            session_id=session_id,
+                            preflight_id=pid,
+                            topic=topic,
+                            file_paths=file_paths,
+                            fired=False,
+                            surfaced_ids=[],
+                            reason="no_relevant_decisions",
+                        )
+                    return PreflightResponse(
+                        topic=topic,
+                        fired=False,
+                        reason="no_relevant_decisions",
+                        guided_mode=guided_mode,
+                        preflight_id=pid,
+                    )
+        except Exception as exc:
+            logger.debug("[preflight] ledger-awareness fast-path failed: %s", exc)
 
     # V1 A3: time the call locally so the metric reflects THIS handler's catch-up.
     import time as _time
@@ -468,11 +718,21 @@ async def handle_preflight(
     region_matches: list[DecisionMatch] = []
     if file_paths:
         try:
-            region_matches, used_graph_expansion = await _region_anchored_preflight(ctx, file_paths)
+            (
+                region_matches,
+                used_graph_expansion,
+                fallback_reason,
+            ) = await _region_anchored_preflight(ctx, file_paths)
             if region_matches:
                 sources_chained.append("region")
                 if used_graph_expansion:
                     sources_chained.append("graph")
+            # #243 — surface graph-expansion fallback as a loud signal,
+            # additive to existing tags. Caller can render a recall-degraded
+            # warning to the agent. Bare tag — granular reason flows through
+            # the telemetry counter, not the response shape.
+            if fallback_reason is not None:
+                sources_chained.append("graph_unavailable")
         except Exception as exc:
             logger.debug("[preflight] region lookup failed: %s", exc)
 
@@ -526,6 +786,17 @@ async def handle_preflight(
     fired = bool(region_matches or unresolved_collisions or context_pending_ready or guided_mode)
     action_hints = generate_hints_from_findings([], drift_candidates, [], guided_mode)
 
+    # #224 Phase C-pre: surface recent timeout counts so a Claude
+    # PreToolUse / SessionStart hook can read current gate posture
+    # without a separate MCP roundtrip. Defaults to {"read": 0, "drift": 0}
+    # if the telemetry buffer is unavailable.
+    try:
+        from ledger.timeout_telemetry import recent_timeout_counts
+
+        recent_timeouts = recent_timeout_counts()
+    except Exception:
+        recent_timeouts = {"read": 0, "drift": 0}
+
     response = PreflightResponse(
         topic=topic,
         fired=fired,
@@ -542,6 +813,7 @@ async def handle_preflight(
         sync_metrics=sync_metrics,
         product_stage=_PRODUCT_STAGE_MSG if _should_show_product_stage() else None,
         preflight_id=pid,
+        recent_timeout_count=recent_timeouts,
     )
 
     # #65 — capture-loop event. surfaced_ids is the union of decision_ids the

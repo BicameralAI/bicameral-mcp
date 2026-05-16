@@ -27,6 +27,7 @@ from .queries import (
     get_pending_decisions_with_regions,
     get_region_metadata,
     get_regions_for_files,
+    get_regions_with_ephemeral_verdicts,
     get_regions_without_hash,
     get_source_cursor,
     get_sync_state,
@@ -77,6 +78,31 @@ from .status import (
 )
 
 _CODE_BODY_LINE_CAP = 200
+
+# #340 — source types whose decisions originate from human product/business
+# conversations (meetings, PRDs, Slack threads, Notion pages). These map to
+# L1 (product commitment) when no code regions are present. When code regions
+# ARE present, the decision is architectural (L2) regardless of source.
+_PRODUCT_SOURCE_TYPES = frozenset({"transcript", "notion", "slack", "document"})
+_IMPL_SOURCE_TYPES = frozenset({"implementation_choice", "agent_session"})
+
+
+def _classify_decision_level(source_type: str, code_regions: list) -> str:
+    """Deterministic heuristic for decision_level when the caller omits it.
+
+    Rules (applied in order):
+    1. Code regions present → L2 (architecture, code-grounded).
+    2. Source is a product conversation → L1 (product commitment).
+    3. Source is an implementation choice → L3 (technical detail).
+    4. Fallback → L2 (safe default — enters codegenome identity graph).
+    """
+    if code_regions:
+        return "L2"
+    if source_type in _PRODUCT_SOURCE_TYPES:
+        return "L1"
+    if source_type in _IMPL_SOURCE_TYPES:
+        return "L3"
+    return "L2"
 
 
 def _extract_code_body(
@@ -156,9 +182,21 @@ class SurrealDBLedgerAdapter:
         url: str | None = None,
         ns: str = "bicameral",
         db: str = "ledger",
+        *,
+        query_timeout_read_seconds: float | None = None,
+        query_timeout_drift_seconds: float | None = None,
     ) -> None:
         self._url = url or os.getenv("SURREAL_URL", _default_db_url())
-        self._client = LedgerClient(url=self._url, ns=ns, db=db)
+        # #224: timeout budgets are forwarded into LedgerClient. None →
+        # LedgerClient module defaults (5s read / 30s drift); callers
+        # that wire operator config through get_ledger() pass concrete
+        # floats.
+        client_kwargs: dict = {"url": self._url, "ns": ns, "db": db}
+        if query_timeout_read_seconds is not None:
+            client_kwargs["query_timeout_read_seconds"] = query_timeout_read_seconds
+        if query_timeout_drift_seconds is not None:
+            client_kwargs["query_timeout_drift_seconds"] = query_timeout_drift_seconds
+        self._client = LedgerClient(**client_kwargs)
         self._connected = False
         self._pending_destructive: DestructiveMigrationRequired | None = None
 
@@ -580,8 +618,13 @@ class SurrealDBLedgerAdapter:
             return []
         await self._ensure_connected()
         conditions = " OR ".join(f"status = '{s}'" for s in statuses)
+        # `decision_id` is not a stored field on the decision table; alias the
+        # Surreal record id into it (matches queries.py:167, 228, 404, 512 et al).
+        # Without the alias every banner row arrives with decision_id=None,
+        # which makes the items the agent sees unactionable.
         query = (
-            f"SELECT decision_id, description, status, source_ref, meeting_date, signoff "
+            f"SELECT type::string(id) AS decision_id, description, status, "
+            f"source_ref, meeting_date, signoff "
             f"FROM decision WHERE {conditions} LIMIT 50"
         )
         result = await self._client.query(query)
@@ -670,11 +713,19 @@ class SurrealDBLedgerAdapter:
                 logger.warning(
                     "[link_commit] could not surface pending decisions on already_synced: %s", exc
                 )
+
+            # #341 — ephemeral stale-repair on the already_synced path.
+            eph_repaired = 0
+            if is_authoritative:
+                eph_repaired = await self._repair_ephemeral_regions(
+                    repo_path, commit_hash, exclude_files=set()
+                )
+
             return {
                 "synced": True,
                 "commit_hash": commit_hash,
                 "reason": "already_synced",
-                "regions_updated": 0,
+                "regions_updated": eph_repaired,
                 "decisions_reflected": 0,
                 "decisions_drifted": 0,
                 "undocumented_symbols": [],
@@ -977,6 +1028,21 @@ class SurrealDBLedgerAdapter:
         except Exception as exc:
             logger.warning("[link_commit] could not surface stale pending decisions: %s", exc)
 
+        # #341 — ephemeral stale-repair on the main sweep path.
+        # Regions with ephemeral verdicts whose files were NOT in changed_files
+        # retain stale content_hash from the feature branch.
+        if is_authoritative:
+            swept_files = set(changed_files)
+            eph_extra = await self._repair_ephemeral_regions(
+                repo_path, commit_hash, exclude_files=swept_files
+            )
+            regions_updated += eph_extra
+
+        # #157 — prune orphaned ephemeral decisions on authoritative branch.
+        decisions_pruned: list[str] = []
+        if is_authoritative:
+            decisions_pruned = await self._prune_orphaned_decisions(repo_path, commit_hash)
+
         if is_authoritative:
             await upsert_sync_state(self._client, repo_path, commit_hash)
 
@@ -992,7 +1058,159 @@ class SurrealDBLedgerAdapter:
             "range_size": range_size,
             "pending_compliance_checks": pending_checks,
             "pending_grounding_checks": pending_grounding_checks,
+            "decisions_pruned": decisions_pruned,
         }
+
+    async def _repair_ephemeral_regions(
+        self,
+        repo_path: str,
+        commit_hash: str,
+        exclude_files: set[str] | None = None,
+    ) -> int:
+        """Re-hash ephemeral-tainted regions at the authoritative ref.
+
+        After returning from a feature branch to the authoritative branch,
+        regions that were bound/verified on the feature branch retain a stale
+        content_hash (set from the feature-branch code).  project_decision_status
+        then finds the ephemeral verdict for that stale hash and incorrectly
+        reports "reflected".
+
+        This method:
+        1. Finds all regions with at least one ephemeral compliance verdict.
+        2. Skips regions already processed in the current sweep (exclude_files).
+        3. Re-computes content_hash at the authoritative ref.
+        4. Updates code_region.content_hash and promotes matching ephemeral verdicts.
+        5. Re-projects decision status.
+
+        Returns the number of regions repaired.
+
+        Fixes #341 (status stuck at pending/reflected after branch switch)
+        and prevents the stale-reflected bug documented by test E22.
+        """
+        try:
+            eph_regions = await get_regions_with_ephemeral_verdicts(self._client)
+        except Exception as exc:
+            logger.warning("[link_commit] ephemeral stale-repair query failed: %s", exc)
+            return 0
+
+        exclude = exclude_files or set()
+        repaired = 0
+        affected_decisions: set[str] = set()
+
+        for er in eph_regions:
+            er_id = er.get("region_id", "")
+            er_fp = er.get("file_path", "")
+            er_sl = er.get("start_line", 0)
+            er_el = er.get("end_line", 0)
+            if not er_id or not er_fp:
+                continue
+            if er_fp in exclude:
+                continue
+
+            try:
+                actual = compute_content_hash(er_fp, er_sl, er_el, repo_path, ref=commit_hash)
+                await update_region_hash(self._client, er_id, actual or "", commit_hash)
+                for dec in er.get("decisions") or []:
+                    if dec is None:
+                        continue
+                    did = str(dec.get("id", ""))
+                    if not did:
+                        continue
+                    if actual:
+                        await promote_ephemeral_verdict(self._client, did, er_id, actual)
+                    affected_decisions.add(did)
+                repaired += 1
+            except Exception as exc:
+                logger.warning(
+                    "[link_commit] ephemeral stale-repair failed for %s: %s",
+                    er_id,
+                    exc,
+                )
+
+        for did in affected_decisions:
+            try:
+                projected = await project_decision_status(self._client, did)
+                await update_decision_status(self._client, did, projected)
+            except Exception as exc:
+                logger.warning(
+                    "[link_commit] status re-projection failed for %s: %s",
+                    did,
+                    exc,
+                )
+
+        if repaired:
+            logger.info(
+                "[link_commit] ephemeral stale-repair: %d regions, %d decisions",
+                repaired,
+                len(affected_decisions),
+            )
+        return repaired
+
+    async def _prune_orphaned_decisions(
+        self,
+        repo_path: str,
+        commit_hash: str,
+    ) -> list[str]:
+        """Prune proposed decisions whose bindings didn't survive merge (#157).
+
+        After returning to the authoritative branch, checks all proposed
+        (un-ratified) decisions.  For each, verifies whether ANY bound
+        region's file still exists at the authoritative ref.  If ALL
+        bound regions point to absent files, the decision is pruned
+        (signoff.state='pruned') — it was born on a feature branch and
+        the code never landed.
+
+        Half-survived merges (some regions present, some absent) are NOT
+        pruned — the decision is still partially grounded.
+
+        Returns a list of pruned decision IDs.
+        """
+        from ledger.queries import get_proposed_decisions_with_bindings, set_decision_pruned
+        from ledger.status import get_git_content
+
+        try:
+            rows = await get_proposed_decisions_with_bindings(self._client)
+        except Exception as exc:
+            logger.warning("[link_commit] orphan prune query failed: %s", exc)
+            return []
+
+        if not rows:
+            return []
+
+        # Group bindings by decision_id
+        decision_regions: dict[str, list[dict]] = {}
+        for row in rows:
+            did = row.get("decision_id", "")
+            if not did:
+                continue
+            decision_regions.setdefault(did, []).append(row)
+
+        pruned: list[str] = []
+        for did, regions in decision_regions.items():
+            all_absent = True
+            for reg in regions:
+                fp = reg.get("file_path", "")
+                if not fp:
+                    continue
+                content = get_git_content(fp, 1, 1, repo_path, ref=commit_hash)
+                if content is not None:
+                    all_absent = False
+                    break
+
+            if all_absent:
+                try:
+                    await set_decision_pruned(self._client, did)
+                    pruned.append(did)
+                except Exception as exc:
+                    logger.warning("[link_commit] prune failed for %s: %s", did, exc)
+
+        if pruned:
+            logger.info(
+                "[link_commit] pruned %d orphaned ephemeral decisions: %s",
+                len(pruned),
+                pruned,
+            )
+        return pruned
 
     async def backfill_empty_hashes(
         self,
@@ -1098,6 +1316,9 @@ class SurrealDBLedgerAdapter:
             initial_status = "ungrounded" if not code_regions else "pending"
             feature_group = mapping.get("feature_group") or None
             decision_level = mapping.get("decision_level") or None
+            # #340 — auto-classify when caller omits decision_level.
+            if not decision_level:
+                decision_level = _classify_decision_level(source_type, code_regions)
             parent_decision_id = mapping.get("parent_decision_id") or None
             # #109 — optional governance metadata; threaded into the
             # decision row's ``governance`` flexible-object field. None
@@ -1105,17 +1326,48 @@ class SurrealDBLedgerAdapter:
             governance = mapping.get("governance") or None
 
             # Create input_span node only when verbatim text is available.
-            # Per v0.5.0 contract: span.text must be non-empty; the schema
-            # ASSERT constraint enforces this at the DB level too.
+            # Per v0.5.0 contract: span.text must be non-empty; the v22
+            # schema ASSERT enforces "text != '' OR archive_key != ''"
+            # at the DB level.
+            #
+            # #221 Phase B-1: when a PiiArchive is configured on the
+            # adapter, write the verbatim text to the archive instead
+            # of inline. The input_span row carries only the
+            # archive_key (content-addressable reference) and text=''.
+            # If archive.put() fails, the row falls back to the legacy
+            # inline-text shape — best-effort segregation. A future
+            # cycle can promote this to fail-closed per the plan's
+            # ``_IngestRefused('archive_unwritable')`` semantic; for
+            # Phase B-1 we ship the dual-path to avoid breaking
+            # existing flows.
             span_id = ""
             if span_text:
+                archive_key = ""
+                archive = getattr(self, "_pii_archive", None)
+                if archive is not None:
+                    try:
+                        archive_key = archive.put(
+                            text=span_text,
+                            speakers=list(span.get("speakers", []) or []),
+                            source_ref=source_ref,
+                            meeting_date=span.get("meeting_date", "") or "",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "[ingest] PII archive write failed for span "
+                            "(source_ref=%s); falling back to inline text: %s",
+                            source_ref,
+                            exc,
+                        )
+                        archive_key = ""
                 span_id = await upsert_input_span(
                     self._client,
-                    text=span_text,
+                    text=span_text if not archive_key else "",
                     source_type=source_type,
                     source_ref=source_ref,
                     speakers=span.get("speakers", []),
                     meeting_date=span.get("meeting_date", ""),
+                    archive_key=archive_key,
                 )
 
             # Stamp discovered on new decisions when signoff not explicitly provided.
@@ -1386,7 +1638,7 @@ class SurrealDBLedgerAdapter:
         """
         await self._ensure_connected()
         await self._client.query(
-            f"UPDATE {decision_id} SET signoff = $signoff",
+            f"UPDATE {decision_id} SET signoff = $signoff, updated_at = time::now()",
             {"signoff": signoff},
         )
         projected = await project_decision_status(self._client, decision_id)
@@ -1420,7 +1672,7 @@ class SurrealDBLedgerAdapter:
         if rows and isinstance(rows[0], dict):
             old_signoff = rows[0].get("signoff") or {}
         await self._client.execute(
-            f"UPDATE {old_id} SET signoff = $s",
+            f"UPDATE {old_id} SET signoff = $s, updated_at = time::now()",
             {
                 "s": {
                     **old_signoff,

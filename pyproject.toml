@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.14.7"
+version = "0.15.0"
 description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,6 +34,11 @@ dependencies = [
   "pydantic>=2.0.0",
   "pyyaml>=6.0",
   "python-dotenv",
+  # PEP 440 version comparisons in handlers/update.py (channel-aware update routing).
+  # `packaging` is a transitive dep of pip/hatchling/build and is reliably present
+  # in any pip-managed env, but we depend on it directly so it ships in the wheel
+  # metadata as a first-class requirement.
+  "packaging>=21",
   # Patch-level pin closes wire-format drift surface (#252 Layer 1).
   # The on-disk SurrealKV record header carries a revision number that
   # must match the surrealdb-py deserializer. A `>=` floor lets a routine
@@ -62,6 +67,7 @@ test = [
   "ruff>=0.5.0",
   "mypy>=1.10.0",
   "build>=1.0.0",
+  "pre-commit>=3.5.0",
 ]
 release = [
   "cyclonedx-bom>=4.0",

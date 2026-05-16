@@ -50,6 +50,7 @@ def test_diagnosis_is_frozen_dataclass():
         drift_status="first-write",
         audit_log_channel="stderr",
         table_counts={},
+        row_probe_warnings=[],
         recent_events=[],
         suggestions=[],
     )

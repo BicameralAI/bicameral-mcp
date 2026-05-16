@@ -323,6 +323,10 @@ class LinkCommitResponse(BaseModel):
     # preflight_id (from a prior bicameral.preflight call), the response
     # echoes it so downstream telemetry rows can be attributed.
     preflight_id: str | None = None
+    # #338 — expose the refs the system used so the caller can detect
+    # snapshot gaps before hitting a bind rejection.
+    bind_effective_ref: str = ""
+    codegenome_indexed_ref: str = ""
 
 
 class ActionHint(BaseModel):
@@ -494,6 +498,7 @@ class IngestDecision(BaseModel):
     source_excerpt: str = ""
     signoff: dict | None = None
     feature_group: str | None = None
+    decision_level: str | None = None  # L1 | L2 | L3 — #340 auto-classified when omitted
     # #109 — optional governance metadata threaded to the ledger.
     governance: dict | None = None
 
@@ -717,8 +722,20 @@ class PreflightResponse(BaseModel):
     sync_metrics: SyncMetrics | None = None  # V1 A3 — catch-up wall times
     product_stage: str | None = None  # shown once per device; wait-time expectation-setting
     # #65 — opaque per-call id for the preflight telemetry capture loop.
-    # None when telemetry is disabled (BICAMERAL_PREFLIGHT_TELEMETRY != 1).
+    # None when preflight telemetry is disabled (canonical: BICAMERAL_TELEMETRY
+    # csv list excludes "preflight"; legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still
+    # honored via the #192 deprecation overlay).
     preflight_id: str | None = None
+    # #224 Phase C-pre — count of ledger-query timeout events recorded in
+    # the last 1 hour, per ``timeout_class``. Populated from the
+    # process-local ring buffer in ``ledger/timeout_telemetry.py`` so
+    # the Claude Code ``PreToolUse`` / ``SessionStart`` hooks can surface
+    # current timeout posture to the model without a SurrealDB roundtrip.
+    # Shape: ``{"read": int, "drift": int}``. Defaults to all-zero so
+    # older response consumers ignore the field cleanly. Reset on
+    # process restart (per-session granularity is correct for the
+    # session-start hook surfacing).
+    recent_timeout_count: dict[str, int] = Field(default_factory=lambda: {"read": 0, "drift": 0})
 
 
 # ── Tool 10: /bicameral_judge_gaps ───────────────────────────────────
@@ -783,6 +800,84 @@ class RatifyResponse(BaseModel):
     was_new: bool  # True if this call set the signoff; False if already set
     signoff: dict
     projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
+
+
+# #278 Phase 2 — remove flows (v0.15.x: hard-delete, see decision:i4wafafzowm3ai5eyhgs)
+class RemoveDecisionResponse(BaseModel):
+    """Response envelope for bicameral.remove_decision.
+
+    Hard-delete (default and only mode as of decision:i4wafafzowm3ai5eyhgs):
+    the decision row and all references to it (binds_to, yields,
+    supersedes, context_for, about edges + compliance_check cache rows)
+    are physically removed from the ledger. A
+    decision_removed.completed event records the full pre-deletion state
+    in the event journal — the "soft audit trail" that replaces the
+    tombstone-row model.
+
+    Idempotent: calling on a missing decision_id returns ``was_new=False``
+    without raising. The canonical record of removal lives in the event
+    journal, not in the ledger.
+    """
+
+    decision_id: str
+    was_new: bool  # True iff this call physically deleted a row
+    event_logged: bool  # True iff a decision_removed.completed event was emitted
+    removed_at: str | None = None  # ISO timestamp on the new removal (None for the no-op path)
+    previous_state: str | None = None  # signoff.state captured immediately before delete
+    reason: str = ""  # echo of the audit reason
+
+
+class RemoveSourcePlan(BaseModel):
+    """Dry-run response for bicameral.remove_source (confirm=False).
+
+    Returned BEFORE any mutation. Lists the full input_span content and the
+    decision ids that would be soft-deleted on a subsequent confirm=True
+    call. The operator inspects this plan, then re-invokes with confirm=True.
+    """
+
+    span_id: str
+    span_existed: bool  # False if span is already gone (idempotent dry-run)
+    input_span_content: dict  # full row as-is (text, source_ref, source_type, ...)
+    decision_ids: list[str]  # decisions yielded by this span that will cascade
+    confirm_required: Literal[True] = True
+
+
+class RemoveSourceResponse(BaseModel):
+    """Post-confirm response for bicameral.remove_source (confirm=True).
+
+    The input_span row is hard-deleted; cascaded_decision_ids are
+    soft-deleted with signoff.state="removed" + removed_by_source=<span_id>.
+    A single source_removed.completed event carries the full pre-deletion
+    span content so the action is recoverable from the event log.
+    """
+
+    span_id: str
+    span_existed: bool  # False if span was already gone (idempotent confirm)
+    cascaded_decision_ids: list[str]
+    event_logged: bool
+
+
+# #278 Phase 3 — raw SurrealQL admin panel
+class AdminQueryRequest(BaseModel):
+    """Request envelope for the dashboard /admin/query endpoint.
+
+    The admin panel is off-by-default; reachability requires
+    BICAMERAL_ENABLE_ADMIN_PANEL=1 at MCP server start. Write mode requires
+    BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1 AND an in-UI typed confirmation.
+    """
+
+    sql: str
+    mode: Literal["read", "write"] = "read"
+    signer: str = ""  # Required for write mode (handler rejects empty)
+
+
+class AdminQueryResponse(BaseModel):
+    """Response envelope for the /admin/query endpoint."""
+
+    mode: Literal["read-only", "write"]
+    rows: list[dict]
+    elapsed_ms: float
+    error: str | None = None
     # #65 — preflight telemetry plumb-through.
     preflight_id: str | None = None
 
@@ -820,6 +915,9 @@ class HistorySource(BaseModel):
     date: str  # ISO date
     speaker: str | None = None
     quote: str  # verbatim excerpt from source_span.text
+    input_span_id: str | None = (
+        None  # SurrealDB record id of the originating input_span (#278 Phase 2)
+    )
 
 
 class HistoryFulfillment(BaseModel):
@@ -905,6 +1003,10 @@ class BindResponse(BaseModel):
     sync_metrics: SyncMetrics | None = None  # V1 A3 — write-barrier hold time
     # #65 — preflight telemetry plumb-through.
     preflight_id: str | None = None
+    # #332 — the git ref actually used for symbol resolution and content_hash
+    # computation. Equals authoritative_sha on the authoritative branch;
+    # equals head_sha on ephemeral (feature) branches.
+    bind_effective_ref: str = ""
 
 
 # ── Session-start banner ─────────────────────────────────────────────

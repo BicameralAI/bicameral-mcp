@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 17
+SCHEMA_VERSION = 24
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -46,6 +46,10 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     15: "0.15.x",  # decision.governance (#109 — governance metadata)
     16: "0.13.x",  # #252 Layer 2 — wire-format sentinel via bicameral_meta table; placeholder, release-eng pins final value at PR merge
     17: "0.14.x",  # re-runnable yields integrity cleanup; placeholder, release-eng pins final value at PR merge
+    18: "0.14.x",  # decision.updated_at + idx_decision_updated_at (#87 precondition — revision marker for preflight dedup); placeholder, release-eng pins final value at PR merge
+    19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
+    23: "0.15.x",  # decision_level backfill for legacy rows; placeholder, release-eng pins final value at PR merge
+    24: "0.15.x",  # idx_input_span_dedup extended with archive_key so distinct archive-keyed spans in the same (source_type, source_ref) bucket no longer collide; placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -98,15 +102,33 @@ _TABLES = [
     # at the ingest contract boundary (IngestDecision.source_excerpt must be
     # non-empty). See v0.5.0 plan §Core Principle.
     "DEFINE TABLE input_span SCHEMAFULL",
-    "DEFINE FIELD text           ON input_span TYPE string ASSERT string::len($value) > 0",
+    # #221 Phase B-1: text is now optional-via-DEFAULT-empty + the ASSERT
+    # enforces "either text or archive_key is non-empty." New ingests
+    # write to the PII archive and leave text=''; legacy rows have
+    # text!='' and archive_key=''. The ASSERT is the deterministic gate
+    # (#205 doctrine, gate_kind: schema) — refactor-resistant; the row
+    # cannot land if BOTH are empty.
+    "DEFINE FIELD text           ON input_span TYPE string DEFAULT '' "
+    "ASSERT $value != '' OR $this.archive_key != ''",
     "DEFINE FIELD source_type    ON input_span TYPE string",  # transcript | notion | slack | document | manual | implementation_choice
     "DEFINE FIELD source_ref     ON input_span TYPE string DEFAULT ''",  # meeting ID, page URL, etc.
     "DEFINE FIELD speakers       ON input_span TYPE array<string> DEFAULT []",
     "DEFINE FIELD meeting_date   ON input_span TYPE string DEFAULT ''",
     "DEFINE FIELD created_at     ON input_span TYPE datetime DEFAULT time::now()",
+    # #221 Phase A: PII archive key. Phase B-1 wires ingest to populate
+    # it as the load-bearing PII surface; Phase B-2 will extend the
+    # pattern to decision.speakers/source_ref pseudonymization.
+    "DEFINE FIELD archive_key    ON input_span TYPE string DEFAULT ''",
     "DEFINE INDEX idx_input_span_ref   ON input_span FIELDS source_type, source_ref",
-    # Dedup: same excerpt from same source is the same span
-    "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text UNIQUE",
+    # v24 (Bug 2 from the dashboard /history 500): the dedup index now
+    # includes archive_key. Pre-v24 the index was (source_type, source_ref,
+    # text) only — Phase B-1 (#221) introduced archive_key and writes
+    # text='' for archive-keyed rows, so two distinct archive_keys sharing
+    # (source_type, source_ref) collided on ('<st>', '<sr>', ''). The
+    # legacy text-only dedup still works for pre-Phase-B-1 rows (text
+    # non-empty, archive_key='') because archive_key='' is just another
+    # discriminator value. New rows distinguish on archive_key.
+    "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text, archive_key UNIQUE",
     # decision — extracted decision / requirement. "What was decided."
     # Denormalized source fields (source_type, source_ref, speakers, meeting_date)
     # are kept for query speed; they mirror the linked input_span but are never
@@ -123,6 +145,14 @@ _TABLES = [
     "DEFINE FIELD status         ON decision TYPE string DEFAULT 'ungrounded' "
     "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON decision TYPE datetime DEFAULT time::now()",
+    # v18 (#87 precondition) — monotonic write marker. Bumped by every
+    # decision UPDATE call site (status/level/signoff/parent/governance/
+    # canonical-dedup-merge). Used by the preflight dedup cache to invalidate
+    # entries whose ledger state changed mid-session. Indexed for cheap
+    # MAX(updated_at) lookups. Optional so pre-v18 rows read back as NONE
+    # at DEFINE time and the migration's UPDATE...WHERE updated_at IS NONE
+    # backfills them to created_at (same precedent as decision_level v8→v9).
+    "DEFINE FIELD updated_at     ON decision TYPE option<datetime> DEFAULT time::now()",
     # v0.4.13-style content-addressable dedup; same derivation, renamed type
     "DEFINE FIELD canonical_id   ON decision TYPE string DEFAULT ''",
     # Double-entry axis — signoff is stored; eng_reflected is derived
@@ -157,6 +187,9 @@ _TABLES = [
     "SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75) HIGHLIGHTS",
     # Powers the "awaiting signoff" PM dashboard queue
     "DEFINE INDEX idx_decision_signoff ON decision FIELDS signoff",
+    # v18 (#87 precondition) — powers cheap MAX(updated_at) revision-marker
+    # queries for the preflight dedup cache key.
+    "DEFINE INDEX idx_decision_updated_at ON decision FIELDS updated_at",
     # ── Shared / unchanged ──────────────────────────────────────────────
     # symbol — a named code entity (function, class, file). Retrieval-tier only.
     "DEFINE TABLE symbol SCHEMAFULL",
@@ -413,6 +446,23 @@ _BICAMERAL_META = [
     "DEFINE FIELD surrealdb_client_version_at_first_write ON bicameral_meta TYPE option<string> DEFAULT NONE",
     "DEFINE FIELD surrealdb_client_version_at_last_write  ON bicameral_meta TYPE option<string> DEFAULT NONE",
     "DEFINE FIELD last_write_at                            ON bicameral_meta TYPE option<datetime> DEFAULT NONE",
+    # v19 (#87 Phase 6) — monotonic counter bumped on every decision
+    # CREATE/UPDATE via the DEFINE EVENT below. Replaces the v18 ORDER BY
+    # DESC LIMIT 1 query as the preflight-dedup revision marker —
+    # constant-time read, deterministic, no full-table scan, no SurrealDB
+    # v2 ordering quirks. Existing v18 `decision.updated_at` stays for
+    # display / debugging.
+    "DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0",
+    # The EVENT auto-bumps the counter on every decision write. Body
+    # UPDATE targets bicameral_meta (a different table), so no risk of
+    # recursive re-firing. SurrealDB v2 evaluates EVENTs inside the same
+    # transaction as the originating write, so the counter advances
+    # atomically with the underlying decision change.
+    (
+        "DEFINE EVENT decision_revision_bump ON TABLE decision "
+        "WHEN $event = 'CREATE' OR $event = 'UPDATE' "
+        "THEN (UPDATE bicameral_meta SET decision_revision = decision_revision + 1)"
+    ),
 ]
 
 
@@ -1019,6 +1069,438 @@ async def _migrate_v16_to_v17(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v17_to_v18(client: LedgerClient) -> None:
+    """v17 → v18: Add decision.updated_at + idx_decision_updated_at (#87 precondition).
+
+    The preflight dedup cache (handlers/preflight.py) currently keys on
+    topic alone — a same-topic re-call within 5 min hits the cache even
+    if the underlying ledger state changed mid-session. #87 broadens the
+    key to (topic_norm, file_paths_hash, ledger_revision); ledger_revision
+    derives from MAX(updated_at) over the decision table. This migration
+    is the schema half of that contract — the handler-side work lands in
+    a follow-up PR.
+
+    Additive only — no data loss. Defines the new field and index
+    idempotently (init_schema also applies them on every connect, so this
+    is symmetric with the existing-pre-v18-row backfill below). Backfills
+    ``updated_at = created_at`` for pre-v18 rows so MAX(updated_at) is
+    well-defined immediately after upgrade.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD updated_at ON decision TYPE option<datetime> DEFAULT time::now()",
+    )
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX idx_decision_updated_at ON decision FIELDS updated_at",
+    )
+    # Backfill: any decision row whose updated_at is NONE (pre-v18) gets
+    # time::now(). The DEFAULT only fires on rows created after the DEFINE,
+    # so without this step legacy rows would have NONE forever and MAX()
+    # would skip them.
+    #
+    # We deliberately use time::now() rather than created_at — some legacy
+    # fixtures (v3_yields_source_span) hold decision rows where created_at
+    # was never set; the schema's TYPE datetime constraint then trips on
+    # ANY UPDATE that re-validates the row, even one that only writes
+    # updated_at. Per-row try/except mirrors _clean_yields_legacy_rows'
+    # tolerance precedent — a single corrupt row doesn't abort the whole
+    # migration. Rows that fail to update stay with updated_at=NONE and
+    # MAX(updated_at) skips them; harmless for the dedup-cache marker
+    # (#87) since the marker only needs monotonicity, not coverage.
+    try:
+        ids = await client.query("SELECT id FROM decision WHERE updated_at IS NONE")
+    except Exception as exc:
+        logger.warning(
+            "[migration] v17 → v18: SELECT for backfill failed (%s) — "
+            "skipping per-row backfill; new rows still get DEFAULT time::now()",
+            exc,
+        )
+        ids = []
+    healed = 0
+    skipped = 0
+    for row in ids or []:
+        rid = row.get("id") if isinstance(row, dict) else None
+        if not rid:
+            continue
+        try:
+            await client.execute(f"UPDATE {rid} SET updated_at = time::now()")
+            healed += 1
+        except Exception as exc:
+            skipped += 1
+            logger.warning(
+                "[migration] v17 → v18: skipped backfill on %s — row likely "
+                "has other corrupt non-optional fields (%s)",
+                rid,
+                exc,
+            )
+    logger.info(
+        "[migration] v17 → v18: backfilled updated_at on %d row(s), skipped %d corrupt row(s)",
+        healed,
+        skipped,
+    )
+    logger.info(
+        "[migration] v17 → v18: decision.updated_at + idx_decision_updated_at added (#87 precondition)"
+    )
+
+
+async def _migrate_v18_to_v19(client: LedgerClient) -> None:
+    """v18 → v19: Add bicameral_meta.decision_revision + DEFINE EVENT (#87 Phase 6).
+
+    Phase 4's ``get_ledger_revision`` shipped with two problems caught
+    after merge:
+
+    1. ``SELECT updated_at ... ORDER BY updated_at DESC LIMIT 1`` is a
+       full scan on the SurrealDB v2 memory backend — the v18
+       ``idx_decision_updated_at`` index does NOT accelerate ORDER BY
+       DESC. ~8ms p50 at N=1000, over Kevin's ≤1ms budget by 8x.
+    2. The same query is ~50% flaky under pytest's batch runner
+       (0/20 wrong standalone, ~7/15 wrong under load). Suggests a
+       SurrealDB v2 ordering quirk we don't fully understand.
+
+    Phase 6 fixes both by sidestepping ORDER BY entirely: a counter on
+    the singleton ``bicameral_meta`` row, auto-bumped on every decision
+    CREATE/UPDATE by a ``DEFINE EVENT`` trigger. Constant-time read.
+    Atomic with the originating decision write (events run inside the
+    same transaction in SurrealDB v2). Zero call-site audit needed —
+    the trigger fires unconditionally on every relevant write.
+
+    Additive only — no data loss. The v18 ``decision.updated_at`` field
+    and ``idx_decision_updated_at`` stay for display / debugging /
+    audit-trail purposes. The migration:
+
+    1. Defines the new field + EVENT idempotently (init_schema also
+       applies them on every connect via ``_BICAMERAL_META``).
+    2. Ensures the singleton ``bicameral_meta`` row exists with
+       ``decision_revision = 0``. The v15→v16 migration created the
+       row in some paths but not all; this step is defensive.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0",
+    )
+    await _execute_define_idempotent(
+        client,
+        (
+            "DEFINE EVENT decision_revision_bump ON TABLE decision "
+            "WHEN $event = 'CREATE' OR $event = 'UPDATE' "
+            "THEN (UPDATE bicameral_meta SET decision_revision = decision_revision + 1)"
+        ),
+    )
+    # Ensure the singleton row exists AND has decision_revision = 0.
+    #
+    # Two failure modes the original v0.13.x migration missed:
+    # 1. No row at all — the DEFINE EVENT fires on decision writes with
+    #    nothing to UPDATE; the counter never increments. Seed via CREATE.
+    # 2. Row exists from an earlier ``_write_wire_format_sentinel`` call
+    #    (v16's ``adapter.connect`` path) but pre-dates the
+    #    ``decision_revision`` field. SurrealDB v2's ``DEFAULT 0`` only
+    #    applies on CREATE, not as a backfill — so the existing row's
+    #    ``decision_revision`` stays NONE, and every subsequent decision
+    #    UPDATE blows up the trigger with
+    #    "Cannot perform addition with 'NONE' and '1'". Backfill via UPDATE.
+    try:
+        rows = await client.query("SELECT id FROM bicameral_meta LIMIT 1")
+    except Exception:
+        rows = []
+    if not rows:
+        try:
+            await client.execute("CREATE bicameral_meta SET decision_revision = 0")
+        except Exception as exc:
+            logger.warning(
+                "[migration] v18 → v19: could not seed bicameral_meta singleton (%s)",
+                exc,
+            )
+    else:
+        try:
+            await client.execute(
+                "UPDATE bicameral_meta SET decision_revision = 0 WHERE decision_revision IS NONE"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[migration] v18 → v19: could not backfill decision_revision on "
+                "existing bicameral_meta row (%s)",
+                exc,
+            )
+    logger.info(
+        "[migration] v18 → v19: bicameral_meta.decision_revision + decision_revision_bump event added (#87 Phase 6)"
+    )
+
+
+async def _migrate_v19_to_v20(client: LedgerClient) -> None:
+    """v19 → v20: Add ``input_span.archive_key`` field (#221 Phase A).
+
+    Phase A of GDPR Art. 17 right-to-erasure (#221). The new field is the
+    forthcoming reference into the operator-local PII archive
+    (``pii_archive/store.py``). This migration adds the field only; it
+    does NOT relax the existing ``input_span.text`` ASSERT or the
+    UNIQUE-on-text index. Those changes land in Phase B alongside the
+    ingest cutover.
+
+    Additive only — existing rows get ``archive_key = ''`` per the
+    DEFAULT, and the legacy read-path (preferring ``input_span.text``)
+    continues to function unchanged. Phase B introduces the schema
+    ASSERT that makes the PII archive the load-bearing store.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD archive_key ON input_span TYPE string DEFAULT ''",
+    )
+    logger.info("[migration] v19 → v20: input_span.archive_key field added (#221 Phase A)")
+
+
+async def _migrate_v20_to_v21(client: LedgerClient) -> None:
+    """v20 → v21: Backfill compliance_check rows for pre-verdict reflected decisions (#342).
+
+    Before the compliance-verdict gate was introduced (v0.5.0), decisions
+    could reach status='reflected' via hash-comparison alone — no
+    compliance_check row was written.  The new project_decision_status
+    requires a compliant verdict row to derive 'reflected', so these
+    pre-verdict-era decisions silently regressed to 'pending' or 'drifted'
+    on the next status re-projection.
+
+    This migration creates a synthetic compliance_check(verdict='compliant')
+    for each (decision, region) pair where the decision is 'reflected' but
+    no compliance_check exists.  The synthetic row uses the region's current
+    content_hash and is marked phase='migration' for traceability.
+
+    Idempotent: skips decisions that already have compliance_check rows.
+    """
+    reflected_rows = await client.query(
+        "SELECT type::string(id) AS did FROM decision WHERE status = 'reflected'"
+    )
+    if not reflected_rows:
+        logger.info("[migration] v20 → v21: no reflected decisions to backfill")
+        return
+
+    backfilled = 0
+    for row in reflected_rows:
+        did = row.get("did", "")
+        if not did:
+            continue
+        existing = await client.query(
+            "SELECT id FROM compliance_check WHERE decision_id = $d LIMIT 1",
+            {"d": did},
+        )
+        if existing:
+            continue
+        bindings = await client.query(
+            f"SELECT type::string(out) AS rid, out.content_hash AS ch "
+            f"FROM binds_to WHERE in = {did}",
+        )
+        for b in bindings or []:
+            rid = b.get("rid", "")
+            ch = b.get("ch", "")
+            if not rid or not ch:
+                continue
+            await client.execute(
+                "CREATE compliance_check SET "
+                "decision_id = $d, region_id = $r, content_hash = $h, "
+                "verdict = 'compliant', confidence = 'migrated', "
+                "explanation = 'backfilled by v20→v21 migration: pre-verdict-era reflected decision', "
+                "phase = 'migration', pruned = false, ephemeral = false",
+                {"d": did, "r": rid, "h": ch},
+            )
+            backfilled += 1
+    logger.info("[migration] v20 → v21: backfilled %d compliance_check rows", backfilled)
+
+
+async def _migrate_v21_to_v22(client: LedgerClient) -> None:
+    """v21 → v22: PII archive cutover (#221 Phase B-1).
+
+    Relaxes the ``input_span.text`` ASSERT from ``string::len > 0`` to
+    ``$value != '' OR $this.archive_key != ''``. This is the
+    deterministic gate per the #205 doctrine — DB-engine-enforced;
+    handler-side bypass is structurally impossible because the row
+    cannot land if BOTH columns are empty.
+
+    Phase B-1 also wires ``handlers/ingest.py`` to write PII into the
+    PiiArchive (from Phase A) and leave ``text=''`` on new rows. The
+    ASSERT permits this because ``archive_key`` is set.
+
+    Legacy rows (v21 and earlier) have ``text!=''`` and ``archive_key=''``
+    and continue to satisfy the new ASSERT via the text clause. They
+    remain readable via the legacy fallback path in
+    ``ledger/queries.py::_resolve_span_text``.
+
+    Schema-level UNIQUE-on-archive_key is NOT added at this layer
+    because legacy rows have ``archive_key=''`` and multiple empty
+    values would violate UNIQUE. Dedup for new ingests is enforced in
+    Python via ``ledger/queries.py::get_input_span_id``. A future
+    cycle (post-legacy-row-backfill) can add a partial UNIQUE index.
+
+    Idempotent: ``DEFINE FIELD`` is overwrite-semantic on SurrealDB v2.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD text ON input_span TYPE string DEFAULT '' "
+        "ASSERT $value != '' OR $this.archive_key != ''",
+    )
+    logger.info(
+        "[migration] v21 → v22: input_span.text ASSERT relaxed for "
+        "PII archive cutover (#221 Phase B-1)"
+    )
+
+
+async def _migrate_v22_to_v23(client: LedgerClient) -> None:
+    """v22 → v23: Backfill decision_level for legacy decisions.
+
+    The v8→v9 migration added the decision_level field (DEFAULT NONE) but
+    did not classify existing rows. The #340 auto-classify heuristic only
+    runs on newly ingested decisions, so all pre-#340 rows remain NONE
+    (unclassified). Per the tolerant policy, NONE is treated as L3 — this
+    silently excludes legacy decisions from the codegenome identity graph.
+
+    This migration applies the same deterministic heuristic used by
+    ``ledger.adapter._classify_decision_level`` at ingest time:
+
+      1. Has binds_to edge → L2 (architecture, code-grounded).
+      2. source_type ∈ {transcript, notion, slack, document} → L1.
+      3. source_type ∈ {implementation_choice, agent_session} → L3.
+      4. Remaining → L2 (safe default — enters identity graph).
+
+    Idempotent: only touches rows WHERE decision_level IS NONE.
+
+    Legacy decision rows (from pre-v18 fixtures or ancient DBs) may
+    carry NONE values for required typed fields (``created_at``,
+    ``feature_hint``, etc.) that were added by later schema versions.
+    SurrealDB v2 re-validates the entire record on any UPDATE, so a
+    bulk ``UPDATE decision SET decision_level = ...`` fails on these
+    rows even though the migration only touches ``decision_level``.
+    We therefore UPDATE per-row and skip (with a warning) any row
+    whose record is too broken for an in-place patch.
+    """
+    # Step 0: defense-in-depth. The v18→v19 migration was historically
+    # buggy — when ``bicameral_meta`` already had a row written by
+    # ``_write_wire_format_sentinel``, the seed branch was skipped and
+    # ``decision_revision`` stayed NONE forever. Every per-row UPDATE
+    # below fires the ``decision_revision_bump`` event, which does
+    # ``decision_revision + 1`` and blows up on NONE. Without this
+    # backfill, the per-row try/except below silently swallows the
+    # trigger failure for every row, ``skip_count`` ticks up to N, and
+    # the migration "succeeds" while classifying zero rows. The fix in
+    # ``_migrate_v18_to_v19`` covers DBs upgrading from <v19 today; this
+    # one-liner covers a DB that already ran the buggy v19 and is
+    # arriving at v23 with ``decision_revision`` still NONE.
+    try:
+        await client.execute(
+            "UPDATE bicameral_meta SET decision_revision = 0 WHERE decision_revision IS NONE"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[migration] v22 → v23: decision_revision pre-backfill failed (%s); "
+            "classification UPDATEs may silently skip",
+            exc,
+        )
+
+    # Step 1: decisions with code-region bindings → L2.
+    # Bound decision IDs come from the binds_to edge table (not
+    # ``->binds_to->code_region IS NOT EMPTY``, which returns True for
+    # all rows in SurrealDB v2 embedded — known quirk).
+    bound_ids = await client.query("SELECT type::string(`in`) AS id FROM binds_to")
+    bound_id_set = {r["id"] for r in (bound_ids or []) if r.get("id")}
+
+    # Fetch all unclassified decisions once for per-row processing.
+    unclassified = await client.query(
+        "SELECT type::string(id) AS id, source_type FROM decision WHERE decision_level IS NONE"
+    )
+    unclassified = [r for r in (unclassified or []) if r.get("id")]
+
+    product_sources = {"transcript", "notion", "slack", "document"}
+    impl_sources = {"implementation_choice", "agent_session"}
+
+    bound_count = 0
+    product_count = 0
+    impl_count = 0
+    fallback_count = 0
+    skip_count = 0
+
+    for row in unclassified:
+        did = row["id"]
+        src = row.get("source_type") or ""
+
+        if did in bound_id_set:
+            level = "L2"
+            counter = "bound"
+        elif src in product_sources:
+            level = "L1"
+            counter = "product"
+        elif src in impl_sources:
+            level = "L3"
+            counter = "impl"
+        else:
+            level = "L2"
+            counter = "fallback"
+
+        try:
+            await client.execute(
+                f"UPDATE {did} SET decision_level = '{level}', updated_at = time::now()"
+            )
+        except Exception:
+            # Row has NONE values in required typed fields from a pre-v18
+            # fixture or ancient DB. Skip it — NONE is already treated as
+            # L3 by the tolerant policy, so the row remains functional.
+            skip_count += 1
+            logger.debug(
+                "[migration] v22 → v23: skipping %s — record fails "
+                "re-validation (likely legacy fixture with missing fields)",
+                did,
+            )
+            continue
+
+        if counter == "bound":
+            bound_count += 1
+        elif counter == "product":
+            product_count += 1
+        elif counter == "impl":
+            impl_count += 1
+        else:
+            fallback_count += 1
+
+    logger.info(
+        "[migration] v22 → v23: decision_level backfill — "
+        "%d bound→L2, %d product→L1, %d impl→L3, %d fallback→L2, %d skipped",
+        bound_count,
+        product_count,
+        impl_count,
+        fallback_count,
+        skip_count,
+    )
+
+
+async def _migrate_v23_to_v24(client: LedgerClient) -> None:
+    """v23 → v24: Extend idx_input_span_dedup with archive_key.
+
+    Pre-v24 the index was UNIQUE on (source_type, source_ref, text).
+    Phase B-1 (#221) introduced archive_key and writes text='' for
+    archive-keyed rows, which meant two distinct archive_keys in the
+    same (source_type, source_ref) bucket collided on the empty-text
+    slot. The collision surfaced as a 500 from /history (which
+    transitively triggers ingest via ensure_ledger_synced → link_commit)
+    once any second archive-keyed write to the same source bucket
+    landed.
+
+    Including archive_key as the 4th field is non-destructive:
+      - Legacy rows (text=non-empty, archive_key=''): dedup tuple is
+        ('<st>','<sr>','<text>','') — uniqueness unchanged.
+      - Archive-keyed rows (text='', archive_key=<sha256>): dedup tuple
+        is ('<st>','<sr>','','<key>') — distinguishable by archive_key.
+
+    Any row valid under the old index is valid under the new one —
+    adding a discriminator field can only relax uniqueness. ``init_schema``
+    re-issues every DEFINE with OVERWRITE on connect, so this migration
+    is largely a safety belt that runs the OVERWRITE explicitly on the
+    version boundary even when init_schema's pass is interrupted.
+    Idempotent — re-running drops through ``_execute_define_idempotent``.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX OVERWRITE idx_input_span_dedup ON input_span "
+        "FIELDS source_type, source_ref, text, archive_key UNIQUE",
+    )
+    logger.info("[migration] v23 → v24: idx_input_span_dedup extended with archive_key")
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1097,6 +1579,13 @@ _MIGRATIONS: dict[int, ...] = {
     15: _migrate_v14_to_v15,
     16: _migrate_v15_to_v16,
     17: _migrate_v16_to_v17,
+    18: _migrate_v17_to_v18,
+    19: _migrate_v18_to_v19,
+    20: _migrate_v19_to_v20,
+    21: _migrate_v20_to_v21,
+    22: _migrate_v21_to_v22,
+    23: _migrate_v22_to_v23,
+    24: _migrate_v23_to_v24,
 }
 
 

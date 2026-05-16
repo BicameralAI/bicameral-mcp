@@ -58,13 +58,43 @@ def get_ledger():
     global _real_ledger_instance
 
     if _real_ledger_instance is None:
+        from context import (
+            _read_query_timeout_drift_seconds,
+            _read_query_timeout_read_seconds,
+        )
         from ledger.adapter import SurrealDBLedgerAdapter
 
+        repo_path = os.getenv("REPO_PATH", ".")
+        # #224: operator-configured query timeout budgets, with the
+        # fail-closed reader (clamps to safe range; falls back to
+        # default on malformed config).
         inner = SurrealDBLedgerAdapter(
             url=os.getenv("SURREAL_URL", None),
+            query_timeout_read_seconds=_read_query_timeout_read_seconds(repo_path),
+            query_timeout_drift_seconds=_read_query_timeout_drift_seconds(repo_path),
         )
 
-        repo_path = os.getenv("REPO_PATH", ".")
+        # #221 Phase B-1: wire the PiiArchive (Phase A primitive) onto
+        # the adapter. ingest writes verbatim text to the archive and
+        # leaves input_span.text=''; reads route through
+        # _resolve_span_text(archive, row). Path is operator-erasable.
+        try:
+            from pii_archive import PiiArchive
+
+            archive_path = os.environ.get(
+                "BICAMERAL_PII_ARCHIVE_PATH",
+                str(Path.home() / ".bicameral" / "pii-archive.db"),
+            )
+            inner._pii_archive = PiiArchive(archive_path)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[ledger] PII archive init failed (%s) — ingest will fall "
+                "back to inline-text shape; erasure not available for "
+                "spans ingested this session",
+                exc,
+            )
+            inner._pii_archive = None
+
         cfg = _read_team_config(repo_path)
         mode = cfg.get("mode", "solo")
 

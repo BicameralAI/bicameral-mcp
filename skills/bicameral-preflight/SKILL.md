@@ -44,6 +44,55 @@ redundant check. Examples:
 - *"remove the deprecated API call"*
 - *"set up the webhook integration"*
 
+## Tier-2 semantic relevance gate (#300)
+
+> **Three-tier gating model.**
+> - **Tier 1** (deterministic): `UserPromptSubmit` hook keyword match — fires or skips this skill.
+> - **Tier 2** (caller LLM, NEW): You decide here — *"Does this prompt have a plausible code-implementation surface?"* If no, exit silently with no tool call.
+> - **Tier 3** (deterministic): `bicameral.preflight` server call with region-anchored retrieval.
+
+Before calling any tool, apply this one-line judgment:
+
+> **Does this prompt have a plausible code-implementation surface?**
+
+If the answer is clearly "no", exit the skill silently — do NOT call
+`bicameral.preflight`. Record `exited_at_tier_2: true` in the
+`skill_end` diagnostic (alongside the existing `g9_preflight_fired`).
+
+### Out of scope — exit at tier 2 (no tool call)
+
+These prompt categories have zero chance of surfacing decisions, drift,
+or open questions. Exit silently:
+
+1. **Pure docs/README/CHANGELOG edits with no source change** — e.g. *"rewrite the README quickstart section"*, *"add demo videos to the README"*, *"update CHANGELOG for the v2.1 release"*.
+2. **Comment-only edits in source files** — e.g. *"add a docstring to the `calculate_total` function"*, *"update the copyright header in all files"*.
+3. **Dependency version bumps with no API change** — e.g. *"bump lodash to 4.17.21"*, *"update the lockfile"*, *"run npm update"*.
+4. **CI/config-only changes** — e.g. *"add a Node 20 matrix entry to the CI workflow"*, *"fix the eslint config to allow semicolons"*, *"update .gitignore to exclude dist/"*.
+5. **Single-file rename or move with no logic change** — e.g. *"rename utils.js to helpers.js"*, *"move the tests into a __tests__ folder"*.
+6. **Read-only questions with no code intent** — e.g. *"how does the rate limiter work?"*, *"explain the auth flow"*, *"what does this function do?"*.
+
+### In scope — proceed to tier 3
+
+These prompts have a plausible code-implementation surface. Call the
+full `bicameral.preflight` tool:
+
+1. **Any prompt that adds, modifies, or removes business logic** — e.g. *"add a Stripe webhook handler"*, *"refactor the rate limiter to sliding window"*.
+2. **Feature implementation or integration** — e.g. *"implement OAuth callback"*, *"wire up the new endpoint"*, *"build a notification system"*.
+3. **Bug fixes that change runtime behavior** — e.g. *"fix the off-by-one in the pagination"*, *"the discount calculation is wrong for cents"*.
+4. **How-to-implement questions** — e.g. *"how should I implement the retry logic?"* (asking HOW = about to implement).
+5. **Migration or conversion of logic** — e.g. *"migrate the payment flow to the new provider"*, *"convert the class component to hooks"*.
+6. **Removing or extracting functional code** — e.g. *"remove the deprecated API call"*, *"extract the validation logic into a shared module"*.
+
+### Edge cases — when in doubt, fire
+
+If the prompt mixes code and non-code work (e.g. *"update the README
+and add the endpoint"*), **fire** — the code portion justifies the
+check. If you genuinely cannot tell, **fire** — the handler is gated
+on actionable signal and will stay silent if nothing relevant is found.
+
+**Do NOT use "why is this test failing?" as a skip trigger** — debugging
+a test often precedes writing a fix. If the user asks to fix it, fire.
+
 ## When NOT to fire
 
 **Only skip for these narrow cases** — when there is ZERO intent to write code:
@@ -92,6 +141,7 @@ bicameral.skill_begin(skill_name="bicameral-preflight", session_id=<uuid4>)
 bicameral.skill_end(skill_name="bicameral-preflight", session_id=<stored_id>,
   errored=<bool>, error_class="<if errored>",
   diagnostic={
+    exited_at_tier_2: <bool>,  # true when tier-2 gate exited without tool call (#300)
     g9_history_features_count: N,
     g9_features_in_scope: N,
     g9_decisions_in_scope: N,
@@ -186,6 +236,21 @@ expansion carry `confidence=0.7` in the response (vs `0.9` for direct
 pins), and `sources_chained` includes `"graph"` (alongside `"region"`)
 when expansion contributed at least one hit. Caller can de-prioritize
 expanded matches without losing them.
+
+**Graph fallback signal (#243).** When `sources_chained` contains
+`"graph_unavailable"`, the code-locator graph expansion couldn't run
+this call (uninitialized symbol index, missing adapter, or transient
+error). Render a one-line note to the user before the surfaced block:
+
+> *Note: structural-neighbor lookup was unavailable this call — recall
+> may be reduced until the symbol index is rebuilt. Decisions bound to
+> files that import these may not have surfaced.*
+
+The granular reason (`absent` / `missing_method` /
+`exception:<type>`) is recorded in the local `preflight_events.jsonl`
+telemetry counter for operator triage; the response shape stays
+stable. Treat `"graph_unavailable"` as advisory — it doesn't block
+the preflight surface; direct-pin matches are unaffected.
 
 ### 2.5 Resolve pending compliance checks if present
 

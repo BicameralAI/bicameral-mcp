@@ -98,6 +98,26 @@ async def _read_schema_version(adapter) -> int | None:
     return await _read_schema_version_raw(adapter._client)
 
 
+_ROW_PROBE_TABLES = ("ledger_sync", "source_cursor")
+
+
+async def _probe_row_deserialization(client) -> list[str]:
+    """Probe operational tables for SurrealDB row-level deserialization (#301).
+
+    The ``diagnose`` gather checks table counts (structural) but not whether
+    rows can actually be read. A version-mismatch in the embedded SurrealKV
+    format manifests as ``Invalid revision `N` for type Value`` — schema
+    looks fine but row-level SELECT fails. This probe catches that gap.
+    """
+    warnings: list[str] = []
+    for table in _ROW_PROBE_TABLES:
+        try:
+            await client.query(f"SELECT * FROM {table} LIMIT 1")
+        except Exception as exc:  # noqa: BLE001
+            warnings.append(f"{table}: {type(exc).__name__}: {exc}")
+    return warnings
+
+
 async def _read_table_counts_raw(client) -> dict[str, int]:
     counts: dict[str, int] = {}
     for table in _CANONICAL_TABLES:
@@ -203,14 +223,23 @@ def _compute_suggestions(d_partial: dict[str, Any]) -> list[str]:
             f"Ledger schema {rec_schema} < binary schema {exp_schema}; "
             "run `bicameral-mcp` once to apply pending migrations."
         )
+    row_warnings = d_partial.get("row_probe_warnings", [])
+    if row_warnings:
+        suggestions.append(
+            f"Row-level deserialization errors in {len(row_warnings)} table(s): "
+            + "; ".join(row_warnings)
+            + ". This usually indicates a SurrealDB SDK version mismatch. "
+            "Back up the ledger file and `bicameral-mcp reset` to reinitialise."
+        )
     return suggestions
 
 
-def _fetch_recommended() -> str | None:
+def _fetch_recommended(channel: str | None = None) -> str | None:
     try:
-        from handlers.update import fetch_recommended_version
+        from handlers.update import _read_channel, fetch_recommended_version
 
-        return fetch_recommended_version()
+        resolved = channel if channel else _read_channel(os.getcwd())
+        return fetch_recommended_version(resolved)
     except Exception:  # noqa: BLE001 — network failure must not break diagnose
         return None
 
@@ -237,6 +266,7 @@ async def gather_diagnosis_raw(client, ledger_url: str) -> Diagnosis:
     first, last, last_at_iso, drift_status, running = await _read_bicameral_meta_raw(client)
     schema_recorded = await _read_schema_version_raw(client)
     table_counts = await _read_table_counts_raw(client)
+    row_probe_warnings = await _probe_row_deserialization(client)
     channel_label, audit_path = _resolve_audit_log_channel()
     recent_events = _tail_recent_events(audit_path, _RECENT_EVENT_TAIL)
 
@@ -249,6 +279,7 @@ async def gather_diagnosis_raw(client, ledger_url: str) -> Diagnosis:
         "ledger_size_bytes": size_bytes,
         "schema_version_recorded": schema_recorded,
         "schema_version_expected": SCHEMA_VERSION,
+        "row_probe_warnings": row_probe_warnings,
     }
     suggestions = _compute_suggestions(partial)
 
@@ -268,6 +299,7 @@ async def gather_diagnosis_raw(client, ledger_url: str) -> Diagnosis:
         drift_status=drift_status,
         audit_log_channel=channel_label,
         table_counts=table_counts,
+        row_probe_warnings=row_probe_warnings,
         recent_events=recent_events,
         suggestions=suggestions,
     )

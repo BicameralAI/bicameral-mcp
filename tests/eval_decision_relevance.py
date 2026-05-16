@@ -19,7 +19,7 @@ Flags:
     --skill-variant   'none'          : ingest fixture decisions directly
                                         (pure grounding-pipeline test).
                       'from-skill-md' : run headless LLM extraction from the
-                                        current .claude/skills/bicameral-ingest/
+                                        current skills/bicameral-ingest/
                                         SKILL.md, then ingest the result.
                                         (Phase 4 — not implemented yet.)
     --min-grounded-pct    Regression gate. Exit non-zero if below (aggregate).

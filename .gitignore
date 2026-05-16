@@ -37,3 +37,4 @@ docs/demos/**/*.mp4
 # during a feature; once merged, the PR description + CHANGELOG carry the
 # durable record.
 plan-*.md
+perf-results/

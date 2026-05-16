@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from contracts import BindResponse, BindResult, PendingComplianceCheck, SyncMetrics
+from handlers.link_commit import _is_ephemeral_commit
 from handlers.sync_middleware import repo_write_barrier
 from preflight_telemetry import telemetry_enabled, write_engagement
 
@@ -105,6 +106,17 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
     repo = ctx.repo_path
     authoritative_sha = getattr(ctx, "authoritative_sha", "") or "HEAD"
 
+    # #332 ephemeral-aware ref: when the current HEAD has not yet landed on
+    # the authoritative branch, resolve symbols and compute content_hash
+    # against head_sha (the branch tip) instead of authoritative_sha (main
+    # tip). This prevents bind from rejecting branch-local files/symbols
+    # and ensures content_hash matches what link_commit's drift sweep sees.
+    head_sha = getattr(ctx, "head_sha", "") or ""
+    authoritative_ref = getattr(ctx, "authoritative_ref", "") or ""
+    effective_ref = authoritative_sha
+    if head_sha and _is_ephemeral_commit(head_sha, repo, authoritative_ref=authoritative_ref):
+        effective_ref = head_sha
+
     results: list[BindResult] = []
 
     for b in bindings:
@@ -161,14 +173,14 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
         if start_line is None or end_line is None:
             from ledger.status import resolve_symbol_lines
 
-            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=authoritative_sha)
+            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=effective_ref)
             if resolved is None:
                 results.append(
                     BindResult(
                         decision_id=decision_id,
                         region_id="",
                         content_hash="",
-                        error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha}",
+                        error=f"symbol '{symbol_name}' not found in {file_path} at {effective_ref}",
                     )
                 )
                 _emit_m2_attempt(
@@ -183,13 +195,13 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             start_line, end_line = int(start_line), int(end_line)
             from ledger.status import get_git_content, resolve_symbol_lines
 
-            if get_git_content(file_path, 1, 1, repo, ref=authoritative_sha) is None:
+            if get_git_content(file_path, 1, 1, repo, ref=effective_ref) is None:
                 results.append(
                     BindResult(
                         decision_id=decision_id,
                         region_id="",
                         content_hash="",
-                        error=f"file '{file_path}' does not exist at {authoritative_sha} — only bind to existing code, never hypothetical files",
+                        error=f"file '{file_path}' does not exist at {effective_ref} — only bind to existing code, never hypothetical files",
                     )
                 )
                 _emit_m2_attempt(
@@ -206,14 +218,14 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             # used to skip that check, accepting any symbol_name as long as
             # the file existed. That was the silent-acceptance surface for
             # M2 grounding precision regressions.
-            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=authoritative_sha)
+            resolved = resolve_symbol_lines(file_path, symbol_name, repo, ref=effective_ref)
             if resolved is None:
                 results.append(
                     BindResult(
                         decision_id=decision_id,
                         region_id="",
                         content_hash="",
-                        error=f"symbol '{symbol_name}' not found in {file_path} at {authoritative_sha} — caller-supplied line range cannot bypass symbol verification (#280)",
+                        error=f"symbol '{symbol_name}' not found in {file_path} at {effective_ref} — caller-supplied line range cannot bypass symbol verification (#280)",
                     )
                 )
                 _emit_m2_attempt(
@@ -249,7 +261,7 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                 start_line=start_line,
                 end_line=end_line,
                 repo=repo,
-                ref=authoritative_sha,
+                ref=effective_ref,
                 purpose=purpose,
             )
         except Exception as exc:
@@ -315,7 +327,7 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                         symbol_kind="unknown",
                         start_line=int(start_line),
                         end_line=int(end_line),
-                        repo_ref=authoritative_sha,
+                        repo_ref=effective_ref,
                         code_region_content_hash=content_hash,
                         code_locator=getattr(ctx, "code_graph", None),
                         region_id=region_id,
@@ -371,4 +383,4 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
     except Exception:
         pass
 
-    return BindResponse(bindings=results)
+    return BindResponse(bindings=results, bind_effective_ref=effective_ref)

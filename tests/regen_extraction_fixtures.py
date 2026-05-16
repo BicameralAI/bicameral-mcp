@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bootstrap the M1 ground-truth extraction fixtures.
 
-Runs the current .claude/skills/bicameral-ingest/SKILL.md Step-1 prompt
+Runs the current skills/bicameral-ingest/SKILL.md Step-1 prompt
 against each transcript in TRANSCRIPT_SOURCES using a strong model
 (default: claude-opus-4-6-20251015) and writes the extracted decisions
 + action items to tests/fixtures/extraction/<source_ref>.json.

@@ -45,6 +45,7 @@ from handlers.ingest import _IngestRefused, handle_ingest
 from handlers.link_commit import handle_link_commit
 from handlers.preflight import handle_preflight
 from handlers.ratify import handle_ratify
+from handlers.remove_decision import handle_remove_decision
 from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
@@ -144,6 +145,8 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.judge_gaps",
     "bicameral.resolve_compliance",
     "bicameral.ratify",
+    "bicameral.remove_decision",
+    "bicameral.remove_source",
     "bicameral.resolve_collision",
     "bicameral.history",
     "bicameral.dashboard",
@@ -186,8 +189,9 @@ async def list_tools() -> list[Tool]:
                         "description": (
                             "Optional opaque id from a prior bicameral.preflight call. "
                             "When supplied, the local preflight-telemetry capture loop "
-                            "(#65, opt-in via BICAMERAL_PREFLIGHT_TELEMETRY=1) attributes "
-                            "this engagement to that preflight."
+                            "(#65, opt-in via BICAMERAL_TELEMETRY=preflight — see #192; "
+                            "legacy BICAMERAL_PREFLIGHT_TELEMETRY=1 still honored via "
+                            "deprecation overlay) attributes this engagement to that preflight."
                         ),
                     },
                 },
@@ -579,6 +583,74 @@ async def list_tools() -> list[Tool]:
             },
         ),
         Tool(
+            name="bicameral.remove_decision",
+            description=(
+                "Hard-delete a decision: physically removes the row and all references "
+                "(binds_to, yields, supersedes, context_for, about edges + compliance_check "
+                "cache rows). A decision_removed.completed event records the full "
+                "pre-deletion snapshot in the event journal — the 'soft audit trail' that "
+                "replaces the prior tombstone-row model (decision:i4wafafzowm3ai5eyhgs). "
+                "Reason is required for audit. Idempotent: calling on a missing decision "
+                "returns was_new=false without raising. To retain a persistent negative "
+                "signal (warn agents away from re-introducing the same idea), use "
+                "supersession (bicameral.resolve_collision action=supersede) instead."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "decision_id": {
+                        "type": "string",
+                        "description": "The decision to hard-delete (UUIDv5 decision ID from the ledger).",
+                    },
+                    "signer": {
+                        "type": "string",
+                        "description": "Identity of the operator or agent performing the removal.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Why this decision is being removed. Required (audit-trail obligation).",
+                    },
+                },
+                "required": ["decision_id", "signer", "reason"],
+            },
+        ),
+        Tool(
+            name="bicameral.remove_source",
+            description=(
+                "Hard-delete an input_span row + cascade-soft-delete every decision derived "
+                "from it (#278 Phase 2). confirm=false (default) returns a dry-run plan listing "
+                "the full span content and the cascaded decision ids; confirm=true performs the "
+                "mutation and emits source_removed.completed event carrying the full pre-deletion "
+                "span content (recoverable from event log). Reason is required. Idempotent on "
+                "missing spans."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "span_id": {
+                        "type": "string",
+                        "description": "The input_span record id to remove.",
+                    },
+                    "signer": {
+                        "type": "string",
+                        "description": "Identity of the operator or agent performing the removal.",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Why this source is being removed. Required (audit-trail obligation).",
+                    },
+                    "confirm": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "False (default) = dry-run returning the cascade plan; True = perform the mutation.",
+                    },
+                },
+                "required": ["span_id", "signer", "reason"],
+            },
+        ),
+        Tool(
             name="bicameral.resolve_collision",
             description=(
                 "Resolve a collision or context_for candidate surfaced by bicameral.ingest. "
@@ -648,6 +720,11 @@ async def list_tools() -> list[Tool]:
                         "type": "boolean",
                         "default": True,
                         "description": "Include superseded decisions in the response",
+                    },
+                    "include_pruned": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include pruned decisions (ephemeral bindings that didn't survive merge). Default excludes them.",
                     },
                     "as_of": {
                         "type": "string",
@@ -1089,6 +1166,23 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 action=arguments.get("action", "ratify"),
                 preflight_id=arguments.get("preflight_id"),
             )
+        elif name in ("bicameral.remove_decision", "remove_decision"):
+            result = await handle_remove_decision(
+                ctx,
+                decision_id=arguments["decision_id"],
+                signer=arguments["signer"],
+                reason=arguments["reason"],
+            )
+        elif name in ("bicameral.remove_source", "remove_source"):
+            from handlers.remove_source import handle_remove_source
+
+            result = await handle_remove_source(
+                ctx,
+                span_id=arguments["span_id"],
+                signer=arguments["signer"],
+                reason=arguments["reason"],
+                confirm=bool(arguments.get("confirm", False)),
+            )
         elif name in ("bicameral.resolve_collision", "resolve_collision"):
             result = await handle_resolve_collision(
                 ctx,
@@ -1110,6 +1204,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 ctx,
                 feature_filter=arguments.get("feature_filter"),
                 include_superseded=arguments.get("include_superseded", True),
+                include_pruned=arguments.get("include_pruned", False),
                 as_of=arguments.get("as_of"),
             )
             # Inject empty-ledger guidance so the caller-LLM doesn't bypass ingest.
@@ -1123,7 +1218,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                     "(2) review the extracted decisions in the ingest response; "
                     "(3) only then use those decisions to guide the implementation."
                 )
-                update_notice = get_update_notice(SERVER_VERSION)
+                update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
                 if update_notice:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
@@ -1142,7 +1237,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 port=srv.port,
             )
             payload = result.model_dump()
-            update_notice = get_update_notice(SERVER_VERSION)
+            update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
             if update_notice:
                 payload["_update"] = update_notice
             return [TextContent(type="text", text=json.dumps(payload, indent=2))]
@@ -1158,7 +1253,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
 
         # Inject update notice into all bicameral ledger tool responses
         payload = result.model_dump()
-        update_notice = get_update_notice(SERVER_VERSION)
+        update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
         if update_notice:
             payload["_update"] = update_notice
 
@@ -1284,6 +1379,29 @@ async def serve_stdio() -> None:
         dashboard_srv = get_dashboard_server()
         await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
 
+        # #380 — symbol-index init runs in the background so the JSON-RPC
+        # ``initialize`` reply lands inside Claude Code's 30s MCP startup
+        # timeout. Pre-#380 this was an inline ``await initialize()`` per
+        # #243 Piece B; on a 150MB+ code-graph.db it took ~45s and every
+        # client disconnected before the handshake completed.
+        #
+        # The fail-loud contract from #243 phase-2 signoff Q3 is preserved
+        # but relocated: a background-init failure is logged to stderr by
+        # the adapter's done-callback (operator sees it immediately), and
+        # the first code-locator tool call surfaces the same error to the
+        # MCP client because ``_ensure_initialized`` re-raises through the
+        # lock. Trade-off: "server refuses to boot" → "first tool call
+        # fails loudly." The operator still gets the actionable
+        # `python -m code_locator index <repo_path>` hint.
+        from adapters.code_locator import get_code_locator
+
+        get_code_locator().initialize_in_background()
+        print(
+            "[serve_stdio] code-locator init scheduled in background (#380); "
+            "first tool call will block until ready",
+            file=sys.stderr,
+        )
+
         # First-boot telemetry consent notice (non-blocking, fires once per
         # policy_version). Stderr-only here; MCP-channel surfacing happens
         # below once the session is live.
@@ -1352,6 +1470,27 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
         "diagnose",
         help="emit a privacy-preserving operator bug-report (#252 Layer 3)",
     )
+    sync_and_brief = subparsers.add_parser(
+        "sync-and-brief",
+        help="pull from configured sources, ingest new transcripts, scan drift, print brief (#279)",
+    )
+    from cli.sync_and_brief_cli import _build_argparser as _sb_build
+
+    _sb_build(sync_and_brief)
+    subparsers.add_parser(
+        "ledger-export",
+        help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
+    )
+    import_parser = subparsers.add_parser(
+        "ledger-import",
+        help="import a JSON-Lines ledger dump (#252 Layer 4)",
+    )
+    import_parser.add_argument(
+        "--from-file",
+        default=None,
+        metavar="PATH",
+        help="read JSONL from file instead of stdin",
+    )
     parser.add_argument(
         "--smoke-test", action="store_true", help="validate wiring + list MCP tools, exit"
     )
@@ -1384,6 +1523,18 @@ def _dispatch(args: Any) -> int:
         from cli.diagnose import main as diagnose_main
 
         return diagnose_main()
+    if args.command == "sync-and-brief":
+        from cli.sync_and_brief_cli import main as sync_and_brief_main
+
+        return sync_and_brief_main(args)
+    if args.command == "ledger-export":
+        from cli.ledger_export_cli import main as export_main
+
+        return export_main()
+    if args.command == "ledger-import":
+        from cli.ledger_import_cli import main as import_main
+
+        return import_main(getattr(args, "from_file", None))
     if args.smoke_test:
         result = asyncio.run(run_smoke_test())
         print(f"{result['server_name']} {result['server_version']} smoke test passed")

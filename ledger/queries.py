@@ -19,6 +19,64 @@ from .client import LedgerClient, LedgerError
 logger = logging.getLogger(__name__)
 
 
+# ── #221 Phase B-1: PII archive read-path centralization ─────────────────
+
+
+# Sentinel returned by ``_resolve_span_text`` when a row's archive_key
+# is set but the archive entry has been erased (GDPR Art. 17 outcome).
+# Load-bearing in two places:
+#   1. ``_resolve_span_text`` returns this literal post-erasure.
+#   2. The ``real_spans`` filter at queries.py (graph-projection
+#      decision-rendering) excludes this literal from agent-visible
+#      surfaces.
+# Hoist to module-level so a refactor of one site without the other
+# fails fast at the constant-equality test.
+_ERASED_SENTINEL = "[ERASED]"
+
+
+def _resolve_span_text(archive, row: dict) -> str:
+    """Return the verbatim span text for a single ``input_span`` row.
+
+    Sync (NOT async) — ``PiiArchive.get()`` is a synchronous SQLite
+    read; wrapping in ``async`` would be unmotivated and would force
+    every consumer into an ``await``.
+
+    Priority:
+
+    1. If ``row['archive_key']`` is set:
+       - ``archive.get(key).text`` when the archive entry is present
+       - ``_ERASED_SENTINEL`` (literal ``"[ERASED]"``) when
+         ``archive.get(key)`` returns ``None`` (post-erasure)
+       - ``_ERASED_SENTINEL`` also on archive exception (logged to stderr)
+    2. Fall back to ``row['text']`` for legacy rows (archive_key='')
+       ingested before Phase B-1's cutover.
+    3. Empty string when neither is set (anomalous; the v22 ASSERT
+       should make this impossible but the helper handles it
+       defensively).
+
+    The helper is the **single point of truth** for ``input_span.text``
+    reads. Anti-test
+    ``tests/test_no_direct_input_span_text_reads.py`` greps the
+    codebase for direct projections / SELECTs and rejects them outside
+    the helper's allow-list (``ledger/queries.py``, tests, fixtures).
+    """
+    archive_key = row.get("archive_key") or ""
+    if archive_key:
+        try:
+            entry = archive.get(archive_key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "[resolve_span_text] archive lookup failed for key %s: %s",
+                archive_key[:16] + "…",
+                exc,
+            )
+            return _ERASED_SENTINEL
+        if entry is None:
+            return _ERASED_SENTINEL
+        return entry.text
+    return row.get("text") or ""
+
+
 # ── Idempotent edge creation ──────────────────────────────────────────────
 #
 # Edge tables (yields, binds_to, locates, depends_on) each have a
@@ -147,8 +205,18 @@ async def get_all_decisions(
     client: LedgerClient,
     filter: str = "all",
     since: str | None = None,
+    archive=None,
 ) -> list[dict]:
-    """Forward graph traversal: decision → binds_to → code_region."""
+    """Forward graph traversal: decision → binds_to → code_region.
+
+    ``archive``: optional PiiArchive for resolving span text per #221
+    Phase B-1. When provided, span text is routed through
+    ``_resolve_span_text(archive, span)`` so post-erasure spans
+    return ``_ERASED_SENTINEL`` and erased rows are filtered out of
+    ``source_excerpt`` (agent-visible) but kept observable for audit.
+    When None, the legacy ``span["text"]`` path is used (backward-
+    compat for callers not yet updated).
+    """
     where_clauses = []
     vars: dict = {}
 
@@ -184,7 +252,7 @@ async def get_all_decisions(
                 purpose,
                 content_hash
             }} AS code_regions,
-            <-yields<-input_span.{{text, meeting_date, speakers}} AS source_spans
+            <-yields<-input_span.{{text, archive_key, meeting_date, speakers}} AS source_spans
         FROM decision
         {where}
         ORDER BY created_at DESC
@@ -201,7 +269,25 @@ async def get_all_decisions(
     for row in rows:
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
+        # #221 Phase B-1: route every span.text read through the helper.
+        # Resolved text replaces raw .text in the span dict so downstream
+        # filter logic sees the post-erasure sentinel correctly.
+        for span in spans:
+            if span is not None:
+                span["text"] = (
+                    _resolve_span_text(archive, span)
+                    if archive is not None
+                    else (span.get("text") or "")
+                )
+        # Filter: exclude empty, description-echoes, AND erased sentinel.
+        real_spans = [
+            s
+            for s in spans
+            if s
+            and s.get("text")
+            and s.get("text") != description
+            and s.get("text") != _ERASED_SENTINEL
+        ]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         if not row.get("meeting_date"):
@@ -216,11 +302,16 @@ async def search_by_bm25(
     query: str,
     max_results: int = 10,
     min_confidence: float = 0.5,
+    archive=None,
 ) -> list[dict]:
     """BM25 search on decision.description.
 
     Also pulls input_span.text (raw passage) + meeting_date via the
     yields reverse edge so callers can render the meeting excerpt.
+
+    #221 Phase B-1: ``archive`` (optional PiiArchive) routes span text
+    through ``_resolve_span_text`` so post-erasure rows return the
+    sentinel and are filtered out of agent-visible rendering.
     """
     rows = await client.query(
         """
@@ -240,7 +331,7 @@ async def search_by_bm25(
                 purpose,
                 content_hash
             } AS code_regions,
-            <-yields<-input_span.{text, meeting_date} AS source_spans
+            <-yields<-input_span.{text, archive_key, meeting_date} AS source_spans
         FROM decision
         WHERE description @0@ $query
         LIMIT $n
@@ -257,7 +348,22 @@ async def search_by_bm25(
                 region["symbol"] = region.pop("symbol_name")
         spans = row.pop("source_spans", None) or []
         description = row.get("description", "")
-        real_spans = [s for s in spans if s and s.get("text") and s.get("text") != description]
+        # #221 Phase B-1: route span text through the helper.
+        for span in spans:
+            if span is not None:
+                span["text"] = (
+                    _resolve_span_text(archive, span)
+                    if archive is not None
+                    else (span.get("text") or "")
+                )
+        real_spans = [
+            s
+            for s in spans
+            if s
+            and s.get("text")
+            and s.get("text") != description
+            and s.get("text") != _ERASED_SENTINEL
+        ]
         first_span = real_spans[0] if real_spans else None
         row["source_excerpt"] = (first_span.get("text") if first_span else "") or ""
         row["meeting_date"] = (first_span.get("meeting_date") if first_span else "") or ""
@@ -329,8 +435,13 @@ async def upsert_vocab_cache(
 async def get_decisions_for_file(
     client: LedgerClient,
     file_path: str,
+    archive=None,
 ) -> list[dict]:
     """Reverse traversal: code_region → binds_to (reverse) → decision for a given file.
+
+    #221 Phase B-1: ``archive`` (optional PiiArchive) routes span text
+    through ``_resolve_span_text`` so post-erasure rows return the
+    sentinel.
 
     Also pulls source_excerpt + meeting_date per decision via the
     yields reverse edge so the drift handler can render the meeting passage.
@@ -402,7 +513,7 @@ async def get_decisions_for_file(
             """
             SELECT
                 type::string(id) AS decision_id,
-                <-yields<-input_span.{text, meeting_date} AS source_spans
+                <-yields<-input_span.{text, archive_key, meeting_date} AS source_spans
             FROM decision
             WHERE type::string(id) IN $ids
             """,
@@ -414,7 +525,26 @@ async def get_decisions_for_file(
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
+            # #221 Phase B-1: route span text through the helper.
+            # ``archive`` not threaded into get_decisions_for_file yet —
+            # legacy fallback returns raw span text. The behavioral
+            # tests pin that erasure propagates here via the caller
+            # passing archive.
+            for span in spans:
+                if span is not None:
+                    span["text"] = (
+                        _resolve_span_text(archive, span)
+                        if archive is not None
+                        else (span.get("text") or "")
+                    )
+            real_spans = [
+                s
+                for s in spans
+                if s
+                and s.get("text")
+                and s.get("text") != desc
+                and s.get("text") != _ERASED_SENTINEL
+            ]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -431,15 +561,36 @@ async def get_decisions_for_file(
     return results
 
 
+async def has_decisions_for_files(
+    client: LedgerClient,
+    file_paths: list[str],
+) -> bool:
+    """Lightweight existence check: return True if ANY decision is bound to a
+    code_region in the given files. Used by the preflight fast-path (#343) to
+    skip expensive sync + queries when the files have never been ingested."""
+    if not file_paths:
+        return False
+    rows = await client.query(
+        "SELECT id FROM code_region WHERE file_path IN $fps LIMIT 1",
+        {"fps": file_paths},
+    )
+    return bool(rows)
+
+
 async def get_decisions_for_files(
     client: LedgerClient,
     file_paths: list[str],
+    archive=None,
 ) -> list[dict]:
     """Bulk reverse traversal: given a list of file paths, return all decisions
     pinned to any code_region in those files.
 
     Same shape as get_decisions_for_file but batched — avoids N+1 queries
     when the caller has several candidate files from a code locator search.
+
+    #221 Phase B-1: ``archive`` (optional PiiArchive) routes span text
+    through ``_resolve_span_text`` so post-erasure rows return the
+    sentinel.
     """
     if not file_paths:
         return []
@@ -510,7 +661,7 @@ async def get_decisions_for_files(
             """
             SELECT
                 type::string(id) AS decision_id,
-                <-yields<-input_span.{text, meeting_date} AS source_spans
+                <-yields<-input_span.{text, archive_key, meeting_date} AS source_spans
             FROM decision
             WHERE type::string(id) IN $ids
             """,
@@ -522,7 +673,22 @@ async def get_decisions_for_files(
             did = str(r.get("decision_id", ""))
             desc = desc_by_decision.get(did, "")
             spans = r.get("source_spans") or []
-            real_spans = [s for s in spans if s and s.get("text") and s.get("text") != desc]
+            # #221 Phase B-1: route span text through the helper.
+            for span in spans:
+                if span is not None:
+                    span["text"] = (
+                        _resolve_span_text(archive, span)
+                        if archive is not None
+                        else (span.get("text") or "")
+                    )
+            real_spans = [
+                s
+                for s in spans
+                if s
+                and s.get("text")
+                and s.get("text") != desc
+                and s.get("text") != _ERASED_SENTINEL
+            ]
             first = real_spans[0] if real_spans else None
             if first:
                 excerpt_by_decision[did] = (
@@ -599,7 +765,8 @@ async def upsert_decision(
         }
         set_clause = (
             "rationale = $rationale, feature_hint = $feature_hint, "
-            "meeting_date = $meeting_date, speakers = $speakers, status = $status"
+            "meeting_date = $meeting_date, speakers = $speakers, status = $status, "
+            "updated_at = time::now()"
         )
         if signoff is not None:
             set_clause += ", signoff = $signoff"
@@ -854,6 +1021,41 @@ async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
     return bool(rows)
 
 
+async def get_decisions_for_span(client: LedgerClient, span_id: str) -> list[str]:
+    """Return decision record ids yielded by the given input_span via the
+    ``yields`` graph edge.
+
+    Used by ``bicameral.remove_source`` (#278 Phase 2) to compute the
+    cascade: every decision derived from a removed source is soft-deleted.
+    Returns an empty list when the span has no derived decisions or does
+    not exist.
+    """
+    rows = await client.query(
+        f"SELECT type::string(id) AS decision_id FROM decision "
+        f"WHERE <-yields<-input_span CONTAINS {span_id}",
+    )
+    return [str(r["decision_id"]) for r in (rows or []) if r.get("decision_id")]
+
+
+async def input_span_exists(client: LedgerClient, span_id: str) -> bool:
+    """Return True iff an input_span row exists with the given record id."""
+    rows = await client.query(f"SELECT id FROM {span_id} LIMIT 1")
+    return bool(rows)
+
+
+async def get_input_span_row(client: LedgerClient, span_id: str) -> dict | None:
+    """Return the full input_span row (text, source_ref, source_type,
+    meeting_date, speakers, created_at) for use in the source_removed.completed
+    event payload. Returns None when the row does not exist."""
+    rows = await client.query(
+        f"SELECT text, source_ref, source_type, meeting_date, speakers, created_at "
+        f"FROM {span_id} LIMIT 1",
+    )
+    if not rows:
+        return None
+    return dict(rows[0])
+
+
 async def get_decision_level(client: LedgerClient, decision_id: str) -> str | None:
     """Return ``decision.decision_level`` (one of ``"L1"``, ``"L2"``, ``"L3"``)
     or ``None`` if the row does not exist or the field is unset.
@@ -1018,6 +1220,19 @@ async def relate_locates(
     )
 
 
+# SurrealDB v2 embedded MVCC: a concurrent in-process writer may
+# cause a transaction to abort with this exact substring. The engine
+# explicitly signals retry-safety in the message. Pinned by
+# ``tests/test_input_span_safe_upsert.py::test_mvcc_conflict_substring_pinned``.
+_MVCC_RETRY_SUBSTRING = "failed to commit transaction"
+# 10 absorbs MVCC bursts under heavy embedded-DB load (test suite running
+# dozens of memory:// instances in the same process produces transient
+# storms). Conflicting writer has already committed by the time we see
+# the error, so each retry's SELECT short-circuits — wall-clock cost of
+# extra retries is one RTT each, negligible.
+_UPSERT_MAX_RETRIES = 10
+
+
 async def upsert_input_span(
     client: LedgerClient,
     text: str,
@@ -1025,14 +1240,137 @@ async def upsert_input_span(
     source_ref: str = "",
     speakers: list = (),
     meeting_date: str = "",
+    archive_key: str = "",
 ) -> str:
     """Create or update an input_span node. Returns the input_span ID string.
 
-    Deduplicates on (source_type, source_ref, text). text must be non-empty
-    (enforced by the schema ASSERT constraint).
+    Wrapper that retries ``_upsert_input_span_once`` on SurrealDB MVCC
+    conflicts ("Failed to commit transaction…can be retried"). On each
+    retry the inner function's SELECT will see the now-committed row
+    from the winning concurrent writer and return early — so the worst
+    case is one extra round-trip, not a duplicate row.
+
+    Unique-index violations ("already contains") are handled inside
+    ``_upsert_input_span_once`` via re-SELECT (no retry needed — the
+    row is already committed).
     """
-    if not text:
+    last_exc: LedgerError | None = None
+    for _attempt in range(_UPSERT_MAX_RETRIES):
+        try:
+            return await _upsert_input_span_once(
+                client,
+                text=text,
+                source_type=source_type,
+                source_ref=source_ref,
+                speakers=speakers,
+                meeting_date=meeting_date,
+                archive_key=archive_key,
+            )
+        except LedgerError as exc:
+            if _MVCC_RETRY_SUBSTRING not in str(exc).lower():
+                raise
+            last_exc = exc
+            # No backoff — under MVCC the conflicting writer has
+            # already committed by the time we get the error, so the
+            # next SELECT sees its row and short-circuits.
+            continue
+    # All retries exhausted on MVCC conflict — surface the last error.
+    assert last_exc is not None
+    logger.warning(
+        "[upsert_input_span] exhausted %d MVCC retries; last error: %s",
+        _UPSERT_MAX_RETRIES,
+        str(last_exc).splitlines()[0] if str(last_exc) else "",
+    )
+    raise last_exc
+
+
+async def _upsert_input_span_once(
+    client: LedgerClient,
+    *,
+    text: str,
+    source_type: str,
+    source_ref: str = "",
+    speakers: list = (),
+    meeting_date: str = "",
+    archive_key: str = "",
+) -> str:
+    """Single-attempt body of ``upsert_input_span``. Retries on MVCC
+    conflict live in the wrapper; this function handles only the
+    schema-level dedup contract.
+
+    #221 Phase B-1: when ``archive_key`` is provided, the row is
+    written with ``text=''`` and the supplied ``archive_key`` —
+    PII flows to the operator-erasable archive (Phase A primitive).
+    Dedup keys on ``archive_key`` when set; falls back to legacy
+    ``(source_type, source_ref, text)`` for backward-compat.
+
+    The v22 schema ASSERT enforces "text != '' OR archive_key != ''"
+    at the DB engine level — this function trusts the ASSERT to
+    reject malformed combinations.
+
+    Legacy behavior preserved: callers passing ``text`` and no
+    ``archive_key`` still get a row written with the legacy shape
+    (text-only, archive_key='').
+    """
+    if not text and not archive_key:
+        # ASSERT would reject; short-circuit with empty return to
+        # match prior contract.
         return ""
+    # #221 Phase B-1: archive-keyed dedup path
+    if archive_key:
+        existing = await client.query(
+            "SELECT id FROM input_span WHERE archive_key = $k LIMIT 1",
+            {"k": archive_key},
+        )
+        if existing:
+            return str(existing[0].get("id", ""))
+        # Atomic CREATE-or-adopt: SELECT-then-CREATE races against a
+        # concurrent writer for the same archive_key, and the v24 dedup
+        # index (source_type, source_ref, text, archive_key) is the
+        # authority. On collision, re-SELECT and return the row the
+        # winner inserted. "already contains" is the v2 substring
+        # pinned by tests/test_schema_recoverable_errors.py.
+        try:
+            rows = await client.query(
+                "CREATE input_span SET "
+                "text=$t, archive_key=$k, source_type=$st, "
+                "source_ref=$sr, speakers=$sp, meeting_date=$md",
+                {
+                    "t": "",  # PII lives in archive; row carries only the key
+                    "k": archive_key,
+                    "st": source_type,
+                    "sr": source_ref,
+                    "sp": list(speakers),
+                    "md": meeting_date,
+                },
+            )
+            return str(rows[0].get("id", "")) if rows else ""
+        except LedgerError as exc:
+            if "already contains" not in str(exc).lower():
+                raise
+            existing = await client.query(
+                "SELECT id FROM input_span WHERE archive_key = $k LIMIT 1",
+                {"k": archive_key},
+            )
+            if existing:
+                return str(existing[0].get("id", ""))
+            # The colliding row uses the same (source_type, source_ref,
+            # text='', archive_key) as us but a different archive_key —
+            # only possible on a pre-v24 ledger where the index lacked
+            # archive_key. Surface as a no-op return rather than crash
+            # the caller (e.g. /history); the operator can run migrate
+            # to upgrade the index and the next ingest will succeed.
+            logger.warning(
+                "[upsert_input_span] dedup collision on (%s, %s, '') "
+                "with archive_key=%s — pre-v24 index suspected; returning "
+                "empty id (caller may skip span). detail=%s",
+                source_type,
+                source_ref,
+                archive_key[:16] + "…" if archive_key else "",
+                str(exc).splitlines()[0] if str(exc) else "",
+            )
+            return ""
+    # Legacy path — text-only dedup (pre-Phase-B-1)
     rows = await client.query(
         """
         UPSERT input_span SET
@@ -1054,11 +1392,33 @@ async def upsert_input_span(
     )
     if rows:
         return str(rows[0].get("id", ""))
-    rows = await client.query(
-        "CREATE input_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
-        {"t": text, "st": source_type, "sr": source_ref, "sp": list(speakers), "md": meeting_date},
-    )
-    return str(rows[0].get("id", "")) if rows else ""
+    # Atomic CREATE-or-adopt for the legacy path — same race as the
+    # archive-keyed branch above (UPSERT...WHERE returns no rows then
+    # CREATE; concurrent writer may have inserted between the two
+    # statements). v24 dedup index includes archive_key, but it's ''
+    # here, so the (source_type, source_ref, text) triple still
+    # uniquely identifies legacy rows.
+    try:
+        rows = await client.query(
+            "CREATE input_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
+            {
+                "t": text,
+                "st": source_type,
+                "sr": source_ref,
+                "sp": list(speakers),
+                "md": meeting_date,
+            },
+        )
+        return str(rows[0].get("id", "")) if rows else ""
+    except LedgerError as exc:
+        if "already contains" not in str(exc).lower():
+            raise
+        existing = await client.query(
+            "SELECT id FROM input_span "
+            "WHERE source_type = $st AND source_ref = $sr AND text = $t LIMIT 1",
+            {"t": text, "st": source_type, "sr": source_ref},
+        )
+        return str(existing[0].get("id", "")) if existing else ""
 
 
 async def update_decision_status(
@@ -1068,9 +1428,70 @@ async def update_decision_status(
 ) -> None:
     """Update the cached status on a decision node."""
     await client.execute(
-        f"UPDATE {decision_id} SET status = $s",
+        f"UPDATE {decision_id} SET status = $s, updated_at = time::now()",
         {"s": status},
     )
+
+
+async def get_ledger_revision(client: LedgerClient) -> str | None:
+    """Return a monotonic revision marker over the ``decision`` table (#87).
+
+    Used by the preflight dedup cache to detect ledger mutations within
+    the 5-minute dedup window — when this changes between successive
+    preflight calls, the cache entry for the same topic/file_paths must
+    invalidate so the freshly-added decision can surface.
+
+    Returns ``None`` on lookup failure. Per Kevin's amendment on issue
+    #87 (B2 signoff comment), callers MUST treat None as "bypass dedup
+    entirely with loud telemetry" — never degrade to a partial key that
+    could silently suppress a valid preflight call.
+
+    Implementation (v19, #87 Phase 6): ``SELECT decision_revision FROM
+    bicameral_meta LIMIT 1``. The counter is auto-bumped on every
+    decision CREATE/UPDATE by the ``decision_revision_bump`` DEFINE
+    EVENT (see ``ledger/schema.py::_BICAMERAL_META``). Constant-time
+    read, deterministic.
+
+    SLO: p95 < 5ms on file-backed SurrealKV, constant-time wrt N.
+    Gated by ``tests/perf/test_ledger_revision_perf.py`` running in
+    ``.github/workflows/perf-gate.yml`` (#357 sub-task 2). The pre-#357
+    docstring claimed "~0.4ms p95 at any ledger size" but was measured
+    on ``memory://`` — a CPU-cache benchmark, not a storage benchmark.
+    Local file-backed measurements land at p95~0.15-0.20ms; the 5ms SLO
+    leaves CI-runner-noise headroom and will tighten once the gate has
+    landed enough green runs to learn the actual baseline.
+
+    History — what this replaces:
+      - v18 draft: ``math::max(coalesce(updated_at, created_at))`` —
+        parse-errored on every call (``coalesce`` is not a SurrealDB v2
+        built-in). Production silently bypassed dedup.
+      - v18 post-fix (#311): ``SELECT updated_at ... ORDER BY
+        updated_at DESC LIMIT 1`` — parsed cleanly but was ~8ms p50 at
+        N=1000 (the index doesn't accelerate ORDER BY DESC on
+        memory://) and ~50% flaky under pytest's batch runner.
+      - v19 (this version): counter-based, both problems gone.
+
+    Returns:
+        Stringified integer counter when the ``bicameral_meta``
+            singleton row exists (the dominant case post-v15 migrate).
+        Empty string when the row is absent — should only happen on a
+            ledger that hasn't run ``adapter.connect()`` once yet.
+        ``None`` when the query raises. Callers must bypass dedup.
+    """
+    try:
+        rows = await client.query("SELECT decision_revision FROM bicameral_meta LIMIT 1")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "[ledger.get_ledger_revision] revision lookup failed — caller should bypass dedup: %s",
+            exc,
+        )
+        return None
+    if not rows:
+        return ""
+    rev = rows[0].get("decision_revision") if isinstance(rows[0], dict) else None
+    if rev is None:
+        return ""
+    return str(rev)
 
 
 # ── canonical_id ↔ decision_id resolution (#97 event replay) ──────────
@@ -1159,7 +1580,7 @@ async def update_decision_level(
     if not rows:
         raise DecisionNotFound(decision_id)
     await client.execute(
-        f"UPDATE {decision_id} SET decision_level = $level",
+        f"UPDATE {decision_id} SET decision_level = $level, updated_at = time::now()",
         {"level": level},
     )
 
@@ -1303,6 +1724,50 @@ async def delete_binds_to_edge(
         logger.warning("[delete_binds_to] %s → %s failed: %s", decision_id, region_id, exc)
 
 
+async def get_proposed_decisions_with_bindings(
+    client: LedgerClient,
+) -> list[dict]:
+    """Return proposed (un-ratified) decisions and their bound regions.
+
+    Used by the ephemeral prune step (#157) to identify decisions whose
+    bindings may not have survived a merge to the authoritative branch.
+    Only returns decisions with signoff.state in {proposed, collision_pending}
+    — ratified decisions are never pruned.
+    """
+    rows = await client.query(
+        """
+        SELECT
+            type::string(in)     AS decision_id,
+            in.signoff           AS signoff,
+            in.source_type       AS source_type,
+            type::string(out)    AS region_id,
+            out.file_path        AS file_path,
+            out.symbol_name      AS symbol_name,
+            out.start_line       AS start_line,
+            out.end_line         AS end_line
+        FROM binds_to
+        WHERE in.signoff.state IN ['proposed', 'collision_pending']
+        """,
+    )
+    return rows or []
+
+
+async def set_decision_pruned(
+    client: LedgerClient,
+    decision_id: str,
+    reason: str = "binding_didnt_survive_merge",
+) -> None:
+    """Transition a decision's signoff to 'pruned' terminal state (#157)."""
+    from datetime import datetime
+
+    now = datetime.now(UTC).isoformat()
+    await client.execute(
+        f"UPDATE {decision_id} SET signoff.state = 'pruned', "
+        f"signoff.pruned_at = $ts, signoff.prune_reason = $r",
+        {"ts": now, "r": reason},
+    )
+
+
 async def has_prior_compliant_verdict(
     client: LedgerClient,
     decision_id: str,
@@ -1361,10 +1826,13 @@ async def project_decision_status(
 
     signoff = dec_rows[0].get("signoff")
 
-    # Guard: superseded decisions are retired from code tracking.
-    # resolve_collision writes signoff.state='superseded' and this function
-    # must never overwrite that by re-deriving compliance status.
-    if isinstance(signoff, dict) and signoff.get("state") == "superseded":
+    # Guard: superseded / pruned decisions are retired from code tracking.
+    # resolve_collision writes signoff.state='superseded'; prune step (#157)
+    # writes signoff.state='pruned'.  Neither should be overwritten.
+    if isinstance(signoff, dict) and signoff.get("state") in (
+        "superseded",
+        "pruned",
+    ):
         return dec_rows[0].get("status") or "ungrounded"
 
     # Get all non-pruned bound regions + their current content_hash
@@ -1377,6 +1845,21 @@ async def project_decision_status(
     )
 
     if not binding_rows:
+        # #281 — prevent regression to "ungrounded" when all binds_to edges
+        # have been pruned (via not_relevant verdicts).  If compliance history
+        # exists, the decision was previously grounded and the caller-LLM
+        # intentionally removed the bindings.  Returning "ungrounded" would
+        # re-surface it in the grounding-gap loop.  "pending" signals "needs
+        # re-binding" without triggering re-discovery.
+        try:
+            history = await client.query(
+                "SELECT id FROM compliance_check WHERE decision_id = $d LIMIT 1",
+                {"d": decision_id},
+            )
+            if history:
+                return "pending"
+        except Exception:
+            pass
         return "ungrounded"
 
     all_compliant = True
@@ -1630,12 +2113,20 @@ async def get_context_for_ready_decisions(
         WHERE signoff.state = 'context_pending'
         """,
     )
+    # #358 — preserve the row's actual decision.status (one of {reflected,
+    # drifted, pending, ungrounded} per schema v10+) instead of hardcoding
+    # "context_pending". The signoff state is already surfaced separately
+    # via the signoff dict; duplicating it into the status field violated
+    # BriefDecision.status's Literal contract and the handler's downstream
+    # try/except swallowed the ValidationError silently — production
+    # behavior: context_pending_ready always returned empty. Pattern
+    # matches the sibling get_collision_pending_decisions at line 1781.
     return [
         {
             "decision_id": str(r.get("decision_id", "")),
             "description": str(r.get("description", "")),
             "signoff": r.get("signoff"),
-            "status": "context_pending",
+            "status": str(r.get("status", "ungrounded")),
         }
         for r in (rows or [])
         if r.get("decision_id") and int(r.get("confirmed_ctx_count") or 0) > 0

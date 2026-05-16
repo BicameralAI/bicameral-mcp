@@ -134,7 +134,7 @@ When the user selects bypass, the agent calls `bicameral.record_bypass(decision_
 
 - Returns `{recorded: True, deduped: False}` on a fresh write.
 - Returns `{recorded: False, deduped: True}` when a prior bypass for the same `decision_id` is still inside the V4 idempotency window (1 hour). This prevents a misbehaving caller from indefinitely suppressing escalations on a sensitive decision -- the FIRST bypass establishes the recency fingerprint; subsequent calls inside the hour cannot extend it.
-- Returns `{recorded: False, deduped: False, reason: "telemetry_disabled"}` when `BICAMERAL_PREFLIGHT_TELEMETRY` is off. Telemetry is opt-in by default per the v0.15.0 privacy contract; bypass storage inherits the same opt-in.
+- Returns `{recorded: False, deduped: False, reason: "telemetry_disabled"}` when preflight telemetry is off (canonical: `BICAMERAL_TELEMETRY` csv list excludes `preflight`; legacy `BICAMERAL_PREFLIGHT_TELEMETRY=0` still honored via the #192 deprecation overlay). Preflight telemetry is opt-in by default per the v0.15.0 privacy contract; bypass storage inherits the same opt-in.
 
 Bypass writes a `preflight_prompt_bypassed` event to `~/.bicameral/preflight_events.jsonl`. **Bypass does NOT mutate decision state.** The `signoff_state` of the underlying decision row is unchanged. Future preflights will surface the same unresolved state again -- the only effect of a recent bypass is that the engine drops one tier on the action ladder for findings on that decision (acknowledgement that the user has seen the unresolved state, not a permanent suppression).
 

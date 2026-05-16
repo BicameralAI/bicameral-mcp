@@ -47,6 +47,82 @@ def _emoji_for(precision: float | None, gate: float = 0.85) -> str:
     return "❌"
 
 
+# Mirrors the FAILURE_MODE_NEXT_STEPS dict in eval_grounding_recall.py.
+# Kept in sync manually — both files must update if the taxonomy changes.
+# Renderer doesn't import from the runner because the runner pulls in
+# fixtures that the renderer doesn't need (keep the renderer dependency-free).
+_FAILURE_MODE_HINTS: dict[str, str] = {
+    "wrong_module": "tighten case-A decision text to name the module/scope",
+    "wrong_intent": "improve bind skill prompt's 'abort on weak evidence'",
+    "cross_language_confusion": "make decision text mention runtime explicitly",
+    "wrong_symbol_in_right_file": "right module — sub-region disambiguation gap",
+    "hallucinated_symbol": "handler failsafe firing; LLM degraded — model bump?",
+    "span_mismatch": "handler failsafe firing; LLM degraded — model bump?",
+    "aborted_correctly": "behavioral decisions correctly route to PM review",
+    "aborted_incorrectly": "bind skill is too cautious — loosen abort rule",
+    "eval_error": "infra (API timeout / network) — not an agent issue",
+    "uncategorized": "unexpected outcome — investigate manually",
+}
+
+
+def _render_failure_modes(rows: list[dict[str, Any]]) -> list[str]:
+    """Render Jin's failure-mode enumeration (#280 PR #292).
+
+    Groups misses by ``failure_mode`` (deterministic classifier in
+    ``tests/eval_grounding_recall.py:classify_failure_mode``), surfaces the
+    top 3 categories with up to 2 example cases each. PM-readable.
+
+    Pure layout function — no surprises if every case is `correct`
+    (returns nothing). Categories are kept in plan-readable order: misses
+    first (sorted by count), eval_error last.
+    """
+    misses = [r for r in rows if r.get("failure_mode") not in (None, "correct")]
+    if not misses:
+        return []
+
+    by_mode: dict[str, list[dict[str, Any]]] = {}
+    for row in misses:
+        mode = str(row.get("failure_mode") or "uncategorized")
+        by_mode.setdefault(mode, []).append(row)
+
+    # Sort: eval_error always last (infra noise), rest by descending count.
+    def _sort_key(item: tuple[str, list[dict[str, Any]]]) -> tuple[int, int]:
+        mode, rows_in = item
+        is_infra = 1 if mode == "eval_error" else 0
+        return (is_infra, -len(rows_in))
+
+    ranked = sorted(by_mode.items(), key=_sort_key)
+    top = ranked[:3]
+
+    out: list[str] = []
+    out.append("**Failure modes** (top categories — PM-actionable):")
+    out.append("")
+    out.append("| Category | Count | Suggested next step | Example |")
+    out.append("|---|---|---|---|")
+    for mode, mode_rows in top:
+        hint = _FAILURE_MODE_HINTS.get(mode, "—")
+        # Up to 2 examples per category. Each example: case_id + 1-line
+        # decision-text excerpt (truncated) + agent reasoning if present.
+        examples: list[str] = []
+        for r in mode_rows[:2]:
+            case_id = r.get("case_id", "?")
+            reasoning = (r.get("reasoning") or "").strip()
+            abort_reason = (r.get("abort_reason") or "").strip()
+            error_msg = (r.get("error_msg") or "").strip()
+            tail = reasoning or abort_reason or error_msg or "(no reasoning captured)"
+            tail = tail.replace("\n", " ").replace("|", "·")
+            if len(tail) > 110:
+                tail = tail[:107] + "…"
+            examples.append(f"`{case_id}` — {tail}")
+        examples_md = "<br>".join(examples) if examples else "—"
+        out.append(f"| `{mode}` | {len(mode_rows)} | {hint} | {examples_md} |")
+    if len(ranked) > 3:
+        out.append("")
+        out.append(f"_…and {len(ranked) - 3} more category(ies); see the per-case list below._")
+    out.append("")
+    return out
+
+
 def render(payload: dict[str, Any]) -> str:
     summary = payload.get("summary") or {}
     rows = payload.get("rows") or []
@@ -88,7 +164,7 @@ def render(payload: dict[str, Any]) -> str:
     out.append("")
     out.append("| Outcome | Count | Share |")
     out.append("|---|---|---|")
-    for label in ("correct", "wrong_symbol", "wrong_file", "aborted"):
+    for label in ("correct", "wrong_symbol", "wrong_file", "aborted", "eval_error"):
         count = outcomes.get(label, 0)
         out.append(f"| {label} | {count} | {_safe_pct(count, total)} |")
     out.append("")
@@ -112,21 +188,24 @@ def render(payload: dict[str, Any]) -> str:
         out.append(f"⚠ **Gate breaches** (warn-only — does not fail CI): {'; '.join(breaches)}")
         out.append("")
 
+    out.extend(_render_failure_modes(rows))
+
     misses = [r for r in rows if r.get("outcome") not in ("correct", None)]
     if misses:
         out.append(f"<details><summary>{len(misses)} missed cases (click to expand)</summary>")
         out.append("")
-        out.append("| Case | Type | Outcome | Bound |")
+        out.append("| Case | Type | Outcome | Bound / Reason |")
         out.append("|---|---|---|---|")
         for r in misses[:25]:  # cap so the summary stays readable
-            bound = (
-                f"`{r.get('bound_file') or '—'}::{r.get('bound_symbol') or '—'}`"
-                if not r.get("aborted")
-                else "_aborted_"
-            )
+            outcome = r.get("outcome", "?")
+            if outcome == "eval_error":
+                detail = f"_error: `{r.get('error_msg') or 'unknown'}`_"
+            elif r.get("aborted"):
+                detail = f"_aborted: {r.get('abort_reason') or 'no reason given'}_"
+            else:
+                detail = f"`{r.get('bound_file') or '—'}::{r.get('bound_symbol') or '—'}`"
             out.append(
-                f"| {r.get('case_id', '?')} | {r.get('case_type', '?')} | "
-                f"{r.get('outcome', '?')} | {bound} |"
+                f"| {r.get('case_id', '?')} | {r.get('case_type', '?')} | {outcome} | {detail} |"
             )
         if len(misses) > 25:
             out.append("")

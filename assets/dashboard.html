@@ -335,6 +335,237 @@ body {
 .l1-body.collapsed { display: none; }
 .l1-empty { font-size: 11px; color: var(--text-light); font-style: italic; padding: 7px 28px; }
 
+/* ── SOURCE VIEW PANEL (#278 Phase 1) ─────────────────────────── */
+/* Hidden by default; .src-panel[data-src-panel="open"] flips it visible.
+   Toggle attribute name is shared between markup and JS — both pinned
+   by tests/test_dashboard_source_view.py. */
+.src-panel {
+  display: none;
+  position: fixed;
+  top: 64px; right: 24px; bottom: 24px;
+  width: min(540px, 42vw);
+  background: var(--paper);
+  border: 1px solid var(--border-dark);
+  box-shadow: -4px 4px 24px rgba(0,0,0,0.08);
+  z-index: 50;
+  padding: 18px 22px;
+  overflow-y: auto;
+  flex-direction: column;
+  gap: 14px;
+}
+.src-panel[data-src-panel="open"] { display: flex; }
+.src-panel-hdr {
+  display: flex; align-items: baseline; gap: 10px;
+  border-bottom: 1px solid var(--border); padding-bottom: 10px;
+}
+.src-panel-hdr h2 {
+  font-family: var(--serif); font-size: 14px; font-weight: 700; color: var(--accent);
+}
+.src-panel-close {
+  margin-left: auto;
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text-dim); font-family: var(--mono); font-size: 11px;
+  padding: 2px 9px; cursor: pointer; border-radius: 2px;
+}
+.src-panel-close:hover { color: var(--text); border-color: var(--border-dark); }
+.src-panel-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 11px; }
+.src-panel-meta .src-type-pill { background: var(--accent-soft); color: var(--accent); padding: 1px 6px; border-radius: 2px; }
+.src-panel-meta .src-date { color: var(--text-dim); }
+.src-panel-meta .src-speaker { color: var(--text-dim); }
+.src-panel-quote {
+  background: var(--canvas); border-left: 3px solid var(--accent);
+  padding: 10px 14px; font-size: 12.5px; line-height: 1.7;
+  color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+.src-panel-related-hdr {
+  font-size: 11px; color: var(--text-dim);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  margin-top: 6px;
+}
+.src-panel-related {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.src-panel-related li {
+  border-left: 2px solid var(--border); padding: 4px 10px;
+}
+.src-panel-related .src-related-link {
+  color: var(--accent); text-decoration: none; cursor: pointer; font-size: 12px;
+}
+.src-panel-related .src-related-link:hover { text-decoration: underline; }
+.src-panel-related-empty { font-size: 11px; color: var(--text-light); font-style: italic; }
+.src-view-btn {
+  margin-left: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--mono); font-size: 10px;
+  padding: 1px 7px; border-radius: 2px; cursor: pointer;
+}
+.src-view-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── REMOVE FLOWS (#278 Phase 2) ───────────────────────────────── */
+.rm-dec-btn, .rm-src-btn {
+  margin-left: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-family: var(--mono); font-size: 10px;
+  padding: 1px 7px; border-radius: 2px; cursor: pointer;
+}
+.rm-dec-btn:hover, .rm-src-btn:hover {
+  color: rgb(220, 38, 38); border-color: rgb(220, 38, 38);
+}
+.rm-dec-btn[disabled] {
+  opacity: 0.4; cursor: not-allowed; color: var(--text-light);
+}
+.rm-modal {
+  display: none;
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0, 0, 0, 0.4);
+  align-items: center; justify-content: center;
+}
+.rm-modal[data-modal="open"] { display: flex; }
+.rm-modal-content {
+  background: var(--paper); border: 1px solid var(--border-dark);
+  width: min(560px, 90vw); max-height: 80vh; overflow-y: auto;
+  padding: 22px 26px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column; gap: 14px;
+}
+.rm-modal-hdr h2 {
+  font-family: var(--serif); font-size: 14px; font-weight: 700; color: var(--accent);
+  margin-bottom: 4px;
+}
+.rm-modal-hdr .rm-warn {
+  font-size: 11px; color: rgb(220, 38, 38);
+}
+.rm-modal label {
+  font-size: 11px; color: var(--text-dim); letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.rm-modal input, .rm-modal textarea {
+  width: 100%; font-family: var(--mono); font-size: 12px;
+  border: 1px solid var(--border); padding: 6px 8px; background: var(--canvas);
+  color: var(--text);
+}
+.rm-modal textarea { resize: vertical; min-height: 60px; }
+.rm-modal-target {
+  background: var(--canvas); border-left: 3px solid var(--accent);
+  padding: 8px 12px; font-size: 12px; line-height: 1.6; color: var(--text);
+}
+.cascade-list {
+  list-style: none; padding: 0; margin: 0;
+  background: var(--canvas); border: 1px solid var(--border);
+  max-height: 160px; overflow-y: auto;
+}
+.cascade-list li {
+  font-size: 11px; padding: 4px 10px; border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.cascade-list li:last-child { border-bottom: none; }
+.cascade-empty { font-size: 11px; color: var(--text-light); font-style: italic; padding: 6px 10px; }
+.mcp-call {
+  display: block;
+  background: var(--canvas); border: 1px dashed var(--border-dark);
+  padding: 8px 12px; font-family: var(--mono); font-size: 11px;
+  white-space: pre-wrap; word-break: break-all; color: var(--text);
+  max-height: 140px; overflow-y: auto;
+}
+.rm-modal-actions {
+  display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px;
+}
+.rm-modal-actions button {
+  font-family: var(--mono); font-size: 11px;
+  padding: 5px 12px; border: 1px solid var(--border); background: var(--paper);
+  color: var(--text); cursor: pointer; border-radius: 2px;
+}
+.rm-modal-actions button.rm-copy { color: var(--accent); border-color: var(--accent); }
+.rm-modal-actions button.rm-cancel:hover { color: var(--text-dim); }
+
+/* ── ADMIN SURREALQL PANEL (#278 Phase 3) ──────────────────── */
+/* Off by default at server level (env flag); UI panel additionally
+   hidden via data-state="closed". Two-step toggle: Advanced opens
+   the panel; a separate Enable-writes flow requires typing the
+   exact phrase before mutations are allowed. */
+.adm-toggle {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 16px; font-size: 11px;
+  color: var(--text-dim); cursor: pointer; user-select: none;
+}
+#adm-panel {
+  display: none;
+  margin-top: 12px;
+  border: 1px solid var(--border-dark);
+  background: var(--paper);
+  padding: 14px 18px;
+}
+#adm-panel[data-state="open"] { display: block; }
+#adm-panel h3 {
+  font-family: var(--serif); font-size: 13px; font-weight: 700; color: var(--accent);
+  margin-bottom: 4px;
+}
+#adm-panel .adm-warn-banner {
+  font-size: 11px; color: rgb(220, 38, 38);
+  margin: 6px 0 10px;
+}
+#adm-panel label {
+  font-size: 11px; color: var(--text-dim);
+  letter-spacing: 0.04em; text-transform: uppercase;
+  display: block; margin-top: 8px;
+}
+#adm-quickref, #adm-sql {
+  width: 100%; font-family: var(--mono); font-size: 12px;
+  border: 1px solid var(--border); padding: 6px 8px; background: var(--canvas);
+  color: var(--text); margin-top: 4px;
+}
+#adm-sql { min-height: 80px; resize: vertical; }
+.adm-controls {
+  display: flex; gap: 8px; align-items: center; margin-top: 10px;
+}
+.adm-controls button {
+  font-family: var(--mono); font-size: 11px;
+  padding: 5px 12px; border: 1px solid var(--accent); background: var(--paper);
+  color: var(--accent); cursor: pointer; border-radius: 2px;
+}
+.adm-write-warn {
+  display: none;
+  font-size: 11px; color: rgb(220, 38, 38);
+  padding: 4px 8px; border: 1px dashed rgb(220, 38, 38);
+}
+#adm-panel[data-write="enabled"] .adm-write-warn { display: inline-block; }
+.adm-result {
+  margin-top: 14px;
+  background: var(--canvas); border: 1px solid var(--border);
+  padding: 8px 12px; font-family: var(--mono); font-size: 11px;
+}
+.adm-result-hdr {
+  display: flex; gap: 16px; font-size: 11px; color: var(--text-dim);
+  margin-bottom: 6px;
+}
+#adm-result-rows {
+  max-height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+.adm-risk-modal {
+  display: none;
+  position: fixed; inset: 0; z-index: 110;
+  background: rgba(0, 0, 0, 0.5);
+  align-items: center; justify-content: center;
+}
+.adm-risk-modal[data-state="open"] { display: flex; }
+.adm-risk-modal-content {
+  background: var(--paper); border: 2px solid rgb(220, 38, 38);
+  width: min(480px, 90vw); padding: 22px 26px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.adm-risk-modal-content h2 {
+  font-family: var(--serif); font-size: 14px; color: rgb(220, 38, 38);
+}
+.adm-risk-modal-content input {
+  font-family: var(--mono); font-size: 12px;
+  padding: 6px 10px; border: 1px solid var(--border);
+  background: var(--canvas); color: var(--text);
+}
+
 
 </style>
 </head>
@@ -371,6 +602,161 @@ body {
 <main class="main" id="root">
   <div class="empty">Loading decision ledger…</div>
 </main>
+
+<!-- ── ADMIN SURREALQL PANEL (#278 Phase 3) ──────────────────── -->
+<!-- Off by default at the server level (requires BICAMERAL_ENABLE_ADMIN_PANEL=1).
+     The UI additionally hides the panel via data-state="closed" until the
+     operator toggles Advanced mode. Write capability requires a SECOND env
+     flag (BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1) AND typing the literal
+     phrase "I accept the risk" in the risk-confirmation modal. -->
+<div class="main">
+  <label class="adm-toggle">
+    <input type="checkbox" id="adv-toggle" onchange="toggleAdvancedPanel()">
+    Advanced (raw SurrealQL panel)
+  </label>
+  <div id="adm-panel" data-state="closed" data-write="disabled">
+    <h3>Raw SurrealQL admin panel</h3>
+    <div class="adm-warn-banner">
+      ⚠ Direct DB access. Read-only by default. Every query is audit-logged.
+      Mutations require <code>BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1</code> at server start.
+    </div>
+    <label for="adm-quickref">Quickref</label>
+    <select id="adm-quickref" onchange="loadQuickref(this.value)">
+      <option value="">-- pick a starter query --</option>
+      <option value="SELECT * FROM decision LIMIT 50">SELECT * FROM decision LIMIT 50</option>
+      <option value="SELECT count() FROM decision GROUP ALL">SELECT count() FROM decision GROUP ALL</option>
+      <option value="INFO FOR DB">INFO FOR DB</option>
+      <option value="SELECT * FROM input_span LIMIT 50">SELECT * FROM input_span LIMIT 50</option>
+      <option value="SELECT id, signoff FROM decision WHERE signoff.state = 'removed'">SELECT id, signoff FROM decision WHERE signoff.state = 'removed'</option>
+    </select>
+    <label for="adm-sql">SurrealQL</label>
+    <textarea id="adm-sql" placeholder="SELECT * FROM decision LIMIT 10"></textarea>
+    <label for="adm-signer">Signer (required for write mode)</label>
+    <input id="adm-signer" type="text" placeholder="email@example.com" style="width:100%;font-family:var(--mono);font-size:12px;border:1px solid var(--border);padding:6px 8px;background:var(--canvas);margin-top:4px">
+    <div class="adm-controls">
+      <button onclick="runAdminQuery()">execute</button>
+      <button onclick="openWriteRiskModal()">enable writes…</button>
+      <span class="adm-write-warn">⚠ WRITES ENABLED — queries will mutate the ledger</span>
+    </div>
+    <div class="adm-result">
+      <div class="adm-result-hdr">
+        <span id="adm-result-mode"></span>
+        <span id="adm-result-elapsed"></span>
+        <span id="adm-result-error" style="color:rgb(220,38,38)"></span>
+      </div>
+      <div id="adm-result-rows"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ── ADMIN WRITE-MODE RISK CONFIRMATION MODAL ──────────────── -->
+<div id="adm-risk-modal" class="adm-risk-modal" data-state="closed" aria-hidden="true">
+  <div class="adm-risk-modal-content">
+    <h2>Enable write mode</h2>
+    <p style="font-size:12px;color:var(--text)">
+      Write mode will let this panel mutate the ledger directly.
+      Mutations bypass the normal decision/source remove flows but are still
+      audit-logged. To proceed, type the literal phrase below.
+    </p>
+    <label for="adm-risk-input" style="font-size:11px;color:var(--text-dim)">Type: <code>I accept the risk</code></label>
+    <input id="adm-risk-input" type="text" placeholder="">
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="closeWriteRiskModal()" style="font-family:var(--mono);font-size:11px;padding:5px 12px;border:1px solid var(--border);background:var(--paper);cursor:pointer">cancel</button>
+      <button onclick="confirmWriteRisk()" style="font-family:var(--mono);font-size:11px;padding:5px 12px;border:1px solid rgb(220,38,38);background:var(--paper);color:rgb(220,38,38);cursor:pointer">confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── SOURCE VIEW PANEL (#278 Phase 1) ───────────────────────── -->
+<!-- Hidden by default via .src-panel CSS; opens when data-src-panel="open".
+     Field text is populated by openSourceView() via .textContent (XSS-safe). -->
+<div id="src-panel" class="src-panel" data-src-panel="closed" aria-hidden="true">
+  <div class="src-panel-hdr">
+    <h2>Source</h2>
+    <button class="rm-src-btn" onclick="openRemoveSourceModal()" title="Remove this source (#278 Phase 2)">remove source</button>
+    <button class="src-panel-close" onclick="closeSourceView()">close</button>
+  </div>
+  <div class="src-panel-meta">
+    <span id="src-panel-type" class="src-type-pill"></span>
+    <span id="src-panel-ref"></span>
+    <span id="src-panel-date" class="src-date"></span>
+    <span id="src-panel-speaker" class="src-speaker"></span>
+  </div>
+  <div id="src-panel-quote" class="src-panel-quote"></div>
+  <div class="src-panel-related-hdr">Decisions from this source</div>
+  <ul id="src-panel-related" class="src-panel-related"></ul>
+</div>
+
+<!-- ── REMOVE DECISION MODAL (#278 Phase 2) ────────────────────── -->
+<!-- Soft-delete a decision via the bicameral.remove_decision MCP tool.
+     Dashboard does NOT invoke writes itself — the modal surfaces the canonical
+     tool-call payload (built via JSON.stringify) and copy-to-clipboard for the
+     operator to run via their MCP-connected agent. -->
+<div id="rm-dec-modal" class="rm-modal" data-modal="closed" aria-hidden="true">
+  <div class="rm-modal-content">
+    <div class="rm-modal-hdr">
+      <h2>Remove decision</h2>
+      <div class="rm-warn">Soft-delete — signoff.state = "removed". Reason is required. No unremove.</div>
+    </div>
+    <div>
+      <label>Target decision</label>
+      <div id="rm-dec-target" class="rm-modal-target"></div>
+    </div>
+    <div>
+      <label for="rm-dec-signer">Signer (your identity)</label>
+      <input id="rm-dec-signer" type="text" placeholder="email@example.com">
+    </div>
+    <div>
+      <label for="rm-dec-reason">Reason (audit-trail; required)</label>
+      <textarea id="rm-dec-reason" placeholder="Why is this decision being removed?"></textarea>
+    </div>
+    <div>
+      <label>MCP tool call (copy &amp; run in your bicameral-connected agent)</label>
+      <code id="rm-dec-mcp-call" class="mcp-call"></code>
+    </div>
+    <div class="rm-modal-actions">
+      <button class="rm-cancel" onclick="closeRemoveModal('rm-dec-modal')">cancel</button>
+      <button class="rm-copy" onclick="buildAndCopyRemoveDecisionCall()">build &amp; copy call</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── REMOVE SOURCE MODAL (#278 Phase 2) ──────────────────────── -->
+<!-- Hard-delete an input_span + cascade-soft-delete every decision derived
+     from it. The cascade list is populated by openRemoveSourceModal via
+     .textContent per decision summary (XSS discipline). -->
+<div id="rm-src-modal" class="rm-modal" data-modal="closed" aria-hidden="true">
+  <div class="rm-modal-content">
+    <div class="rm-modal-hdr">
+      <h2>Remove source</h2>
+      <div class="rm-warn">Cascading hard-delete of the source + soft-delete of every derived decision. Inspect the cascade carefully.</div>
+    </div>
+    <div>
+      <label>Source</label>
+      <div id="rm-src-target" class="rm-modal-target"></div>
+    </div>
+    <div>
+      <label>Decisions that will be cascade-removed</label>
+      <ul id="rm-src-cascade" class="cascade-list"></ul>
+    </div>
+    <div>
+      <label for="rm-src-signer">Signer (your identity)</label>
+      <input id="rm-src-signer" type="text" placeholder="email@example.com">
+    </div>
+    <div>
+      <label for="rm-src-reason">Reason (audit-trail; required)</label>
+      <textarea id="rm-src-reason" placeholder="Why is this source being removed?"></textarea>
+    </div>
+    <div>
+      <label>MCP tool call (copy &amp; run in your bicameral-connected agent — call once with confirm=false to verify the cascade, then with confirm=true)</label>
+      <code id="rm-src-mcp-call" class="mcp-call"></code>
+    </div>
+    <div class="rm-modal-actions">
+      <button class="rm-cancel" onclick="closeRemoveModal('rm-src-modal')">cancel</button>
+      <button class="rm-copy" onclick="buildAndCopyRemoveSourceCall()">build &amp; copy call</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── helpers ─────────────────────────────────────────────────
@@ -517,6 +903,11 @@ function renderRatPill(d) {
 }
 
 // ── expanded detail body ──────────────────────────────────────
+// renderDetailSources reads the (_fi, _di) tags written by renderFeature so
+// each "View source" button can address the right source via three numeric
+// indices passed to openSourceView. The indices are numeric and safe to
+// interpolate; user-controlled fields (source_type, ref, quote) remain
+// `esc()`'d in the inline list and are written via .textContent in the panel.
 function renderDetailSources(d) {
   const srcs = d.sources || [];
   if (!srcs.length) {
@@ -525,15 +916,18 @@ function renderDetailSources(d) {
       : '~ no meeting source';
     return `<div class="det-no-src">${msg}</div>`;
   }
-  return srcs.map(s => {
+  const featureIdx = d._fi;
+  const decIdx = d._di;
+  return srcs.map((s, i) => {
     const meta = [
       s.source_type ? `<span class="src-type-pill">${esc(s.source_type)}</span>` : '',
       s.source_ref  ? `<span>${esc(s.source_ref)}</span>` : '',
       s.date        ? `<span class="src-date">${esc(s.date.slice(0,10))}</span>` : '',
       s.speaker     ? `<span class="src-speaker">${esc(s.speaker)}</span>` : '',
     ].filter(Boolean).join('');
+    const viewBtn = `<button class="src-view-btn" onclick="openSourceView(${featureIdx}, ${decIdx}, ${i})">View source</button>`;
     return `<div class="det-src">
-  ${meta ? `<div class="det-src-meta">${meta}</div>` : ''}
+  ${meta ? `<div class="det-src-meta">${meta}${viewBtn}</div>` : `<div class="det-src-meta">${viewBtn}</div>`}
   ${s.quote ? `<div class="det-quote">${esc(s.quote)}</div>` : ''}
 </div>`;
   }).join('');
@@ -567,9 +961,16 @@ function renderDec(d, idx, depth) {
   const lvlBadge = `<span class="lvl-badge ${lvlClass}">${lvlLabel}</span>`;
   const dataLevel = level || 'unclassified';
   const spacer   = depth > 0 ? `<span class="depth-spacer" style="width:${depth * 18}px"></span>` : '';
-  const body     = renderDetailSources(d) + renderCodeChips(d);
+  // #278 Phase 2: "Remove decision" button gated on signoff state.
+  // Already-removed decisions render the button as disabled — operation is
+  // a no-op (idempotent at the handler) and the UI should reflect that.
+  const isRemoved = d.signoff_state === 'removed' || (d.signoff && d.signoff.state === 'removed');
+  const rmBtn = isRemoved
+    ? `<button class="rm-dec-btn" disabled title="Already removed">remove</button>`
+    : `<button class="rm-dec-btn" onclick="event.stopPropagation(); openRemoveDecisionModal('${esc(d.id)}', this.dataset.summary, '${esc(d.signoff_state || '')}')" data-summary="${esc(d.summary || '')}" title="Soft-delete this decision (#278 Phase 2)">remove</button>`;
+  const body     = renderDetailSources(d) + renderCodeChips(d) + `<div class="dec-rm-row" style="margin-top:8px">${rmBtn}</div>`;
   return `
-<div class="dec decision-row ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" data-level="${dataLevel}" id="d${idx}" onclick="toggleDec(this)">
+<div class="dec decision-row ${stCls}${proposed ? ' is-proposed' : ''}${discovered ? ' is-discovered' : ''}${superseded ? ' is-superseded' : ''}${rejected ? ' is-rejected' : ''}" data-level="${dataLevel}" data-decision-id="${esc(d.id)}" id="d${idx}" onclick="toggleDec(this)">
   <div class="dec-hdr">
     <div class="d-text-col">
       ${spacer}${lvlBadge}<span class="d-text">${esc(d.summary)}</span>
@@ -631,6 +1032,12 @@ function getAllDescendants(childNodes) {
 function renderFeature(f, fi) {
   const decisions = f.decisions || [];
 
+  // Tag each decision with its (featureIdx, decIdx-within-feature) so the
+  // "View source" button rendered later can address the right source via
+  // _currentData.features[fi].decisions[di].sources[si]. Decoration is local
+  // to this render pass; data is rebuilt on every SSE update.
+  decisions.forEach((d, di) => { d._fi = fi; d._di = di; });
+
   // Build full tree from parent_decision_id relationships
   const { roots, map } = buildDecisionTree(decisions);
 
@@ -672,11 +1079,336 @@ function renderFeature(f, fi) {
 </div>`;
 }
 
+// ── source view (#278 Phase 1) ────────────────────────────────
+// Cache of the most recent HistoryResponse so openSourceView can resolve
+// (featureIdx, decIdx, srcIdx) into the underlying source object.
+let _currentData = null;
+// Client-side index mapping a source signature → list of decisions that
+// extracted from that source. Rebuilt on every render().
+let _sourceIndex = new Map();
+
+// Stable client-side signature for a HistorySource. Two sources with the same
+// signature are treated as "the same source" for grouping purposes. The slice
+// constant (40) is asserted explicitly by
+// tests/test_dashboard_source_view.py::test_source_signature_function_defined.
+function sourceSignature(src) {
+  return [
+    src.source_type || '',
+    src.source_ref || '',
+    src.date || '',
+    (src.quote || '').slice(0, 40),
+  ].join('|');
+}
+
+// Walk every feature → decision → source and accumulate a
+// Map<signature, {id, summary}[]> so the panel can render "other decisions
+// extracted from this source" with no extra server call.
+function buildSourceIndex(features) {
+  const idx = new Map();
+  (features || []).forEach(f => {
+    (f.decisions || []).forEach(d => {
+      (d.sources || []).forEach(src => {
+        const sig = sourceSignature(src);
+        const entry = { id: d.id, summary: d.summary || '' };
+        const bucket = idx.get(sig);
+        if (bucket) bucket.push(entry);
+        else idx.set(sig, [entry]);
+      });
+    });
+  });
+  return idx;
+}
+
+// Open the source-view panel for a specific (featureIdx, decIdx, srcIdx)
+// triple. All user-controlled values are written via .textContent (XSS-safe);
+// the related-decisions list is built with esc() + event delegation (no inline
+// onclick). See plan-278-phase-1-source-view.md "Security Discipline".
+function openSourceView(featureIdx, decIdx, srcIdx) {
+  if (!_currentData) return;
+  const feat = (_currentData.features || [])[featureIdx];
+  if (!feat) return;
+  const dec = (feat.decisions || [])[decIdx];
+  if (!dec) return;
+  const src = _currentData.features[featureIdx].decisions[decIdx].sources[srcIdx];
+  if (!src) return;
+
+  // Discipline #1: populate user-controlled fields via .textContent.
+  document.getElementById('src-panel-type').textContent = src.source_type || '';
+  document.getElementById('src-panel-ref').textContent = src.source_ref || '';
+  document.getElementById('src-panel-date').textContent =
+    src.date ? src.date.slice(0, 10) : '';
+  document.getElementById('src-panel-speaker').textContent = src.speaker || '';
+  document.getElementById('src-panel-quote').textContent = src.quote || '';
+
+  // Related-decisions list — skip the originating decision itself.
+  const sig = sourceSignature(src);
+  const related = (_sourceIndex.get(sig) || []).filter(e => e.id !== dec.id);
+  const listEl = document.getElementById('src-panel-related');
+  if (!related.length) {
+    listEl.innerHTML =
+      '<li class="src-panel-related-empty">No other decisions from this source.</li>';
+  } else {
+    // Discipline #2: esc() every interpolated value and use data-decision-id
+    // for event delegation — NO inline onclick on the link.
+    listEl.innerHTML = related.map(e =>
+      `<li><a class="src-related-link" data-decision-id="${esc(e.id)}">${esc(e.summary)}</a></li>`
+    ).join('');
+  }
+
+  // #278 Phase 2: stash the active source context so the panel's
+  // "remove source" button can target the right span without re-encoding
+  // server data through HTML.
+  _activeSourceContext = { src: src, related: related };
+
+  const panel = document.getElementById('src-panel');
+  panel.setAttribute('data-src-panel', 'open');
+  panel.setAttribute('aria-hidden', 'false');
+}
+
+function closeSourceView() {
+  const panel = document.getElementById('src-panel');
+  panel.setAttribute('data-src-panel', 'closed');
+  panel.setAttribute('aria-hidden', 'true');
+}
+
+// ── remove flows (#278 Phase 2) ───────────────────────────────
+// Tracks the source the user opened most recently via openSourceView so the
+// "remove source" button in the panel knows which source to target.
+let _activeSourceContext = null;
+
+// Build the MCP tool-call payload via JSON.stringify (NOT raw template
+// interpolation of server data) and write it via .textContent into the
+// modal's code block. XSS-safe by construction: JSON.stringify escapes all
+// user-controlled values, and .textContent ensures the resulting string is
+// rendered as text, never parsed as HTML.
+function buildMcpCall(toolName, args, codeElId) {
+  const payload = JSON.stringify({ name: toolName, arguments: args }, null, 2);
+  const el = document.getElementById(codeElId);
+  if (el) el.textContent = payload;
+  return payload;
+}
+
+function copyMcpCall(codeElId) {
+  const el = document.getElementById(codeElId);
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent || '').catch(() => {});
+}
+
+function openRemoveDecisionModal(decisionId, summary, signoffState) {
+  // Already-removed decisions short-circuit (button is also rendered disabled,
+  // but defend the modal opener as well).
+  if (signoffState === 'removed') return;
+  // Populate user-controlled fields via .textContent (XSS discipline #1).
+  document.getElementById('rm-dec-target').textContent =
+    `${decisionId}\n${summary || ''}`;
+  document.getElementById('rm-dec-signer').value = '';
+  document.getElementById('rm-dec-reason').value = '';
+  document.getElementById('rm-dec-mcp-call').textContent = '';
+  // Stash the decision id on the modal so buildAndCopy can read it later
+  // without re-encoding it through HTML.
+  const modal = document.getElementById('rm-dec-modal');
+  modal.dataset.decisionId = decisionId;
+  modal.setAttribute('data-modal', 'open');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function buildAndCopyRemoveDecisionCall() {
+  const modal = document.getElementById('rm-dec-modal');
+  const decisionId = modal.dataset.decisionId || '';
+  const signer = document.getElementById('rm-dec-signer').value.trim();
+  const reason = document.getElementById('rm-dec-reason').value.trim();
+  if (!signer || !reason) {
+    document.getElementById('rm-dec-mcp-call').textContent =
+      '(fill in signer and reason — both are required)';
+    return;
+  }
+  buildMcpCall(
+    'bicameral.remove_decision',
+    { decision_id: decisionId, signer: signer, reason: reason },
+    'rm-dec-mcp-call',
+  );
+  copyMcpCall('rm-dec-mcp-call');
+}
+
+function openRemoveSourceModal() {
+  // Reads the active source context stashed by openSourceView (Phase 1).
+  if (!_activeSourceContext) {
+    return;
+  }
+  const { src, related } = _activeSourceContext;
+  // The InputSpan record id is propagated through HistorySource by Phase A
+  // (handlers/history.py change). When absent (legacy ingest), bail out with
+  // an explanatory message.
+  if (!src.input_span_id) {
+    document.getElementById('rm-src-target').textContent =
+      '(source pre-dates Phase 2 — input_span_id is not on the wire; remove via SurrealQL admin panel when available)';
+    document.getElementById('rm-src-mcp-call').textContent = '';
+    const m = document.getElementById('rm-src-modal');
+    m.setAttribute('data-modal', 'open');
+    return;
+  }
+  // Populate user-controlled fields via .textContent.
+  document.getElementById('rm-src-target').textContent =
+    `${src.input_span_id}\n${src.source_type || ''} · ${src.source_ref || ''}\n${(src.quote || '').slice(0, 200)}`;
+  // Cascade list: each <li>'s text content is the decision summary, written
+  // via .textContent per item (NOT innerHTML interpolation).
+  const listEl = document.getElementById('rm-src-cascade');
+  listEl.textContent = '';  // clear
+  if (!related || related.length === 0) {
+    const li = document.createElement('li');
+    li.className = 'cascade-empty';
+    li.textContent = 'No decisions are derived from this source — only the span itself will be removed.';
+    listEl.appendChild(li);
+  } else {
+    related.forEach((entry) => {
+      const li = document.createElement('li');
+      // Composite text: id + summary, both via textContent (no HTML).
+      li.textContent = `${entry.id} — ${entry.summary || ''}`;
+      listEl.appendChild(li);
+    });
+  }
+  document.getElementById('rm-src-signer').value = '';
+  document.getElementById('rm-src-reason').value = '';
+  document.getElementById('rm-src-mcp-call').textContent = '';
+  const modal = document.getElementById('rm-src-modal');
+  modal.dataset.spanId = src.input_span_id;
+  modal.setAttribute('data-modal', 'open');
+  modal.setAttribute('aria-hidden', 'false');
+}
+
+function buildAndCopyRemoveSourceCall() {
+  const modal = document.getElementById('rm-src-modal');
+  const spanId = modal.dataset.spanId || '';
+  const signer = document.getElementById('rm-src-signer').value.trim();
+  const reason = document.getElementById('rm-src-reason').value.trim();
+  if (!signer || !reason || !spanId) {
+    document.getElementById('rm-src-mcp-call').textContent =
+      '(fill in signer and reason — both are required; span_id must be available)';
+    return;
+  }
+  buildMcpCall(
+    'bicameral.remove_source',
+    { span_id: spanId, signer: signer, reason: reason, confirm: false },
+    'rm-src-mcp-call',
+  );
+  copyMcpCall('rm-src-mcp-call');
+}
+
+function closeRemoveModal(modalId) {
+  const modal = document.getElementById(modalId);
+  if (!modal) return;
+  modal.setAttribute('data-modal', 'closed');
+  modal.setAttribute('aria-hidden', 'true');
+}
+
+// ── admin SurrealQL panel (#278 Phase 3) ──────────────────────
+// The server-side route at /admin/query is off by default; this UI is also
+// hidden via data-state="closed" until the operator opens the Advanced
+// toggle. Write capability requires a SECOND env flag at the server AND
+// typing the literal "I accept the risk" phrase below.
+let _writeModeEnabled = false;
+
+function toggleAdvancedPanel() {
+  const panel = document.getElementById('adm-panel');
+  const toggle = document.getElementById('adv-toggle');
+  panel.setAttribute('data-state', toggle.checked ? 'open' : 'closed');
+}
+
+function loadQuickref(value) {
+  if (!value) return;
+  document.getElementById('adm-sql').value = value;
+}
+
+function openWriteRiskModal() {
+  const modal = document.getElementById('adm-risk-modal');
+  document.getElementById('adm-risk-input').value = '';
+  modal.setAttribute('data-state', 'open');
+}
+
+function closeWriteRiskModal() {
+  document.getElementById('adm-risk-modal').setAttribute('data-state', 'closed');
+}
+
+function confirmWriteRisk() {
+  // The literal phrase below is the operator's typed confirmation. It is
+  // pinned by tests/test_dashboard_admin_panel.py::test_admin_panel_write_mode_requires_typed_confirmation —
+  // do not change the wording without updating that test.
+  const typed = (document.getElementById('adm-risk-input').value || '').trim();
+  if (typed === 'I accept the risk') {
+    _writeModeEnabled = true;
+    document.getElementById('adm-panel').setAttribute('data-write', 'enabled');
+    closeWriteRiskModal();
+  } else {
+    document.getElementById('adm-risk-input').placeholder =
+      "Phrase didn't match — try again or cancel";
+  }
+}
+
+async function runAdminQuery() {
+  const sql = document.getElementById('adm-sql').value.trim();
+  const signer = document.getElementById('adm-signer').value.trim();
+  const mode = _writeModeEnabled ? 'write' : 'read';
+  if (!sql) {
+    renderAdminResult({ mode: 'read-only', rows: [], elapsed_ms: 0, error: 'SQL is empty' });
+    return;
+  }
+  let response;
+  try {
+    const res = await fetch('/admin/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql: sql, mode: mode, signer: signer }),
+    });
+    response = await res.json();
+  } catch (e) {
+    response = { mode: 'read-only', rows: [], elapsed_ms: 0, error: String(e) };
+  }
+  renderAdminResult(response);
+}
+
+function renderAdminResult(response) {
+  // XSS discipline: all user-controlled values (rows from the DB, error
+  // messages from the server) written via .textContent. The rows are
+  // JSON.stringify'd and rendered as text in a single <pre>-like block.
+  document.getElementById('adm-result-mode').textContent =
+    'mode: ' + (response.mode || '');
+  document.getElementById('adm-result-elapsed').textContent =
+    'elapsed: ' + (response.elapsed_ms != null ? response.elapsed_ms.toFixed(2) + ' ms' : '');
+  document.getElementById('adm-result-error').textContent =
+    response.error ? ('error: ' + response.error) : '';
+  const rowsEl = document.getElementById('adm-result-rows');
+  if (!response.rows || response.rows.length === 0) {
+    rowsEl.textContent = '(no rows)';
+  } else {
+    rowsEl.textContent = JSON.stringify(response.rows, null, 2);
+  }
+}
+
+
+// Discipline #3: jump-to-decision uses document.getElementById (DOM API, no
+// HTML concatenation). The id namespace is generated by renderDec / orphan
+// rendering, so this also exercises the row-id contract.
+function jumpToDecision(id) {
+  // Decision row ids in the DOM are composed by renderFeature/renderL1Section
+  // ('l1-{fi}-{li}-{di}' for nested, 'ft{fi}-{di}' for orphans). We try a few
+  // resolution strategies because the decision.id is a SurrealDB id, not the
+  // DOM id directly; locate the row by its data-decision-id attribute.
+  const row =
+    document.querySelector(`.decision-row[data-decision-id="${CSS.escape(id)}"]`) ||
+    document.getElementById(id);
+  if (!row) return;
+  closeSourceView();
+  row.classList.add('open');
+  row.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
 // ── render ────────────────────────────────────────────────────
 let _lastFeaturesJson = null;
 
 function render(data) {
+  _currentData = data;
   const features = data.features || [];
+  _sourceIndex = buildSourceIndex(features);
   document.getElementById('tref').textContent =
     data.as_of ? `@ ${String(data.as_of).slice(0, 9)}` : '';
 
@@ -778,6 +1510,17 @@ function connect() {
     setTimeout(connect, 4000);
   };
 }
+
+// Single delegated click handler for the related-decisions list.
+// Pinned by tests/test_dashboard_source_view.py::test_related_list_delegated_handler_defined.
+// Replaces the otherwise-tempting inline onclick that would interpolate
+// untrusted decision ids/summaries into an HTML attribute (Security
+// Discipline #2 in plan-278-phase-1-source-view.md).
+document.addEventListener('click', (ev) => {
+  const link = ev.target.closest('.src-panel-related [data-decision-id]');
+  if (!link) return;
+  jumpToDecision(link.dataset.decisionId);
+});
 
 fetch('/history').then(r => r.json()).then(render).catch(() => {});
 connect();

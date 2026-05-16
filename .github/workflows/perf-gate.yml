@@ -1,0 +1,70 @@
+name: Perf Gate
+
+# Runs the file-backed SurrealKV performance suite on every PR targeting
+# main/dev. The pre-#357 perf claims (#311 "8ms p50 at N=1000", #312
+# "sub-3ms p95 at N=500") were all measured locally on memory:// — a
+# CPU-cache benchmark, not a storage benchmark. This workflow closes
+# that gap.
+#
+# See tests/perf/test_ledger_revision_perf.py for the test logic and
+# threshold rationale.
+
+on:
+  pull_request:
+    branches: [main, dev]
+  # Allow manual runs so the baseline can be captured / re-measured
+  # without opening a PR.
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  perf-gate:
+    name: Perf gate (file-backed SurrealKV)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+
+      - name: Run perf gate (file-backed SurrealKV)
+        env:
+          PERF_RESULTS_DIR: ${{ github.workspace }}/perf-results
+        run: |
+          mkdir -p "$PERF_RESULTS_DIR"
+          # -m perf overrides the addopts "-m not perf" in pytest.ini.
+          # Verbose output so the p50/p95/p99 numbers land in the run log.
+          python -m pytest tests/perf/ -m perf -v --tb=short
+
+      - name: Upload perf result artifacts
+        if: always()  # capture even on failure for forensics
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results-${{ github.run_id }}
+          path: perf-results/
+          retention-days: 30
+
+      - name: Summarize results
+        if: success()
+        run: |
+          echo "## Perf gate — file-backed SurrealKV" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| N decisions | p50 ms | p95 ms | p99 ms | mean ms |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          for f in perf-results/get_ledger_revision_n*.json; do
+            n=$(python -c "import json; print(json.load(open('$f'))['n_decisions'])")
+            p50=$(python -c "import json; print(json.load(open('$f'))['p50_ms'])")
+            p95=$(python -c "import json; print(json.load(open('$f'))['p95_ms'])")
+            p99=$(python -c "import json; print(json.load(open('$f'))['p99_ms'])")
+            mean=$(python -c "import json; print(json.load(open('$f'))['mean_ms'])")
+            echo "| $n | $p50 | $p95 | $p99 | $mean |" >> $GITHUB_STEP_SUMMARY
+          done

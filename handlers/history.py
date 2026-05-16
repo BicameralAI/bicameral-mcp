@@ -112,6 +112,10 @@ def _row_to_history_decision(
             raw_type = str(span.get("source_type") or row.get("source_type") or "manual")
             speakers = span.get("speakers") or []
             speaker = speakers[0] if speakers else None
+            # #278 Phase 2: propagate the input_span record id through to the
+            # HistorySource so remove_source can target the cascade.
+            span_id_raw = span.get("id")
+            input_span_id = str(span_id_raw) if span_id_raw else None
             sources.append(
                 HistorySource(
                     source_ref=str(span.get("source_ref") or row.get("source_ref") or ""),
@@ -119,6 +123,7 @@ def _row_to_history_decision(
                     date=str(span.get("meeting_date") or row.get("meeting_date") or ""),
                     speaker=speaker,
                     quote=text,
+                    input_span_id=input_span_id,
                 )
             )
     else:
@@ -209,15 +214,26 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
                     purpose,
                     content_hash
                 } AS code_regions,
-                <-yields<-input_span.{text, source_ref, source_type, meeting_date, speakers} AS _source_spans
+                <-yields<-input_span.{id, text, archive_key, source_ref, source_type, meeting_date, speakers} AS _source_spans
             FROM decision
             ORDER BY created_at ASC
             """,
+            # #224: full-tree enriched query with graph traversal on
+            # every decision row. Heavy traversal path → drift budget.
+            timeout_class="drift",
         )
     except Exception as exc:
         logger.warning("[history] enriched query failed, falling back: %s", exc)
         rows = await ledger.get_all_decisions(filter="all")
         return rows
+
+    # #221 Phase B-1: route each span's text through _resolve_span_text
+    # so post-erasure rows return the [ERASED] sentinel; legacy rows
+    # fall back to row["text"]. The archive accessor is on the inner
+    # SurrealDBLedgerAdapter; degrade gracefully if not present.
+    from ledger.queries import _resolve_span_text
+
+    archive = getattr(inner, "_pii_archive", None) or getattr(ledger, "_pii_archive", None)
 
     for row in rows:
         ca = row.pop("created_at", None)
@@ -225,6 +241,15 @@ async def _fetch_all_decisions_enriched(ledger) -> list[dict]:
         for region in row.get("code_regions") or []:
             if region and "symbol_name" in region:
                 region["symbol"] = region.pop("symbol_name")
+        # Resolve each span's text via the helper. Without archive,
+        # falls back to span["text"] (legacy behavior).
+        for span in row.get("_source_spans") or []:
+            if span is None:
+                continue
+            if archive is not None:
+                span["text"] = _resolve_span_text(archive, span)
+            else:
+                span["text"] = span.get("text") or ""
 
     return rows
 
@@ -286,6 +311,7 @@ async def handle_history(
     ctx,
     feature_filter: str | None = None,
     include_superseded: bool = True,
+    include_pruned: bool = False,
     as_of: str | None = None,
 ) -> HistoryResponse:
     """Read-only dump of the full decision ledger grouped by feature area.
@@ -330,6 +356,14 @@ async def handle_history(
             hist_dec = _row_to_history_decision(row, feature_id=feature_id)
             # Filter superseded if requested
             if not include_superseded and hist_dec.status == "superseded":
+                continue
+            # #157 — exclude pruned decisions by default
+            signoff_obj = row.get("signoff")
+            if (
+                not include_pruned
+                and isinstance(signoff_obj, dict)
+                and signoff_obj.get("state") == "pruned"
+            ):
                 continue
             decisions.append(hist_dec)
 

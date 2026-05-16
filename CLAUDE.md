@@ -2,7 +2,9 @@
 
 ## Canonical Skill Source
 
-`pilot/mcp/skills/` is the **single canonical location** for all skill files in this project. Do not edit `.claude/skills/bicameral-*/SKILL.md` copies — they are stale duplicates and should be deleted. When a skill file changes, commit only the `pilot/mcp/skills/` version.
+`skills/` is the **single canonical location** for all skill files in this project. `.claude/skills/bicameral-*` are symlinks to `../../skills/bicameral-*` — they exist so Claude Code's slash-command resolver finds the skills, but they always resolve to the canonical content. Edit only the `skills/` versions; never write through the symlinks.
+
+> **Windows contributors (required)**: git stores symlinks as mode-120000 entries. Windows defaults to `core.symlinks=false` and stores the symlink *target string* as a plain text file — this breaks slash-command resolution silently. Before cloning, run `git config --global core.symlinks true` (or develop via WSL). If you've already cloned with the default, fix in-place: `git rm --cached .claude/skills/bicameral-* && git checkout -- .claude/skills/`. CI enforces this contract via `tests/test_skills_symlink_integrity.py` and a dedicated step in `test-mcp-regression.yml` (#357 sub-task 4); a Windows clone without `core.symlinks=true` will fail both gates.
 
 ## Tool Changes Require Skill Changes (Mandatory)
 
@@ -19,6 +21,27 @@ worse than a compile error because it fails at runtime in production sessions.
 - [ ] Did any default behavior change? → Update skill's "Steps" or "After" section
 - [ ] Did a new tool get added? → Create `skills/<tool-name>/SKILL.md`
 - [ ] Did a status literal gain a new value (e.g. `"proposal"`)? → Update every skill that renders status
+
+## Sociable Testing for UX Paths (Mandatory for Handlers + Ledger)
+
+Default to **sociable unit tests** ([Martin Fowler, "On the Diverse And Fantastical Shape of Testing"](https://martinfowler.com/articles/2021-test-shapes.html)) for anything the MCP agent actually invokes: handlers under `handlers/`, ledger queries in `ledger/`, and the contracts they return. A test is **solitary** when it replaces a collaborator we ship to users (the `ctx`, the `ledger`, a handler in the call graph) with a `MagicMock` / `AsyncMock` / `patch(...)`; it's **sociable** when it runs the real collaborator and only seams off something we genuinely can't run in tests (network, time, external SaaS, an injected failure mode like "symbol disappears").
+
+The motivation is concrete: AI-authored tests skew solitary because mocks are easy to make pass. A solitary test for `get_session_start_banner` stayed green for months while `get_decisions_by_status` was selecting an undefined `decision_id` field and returning `None` for every banner row — agents saw null IDs in production while the suite reported full coverage. The first sociable run caught it.
+
+**Rules**
+
+1. **Handler tests** (`tests/test_<handler>*.py`) — instantiate a real `SurrealDBLedgerAdapter` over `memory://` and seed rows with the production schema. Reference pattern: `tests/test_codegenome_continuity_service.py::_fresh_adapter` and `tests/test_sync_middleware.py::_make_real_adapter`.
+2. **Ledger query tests** — never `MagicMock` the client. Use the real `LedgerClient(url="memory://", ...)` + `init_schema` + `migrate`.
+3. **`ctx` should be `SimpleNamespace`, not `MagicMock`** — when a handler grows a new required field, `SimpleNamespace` raises `AttributeError` and the test fails honestly; `MagicMock` silently invents the field.
+4. **Narrow seams are fine** when the alternative is impossible or fragile: patching `ledger.status.resolve_symbol_lines` to simulate a missing symbol (`tests/test_link_commit_grounding.py:185`), patching `handle_link_commit` when testing the *caller's* cache logic (not link_commit itself), patching `time.monotonic` for TTL math.
+5. **Solitary is correct for** pure helpers (`_check_payload_size` standalone), external boundaries we can't run (`tests/test_backends_google_drive_unit.py`), and concurrency primitives that don't talk to collaborators (`repo_write_barrier` tests).
+
+**Checklist before opening a tests-only PR**
+
+- [ ] Does the test instantiate `MagicMock` for `ctx` or `ledger`? → Replace with `SimpleNamespace` + real adapter unless one of the "solitary is correct" exceptions applies.
+- [ ] Does the test hand-craft a row dict that mimics what the ledger returns? → Seed the real ledger and let it produce the row.
+- [ ] Does an `assert_called_once_with(<exact SQL or arg list>)` mirror the production code? → That's a tautology. Replace it with an assertion on observable behavior (what the user/agent sees).
+- [ ] Does the failure mode under test (e.g. symbol disappeared, ledger crashed) actually require a patch? → Yes is fine; pin the patch to the narrowest seam.
 
 ## Auto-Tick Rule
 

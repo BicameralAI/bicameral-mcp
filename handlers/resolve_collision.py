@@ -96,7 +96,7 @@ async def handle_resolve_collision(
             if not await decision_exists(client, old_id):
                 raise ValueError(f"No decision row for old_id={old_id}")
             await client.execute(
-                f"UPDATE {new_id} SET parent_decision_id = $pid",
+                f"UPDATE {new_id} SET parent_decision_id = $pid, updated_at = time::now()",
                 {"pid": old_id},
             )
             logger.info(
@@ -125,7 +125,7 @@ async def handle_resolve_collision(
             "created_at": _now_iso,
         }
         await client.execute(
-            f"UPDATE {new_id} SET signoff = $s",
+            f"UPDATE {new_id} SET signoff = $s, updated_at = time::now()",
             {"s": _proposed_signoff},
         )
         new_status = await project_decision_status(client, new_id)

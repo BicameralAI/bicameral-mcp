@@ -518,3 +518,111 @@ The full Entry #7 detection heuristic catalog now reads:
 
 The cumulative heuristic catalog represents the failure modes observed across 4 sessions (v1.0 round-1 through v0-blockers round-2) of this codebase's audit cycles. Each VETO that surfaced a new heuristic produced a durable gain — heuristics 1-4 prevented the v1.1 first-round PASS, heuristic 5 catalyzed Entry #37, heuristic 6 catalyzed Entry #38. Audit Step 2 should consult this catalog as a checklist when verifying plan-cited symbols against current code.
 
+
+---
+
+## Failure Entry #8
+
+**Date**: 2026-05-15T03:30:00Z
+**Verdict ID**: plan-221-phase-b-1-ingest-cutover.md @ round-1 VETO (3 blocking findings: F-B1-1, F-B1-2, F-B1-3)
+**Failure Mode**: GHOST_PATH — incomplete enumeration when declaring read-path centralization
+
+### What Failed
+
+`plan-221-phase-b-1-ingest-cutover.md` round-1 claimed `_resolve_span_text(archive, row)` would be "the single point of truth" for `input_span.text` reads, listing 5 sites all inside `ledger/queries.py`. The judge's grep found 7 sites total:
+
+- 4 in `ledger/queries.py` (graph projections at lines 187, 243, 405, 529) — correctly enumerated
+- 1 in `ledger/queries.py::get_input_span_row` (line 896) — correctly enumerated as the raw-access boundary
+- **2 sites outside `ledger/queries.py`** — MISSED:
+  - `handlers/history.py:217` — `<-yields<-input_span.{...text...}` projection in the enriched-fetch path
+  - `handlers/remove_source.py` — consumes `.text` from `get_input_span_row` and writes it to audit telemetry as `input_span_content`
+
+### Why It Failed
+
+The Governor enumerated read sites by greping only the target file (`ledger/queries.py`) instead of the entire codebase. This worked for round-1 internal lines but missed cross-module consumers. Post-erasure, the missed sites would have returned stale plaintext (history.py) and empty-string audit logs (remove_source.py), defeating the "every consumer reads through the helper" promise.
+
+### Pattern to Avoid
+
+When a plan declares centralization ("single point of truth", "all consumers route through X"), the enumeration step MUST grep the **entire codebase**, not just the file being centralized. Specifically:
+
+1. Identify the data shape being centralized (here: `input_span.text` access)
+2. Grep for ALL projection forms across the whole repo:
+   - Graph traversal (`<-yields<-input_span.{...text...}`)
+   - Direct SELECT (`SELECT text FROM input_span`)
+   - Indirect (calling a helper that returns the full row + consuming `.text`)
+3. List EVERY site found, classify each as (a) refactor through helper, (b) raw-access boundary kept in allow-list, (c) explicit documented exception with its own test
+4. The anti-test grep pattern + allow-list must MATCH the enumeration exactly — no allow-list widening to paper over missed sites
+
+### Remediation Attempted (round-2 plan revision)
+
+Plan §"Phase C: read-path helper" expanded to 7 sites with corrected table. Two new tests added:
+- `test_history_enriched_returns_erased_sentinel_for_erased_spans` — load-bearing user-visible erasure propagation
+- `test_remove_source_captures_erased_sentinel_in_audit_when_archive_entry_missing` — audit-telemetry post-erasure semantic
+
+Anti-test allow-list tightened to EXCLUDE `handlers/` — those sites must refactor through the helper.
+
+### Catalog Update — heuristic 7 added to Entry #7's heuristic series
+
+7. **Codebase-wide-grep check**: when a plan declares centralization of access to a data shape (single helper, registry, gateway), the enumeration MUST be sourced from a codebase-wide grep covering every projection / read / indirect-consumer form — not from inspection of the file being centralized. The anti-test's allow-list must mirror the enumeration exactly.
+
+The cumulative catalog now reads (1-7):
+1. Existence check
+2. Signature check
+3. Type-boundary check
+4. Helper-symmetry check
+5. Upstream-consumer check
+6. Wrapper-side-effect check
+7. Codebase-wide-grep check
+
+---
+
+## Failure Entry #9
+
+**Date**: 2026-05-15T03:45:00Z
+**Verdict ID**: plan-221-phase-b-1-ingest-cutover.md @ round-2 VETO (3 findings: F-B2-1, F-B2-2, F-B2-3)
+**Failure Mode**: HALLUCINATION (intra-plan signature contradiction) + GHOST_PATH (brittle regex; filter-behavior gap)
+
+### What Failed
+
+The round-1-VETO revision of `plan-221-phase-b-1-ingest-cutover.md` introduced three new findings:
+
+- **F-B2-1**: Anti-test regex `r"SELECT[^F]*\btext\b[^F]*FROM\s+input_span"` is brittle against multi-line SQL — `[^F]*` excludes any character with code-point F in any case, but more critically, doesn't span newlines. A multi-line `SELECT\n  text\nFROM input_span` slips past.
+- **F-B2-2**: The helper signature is declared TWO ways in the same plan: §"Limitations" line 38 says `_resolve_span_text(client, archive, row)`; §"Helper contract" says `async def _resolve_span_text(archive, row) -> str`. Different param count, different sync/async. The `async` keyword is unmotivated — `PiiArchive.get()` is synchronous (SQLite read).
+- **F-B2-3**: Acceptance criteria forgot to pin the `real_spans` filter behavior at `queries.py:~204`. After refactor, erased rows resolve to `"[ERASED]"` which is truthy and `!= description`, so they surface as "real spans" in agent-visible rendering. Erasure looks like it didn't take.
+
+### Why It Failed
+
+The round-1 revision focused on F-B1-{1,2,3} (the missed read sites) and didn't re-audit the unchanged sections (Helper contract, Anti-test regex, downstream filter consumers). When a revision lands, the WHOLE plan needs cross-section consistency review, not just the deltas.
+
+### Pattern to Avoid
+
+When revising a plan in response to a VETO:
+
+1. After patching the cited findings, run a **cross-section consistency review**: scan EVERY signature, type, and contract reference for agreement.
+2. Specifically: if a function signature appears in §"Limitations", §"Helper contract", §"Module contract", §"Phase X", §Acceptance — they MUST all match. A revision that touches one without updating the others is incoherent.
+3. **Re-check anti-test regex patterns** for multi-line / case / whitespace robustness. Add a meta-test that fabricates a representative shape and verifies the anti-test catches it.
+4. **Trace every downstream consumer** of the new sentinel/return value: if the helper returns `"[ERASED]"` post-erasure, every existing filter / comparison / branch on the helper's return must be reviewed for desired semantic under the new value.
+
+### Catalog Update — heuristics #8 + #9 added to Entry #7's series
+
+8. **Cross-section signature consistency check**: when a function appears in multiple sections of a plan, all instances must agree on (a) parameter list, (b) sync/async, (c) return type. Round-2 audits MUST scan revised plans for this drift.
+
+9. **Sentinel-value downstream-consumer audit**: when a helper introduces a sentinel return value (`"[ERASED]"`, `None`, etc.), the plan MUST enumerate every comparison/branch site that consumes the helper's output and verify the sentinel is handled with the intended semantic. Test pin each branch under the sentinel.
+
+The cumulative catalog now reads (1-9):
+
+1. Existence check
+2. Signature check
+3. Type-boundary check
+4. Helper-symmetry check
+5. Upstream-consumer check
+6. Wrapper-side-effect check
+7. Codebase-wide-grep check
+8. Cross-section signature consistency check
+9. Sentinel-value downstream-consumer audit
+
+### Remediation Attempted (round-3 plan revision)
+
+- F-B2-1: regex switched to `re.MULTILINE | re.DOTALL` flags + non-greedy span pattern; meta-test `test_anti_test_catches_fabricated_multiline_select` added.
+- F-B2-2: signature reconciled — `def _resolve_span_text(archive, row) -> str` (sync, no client param) across all sections.
+- F-B2-3: filter at `queries.py:~204` extended to exclude `[ERASED]` from `real_spans`; `_ERASED_SENTINEL` constant hoisted; test `test_post_erasure_spans_excluded_from_real_spans_filter` added.

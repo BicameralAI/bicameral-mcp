@@ -198,7 +198,7 @@ def _check_canary(payload: dict) -> None:
     env-disable shortcuts the detector cost (does not even serialize the
     payload).
     """
-    if os.getenv("BICAMERAL_INGEST_CANARY_DISABLE", "").strip() == "1":
+    if os.getenv("BICAMERAL_INGEST_CANARY_DISABLE", "").strip().lower() in _GUIDED_MODE_TRUTHY:
         return
     from handlers import canary_patterns
 
@@ -235,7 +235,7 @@ def _check_sensitive(payload: dict) -> None:
     disables in v1). The env disable shortcuts the detector cost
     (does not even serialize the payload).
     """
-    if os.getenv("BICAMERAL_INGEST_SECRET_DISABLE", "").strip() == "1":
+    if os.getenv("BICAMERAL_INGEST_SECRET_DISABLE", "").strip().lower() in _GUIDED_MODE_TRUTHY:
         return
     from handlers import sensitive_patterns
 
@@ -301,6 +301,9 @@ def _normalize_payload(payload: dict) -> dict:
             mapping["signoff"] = d.signoff
         if d.feature_group is not None:
             mapping["feature_group"] = d.feature_group
+        # #340 — thread decision_level from IngestDecision to the mapping.
+        if d.decision_level is not None:
+            mapping["decision_level"] = d.decision_level
         # #109 — thread optional governance metadata from IngestDecision
         # to the per-mapping payload so the ledger write picks it up.
         if d.governance is not None:
@@ -689,6 +692,7 @@ async def handle_ingest(
             CreatedDecision(
                 decision_id=d["decision_id"],
                 description=d["description"],
+                decision_level=d.get("decision_level"),
             )
             for d in result.get("created_decisions", [])
         ],

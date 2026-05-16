@@ -1,0 +1,36 @@
+# Pre-commit hooks for bicameral-mcp (#357 sub-task 3).
+#
+# Mirrors the .github/workflows/lint-and-typecheck.yml CI gate so the
+# common case — "I forgot to run ruff before pushing" — is caught at
+# commit time and never produces a post-push `style:` cleanup commit.
+# Six such commits between #279 and #310 (eb32e80, ee24395, 0cf574b,
+# 1d752cc, 1690a30, cacfb62) were the recurring tax this config removes.
+#
+# Activation:
+#   pip install pre-commit       # or via [project.optional-dependencies] test
+#   pre-commit install           # writes .git/hooks/pre-commit
+#
+# Run on all files (e.g., to check before a PR):
+#   pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Pinned to the same ruff version CI runs (`pip install -e ".[test]"`
+    # resolves the `ruff>=0.5.0` floor in pyproject.toml to whatever
+    # latest is at install time). Different ruff versions produce
+    # different format outputs and different lint rules, so a stale pin
+    # here means "local says clean, CI says dirty" or vice versa — the
+    # opposite of what this hook is for. Bump on every ruff upgrade.
+    rev: v0.15.12
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        # ruff check + --fix mirrors the `ruff check .` step in
+        # lint-and-typecheck.yml. --fix means the hook applies safe
+        # autofixes (e.g., F541 f-string-no-placeholders) automatically;
+        # the commit re-stages the fixed content. If a check fails that
+        # ruff can't autofix, the hook fails and the commit is aborted
+        # — same behaviour as the CI step.
+      - id: ruff-format
+        # Mirrors `ruff format --check .` step in lint-and-typecheck.yml.
+        # Reformats in place; commit re-stages.

@@ -400,6 +400,10 @@ The squash commit message inherits this; loose PR titles produce ugly history.
 Closes #61
 Refs #60 (depends on continuity matcher landed there)
 
+## Linked decisions
+Closes decision:ko8efq3z1zwhbof7kecq — Name "Ledger Locator"
+Refs decision:c2eqcwimhe4lpaexrddw — Supported environments scope lock
+
 ## Plan / Audit / Seal
 - Plan: docs/Planning/plan-codegenome-phase-4.md (v3, content hash sha256:911171cf…)
 - Audit: META_LEDGER Entry #13, chain hash 21ac210f… — verdict PASS
@@ -413,6 +417,25 @@ Refs #60 (depends on continuity matcher landed there)
 
 The Plan/Audit/Seal section is **mandatory for any PR > 100 LOC or risk:L2+**.
 Smaller PRs may use `Plan: trivial; risk:L1`.
+
+> **Linked decisions are required on PRs authored by BicameralAI org
+> members.** Every load-bearing change should trace to at least one
+> decision in the bicameral ledger — the PR body cites the
+> `decision:<surrealdb-id>` so reviewers can verify the change is
+> grounded in an explicit decision rather than ambient assumption. If
+> no relevant decision exists yet, run `bicameral.ingest` (or capture
+> via the dashboard's Ingest panel) **before** opening the PR; if the
+> change *was* the decision-of-record, ingest it then reference it
+> here. Use the same keyword vocabulary as `## Linked issues`:
+> `Closes decision:<id>` for the decision this PR satisfies / closes
+> the gap for, `Refs decision:<id>` for decisions that constrain or
+> motivate the change without being directly closed.
+>
+> **External contributors are exempt.** Bicameral access is
+> org-internal; gating community contributions on internal tooling is
+> not the goal. A maintainer shepherding an external PR SHOULD ingest
+> the load-bearing decision on the contributor's behalf at merge time
+> and add a post-merge comment linking it for the audit trail.
 
 > **PR-body issue references (Issue #114)**: every PR body that
 > mentions `#NUMBER` tokens should wrap them with one of:
@@ -532,6 +555,39 @@ responsibility (run lint locally, verify on Windows, etc.) until the gates
 land.
 
 Red CI blocks merge. Don't ask reviewers to look at red PRs.
+
+#### 4.5.5 Local enforcement — `pre-commit` (mandatory for committers)
+
+The lint gate (`ruff check` + `ruff format --check`) lives in CI, but
+running it only at PR time has produced a recurring tax: between #279
+and #310, six commits (`eb32e80`, `ee24395`, `0cf574b`, `1d752cc`,
+`1690a30`, `cacfb62`) were `style:` cleanups whose only purpose was
+appeasing CI after the actual feature commit landed unformatted. PR #357
+sub-task 3 closes this loop by enforcing the same checks at commit time.
+
+**Install once per clone:**
+
+```bash
+pip install pre-commit                  # already in [project.optional-dependencies] test
+pre-commit install                      # writes .git/hooks/pre-commit
+```
+
+The hook now runs `ruff check --fix` + `ruff format` on every staged
+Python file. Auto-fixable issues (F541, B007, etc.) are repaired in
+place and re-staged; non-fixable issues abort the commit so you can fix
+them before the commit lands.
+
+**To run on the whole repo** (e.g., one-shot cleanup):
+
+```bash
+pre-commit run --all-files
+```
+
+**CI fallback.** If you push without `pre-commit install` and the CI
+lint step fails, the workflow now emits an explicit install hint to
+`$GITHUB_STEP_SUMMARY` and to the job log via `::error::`. That hint
+exists exclusively to break the "push → red CI → push `style:` fixup"
+loop — see PR #357 commit message for the failure history.
 
 ### 4.6 Review feedback discipline
 
@@ -739,6 +795,49 @@ attach platform builds here.
 - Announce: README badge bump, project README "Latest" line, optional Slack /
   Discord drop. Use the headline sentence verbatim.
 
+### 6.9 Nightly channel curation (`RECOMMENDED_NIGHTLY_VERSION`)
+
+The nightly channel ships every successful `publish-nightly.yml` run to PyPI
+as a CalVer pre-release (e.g. `2026.5.16.dev011742`; one per cron tick or
+manual dispatch). Pilots on `channel: nightly` would get spammed if
+`bicameral.update` notified them of each one, so notifications are gated by a
+**developer-curated pointer file**: `/RECOMMENDED_NIGHTLY_VERSION` at the
+repo root, tracked on `dev`.
+
+The CalVer scheme (`YYYY.M.D.devHHMMSS`) is deliberately orthogonal to
+stable's semver (`X.Y.Z`). Stable progresses by cherry-pick from dev, so
+dev's content has no fixed relationship to any specific upcoming stable
+version — anchoring nightlies to "next patch above stable" would be a
+fiction. PEP 440 sorts CalVer above any plausible stable, so nightly users
+never see a "downgrade" nag.
+
+Jin (or any maintainer) bumps it manually via a PR to `dev` when a nightly
+crosses one of these thresholds:
+
+- **Major bugfix lands.** A fix that addresses a tester-reported issue,
+  unblocks a workflow, or restores broken functionality.
+- **Schema migration that lands cleanly.** Pilots should pull this nightly
+  before their next ledger touch so they're on the new schema.
+- **New tool / new field in an existing tool response** that affects skill
+  contracts — pilots need it for their agent to render correctly.
+- **A previous nightly was broken** and the next clean one is out (skip the
+  broken nightly).
+
+Do **NOT** bump for: every new commit, documentation-only changes, test-only
+changes, refactors with no behavioral change, performance work below ~10%
+delta, or batch-able fixes that can ride the next "major bugfix" bump.
+
+**How to bump:**
+
+1. Confirm the target nightly is on PyPI (`pip index versions --pre bicameral-mcp`).
+2. Open a PR to `dev` with a one-line change to `RECOMMENDED_NIGHTLY_VERSION`.
+3. PR title: `chore(nightly): bump RECOMMENDED_NIGHTLY_VERSION to YYYY.M.D.devN`.
+4. Body: one paragraph naming which threshold from the list above applies.
+5. Single-approval merge (this is not a release PR — it's a pointer flip).
+
+Pilots' `bicameral.update` is cached for 1 hour, so the upgrade notification
+appears within an hour of the file landing on `dev`.
+
 ---
 
 ## 7. CHANGELOG.md conventions
@@ -827,8 +926,9 @@ From `CLAUDE.md`:
 > with a matching update to the relevant `pilot/mcp/skills/*/SKILL.md`** in the
 > same commit.
 
-This is enforced at review time. `pilot/mcp/skills/` is canonical;
-`.claude/skills/bicameral-*/SKILL.md` copies are stale and slated for deletion.
+This is enforced at review time. `skills/` is canonical;
+`.claude/skills/bicameral-*` are symlinks to `../../skills/bicameral-*` for
+Claude Code's slash-command resolver — never edit through them.
 
 ---
 
