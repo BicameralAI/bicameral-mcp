@@ -1187,10 +1187,18 @@ async def _migrate_v18_to_v19(client: LedgerClient) -> None:
             "THEN (UPDATE bicameral_meta SET decision_revision = decision_revision + 1)"
         ),
     )
-    # Ensure the singleton row exists. Without this, the EVENT fires on
-    # decision writes but has no row to UPDATE; the counter stays at 0.
-    # _write_wire_format_sentinel (adapter.connect) creates the row on
-    # first connect, but the migration may run before that path.
+    # Ensure the singleton row exists AND has decision_revision = 0.
+    #
+    # Two failure modes the original v0.13.x migration missed:
+    # 1. No row at all — the DEFINE EVENT fires on decision writes with
+    #    nothing to UPDATE; the counter never increments. Seed via CREATE.
+    # 2. Row exists from an earlier ``_write_wire_format_sentinel`` call
+    #    (v16's ``adapter.connect`` path) but pre-dates the
+    #    ``decision_revision`` field. SurrealDB v2's ``DEFAULT 0`` only
+    #    applies on CREATE, not as a backfill — so the existing row's
+    #    ``decision_revision`` stays NONE, and every subsequent decision
+    #    UPDATE blows up the trigger with
+    #    "Cannot perform addition with 'NONE' and '1'". Backfill via UPDATE.
     try:
         rows = await client.query("SELECT id FROM bicameral_meta LIMIT 1")
     except Exception:
@@ -1201,6 +1209,18 @@ async def _migrate_v18_to_v19(client: LedgerClient) -> None:
         except Exception as exc:
             logger.warning(
                 "[migration] v18 → v19: could not seed bicameral_meta singleton (%s)",
+                exc,
+            )
+    else:
+        try:
+            await client.execute(
+                "UPDATE bicameral_meta SET decision_revision = 0 "
+                "WHERE decision_revision IS NONE"
+            )
+        except Exception as exc:
+            logger.warning(
+                "[migration] v18 → v19: could not backfill decision_revision on "
+                "existing bicameral_meta row (%s)",
                 exc,
             )
     logger.info(
@@ -1351,6 +1371,30 @@ async def _migrate_v22_to_v23(client: LedgerClient) -> None:
     We therefore UPDATE per-row and skip (with a warning) any row
     whose record is too broken for an in-place patch.
     """
+    # Step 0: defense-in-depth. The v18→v19 migration was historically
+    # buggy — when ``bicameral_meta`` already had a row written by
+    # ``_write_wire_format_sentinel``, the seed branch was skipped and
+    # ``decision_revision`` stayed NONE forever. Every per-row UPDATE
+    # below fires the ``decision_revision_bump`` event, which does
+    # ``decision_revision + 1`` and blows up on NONE. Without this
+    # backfill, the per-row try/except below silently swallows the
+    # trigger failure for every row, ``skip_count`` ticks up to N, and
+    # the migration "succeeds" while classifying zero rows. The fix in
+    # ``_migrate_v18_to_v19`` covers DBs upgrading from <v19 today; this
+    # one-liner covers a DB that already ran the buggy v19 and is
+    # arriving at v23 with ``decision_revision`` still NONE.
+    try:
+        await client.execute(
+            "UPDATE bicameral_meta SET decision_revision = 0 "
+            "WHERE decision_revision IS NONE"
+        )
+    except Exception as exc:
+        logger.warning(
+            "[migration] v22 → v23: decision_revision pre-backfill failed (%s); "
+            "classification UPDATEs may silently skip",
+            exc,
+        )
+
     # Step 1: decisions with code-region bindings → L2.
     # Bound decision IDs come from the binds_to edge table (not
     # ``->binds_to->code_region IS NOT EMPTY``, which returns True for
