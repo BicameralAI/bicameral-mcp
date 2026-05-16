@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "audit"
+  ],
+  "reasoning": "The audit feature's decision about system-initiated actions recording originating user context is directly relevant to a background job that updates user usage counters, as such a job is a system-initiated action that may need to record user context for compliance."
+}

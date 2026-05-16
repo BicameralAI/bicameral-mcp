@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "permissions"
+  ],
+  "reasoning": "The \"permissions\" feature group contains a decision about server-side permission checks and client grant assumptions, which directly describes behavior the permission middleware client check task will touch."
+}

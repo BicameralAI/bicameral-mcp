@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "retention"
+  ],
+  "reasoning": "The \"retention\" feature contains a decision about deleting raw event payloads after 90 days, which directly describes the behavior an S3 lifecycle rule for raw event payloads would implement."
+}
