@@ -1,19 +1,36 @@
 """Handler for bicameral.update — check for and apply recommended updates.
 
-Two release channels:
-  - ``stable``  → tracks ``RECOMMENDED_VERSION`` on the ``main`` branch.
-  - ``nightly`` → tracks ``RECOMMENDED_NIGHTLY_VERSION`` on the ``dev`` branch,
-    updated by ``.github/workflows/publish-nightly.yml`` after each successful
-    PyPI dev-release publish.
+Two release channels, each with a different source of truth for "latest":
+
+  - ``stable``  → queries PyPI's ``/pypi/bicameral-mcp/json`` ``info.version``
+    field, which is the latest non-pre-release. No file pointer needed:
+    stable releases are naturally curated by the ``dev → main`` release PR
+    process (see docs/DEV_CYCLE.md §6), so whatever reaches PyPI as a final
+    release is by definition the recommended version.
+
+  - ``nightly`` → tracks ``RECOMMENDED_NIGHTLY_VERSION`` on the ``dev``
+    branch. The file is **developer-curated** — maintainers bump it manually
+    when a nightly contains a "major bugfix" worth surfacing to pilots (see
+    docs/DEV_CYCLE.md §6.9 for the bump heuristic). Without this curation
+    layer, pilots would get notified on every nightly publish, which defeats
+    the "quiet by default" UX. The workflow does NOT auto-update this file;
+    bumps land via normal PRs to ``dev``.
 
 Channel is read from ``.bicameral/config.yaml`` (``channel: stable|nightly``),
 defaulting to ``stable``. Testers opt into nightly by editing the config or
 re-running the wizard; the wizard writes ``channel: stable`` on a fresh install.
 
-Version comparison uses ``packaging.version.Version`` (PEP 440), so dev
-releases (``0.14.7.dev202605151430``) compare correctly against final
-releases (``0.14.6``, ``0.14.7``). The previous ``int(x) for x in v.split('.')``
-parser crashed on ``.devN`` suffixes and silently downgraded nightly users.
+Version comparison uses ``packaging.version.Version`` (PEP 440). Stable
+uses semver (``0.14.6``); nightly uses CalVer (``2026.5.16.dev011742``).
+The two schemes are deliberately orthogonal — stable progresses by
+cherry-pick from dev, so dev's content has no fixed relationship to any
+specific upcoming stable version. CalVer sorts above any plausible stable
+release, so a pilot on nightly never gets nagged to "downgrade" to stable
+even though stable's semver number is much smaller.
+
+The previous ``int(x) for x in v.split('.')`` parser crashed on ``.devN``
+suffixes and silently downgraded nightly users; the PEP 440 parser fixes
+this regardless of the version scheme.
 
 Update check is cached at ``~/.bicameral/update-check.json`` with a 1-hour
 TTL, keyed by channel.
@@ -36,11 +53,11 @@ from packaging.version import InvalidVersion, Version
 
 logger = logging.getLogger(__name__)
 
-_RECOMMENDED_VERSION_URLS: dict[str, str] = {
-    "stable": "https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/main/RECOMMENDED_VERSION",
-    "nightly": "https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/dev/RECOMMENDED_NIGHTLY_VERSION",
-}
-_VALID_CHANNELS = frozenset(_RECOMMENDED_VERSION_URLS)
+_NIGHTLY_RECOMMENDED_VERSION_URL = (
+    "https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/dev/RECOMMENDED_NIGHTLY_VERSION"
+)
+_PYPI_JSON_URL = "https://pypi.org/pypi/bicameral-mcp/json"
+_VALID_CHANNELS = frozenset({"stable", "nightly"})
 _DEFAULT_CHANNEL = "stable"
 
 _CACHE_PATH = os.path.expanduser("~/.bicameral/update-check.json")
@@ -133,7 +150,13 @@ def fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
 
 
 def _fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
-    """Fetch the recommended version for ``channel`` from GitHub with a 1-hour cache."""
+    """Fetch the recommended version for ``channel`` with a 1-hour cache.
+
+    ``stable`` queries PyPI's ``info.version`` (latest non-pre-release).
+    ``nightly`` reads the developer-curated pointer file on ``dev``. Both
+    paths fall back to a stale cached value on network failure rather than
+    ``None``.
+    """
     channel = _normalize_channel(channel)
     cache = _load_cache()
     now = time.time()
@@ -143,10 +166,14 @@ def _fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
     if bucket.get("fetched_at", 0) + _CACHE_TTL_SECONDS > now:
         return bucket.get("recommended_version")
 
-    url = _RECOMMENDED_VERSION_URLS[channel]
     try:
-        with urllib.request.urlopen(url, timeout=3) as resp:
-            version = resp.read().decode().strip()
+        if channel == "stable":
+            version = _fetch_latest_stable_from_pypi()
+        else:
+            with urllib.request.urlopen(_NIGHTLY_RECOMMENDED_VERSION_URL, timeout=3) as resp:
+                version = resp.read().decode().strip()
+        if not version:
+            return bucket.get("recommended_version")
         cache[channel] = {"recommended_version": version, "fetched_at": now}
         _save_cache(cache)
         return version
@@ -154,6 +181,24 @@ def _fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
         logger.debug("[update] version check failed for channel=%s: %s", channel, exc)
         # Return stale cache value rather than nothing
         return bucket.get("recommended_version")
+
+
+def _fetch_latest_stable_from_pypi() -> str | None:
+    """Return the latest non-pre-release version of ``bicameral-mcp`` on PyPI.
+
+    PyPI's ``info.version`` field is canonically "the latest non-pre-release"
+    — it hides ``.devN`` / ``rcN`` / ``aN`` / ``bN`` automatically, which is
+    exactly what the stable channel wants. Returns ``None`` if the response
+    is malformed or the field is missing; the caller treats that the same
+    as a network failure and falls back to cache.
+    """
+    with urllib.request.urlopen(_PYPI_JSON_URL, timeout=5) as resp:
+        data = json.load(resp)
+    if not isinstance(data, dict):
+        return None
+    info = data.get("info") or {}
+    version = info.get("version")
+    return str(version) if version else None
 
 
 def _parse_version(v: str) -> Version:

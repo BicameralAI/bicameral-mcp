@@ -45,7 +45,7 @@ bicameral-mcp --smoke-test
 
 ### Nightly channel (design partners)
 
-Design partners opt into the nightly build to receive bug fixes the day they land on `dev`, ahead of the stable release on `main`. Nightlies are PEP 440 dev releases (`X.Y.Z.devYYYYMMDDHHMM`) published to PyPI; `pip` and `uv` skip them by default, so a plain `pip install bicameral-mcp` never picks one up unintentionally.
+Design partners opt into the nightly build to receive bug fixes the day they land on `dev`, ahead of the stable release on `main`. Nightlies use a CalVer scheme (`YYYY.M.D.devHHMMSS`, e.g. `2026.5.16.dev011742`) deliberately orthogonal to stable's semver — stable progresses by cherry-pick from dev, so anchoring nightlies to "next patch above stable" would be a fiction. `pip` and `uv` skip dev releases by default, so a plain `pip install bicameral-mcp` never picks one up unintentionally.
 
 **Step 1 — install with pre-releases enabled:**
 
@@ -63,7 +63,7 @@ pip install --pre --upgrade bicameral-mcp
 channel: nightly  # was: stable
 ```
 
-With `channel: nightly`, `bicameral.update` reads the recommended version from `RECOMMENDED_NIGHTLY_VERSION` on the `dev` branch (updated by `publish-nightly.yml` after each successful publish) and offers to upgrade to the newest nightly. Without flipping the channel, the handler keeps pointing you at stable releases on `main` — and would try to "upgrade" you off your nightly install onto an older stable version. Version comparison is PEP 440-aware: `0.14.7.dev*` sorts between `0.14.6` (newer than) and `0.14.7` (older than), so the channel keeps you on the right ladder.
+With `channel: nightly`, `bicameral.update` reads the **developer-curated** `RECOMMENDED_NIGHTLY_VERSION` file on the `dev` branch and offers to upgrade to it. Every nightly publishes to PyPI, but the pointer file is only bumped when a maintainer judges the nightly worth surfacing — major bugfix, schema migration, new tool field — so pilots aren't notified on every cron tick. See `docs/DEV_CYCLE.md` §6.9 for the bump heuristic. Stable (`channel: stable`) queries PyPI's `info.version` directly — the `dev → main` release-PR process is the curation lever there. The two channels use deliberately incompatible version schemes (CalVer for nightly, semver for stable), so `bicameral.update` never tries to cross-upgrade you from one channel to the other; flipping the `channel:` field in your config is the only way to switch.
 
 **To roll back to stable:** flip `channel: stable` in your config, then:
 

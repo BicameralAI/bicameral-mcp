@@ -772,6 +772,49 @@ attach platform builds here.
 - Announce: README badge bump, project README "Latest" line, optional Slack /
   Discord drop. Use the headline sentence verbatim.
 
+### 6.9 Nightly channel curation (`RECOMMENDED_NIGHTLY_VERSION`)
+
+The nightly channel ships every successful `publish-nightly.yml` run to PyPI
+as a CalVer pre-release (e.g. `2026.5.16.dev011742`; one per cron tick or
+manual dispatch). Pilots on `channel: nightly` would get spammed if
+`bicameral.update` notified them of each one, so notifications are gated by a
+**developer-curated pointer file**: `/RECOMMENDED_NIGHTLY_VERSION` at the
+repo root, tracked on `dev`.
+
+The CalVer scheme (`YYYY.M.D.devHHMMSS`) is deliberately orthogonal to
+stable's semver (`X.Y.Z`). Stable progresses by cherry-pick from dev, so
+dev's content has no fixed relationship to any specific upcoming stable
+version — anchoring nightlies to "next patch above stable" would be a
+fiction. PEP 440 sorts CalVer above any plausible stable, so nightly users
+never see a "downgrade" nag.
+
+Jin (or any maintainer) bumps it manually via a PR to `dev` when a nightly
+crosses one of these thresholds:
+
+- **Major bugfix lands.** A fix that addresses a tester-reported issue,
+  unblocks a workflow, or restores broken functionality.
+- **Schema migration that lands cleanly.** Pilots should pull this nightly
+  before their next ledger touch so they're on the new schema.
+- **New tool / new field in an existing tool response** that affects skill
+  contracts — pilots need it for their agent to render correctly.
+- **A previous nightly was broken** and the next clean one is out (skip the
+  broken nightly).
+
+Do **NOT** bump for: every new commit, documentation-only changes, test-only
+changes, refactors with no behavioral change, performance work below ~10%
+delta, or batch-able fixes that can ride the next "major bugfix" bump.
+
+**How to bump:**
+
+1. Confirm the target nightly is on PyPI (`pip index versions --pre bicameral-mcp`).
+2. Open a PR to `dev` with a one-line change to `RECOMMENDED_NIGHTLY_VERSION`.
+3. PR title: `chore(nightly): bump RECOMMENDED_NIGHTLY_VERSION to YYYY.M.D.devN`.
+4. Body: one paragraph naming which threshold from the list above applies.
+5. Single-approval merge (this is not a release PR — it's a pointer flip).
+
+Pilots' `bicameral.update` is cached for 1 hour, so the upgrade notification
+appears within an hour of the file landing on `dev`.
+
 ---
 
 ## 7. CHANGELOG.md conventions
