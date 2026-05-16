@@ -250,3 +250,81 @@ async def test_v23_bound_product_source_still_l2() -> None:
         assert await _get_level(c, did) == "L2"
     finally:
         await c.close()
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_v23_classifies_when_decision_revision_was_none() -> None:
+    """Regression: v22→v23 must classify legacy rows even when the
+    ``bicameral_meta.decision_revision`` field is NONE on entry.
+
+    The ``decision_revision_bump`` event fires on every decision UPDATE
+    and does ``decision_revision = decision_revision + 1``. If the field
+    is NONE (because the v18→v19 migration historically skipped the
+    backfill when a sentinel row already existed), the trigger raises
+    "Cannot perform addition with 'NONE' and '1'". The per-row try/except
+    inside ``_migrate_v22_to_v23`` then silently catches the failure,
+    increments ``skip_count``, and the classification UPDATE never lands
+    — so every legacy row that needed classification is silently
+    skipped, and the migration "succeeds" while doing nothing.
+
+    The defense-in-depth backfill at the top of ``_migrate_v22_to_v23``
+    must rescue this case.
+    """
+    c = await _fresh_client()
+    try:
+        # Force the broken state. SurrealDB v2 enforces ``TYPE int`` on
+        # an UPDATE, so we can't just SET decision_revision = NONE.
+        # Drop the field, re-CREATE the singleton row (which now lacks
+        # the field), and re-define the field — DEFAULT 0 won't
+        # backfill existing rows. End state matches a real DB whose
+        # v18→v19 ran the buggy original "skip seed if row exists" logic.
+        await c.execute("DELETE FROM bicameral_meta")
+        await c.execute("REMOVE FIELD decision_revision ON bicameral_meta")
+        await c.execute(
+            "CREATE bicameral_meta SET "
+            "surrealdb_client_version_at_first_write = '2.0.0', "
+            "surrealdb_client_version_at_last_write = '2.0.0', "
+            "last_write_at = time::now()"
+        )
+        await c.execute("DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0")
+        pre = await c.query("SELECT decision_revision FROM bicameral_meta LIMIT 1")
+        assert pre and pre[0].get("decision_revision") is None, (
+            f"setup: bicameral_meta.decision_revision must be NONE, got {pre!r}"
+        )
+
+        # Seed a legacy unclassified decision. The CREATE fires the
+        # decision_revision_bump trigger — which would blow up under
+        # the unfixed code path. With the v22→v23 pre-backfill in
+        # place, the trigger only fires AFTER step 0 has rescued the
+        # counter, so this CREATE itself can't reproduce the failure.
+        # We instead seed first (succeeds because field is still NONE
+        # before the trigger tries to add — actually, the trigger DOES
+        # try, but we want this seed to land regardless). Easiest:
+        # seed via raw INSERT bypassing the trigger by temporarily
+        # removing the event.
+        await c.execute("REMOVE EVENT decision_revision_bump ON TABLE decision")
+        did = await _seed_decision(c, description="legacy-row", source_type="transcript")
+        await c.execute(f"UPDATE {did} SET decision_level = NONE")
+        # Re-define the event so the migration runs in realistic conditions.
+        await c.execute(
+            "DEFINE EVENT decision_revision_bump ON TABLE decision "
+            "WHEN $event = 'CREATE' OR $event = 'UPDATE' "
+            "THEN (UPDATE bicameral_meta SET decision_revision = decision_revision + 1)"
+        )
+        assert await _get_level(c, did) is None
+
+        # Run v22→v23 — must classify, not silently skip.
+        await _migrate_v22_to_v23(c)
+
+        assert await _get_level(c, did) == "L1", (
+            "transcript-source decision must be classified as L1; if it's NONE, "
+            "the trigger blew up and the per-row try/except silently skipped it"
+        )
+        # Counter is now back to a usable int.
+        post = await c.query("SELECT decision_revision FROM bicameral_meta LIMIT 1")
+        assert isinstance(post[0]["decision_revision"], int), (
+            f"decision_revision must be int after v22→v23 pre-backfill, got {post[0]!r}"
+        )
+    finally:
+        await c.close()
