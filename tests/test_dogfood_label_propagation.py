@@ -158,8 +158,9 @@ def _stub_queries(monkeypatch):
         return None
 
     monkeypatch.setattr("handlers.remove_decision.decision_exists", _decision_exists)
-    monkeypatch.setattr("handlers.remove_decision.project_decision_status", _project)
-    monkeypatch.setattr("handlers.remove_decision.update_decision_status", _update)
+    # remove_decision no longer calls project/update_decision_status — the
+    # v0.15.x hard-delete path drops them; only remove_source still uses
+    # them (cascade still does soft-delete pending its own decision).
     monkeypatch.setattr("handlers.remove_source.project_decision_status", _project)
     monkeypatch.setattr("handlers.remove_source.update_decision_status", _update)
 

@@ -1,40 +1,42 @@
-"""Handler for /bicameral.remove_decision MCP tool — #278 Phase 2.
+"""Handler for /bicameral.remove_decision MCP tool.
 
-Soft-delete a decision: the row stays, signoff.state flips to "removed",
-and a decision_removed.completed event is appended to the event log when
-team mode is active.
+Hard-delete (v0.15.x, decision:i4wafafzowm3ai5eyhgs): physically removes
+the decision row and all references to it (binds_to / yields / supersedes /
+context_for / about edges + compliance_check cache rows). A
+decision_removed.completed event captures the full pre-deletion snapshot
+in the event journal — the "soft audit trail" that replaces the prior
+tombstone-row model.
 
-Like rejection, removed decisions remain visible as negative signals — agents
-consult them to avoid re-introducing the same wrong decision. Restoration
-requires writing a new decision that supersedes the removed one (mirror of
-the ratify.py "No unratify" doctrine).
+Why hard-delete: soft-delete was intended as a negative-signal mechanism
+(rows with signoff.state="removed" warn future agents away from
+re-introducing the same wrong decision). In practice the dominant call
+shape is janitorial — test pollution, accidentally-ingested rows,
+retracted ideas with no learning value — where tombstones become friction
+that surfaces in preflight, occupies dashboard slots, and gets re-bound
+by drift sweeps. Supersession (record a new decision contradicting an old
+one) remains the right tool when you DO want a persistent negative
+signal.
 
 Audit obligation:
-  - `reason` is required (empty string raises ValueError).
-  - Every state mutation appends decision_removed.completed to the event log
-    when ledger has an attached event writer (team mode); local-only mode
-    skips the event emission (no writer attached).
-  - The signoff dict carries `previous_state` so the event log payload
-    captures the full state transition.
+  - ``reason`` is required (empty/whitespace string raises ValueError).
+  - A decision_removed.completed event is emitted to the event log when
+    the ledger has an attached writer (team mode). Local-only mode skips
+    the event emission. The event payload carries the full pre-deletion
+    snapshot so the action is recoverable from the journal alone.
 
 Idempotent:
-  - Calling remove_decision on an already-removed decision returns
-    was_new=False, does not write a new signoff, and does not emit a
-    second event.
+  - Calling on a missing ``decision_id`` returns ``was_new=False`` and
+    ``event_logged=False`` without raising. The matching event in the
+    journal is the canonical record of any prior removal.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Literal, cast
 
 from contracts import RemoveDecisionResponse
-from ledger.queries import (
-    decision_exists,
-    project_decision_status,
-    update_decision_status,
-)
+from ledger.queries import decision_exists
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +47,12 @@ async def handle_remove_decision(
     signer: str,
     reason: str,
 ) -> RemoveDecisionResponse:
-    """Soft-delete a decision (signoff.state -> "removed").
+    """Hard-delete a decision and all references to it.
 
-    Idempotent: a second call returns was_new=False and leaves the existing
-    "removed" signoff untouched.
+    Returns ``was_new=True`` on the first call (row + edges + cache rows
+    deleted; event emitted in team mode). Returns ``was_new=False`` on
+    subsequent calls because the row is no longer present — the event
+    journal already records the original removal.
     """
     if not reason or not reason.strip():
         raise ValueError("remove_decision requires a non-empty 'reason' (audit-trail obligation)")
@@ -60,55 +64,38 @@ async def handle_remove_decision(
     inner = getattr(ledger, "_inner", ledger)
     client = inner._client
 
+    # Idempotent fast path — row is already gone. The matching
+    # decision_removed.completed event in the journal is the canonical
+    # record of prior removal; we don't try to look it up here.
     if not await decision_exists(client, decision_id):
-        raise ValueError(f"No decision row for {decision_id}")
-
-    rows = await client.query(
-        f"SELECT signoff FROM {decision_id} LIMIT 1",
-    )
-    existing_signoff = (rows[0].get("signoff") if rows else None) or None
-
-    # Idempotent fast path — already removed
-    if (
-        existing_signoff
-        and isinstance(existing_signoff, dict)
-        and existing_signoff.get("state") == "removed"
-    ):
-        projected = await project_decision_status(client, decision_id)
         return RemoveDecisionResponse(
             decision_id=decision_id,
             was_new=False,
-            signoff=existing_signoff,
-            projected_status=cast(
-                Literal["reflected", "drifted", "pending", "ungrounded"], projected
-            ),
+            event_logged=False,
+            removed_at=None,
+            previous_state=None,
+            reason=reason,
         )
 
-    head_ref = getattr(ctx, "authoritative_sha", "") or ""
-    session_id = getattr(ctx, "session_id", None) or ""
-    now_iso = datetime.now(UTC).isoformat()
+    # Snapshot the row + signoff BEFORE delete so the event payload
+    # captures enough state to recover from the journal alone.
+    snapshot_rows = await client.query(
+        f"SELECT type::string(id) AS id, description, status, source_type, "
+        f"source_ref, signoff, decision_level, parent_decision_id, "
+        f"feature_group, governance, created_at, updated_at "
+        f"FROM {decision_id} LIMIT 1"
+    )
+    snapshot = snapshot_rows[0] if snapshot_rows else {}
+    existing_signoff = snapshot.get("signoff") or None
     previous_state = existing_signoff.get("state") if isinstance(existing_signoff, dict) else None
 
-    signoff = {
-        "state": "removed",
-        "signer": signer,
-        "session_id": session_id,
-        "removed_at": now_iso,
-        "previous_state": previous_state,
-        "reason": reason,
-        "source_commit_ref": head_ref,
-    }
+    session_id = getattr(ctx, "session_id", None) or ""
+    head_ref = getattr(ctx, "authoritative_sha", "") or ""
+    now_iso = datetime.now(UTC).isoformat()
 
-    await client.query(
-        f"UPDATE {decision_id} SET signoff = $signoff",
-        {"signoff": signoff},
-    )
-    projected = await project_decision_status(client, decision_id)
-    await update_decision_status(client, decision_id, projected)
+    await _hard_delete_decision(client, decision_id)
 
-    # Emit decision_removed.completed event when team mode is active.
-    # In local-only mode (no _writer on the adapter), audit-log obligation
-    # is satisfied by the ledger row's signoff history itself.
+    event_logged = False
     writer = getattr(ledger, "_writer", None)
     if writer is not None:
         from events.dogfood import maybe_dogfood_label
@@ -116,22 +103,78 @@ async def handle_remove_decision(
         payload = maybe_dogfood_label(
             {
                 "decision_id": decision_id,
-                "signoff": signoff,
+                "signer": signer,
+                "reason": reason,
+                "removed_at": now_iso,
+                "session_id": session_id,
+                "previous_state": previous_state,
+                "source_commit_ref": head_ref,
+                # Full pre-deletion snapshot — recoverable audit trail.
+                "snapshot": {
+                    "description": snapshot.get("description", ""),
+                    "status": snapshot.get("status", ""),
+                    "source_type": snapshot.get("source_type", ""),
+                    "source_ref": snapshot.get("source_ref", ""),
+                    "decision_level": snapshot.get("decision_level"),
+                    "parent_decision_id": snapshot.get("parent_decision_id"),
+                    "feature_group": snapshot.get("feature_group"),
+                    "governance": snapshot.get("governance"),
+                    "signoff": existing_signoff,
+                    "created_at": str(snapshot.get("created_at", "")),
+                    "updated_at": str(snapshot.get("updated_at", "")),
+                },
             }
         )
         writer.write("decision_removed.completed", payload)
+        event_logged = True
 
     logger.info(
-        "[remove_decision] decision=%s signer=%s previous_state=%s projected_status=%s",
+        "[remove_decision] hard-delete decision=%s signer=%s previous_state=%s event_logged=%s",
         decision_id,
         signer,
         previous_state,
-        projected,
+        event_logged,
     )
 
     return RemoveDecisionResponse(
         decision_id=decision_id,
         was_new=True,
-        signoff=signoff,
-        projected_status=cast(Literal["reflected", "drifted", "pending", "ungrounded"], projected),
+        event_logged=event_logged,
+        removed_at=now_iso,
+        previous_state=previous_state,
+        reason=reason,
     )
+
+
+async def _hard_delete_decision(client, decision_id: str) -> None:
+    """Physically remove a decision row and every reference to it.
+
+    Removed:
+      - binds_to edges OUT of this decision (→ code_region).
+      - yields edges IN to this decision (input_span →).
+      - supersedes edges in either direction.
+      - context_for edges IN to this decision (input_span →).
+      - about edges OUT of this decision (→ code_subject).
+      - compliance_check rows keyed on this decision_id.
+      - the decision row itself.
+
+    Children orphaned cleanly: ``decision.parent_decision_id`` is set to
+    NONE on any decision that pointed at this id, so they become
+    root-level decisions instead of dangling pointers.
+    """
+    # NULL out child pointers so hierarchical decisions don't dangle.
+    await client.query(
+        f"UPDATE decision SET parent_decision_id = NONE WHERE parent_decision_id = '{decision_id}'"
+    )
+    # Delete every edge touching this decision (one query per edge table
+    # — SurrealDB v2 has no cascade and the IN/OUT-typed RELATION tables
+    # can't be combined in a single DELETE statement).
+    await client.query(f"DELETE binds_to WHERE in = {decision_id}")
+    await client.query(f"DELETE yields WHERE out = {decision_id}")
+    await client.query(f"DELETE supersedes WHERE in = {decision_id} OR out = {decision_id}")
+    await client.query(f"DELETE context_for WHERE out = {decision_id}")
+    await client.query(f"DELETE about WHERE in = {decision_id}")
+    # Drop the compliance_check verdict cache for this decision.
+    await client.query("DELETE compliance_check WHERE decision_id = $d", {"d": decision_id})
+    # Finally, the row itself.
+    await client.query(f"DELETE {decision_id}")

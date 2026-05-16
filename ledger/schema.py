@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -49,6 +49,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     18: "0.14.x",  # decision.updated_at + idx_decision_updated_at (#87 precondition — revision marker for preflight dedup); placeholder, release-eng pins final value at PR merge
     19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
     23: "0.15.x",  # decision_level backfill for legacy rows; placeholder, release-eng pins final value at PR merge
+    24: "0.15.x",  # idx_input_span_dedup extended with archive_key so distinct archive-keyed spans in the same (source_type, source_ref) bucket no longer collide; placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -119,16 +120,15 @@ _TABLES = [
     # pattern to decision.speakers/source_ref pseudonymization.
     "DEFINE FIELD archive_key    ON input_span TYPE string DEFAULT ''",
     "DEFINE INDEX idx_input_span_ref   ON input_span FIELDS source_type, source_ref",
-    # Legacy dedup index — applies to pre-Phase-B-1 rows where text was
-    # the dedup key. Stays in place for backward-compat.
-    "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text UNIQUE",
-    # #221 Phase B-1: schema-level UNIQUE on archive_key is NOT enforced
-    # at the index layer because legacy rows have archive_key='' (multiple
-    # empty values would violate UNIQUE). Dedup for new-ingest rows is
-    # enforced in Python by ``ledger/queries.py::get_input_span_id`` —
-    # the lookup queries by archive_key and returns the existing row
-    # before any CREATE. A future cycle can add a schema-level partial
-    # UNIQUE index after legacy-row backfill completes.
+    # v24 (Bug 2 from the dashboard /history 500): the dedup index now
+    # includes archive_key. Pre-v24 the index was (source_type, source_ref,
+    # text) only — Phase B-1 (#221) introduced archive_key and writes
+    # text='' for archive-keyed rows, so two distinct archive_keys sharing
+    # (source_type, source_ref) collided on ('<st>', '<sr>', ''). The
+    # legacy text-only dedup still works for pre-Phase-B-1 rows (text
+    # non-empty, archive_key='') because archive_key='' is just another
+    # discriminator value. New rows distinguish on archive_key.
+    "DEFINE INDEX idx_input_span_dedup ON input_span FIELDS source_type, source_ref, text, archive_key UNIQUE",
     # decision — extracted decision / requirement. "What was decided."
     # Denormalized source fields (source_type, source_ref, speakers, meeting_date)
     # are kept for query speed; they mirror the linked input_span but are never
@@ -1468,6 +1468,39 @@ async def _migrate_v22_to_v23(client: LedgerClient) -> None:
     )
 
 
+async def _migrate_v23_to_v24(client: LedgerClient) -> None:
+    """v23 → v24: Extend idx_input_span_dedup with archive_key.
+
+    Pre-v24 the index was UNIQUE on (source_type, source_ref, text).
+    Phase B-1 (#221) introduced archive_key and writes text='' for
+    archive-keyed rows, which meant two distinct archive_keys in the
+    same (source_type, source_ref) bucket collided on the empty-text
+    slot. The collision surfaced as a 500 from /history (which
+    transitively triggers ingest via ensure_ledger_synced → link_commit)
+    once any second archive-keyed write to the same source bucket
+    landed.
+
+    Including archive_key as the 4th field is non-destructive:
+      - Legacy rows (text=non-empty, archive_key=''): dedup tuple is
+        ('<st>','<sr>','<text>','') — uniqueness unchanged.
+      - Archive-keyed rows (text='', archive_key=<sha256>): dedup tuple
+        is ('<st>','<sr>','','<key>') — distinguishable by archive_key.
+
+    Any row valid under the old index is valid under the new one —
+    adding a discriminator field can only relax uniqueness. ``init_schema``
+    re-issues every DEFINE with OVERWRITE on connect, so this migration
+    is largely a safety belt that runs the OVERWRITE explicitly on the
+    version boundary even when init_schema's pass is interrupted.
+    Idempotent — re-running drops through ``_execute_define_idempotent``.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX OVERWRITE idx_input_span_dedup ON input_span "
+        "FIELDS source_type, source_ref, text, archive_key UNIQUE",
+    )
+    logger.info("[migration] v23 → v24: idx_input_span_dedup extended with archive_key")
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1552,6 +1585,7 @@ _MIGRATIONS: dict[int, ...] = {
     21: _migrate_v20_to_v21,
     22: _migrate_v21_to_v22,
     23: _migrate_v22_to_v23,
+    24: _migrate_v23_to_v24,
 }
 
 

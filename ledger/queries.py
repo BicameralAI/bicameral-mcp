@@ -1220,6 +1220,19 @@ async def relate_locates(
     )
 
 
+# SurrealDB v2 embedded MVCC: a concurrent in-process writer may
+# cause a transaction to abort with this exact substring. The engine
+# explicitly signals retry-safety in the message. Pinned by
+# ``tests/test_input_span_safe_upsert.py::test_mvcc_conflict_substring_pinned``.
+_MVCC_RETRY_SUBSTRING = "failed to commit transaction"
+# 10 absorbs MVCC bursts under heavy embedded-DB load (test suite running
+# dozens of memory:// instances in the same process produces transient
+# storms). Conflicting writer has already committed by the time we see
+# the error, so each retry's SELECT short-circuits — wall-clock cost of
+# extra retries is one RTT each, negligible.
+_UPSERT_MAX_RETRIES = 10
+
+
 async def upsert_input_span(
     client: LedgerClient,
     text: str,
@@ -1230,6 +1243,60 @@ async def upsert_input_span(
     archive_key: str = "",
 ) -> str:
     """Create or update an input_span node. Returns the input_span ID string.
+
+    Wrapper that retries ``_upsert_input_span_once`` on SurrealDB MVCC
+    conflicts ("Failed to commit transaction…can be retried"). On each
+    retry the inner function's SELECT will see the now-committed row
+    from the winning concurrent writer and return early — so the worst
+    case is one extra round-trip, not a duplicate row.
+
+    Unique-index violations ("already contains") are handled inside
+    ``_upsert_input_span_once`` via re-SELECT (no retry needed — the
+    row is already committed).
+    """
+    last_exc: LedgerError | None = None
+    for _attempt in range(_UPSERT_MAX_RETRIES):
+        try:
+            return await _upsert_input_span_once(
+                client,
+                text=text,
+                source_type=source_type,
+                source_ref=source_ref,
+                speakers=speakers,
+                meeting_date=meeting_date,
+                archive_key=archive_key,
+            )
+        except LedgerError as exc:
+            if _MVCC_RETRY_SUBSTRING not in str(exc).lower():
+                raise
+            last_exc = exc
+            # No backoff — under MVCC the conflicting writer has
+            # already committed by the time we get the error, so the
+            # next SELECT sees its row and short-circuits.
+            continue
+    # All retries exhausted on MVCC conflict — surface the last error.
+    assert last_exc is not None
+    logger.warning(
+        "[upsert_input_span] exhausted %d MVCC retries; last error: %s",
+        _UPSERT_MAX_RETRIES,
+        str(last_exc).splitlines()[0] if str(last_exc) else "",
+    )
+    raise last_exc
+
+
+async def _upsert_input_span_once(
+    client: LedgerClient,
+    *,
+    text: str,
+    source_type: str,
+    source_ref: str = "",
+    speakers: list = (),
+    meeting_date: str = "",
+    archive_key: str = "",
+) -> str:
+    """Single-attempt body of ``upsert_input_span``. Retries on MVCC
+    conflict live in the wrapper; this function handles only the
+    schema-level dedup contract.
 
     #221 Phase B-1: when ``archive_key`` is provided, the row is
     written with ``text=''`` and the supplied ``archive_key`` —
@@ -1257,20 +1324,52 @@ async def upsert_input_span(
         )
         if existing:
             return str(existing[0].get("id", ""))
-        rows = await client.query(
-            "CREATE input_span SET "
-            "text=$t, archive_key=$k, source_type=$st, "
-            "source_ref=$sr, speakers=$sp, meeting_date=$md",
-            {
-                "t": "",  # PII lives in archive; row carries only the key
-                "k": archive_key,
-                "st": source_type,
-                "sr": source_ref,
-                "sp": list(speakers),
-                "md": meeting_date,
-            },
-        )
-        return str(rows[0].get("id", "")) if rows else ""
+        # Atomic CREATE-or-adopt: SELECT-then-CREATE races against a
+        # concurrent writer for the same archive_key, and the v24 dedup
+        # index (source_type, source_ref, text, archive_key) is the
+        # authority. On collision, re-SELECT and return the row the
+        # winner inserted. "already contains" is the v2 substring
+        # pinned by tests/test_schema_recoverable_errors.py.
+        try:
+            rows = await client.query(
+                "CREATE input_span SET "
+                "text=$t, archive_key=$k, source_type=$st, "
+                "source_ref=$sr, speakers=$sp, meeting_date=$md",
+                {
+                    "t": "",  # PII lives in archive; row carries only the key
+                    "k": archive_key,
+                    "st": source_type,
+                    "sr": source_ref,
+                    "sp": list(speakers),
+                    "md": meeting_date,
+                },
+            )
+            return str(rows[0].get("id", "")) if rows else ""
+        except LedgerError as exc:
+            if "already contains" not in str(exc).lower():
+                raise
+            existing = await client.query(
+                "SELECT id FROM input_span WHERE archive_key = $k LIMIT 1",
+                {"k": archive_key},
+            )
+            if existing:
+                return str(existing[0].get("id", ""))
+            # The colliding row uses the same (source_type, source_ref,
+            # text='', archive_key) as us but a different archive_key —
+            # only possible on a pre-v24 ledger where the index lacked
+            # archive_key. Surface as a no-op return rather than crash
+            # the caller (e.g. /history); the operator can run migrate
+            # to upgrade the index and the next ingest will succeed.
+            logger.warning(
+                "[upsert_input_span] dedup collision on (%s, %s, '') "
+                "with archive_key=%s — pre-v24 index suspected; returning "
+                "empty id (caller may skip span). detail=%s",
+                source_type,
+                source_ref,
+                archive_key[:16] + "…" if archive_key else "",
+                str(exc).splitlines()[0] if str(exc) else "",
+            )
+            return ""
     # Legacy path — text-only dedup (pre-Phase-B-1)
     rows = await client.query(
         """
@@ -1293,11 +1392,33 @@ async def upsert_input_span(
     )
     if rows:
         return str(rows[0].get("id", ""))
-    rows = await client.query(
-        "CREATE input_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
-        {"t": text, "st": source_type, "sr": source_ref, "sp": list(speakers), "md": meeting_date},
-    )
-    return str(rows[0].get("id", "")) if rows else ""
+    # Atomic CREATE-or-adopt for the legacy path — same race as the
+    # archive-keyed branch above (UPSERT...WHERE returns no rows then
+    # CREATE; concurrent writer may have inserted between the two
+    # statements). v24 dedup index includes archive_key, but it's ''
+    # here, so the (source_type, source_ref, text) triple still
+    # uniquely identifies legacy rows.
+    try:
+        rows = await client.query(
+            "CREATE input_span SET text=$t, source_type=$st, source_ref=$sr, speakers=$sp, meeting_date=$md",
+            {
+                "t": text,
+                "st": source_type,
+                "sr": source_ref,
+                "sp": list(speakers),
+                "md": meeting_date,
+            },
+        )
+        return str(rows[0].get("id", "")) if rows else ""
+    except LedgerError as exc:
+        if "already contains" not in str(exc).lower():
+            raise
+        existing = await client.query(
+            "SELECT id FROM input_span "
+            "WHERE source_type = $st AND source_ref = $sr AND text = $t LIMIT 1",
+            {"t": text, "st": source_type, "sr": source_ref},
+        )
+        return str(existing[0].get("id", "")) if existing else ""
 
 
 async def update_decision_status(
