@@ -234,11 +234,12 @@ def _compute_suggestions(d_partial: dict[str, Any]) -> list[str]:
     return suggestions
 
 
-def _fetch_recommended() -> str | None:
+def _fetch_recommended(channel: str | None = None) -> str | None:
     try:
-        from handlers.update import fetch_recommended_version
+        from handlers.update import _read_channel, fetch_recommended_version
 
-        return fetch_recommended_version()
+        resolved = channel if channel else _read_channel(os.getcwd())
+        return fetch_recommended_version(resolved)
     except Exception:  # noqa: BLE001 — network failure must not break diagnose
         return None
 

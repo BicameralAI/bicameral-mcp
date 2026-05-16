@@ -1514,6 +1514,7 @@ def _write_collaboration_config(
         f"mode: {mode}\n"
         f"guided: {'true' if guided else 'false'}\n"
         f"telemetry: {'true' if telemetry else 'false'}\n"
+        "channel: stable\n"  # release channel — flip to `nightly` to track dev builds via bicameral.update
         "signer_email_fallback: local-part-only\n"
         "render_source_attribution: redacted\n"  # #209: privacy-positive default
     )

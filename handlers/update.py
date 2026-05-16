@@ -1,11 +1,22 @@
 """Handler for bicameral.update — check for and apply recommended updates.
 
-Recommended version is controlled via a RECOMMENDED_VERSION file in the repo
-root. This is intentionally separate from the PyPI latest release — not every
-release needs to be pushed to testers.
+Two release channels:
+  - ``stable``  → tracks ``RECOMMENDED_VERSION`` on the ``main`` branch.
+  - ``nightly`` → tracks ``RECOMMENDED_NIGHTLY_VERSION`` on the ``dev`` branch,
+    updated by ``.github/workflows/publish-nightly.yml`` after each successful
+    PyPI dev-release publish.
 
-Update check is cached at ~/.bicameral/update-check.json with a 1-hour TTL to
-avoid latency on every tool call.
+Channel is read from ``.bicameral/config.yaml`` (``channel: stable|nightly``),
+defaulting to ``stable``. Testers opt into nightly by editing the config or
+re-running the wizard; the wizard writes ``channel: stable`` on a fresh install.
+
+Version comparison uses ``packaging.version.Version`` (PEP 440), so dev
+releases (``0.14.7.dev202605151430``) compare correctly against final
+releases (``0.14.6``, ``0.14.7``). The previous ``int(x) for x in v.split('.')``
+parser crashed on ``.devN`` suffixes and silently downgraded nightly users.
+
+Update check is cached at ``~/.bicameral/update-check.json`` with a 1-hour
+TTL, keyed by channel.
 """
 
 from __future__ import annotations
@@ -13,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,11 +32,17 @@ import time
 import urllib.request
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 logger = logging.getLogger(__name__)
 
-_RECOMMENDED_VERSION_URL = (
-    "https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/main/RECOMMENDED_VERSION"
-)
+_RECOMMENDED_VERSION_URLS: dict[str, str] = {
+    "stable": "https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/main/RECOMMENDED_VERSION",
+    "nightly": "https://raw.githubusercontent.com/BicameralAI/bicameral-mcp/dev/RECOMMENDED_NIGHTLY_VERSION",
+}
+_VALID_CHANNELS = frozenset(_RECOMMENDED_VERSION_URLS)
+_DEFAULT_CHANNEL = "stable"
+
 _CACHE_PATH = os.path.expanduser("~/.bicameral/update-check.json")
 _CACHE_TTL_SECONDS = 3600  # 1 hour
 
@@ -52,9 +70,17 @@ def _resolve_install_command(target: str) -> list[str]:
 
 
 def _load_cache() -> dict:
+    """Load the per-channel cache. Migrates legacy flat shape on read."""
     try:
         with open(_CACHE_PATH) as f:
-            return json.load(f)
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return {}
+        # Legacy shape was {"recommended_version": ..., "fetched_at": ...}.
+        # Promote it under the "stable" key so existing caches keep working.
+        if "recommended_version" in data and "fetched_at" in data:
+            return {"stable": data}
+        return data
     except Exception:
         return {}
 
@@ -68,56 +94,102 @@ def _save_cache(data: dict) -> None:
         pass
 
 
-def fetch_recommended_version() -> str | None:
+def _normalize_channel(channel: str | None) -> str:
+    if channel and channel in _VALID_CHANNELS:
+        return channel
+    return _DEFAULT_CHANNEL
+
+
+def _read_channel(repo_path: str) -> str:
+    """Resolve the release channel from ``.bicameral/config.yaml``.
+
+    Mirrors the regex-fallback pattern used by ``_read_guided_from_config`` to
+    avoid hard-importing yaml in this module. Defaults to ``stable`` on any
+    missing file, parse error, or unrecognized value.
+    """
+    if not repo_path:
+        return _DEFAULT_CHANNEL
+    try:
+        config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+        if not config_path.exists():
+            return _DEFAULT_CHANNEL
+        text = config_path.read_text()
+        m = re.search(r"^channel:\s*(\w+)", text, re.MULTILINE)
+        if m:
+            return _normalize_channel(m.group(1))
+    except Exception:
+        pass
+    return _DEFAULT_CHANNEL
+
+
+def fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
     """Public alias for ``_fetch_recommended_version`` (#252 Layer 3 cross-layer call).
 
     Used by ``cli/diagnose.py`` to compute the recommended-version-mismatch
     suggestion heuristic. Same semantics + 1-hour cache; this is the
-    cross-layer-clean entry point. Internal callers in this module continue
-    to use ``_fetch_recommended_version`` directly.
+    cross-layer-clean entry point.
     """
-    return _fetch_recommended_version()
+    return _fetch_recommended_version(channel)
 
 
-def _fetch_recommended_version() -> str | None:
-    """Fetch RECOMMENDED_VERSION from GitHub with a 1-hour cache."""
+def _fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
+    """Fetch the recommended version for ``channel`` from GitHub with a 1-hour cache."""
+    channel = _normalize_channel(channel)
     cache = _load_cache()
     now = time.time()
+    raw_bucket = cache.get(channel)
+    bucket: dict = raw_bucket if isinstance(raw_bucket, dict) else {}
 
-    if cache.get("fetched_at", 0) + _CACHE_TTL_SECONDS > now:
-        return cache.get("recommended_version")
+    if bucket.get("fetched_at", 0) + _CACHE_TTL_SECONDS > now:
+        return bucket.get("recommended_version")
 
+    url = _RECOMMENDED_VERSION_URLS[channel]
     try:
-        with urllib.request.urlopen(_RECOMMENDED_VERSION_URL, timeout=3) as resp:
+        with urllib.request.urlopen(url, timeout=3) as resp:
             version = resp.read().decode().strip()
-        _save_cache({"recommended_version": version, "fetched_at": now})
+        cache[channel] = {"recommended_version": version, "fetched_at": now}
+        _save_cache(cache)
         return version
     except Exception as exc:
-        logger.debug("[update] version check failed: %s", exc)
+        logger.debug("[update] version check failed for channel=%s: %s", channel, exc)
         # Return stale cache value rather than nothing
-        return cache.get("recommended_version")
+        return bucket.get("recommended_version")
 
 
-def _parse_version(v: str) -> tuple[int, ...]:
+def _parse_version(v: str) -> Version:
+    """PEP 440 version parse. Falls back to ``Version('0')`` on malformed input.
+
+    Using ``packaging.version.Version`` ensures ``0.14.7.dev202605151430``
+    correctly orders between ``0.14.6`` (less) and ``0.14.7`` (less, since
+    .devN sorts before the final release of the same number). The previous
+    tuple-of-ints parser crashed on the ``.devN`` suffix and returned ``(0,)``,
+    which made every nightly tester look like they were running v0.
+    """
     try:
-        return tuple(int(x) for x in v.strip().lstrip("v").split("."))
-    except Exception:
-        return (0,)
+        return Version(v.strip().lstrip("v"))
+    except (InvalidVersion, Exception):
+        return Version("0")
 
 
-def get_update_notice(current_version: str) -> dict | None:
-    """Return an _update block if a recommended update is available, else None."""
-    recommended = _fetch_recommended_version()
+def get_update_notice(current_version: str, repo_path: str = "") -> dict | None:
+    """Return an _update block if a recommended update is available, else None.
+
+    Channel is read from ``<repo_path>/.bicameral/config.yaml``. With no
+    repo_path (e.g. early server bootstrap), behaves as if channel=stable.
+    """
+    channel = _read_channel(repo_path)
+    recommended = _fetch_recommended_version(channel)
     if not recommended:
         return None
     if _parse_version(recommended) <= _parse_version(current_version):
         return None
     return {
+        "channel": channel,
         "recommended_version": recommended,
         "current_version": current_version,
         "action_required": (
             f"Ask the user: 'bicameral-mcp v{recommended} is available "
-            f"(you are on v{current_version}) — upgrade now? (yes/no)'. "
+            f"(you are on v{current_version}, channel={channel}) — upgrade now? (yes/no)'. "
             'If yes, call bicameral.update {"action": "apply"}.'
         ),
     }
@@ -272,41 +344,48 @@ async def handle_update(
     except Exception:
         pass
 
+    channel = _read_channel(repo_path)
+
     if action == "check":
-        recommended = _fetch_recommended_version()
+        recommended = _fetch_recommended_version(channel)
         if not recommended:
             return {
                 "status": "unknown",
+                "channel": channel,
                 "current_version": current_version,
-                "message": "Could not reach version endpoint.",
+                "message": f"Could not reach version endpoint for channel={channel}.",
                 "preflight_id": preflight_id,
             }
         if _parse_version(recommended) <= _parse_version(current_version):
             return {
                 "status": "up_to_date",
+                "channel": channel,
                 "current_version": current_version,
                 "recommended_version": recommended,
                 "preflight_id": preflight_id,
             }
         return {
             "status": "update_available",
+            "channel": channel,
             "current_version": current_version,
             "recommended_version": recommended,
             "preflight_id": preflight_id,
         }
 
     if action == "apply":
-        recommended = _fetch_recommended_version()
+        recommended = _fetch_recommended_version(channel)
         if not recommended:
             return {
                 "status": "error",
-                "message": "Could not determine recommended version.",
+                "channel": channel,
+                "message": f"Could not determine recommended version for channel={channel}.",
                 "preflight_id": preflight_id,
             }
 
         if _parse_version(recommended) <= _parse_version(current_version):
             return {
                 "status": "already_up_to_date",
+                "channel": channel,
                 "current_version": current_version,
                 "recommended_version": recommended,
                 "preflight_id": preflight_id,
@@ -346,6 +425,7 @@ async def handle_update(
                     )
                     return {
                         "status": "upgraded",
+                        "channel": channel,
                         "from_version": current_version,
                         "to_version": recommended,
                         "skills_updated": skills_updated,
@@ -367,6 +447,7 @@ async def handle_update(
                 )
                 return {
                     "status": "upgraded",
+                    "channel": channel,
                     "from_version": current_version,
                     "to_version": recommended,
                     "skills_updated": skills_updated,
