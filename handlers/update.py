@@ -137,7 +137,8 @@ def _fetch_recommended_version(channel: str = _DEFAULT_CHANNEL) -> str | None:
     channel = _normalize_channel(channel)
     cache = _load_cache()
     now = time.time()
-    bucket = cache.get(channel) if isinstance(cache.get(channel), dict) else {}
+    raw_bucket = cache.get(channel)
+    bucket: dict = raw_bucket if isinstance(raw_bucket, dict) else {}
 
     if bucket.get("fetched_at", 0) + _CACHE_TTL_SECONDS > now:
         return bucket.get("recommended_version")
