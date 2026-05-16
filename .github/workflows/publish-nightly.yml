@@ -21,8 +21,12 @@ on:
   schedule:
     - cron: '0 7 * * *'   # 07:00 UTC daily (~midnight PT)
   workflow_dispatch:
-  push:
-    branches: [dev]
+  # No push-to-dev trigger: classic "nightly" cadence is one build/day from
+  # the cron, with workflow_dispatch as the manual override for urgent fixes.
+  # Publishing on every dev commit was considered and dropped — too much
+  # version churn for pilots, no real benefit over a daily snapshot.
+  # Cron requires this file to exist on the default branch (`main`) for
+  # GitHub to register the schedule — see chore/nightly-cron-registration.
 
 permissions:
   id-token: write    # PyPI trusted publishing
