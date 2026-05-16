@@ -1214,8 +1214,7 @@ async def _migrate_v18_to_v19(client: LedgerClient) -> None:
     else:
         try:
             await client.execute(
-                "UPDATE bicameral_meta SET decision_revision = 0 "
-                "WHERE decision_revision IS NONE"
+                "UPDATE bicameral_meta SET decision_revision = 0 WHERE decision_revision IS NONE"
             )
         except Exception as exc:
             logger.warning(
@@ -1385,8 +1384,7 @@ async def _migrate_v22_to_v23(client: LedgerClient) -> None:
     # arriving at v23 with ``decision_revision`` still NONE.
     try:
         await client.execute(
-            "UPDATE bicameral_meta SET decision_revision = 0 "
-            "WHERE decision_revision IS NONE"
+            "UPDATE bicameral_meta SET decision_revision = 0 WHERE decision_revision IS NONE"
         )
     except Exception as exc:
         logger.warning(

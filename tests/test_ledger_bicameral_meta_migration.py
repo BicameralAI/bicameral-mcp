@@ -132,8 +132,7 @@ async def test_migrate_v18_to_v19_backfills_decision_revision_on_preexisting_row
         f"migrate must keep exactly one bicameral_meta row, got {post_rows!r}"
     )
     assert post_rows[0].get("decision_revision") == 0, (
-        f"v18→v19 must backfill decision_revision=0 on existing rows; "
-        f"got {post_rows[0]!r}"
+        f"v18→v19 must backfill decision_revision=0 on existing rows; got {post_rows[0]!r}"
     )
 
     # 3. Trigger contract: a decision UPDATE must increment the counter
@@ -144,9 +143,7 @@ async def test_migrate_v18_to_v19_backfills_decision_revision_on_preexisting_row
         "CREATE decision SET description = 'probe', source_type = 'manual', "
         "canonical_id = 'probe-cid', status = 'ungrounded'"
     )
-    after_create = await fresh_client.query(
-        "SELECT decision_revision FROM bicameral_meta LIMIT 1"
-    )
+    after_create = await fresh_client.query("SELECT decision_revision FROM bicameral_meta LIMIT 1")
     assert after_create[0]["decision_revision"] >= 1, (
         "decision_revision_bump event must increment counter on decision CREATE; "
         f"got {after_create[0]!r}"

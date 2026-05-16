@@ -287,9 +287,7 @@ async def test_v23_classifies_when_decision_revision_was_none() -> None:
             "surrealdb_client_version_at_last_write = '2.0.0', "
             "last_write_at = time::now()"
         )
-        await c.execute(
-            "DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0"
-        )
+        await c.execute("DEFINE FIELD decision_revision ON bicameral_meta TYPE int DEFAULT 0")
         pre = await c.query("SELECT decision_revision FROM bicameral_meta LIMIT 1")
         assert pre and pre[0].get("decision_revision") is None, (
             f"setup: bicameral_meta.decision_revision must be NONE, got {pre!r}"
@@ -306,9 +304,7 @@ async def test_v23_classifies_when_decision_revision_was_none() -> None:
         # seed via raw INSERT bypassing the trigger by temporarily
         # removing the event.
         await c.execute("REMOVE EVENT decision_revision_bump ON TABLE decision")
-        did = await _seed_decision(
-            c, description="legacy-row", source_type="transcript"
-        )
+        did = await _seed_decision(c, description="legacy-row", source_type="transcript")
         await c.execute(f"UPDATE {did} SET decision_level = NONE")
         # Re-define the event so the migration runs in realistic conditions.
         await c.execute(
