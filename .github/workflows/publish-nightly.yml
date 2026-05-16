@@ -2,16 +2,16 @@ name: Publish nightly to PyPI
 
 # Nightly pre-release channel for design partners.
 #
-# Publishes whatever is on `dev` to PyPI as a PEP 440 dev release, so testers
-# can pull bug fixes the day they land without waiting on the main-branch
-# review cycle. Stable installs are unaffected: `pip install bicameral-mcp`
-# never picks up a `.devN` version unless `--pre` is passed.
+# Publishes whatever is on `dev` to PyPI as a CalVer dev release. CalVer
+# (YYYY.M.D.dev<HHMMSS>) is deliberately orthogonal to stable's semver
+# (X.Y.Z): stable progresses by cherry-pick from dev, so there is no fixed
+# relationship between dev's content and the next stable version number.
+# Anchoring nightlies to "next patch above stable" would be a fiction.
+# Example: 2026.5.16.dev011742 (May 16 2026, 01:17:42 UTC).
 #
-# Versioning: BASE.dev<UTC-YYYYMMDDHHMM>, where BASE is the next patch above
-# whatever is currently in pyproject.toml. Example: pyproject says 0.14.6 →
-# nightly publishes 0.14.7.dev202605151430. PyPI sorts dev releases below
-# their target final, so the nightly is always "newer than current stable,
-# older than next stable."
+# Pilots install nightlies via `pip install --pre bicameral-mcp` (or
+# `uv tool install bicameral-mcp --prerelease=allow`). Stable installs are
+# unaffected: pip never picks up a `.devN` version unless `--pre` is passed.
 #
 # Heavy supply-chain ceremony (cosign signing, SBOM attestation, hooks/skills
 # manifests) is intentionally skipped here. Stable releases via publish.yml
@@ -25,12 +25,10 @@ on:
   # the cron, with workflow_dispatch as the manual override for urgent fixes.
   # Publishing on every dev commit was considered and dropped — too much
   # version churn for pilots, no real benefit over a daily snapshot.
-  # Cron requires this file to exist on the default branch (`main`) for
-  # GitHub to register the schedule — see chore/nightly-cron-registration.
 
 permissions:
   id-token: write    # PyPI trusted publishing
-  contents: write    # commit RECOMMENDED_NIGHTLY_VERSION back to dev
+  contents: read     # checkout only; we no longer push anything back
 
 concurrency:
   group: publish-nightly
@@ -57,11 +55,13 @@ jobs:
       - name: Compute nightly version
         id: ver
         run: |
-          BASE=$(python -c "import tomllib; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
-          IFS=. read -r MAJ MIN PAT <<<"$BASE"
-          NEXT_PATCH=$((PAT + 1))
-          STAMP=$(date -u +%Y%m%d%H%M)
-          NIGHTLY="${MAJ}.${MIN}.${NEXT_PATCH}.dev${STAMP}"
+          # CalVer release segment: YYYY.M.D (no zero-padding — PEP 440
+          # normalizes anyway, and the un-padded form reads naturally).
+          # Dev segment: HHMMSS UTC so simultaneous-minute dispatches still
+          # produce unique versions. Example: 2026.5.16.dev011742.
+          DATE_PART=$(date -u +%Y.%-m.%-d)
+          TIME_PART=$(date -u +%H%M%S)
+          NIGHTLY="${DATE_PART}.dev${TIME_PART}"
           echo "version=$NIGHTLY" >>"$GITHUB_OUTPUT"
           echo "Nightly version: $NIGHTLY"
 
@@ -88,25 +88,11 @@ jobs:
         with:
           verbose: true
 
-      - name: Update RECOMMENDED_NIGHTLY_VERSION on dev
-        env:
-          NIGHTLY_VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          # `bicameral.update` on a tester's machine fetches this file from the
-          # dev branch to decide whether a newer nightly is out. Update it last,
-          # only after PyPI publish succeeded, so we never advertise a version
-          # that isn't actually installable.
-          #
-          # Restore pyproject.toml first — we mutated it in-CI for the build,
-          # and that mutation must NOT end up in the commit we push back.
-          git checkout -- pyproject.toml
-          echo "$NIGHTLY_VERSION" > RECOMMENDED_NIGHTLY_VERSION
-          if git diff --quiet RECOMMENDED_NIGHTLY_VERSION; then
-            echo "RECOMMENDED_NIGHTLY_VERSION unchanged; skipping commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add RECOMMENDED_NIGHTLY_VERSION
-          git commit -m "nightly: bump RECOMMENDED_NIGHTLY_VERSION to $NIGHTLY_VERSION [skip ci]"
-          git push origin HEAD:dev
+      # NOTE: there is intentionally no post-publish step here.
+      # Pilots' `bicameral.update` reads `RECOMMENDED_NIGHTLY_VERSION` on the
+      # `dev` branch, which is **developer-curated** — bumped manually by a
+      # maintainer when a nightly contains a "major bugfix" worth surfacing
+      # (see docs/DEV_CYCLE.md §6.9). The workflow does NOT auto-update that
+      # file, by design: surfacing every nightly to pilots would spam them.
+      # Every nightly still lands on PyPI; the file just controls "which one
+      # is worth notifying about."
