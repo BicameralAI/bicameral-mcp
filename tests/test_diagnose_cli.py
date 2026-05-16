@@ -21,8 +21,8 @@ def _patch_network(monkeypatch):
     """Avoid live HTTP fetch in tests."""
     from handlers import update as update_mod
 
-    monkeypatch.setattr(update_mod, "_fetch_recommended_version", lambda: None)
-    monkeypatch.setattr(update_mod, "fetch_recommended_version", lambda: None)
+    monkeypatch.setattr(update_mod, "_fetch_recommended_version", lambda channel="stable": None)
+    monkeypatch.setattr(update_mod, "fetch_recommended_version", lambda channel="stable": None)
     yield
 
 

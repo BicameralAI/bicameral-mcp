@@ -229,7 +229,9 @@ async def test_update_returns_preflight_id_in_dict(monkeypatch, tmp_path):
     importlib.reload(update_handler)
 
     # Force the version fetcher to a known value.
-    monkeypatch.setattr(update_handler, "_fetch_recommended_version", lambda: "0.99.0")
+    monkeypatch.setattr(
+        update_handler, "_fetch_recommended_version", lambda channel="stable": "0.99.0"
+    )
 
     out = await update_handler.handle_update(
         action="check",

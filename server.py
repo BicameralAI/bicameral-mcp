@@ -1215,7 +1215,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                     "(2) review the extracted decisions in the ingest response; "
                     "(3) only then use those decisions to guide the implementation."
                 )
-                update_notice = get_update_notice(SERVER_VERSION)
+                update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
                 if update_notice:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
@@ -1234,7 +1234,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 port=srv.port,
             )
             payload = result.model_dump()
-            update_notice = get_update_notice(SERVER_VERSION)
+            update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
             if update_notice:
                 payload["_update"] = update_notice
             return [TextContent(type="text", text=json.dumps(payload, indent=2))]
@@ -1250,7 +1250,7 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
 
         # Inject update notice into all bicameral ledger tool responses
         payload = result.model_dump()
-        update_notice = get_update_notice(SERVER_VERSION)
+        update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
         if update_notice:
             payload["_update"] = update_notice
 

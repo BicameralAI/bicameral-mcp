@@ -43,6 +43,36 @@ Verify:
 bicameral-mcp --smoke-test
 ```
 
+### Nightly channel (design partners)
+
+Design partners opt into the nightly build to receive bug fixes the day they land on `dev`, ahead of the stable release on `main`. Nightlies are PEP 440 dev releases (`X.Y.Z.devYYYYMMDDHHMM`) published to PyPI; `pip` and `uv` skip them by default, so a plain `pip install bicameral-mcp` never picks one up unintentionally.
+
+**Step 1 — install with pre-releases enabled:**
+
+```bash
+# uv
+uv tool install bicameral-mcp --prerelease=allow
+
+# pip
+pip install --pre --upgrade bicameral-mcp
+```
+
+**Step 2 — flip your repo's channel to nightly** so `bicameral.update` tracks the nightly version pointer instead of the stable one. Edit `.bicameral/config.yaml`:
+
+```yaml
+channel: nightly  # was: stable
+```
+
+With `channel: nightly`, `bicameral.update` reads the recommended version from `RECOMMENDED_NIGHTLY_VERSION` on the `dev` branch (updated by `publish-nightly.yml` after each successful publish) and offers to upgrade to the newest nightly. Without flipping the channel, the handler keeps pointing you at stable releases on `main` — and would try to "upgrade" you off your nightly install onto an older stable version. Version comparison is PEP 440-aware: `0.14.7.dev*` sorts between `0.14.6` (newer than) and `0.14.7` (older than), so the channel keeps you on the right ladder.
+
+**To roll back to stable:** flip `channel: stable` in your config, then:
+
+```bash
+pip install --upgrade --force-reinstall bicameral-mcp
+```
+
+Nightlies are best-effort: the test suite has passed at PR-to-`dev` merge time, but they skip the supply-chain signing ceremony (cosign, SBOM attestation) that stable releases ship with. If you need a signed artifact for compliance review, stay on stable.
+
 ---
 
 ## How It Feels
