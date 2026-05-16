@@ -600,6 +600,84 @@ CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
   their line anchors. Use `--force-with-lease` only after a `git fetch`, and
   call it out in a PR comment so reviewers re-fetch.
 
+### 4.7 Schema-touching PRs — expand-only + flag-gate
+
+> **Why this rule exists.** Migration tools (Alembic, Rails, Django, Flyway,
+> Liquibase, the bicameral `_MIGRATIONS` registry) all treat the schema chain
+> as append-only — you can't cleanly skip a middle migration. When experimental
+> features piggyback their schema onto feature commits, killed experiments
+> leave schema fragments in the chain that prod still has to apply, and the
+> only escape is a "next full release drains everything" model that pushes
+> migrations to main in big lumps. The 2026-05-15 cross-tool research survey
+> (`decision:cp25jfz1nt6h3u2gjzmu`) confirmed every major ecosystem has
+> converged on the same answer: **decouple schema from features**. Ship the
+> schema; gate the feature. This subsection encodes that doctrine.
+
+Two ratified architectural decisions (`decision:cp25jfz1nt6h3u2gjzmu` +
+`decision:adklplvfhthkdch05pe9`) govern any PR that touches `ledger/schema.py`
+or its `_MIGRATIONS` registry:
+
+#### 4.7.1 Migrations must be expand-only
+
+A migration commit may contain **only additive** schema operations:
+
+| ✅ Allowed | ❌ Forbidden in the same migration commit |
+|---|---|
+| `DEFINE FIELD x ON t TYPE option<…> DEFAULT …` (new optional field, has default) | `REMOVE FIELD x ON t` |
+| `DEFINE TABLE t SCHEMAFULL …` (new table) | `REMOVE TABLE t` |
+| `DEFINE INDEX i ON t FIELDS …` (new index) | `REMOVE INDEX i` |
+| `DEFINE INDEX OVERWRITE i ON t FIELDS …` that *only relaxes* uniqueness or adds discriminator fields (rows valid pre-change remain valid post-change) | `DEFINE INDEX OVERWRITE i ON t FIELDS …` that tightens uniqueness or drops fields |
+| `DEFINE FIELD x ON t TYPE string DEFAULT '' ASSERT $value != ''` (new field, but rejects empty so existing rows must already satisfy it — only allowed when paired with a backfill that runs *first* in the same migration function) | `ALTER` that breaks existing readers (changed TYPE, added required field without default, narrowed ASSERT) |
+
+Destructive operations are not banned outright — they live in their **own
+dedicated commit** and ship in a **later release**, after every reader of the
+deprecated surface has been validated as removed from prod. The kernel-style
+deprecate-then-remove cycle. PR reviewers reject schema PRs that mix additive
+and destructive ops in one commit.
+
+CI lint (planned, `scripts/lint_schema_destructive.py`) parses
+`ledger/schema.py` diffs and flags `REMOVE …` / breaking `ALTER` /
+tightening-ASSERT operations in any commit that *also* modifies non-migration
+code. Until the lint ships, this rule is enforced by reviewer attention.
+
+#### 4.7.2 New-schema-dependent code must be feature-flag gated
+
+A code path that depends on a newly-added schema element must be wrapped in
+a flag that defaults OFF in prod. Two acceptable shapes:
+
+- **Env var** — `BICAMERAL_FEATURE_X=1` to enable. Read in the handler via
+  `os.environ.get("BICAMERAL_FEATURE_X", "0") == "1"`.
+- **Config setting** — surfaced through `.bicameral/config.yaml` with a
+  default-off entry in `setup_wizard`.
+
+The schema ships immediately in the next release. The flag stays off in prod
+until a **separate** release flips its default. If the experiment is killed,
+the flag never flips on, and a follow-up cleanup migration (destructive,
+following §4.7.1's separate-commit rule) drops the schema slot in a later
+release — never via history rewrite on the original migration.
+
+**This rule does not apply** to schema changes that the binary itself
+unconditionally depends on (e.g. fixing a unique-index collision that breaks
+the dashboard for everyone). Those are bugfixes, not features; the flag-gate
+applies to *new feature surface*, not to invariants.
+
+#### 4.7.3 PR review checklist for schema-touching PRs
+
+Reviewers MUST verify, before approving any PR that bumps `SCHEMA_VERSION`:
+
+- [ ] Every operation in the new migration function is additive per §4.7.1.
+- [ ] If the PR also adds feature code that reads/writes the new schema,
+      the feature path is wrapped in an env-var or config flag, defaulting OFF.
+- [ ] If the PR adds destructive cleanup of an earlier feature's schema, that
+      destructive operation is in a separate commit *and* the migration
+      docstring names the prior decision/PR that introduced the surface being
+      cleaned up.
+- [ ] The migration is exercised by at least one sociable test that exercises
+      a forward-migration path on `memory://` (`init_schema` + `migrate`,
+      then a read+write that validates the new shape).
+
+Failure on any of these = changes-requested.
+
 ---
 
 ## 5. Merging to `dev`
@@ -1027,10 +1105,31 @@ A commit is triage-eligible if **all** of:
 - It does not depend on `dev`-only refactors that haven't shipped to `main`. If
   it does, the prerequisites must be triage-eligible too, and they all
   cherry-pick as a coherent batch.
+- If it touches `ledger/schema.py` or any migration function, it complies with
+  **§4.7 (expand-only + flag-gate)**. Schema migrations that are strictly
+  additive AND any feature code that reads the new schema is flag-gated off in
+  prod are triage-eligible. This amendment supersedes the prior blanket
+  "schema-migrating changes are not triage-eligible" rule
+  (`decision:0ok1249n2tdrfud2a5j9`, 2026-05-15).
 
-**Not triage-eligible** by default: schema-migrating changes, breaking
-public-API changes, multi-PR feature epics, "v1 patches" (the catch-all
-`triage-from-dev` PR title uses for work explicitly held for the next major).
+**Not triage-eligible** by default:
+
+- **Destructive schema changes** — any `REMOVE` / `DROP` / breaking `ALTER` /
+  tightening-ASSERT operation per §4.7.1. These ship only in full `dev → main`
+  releases, after the prior feature surface has been demonstrably removed from
+  prod readers.
+- **Flag-flip releases** — a release whose code change is "set the default of
+  an existing feature flag from off to on." Flipping a flag is a behavior
+  change, not a fix; it goes through the normal `dev → main` release path so
+  CHANGELOG, eval gates, and rollback story are explicit.
+- **Breaking public-API changes** — including MCP tool contract changes that
+  remove fields, change response shape, or rename tools. Migration shims
+  inside `bicameral.update` may carry across a triage but the breaking change
+  itself ships in a full release.
+- **Multi-PR feature epics** — work that spans more than one PR and needs all
+  parts to ship together for coherence.
+- **"v1 patches"** — the catch-all `triage-from-dev` PR title uses for work
+  explicitly held for the next major.
 
 When in doubt, the change waits for the next `dev → main` release.
 
