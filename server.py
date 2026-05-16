@@ -585,19 +585,22 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="bicameral.remove_decision",
             description=(
-                "Soft-delete a decision: signoff.state -> 'removed' + reason + audit event "
-                "(#278 Phase 2). The decision row stays as a negative signal (like rejection), "
-                "agents consult removed decisions to avoid re-introducing the same wrong "
-                "decision. Reason is required for audit-trail. Idempotent — calling on an "
-                "already-removed decision returns was_new=false. Restoration requires a "
-                "superseding decision, not a restore op (no unremove)."
+                "Hard-delete a decision: physically removes the row and all references "
+                "(binds_to, yields, supersedes, context_for, about edges + compliance_check "
+                "cache rows). A decision_removed.completed event records the full "
+                "pre-deletion snapshot in the event journal — the 'soft audit trail' that "
+                "replaces the prior tombstone-row model (decision:i4wafafzowm3ai5eyhgs). "
+                "Reason is required for audit. Idempotent: calling on a missing decision "
+                "returns was_new=false without raising. To retain a persistent negative "
+                "signal (warn agents away from re-introducing the same idea), use "
+                "supersession (bicameral.resolve_collision action=supersede) instead."
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
                     "decision_id": {
                         "type": "string",
-                        "description": "The decision to soft-delete (UUIDv5 decision ID from the ledger).",
+                        "description": "The decision to hard-delete (UUIDv5 decision ID from the ledger).",
                     },
                     "signer": {
                         "type": "string",

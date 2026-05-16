@@ -802,21 +802,29 @@ class RatifyResponse(BaseModel):
     projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
 
 
-# #278 Phase 2 — remove flows
+# #278 Phase 2 — remove flows (v0.15.x: hard-delete, see decision:i4wafafzowm3ai5eyhgs)
 class RemoveDecisionResponse(BaseModel):
     """Response envelope for bicameral.remove_decision.
 
-    Soft-delete: decision row stays; signoff.state flips to "removed";
-    a decision_removed.completed event is appended to the event log when
-    team mode is active. Idempotent: calling remove_decision twice on the
-    same target returns was_new=False on the second call without
-    re-emitting an event.
+    Hard-delete (default and only mode as of decision:i4wafafzowm3ai5eyhgs):
+    the decision row and all references to it (binds_to, yields,
+    supersedes, context_for, about edges + compliance_check cache rows)
+    are physically removed from the ledger. A
+    decision_removed.completed event records the full pre-deletion state
+    in the event journal — the "soft audit trail" that replaces the
+    tombstone-row model.
+
+    Idempotent: calling on a missing decision_id returns ``was_new=False``
+    without raising. The canonical record of removal lives in the event
+    journal, not in the ledger.
     """
 
     decision_id: str
-    was_new: bool  # True if this call set state=removed; False if already removed
-    signoff: dict
-    projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    was_new: bool  # True iff this call physically deleted a row
+    event_logged: bool  # True iff a decision_removed.completed event was emitted
+    removed_at: str | None = None  # ISO timestamp on the new removal (None for the no-op path)
+    previous_state: str | None = None  # signoff.state captured immediately before delete
+    reason: str = ""  # echo of the audit reason
 
 
 class RemoveSourcePlan(BaseModel):

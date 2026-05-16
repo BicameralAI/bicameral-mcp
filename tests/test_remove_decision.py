@@ -1,242 +1,390 @@
-"""Phase B of #278 Phase 2 — bicameral.remove_decision handler tests.
+"""Sociable tests for bicameral.remove_decision (hard-delete contract).
 
-Pins:
-  1. Reason is required (empty/whitespace → ValueError).
-  2. Unknown decision_id → ValueError matching ratify.py's "No decision row" shape.
-  3. The handler writes signoff.state="removed" + reason + signer + removed_at
-     + previous_state, and re-projects decision status.
-  4. Idempotent: second call returns was_new=False, does not emit a second
-     event.
-  5. Emits decision_removed.completed event when adapter has a _writer
-     (team mode); skips emission in local-only mode without raising.
+Per decision:i4wafafzowm3ai5eyhgs, remove_decision physically deletes
+the decision row + all references; soft-delete / tombstone is no longer
+a concept. The event journal carries the full pre-deletion snapshot as
+the "soft audit trail".
+
+Tests run against a real SurrealDBLedgerAdapter over ``memory://`` per
+``pilot/mcp/CLAUDE.md`` sociable-testing policy — no MagicMock for
+``ctx`` or ``ledger``.
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
-pytestmark = pytest.mark.asyncio
+from ledger.adapter import SurrealDBLedgerAdapter
+from ledger.client import LedgerClient
+from ledger.schema import init_schema, migrate
 
-# Marker mirrors the project's existing phase2-needs-surrealdb convention.
-PHASE2 = pytest.mark.phase2
+pytestmark = [pytest.mark.asyncio, pytest.mark.phase2]
 
 
-class _FakeClient:
-    """Minimal stand-in for the SurrealDB client used by handle_remove_decision.
+_NS_COUNTER = 0
 
-    Records the queries the handler issues so the test can assert on the SQL
-    + parameter shape without spinning up a real SurrealDB. Backed by an
-    in-memory dict keyed by decision_id.
+
+async def _fresh_adapter(suffix: str) -> SurrealDBLedgerAdapter:
+    """Real adapter over memory://, fresh schema per test.
+
+    Pattern mirrors ``tests/test_sync_middleware.py::_make_real_adapter`` —
+    each call gets a unique namespace so rows from one test never leak
+    into another. We assemble the adapter manually because
+    ``SurrealDBLedgerAdapter.connect()`` doesn't accept ns/db kwargs and
+    each test needs an isolated DB.
     """
-
-    def __init__(self, decisions: dict[str, dict] | None = None) -> None:
-        self._rows = decisions or {}
-        self.queries: list[tuple[str, dict | None]] = []
-
-    async def query(self, sql: str, params: dict | None = None):
-        self.queries.append((sql, params))
-        sql_l = sql.lower()
-        if "select signoff from" in sql_l:
-            # SELECT signoff FROM decision:abc LIMIT 1
-            did = sql.split("FROM ", 1)[1].split(" ", 1)[0]
-            row = self._rows.get(did, {})
-            return [{"signoff": row.get("signoff")}]
-        if "update " in sql_l and "set signoff" in sql_l:
-            did = sql.split("UPDATE ", 1)[1].split(" SET")[0].strip()
-            row = self._rows.setdefault(did, {})
-            row["signoff"] = params["signoff"]
-            return [row]
-        # Fallback: just return empty
-        return []
+    global _NS_COUNTER
+    _NS_COUNTER += 1
+    client = LedgerClient(url="memory://", ns=f"remove_dec_{_NS_COUNTER}", db=f"rd_{suffix}")
+    await client.connect()
+    await init_schema(client)
+    await migrate(client, allow_destructive=True)
+    adapter = SurrealDBLedgerAdapter(url="memory://")
+    adapter._client = client
+    adapter._connected = True
+    adapter._pii_archive = None
+    return adapter
 
 
-class _FakeLedger:
-    """Adapter stand-in. Implements just the surface handle_remove_decision touches."""
-
-    def __init__(self, decisions: dict[str, dict], writer=None) -> None:
-        self._inner = self  # handler does getattr(ledger, "_inner", ledger)
-        self._client = _FakeClient(decisions)
-        if writer is not None:
-            self._writer = writer
-
-    async def connect(self) -> None:
-        return None
+_SEED_COUNTER = 0
 
 
-class _FakeWriter:
-    """Captures events the handler emits in team mode."""
+def _next_canonical(prefix: str = "rd") -> str:
+    """Monotonic canonical_id per seed.
+
+    ``decision.canonical_id`` carries a UNIQUE index (schema.py
+    ``idx_decision_canonical``); the field default is ``''`` so a second
+    seed in the same DB collides. The pattern matches the one in
+    ``tests/test_sync_middleware.py``.
+    """
+    global _SEED_COUNTER
+    _SEED_COUNTER += 1
+    return f"{prefix}-{_SEED_COUNTER}"
+
+
+async def _seed_decision(
+    adapter: SurrealDBLedgerAdapter,
+    *,
+    description: str,
+    signoff_state: str = "ratified",
+    parent_id: str | None = None,
+) -> str:
+    """Create one decision row directly via the client. Returns its id."""
+    canonical = _next_canonical()
+    sql = (
+        "CREATE decision SET description=$d, source_type='test', "
+        "source_ref='unit-test', status='pending', "
+        "canonical_id=$cid, signoff=$so"
+    )
+    params = {
+        "d": description,
+        "cid": canonical,
+        "so": {"state": signoff_state, "signer": "seed@test"},
+    }
+    if parent_id is not None:
+        sql += ", parent_decision_id=$p"
+        params["p"] = parent_id
+    rows = await adapter._client.query(sql, params)
+    return str(rows[0]["id"])
+
+
+def _ctx(adapter: SurrealDBLedgerAdapter, *, writer=None) -> SimpleNamespace:
+    """Build a SimpleNamespace ctx — fails honestly on missing fields
+    (vs MagicMock which would silently invent them)."""
+    ledger = adapter
+    if writer is not None:
+        # Attach writer so the handler's team-mode branch fires.
+        ledger._writer = writer
+    return SimpleNamespace(
+        ledger=ledger,
+        repo_path="/tmp/test-repo",
+        session_id="sess-test",
+        authoritative_sha="testsha0",
+    )
+
+
+class _CapturingWriter:
+    """Captures events the handler emits when wired as ``adapter._writer``."""
 
     def __init__(self) -> None:
         self.events: list[tuple[str, dict]] = []
 
-    def write(self, event_type: str, payload: dict):
+    def write(self, event_type: str, payload: dict) -> None:
         self.events.append((event_type, payload))
 
 
-class _FakeCtx:
-    def __init__(self, ledger, session_id: str = "sess-1", sha: str = "deadbeef") -> None:
-        self.ledger = ledger
-        self.session_id = session_id
-        self.authoritative_sha = sha
+# ── Contract: empty reason rejected ─────────────────────────────────────
 
 
-# Patch ledger.queries functions to skip real DB work for these handler-shape tests.
-@pytest.fixture(autouse=True)
-def _stub_queries(monkeypatch):
-    async def _decision_exists(client, did):
-        rows = await client.query(f"SELECT id FROM {did} LIMIT 1")
-        return did in client._rows
-
-    async def _project(client, did):
-        return "ungrounded"
-
-    async def _update(client, did, status):
-        return None
-
-    monkeypatch.setattr("handlers.remove_decision.decision_exists", _decision_exists)
-    monkeypatch.setattr("handlers.remove_decision.project_decision_status", _project)
-    monkeypatch.setattr("handlers.remove_decision.update_decision_status", _update)
-
-
-async def test_remove_decision_rejects_empty_reason() -> None:
+async def test_rejects_empty_reason() -> None:
     from handlers.remove_decision import handle_remove_decision
 
-    ledger = _FakeLedger({"decision:abc": {"signoff": {"state": "ratified"}}})
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("empty_reason")
+    try:
+        did = await _seed_decision(adapter, description="some decision")
+        with pytest.raises(ValueError, match="non-empty 'reason'"):
+            await handle_remove_decision(_ctx(adapter), decision_id=did, signer="x@y", reason="")
+    finally:
+        await adapter._client.close()
 
-    with pytest.raises(ValueError, match="non-empty 'reason'"):
-        await handle_remove_decision(ctx, decision_id="decision:abc", signer="x@y", reason="")
 
-
-async def test_remove_decision_rejects_whitespace_only_reason() -> None:
+async def test_rejects_whitespace_only_reason() -> None:
     from handlers.remove_decision import handle_remove_decision
 
-    ledger = _FakeLedger({"decision:abc": {"signoff": {"state": "ratified"}}})
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("ws_reason")
+    try:
+        did = await _seed_decision(adapter, description="some decision")
+        with pytest.raises(ValueError, match="non-empty 'reason'"):
+            await handle_remove_decision(
+                _ctx(adapter), decision_id=did, signer="x@y", reason="   \t\n"
+            )
+    finally:
+        await adapter._client.close()
 
-    with pytest.raises(ValueError, match="non-empty 'reason'"):
-        await handle_remove_decision(
-            ctx, decision_id="decision:abc", signer="x@y", reason="   \t\n"
+
+# ── Contract: idempotent on missing decision ─────────────────────────────
+
+
+async def test_missing_decision_is_idempotent_no_op() -> None:
+    """Per v0.15.x hard-delete contract: a missing decision_id returns
+    was_new=False and event_logged=False without raising. The matching
+    event in the journal (if any) is the canonical record of any prior
+    removal — the handler does not try to recreate it."""
+    from handlers.remove_decision import handle_remove_decision
+
+    adapter = await _fresh_adapter("missing")
+    try:
+        resp = await handle_remove_decision(
+            _ctx(adapter),
+            decision_id="decision:does_not_exist",
+            signer="x@y",
+            reason="probe",
+        )
+        assert resp.was_new is False
+        assert resp.event_logged is False
+        assert resp.removed_at is None
+        assert resp.previous_state is None
+        assert resp.reason == "probe"
+    finally:
+        await adapter._client.close()
+
+
+# ── Contract: row + edges + compliance_check are physically gone ─────────
+
+
+async def test_hard_delete_removes_row_edges_and_compliance_cache() -> None:
+    """The decision row, its binds_to/yields edges, and any
+    compliance_check rows keyed on it must all be physically gone after
+    a successful call."""
+    from handlers.remove_decision import handle_remove_decision
+
+    adapter = await _fresh_adapter("hard")
+    try:
+        # Seed decision + 1 yields edge + 1 binds_to edge + 1
+        # compliance_check row so we can confirm each is cleaned up.
+        did = await _seed_decision(adapter, description="will be deleted")
+        span_rows = await adapter._client.query(
+            "CREATE input_span SET text='probe', source_type='test', source_ref='r'"
+        )
+        sid = str(span_rows[0]["id"])
+        region_rows = await adapter._client.query(
+            "CREATE code_region SET file_path='probe.py', symbol_name='probe', "
+            "start_line=1, end_line=2"
+        )
+        rid = str(region_rows[0]["id"])
+        await adapter._client.query(f"RELATE {sid}->yields->{did}")
+        # binds_to requires confidence (TYPE float) on the edge.
+        await adapter._client.query(f"RELATE {did}->binds_to->{rid} SET confidence = 1.0")
+        await adapter._client.query(
+            "CREATE compliance_check SET decision_id=$d, region_id=$r, "
+            "content_hash='hash1', verdict='compliant', confidence='high', "
+            "explanation='seed', phase='ingest'",
+            {"d": did, "r": rid},
         )
 
+        # Pre-condition sanity
+        pre_d = await adapter._client.query(f"SELECT id FROM {did}")
+        pre_yields = await adapter._client.query(f"SELECT id FROM yields WHERE out = {did}")
+        pre_binds = await adapter._client.query(f"SELECT id FROM binds_to WHERE in = {did}")
+        pre_cc = await adapter._client.query(
+            "SELECT id FROM compliance_check WHERE decision_id = $d", {"d": did}
+        )
+        assert pre_d and pre_yields and pre_binds and pre_cc
 
-async def test_remove_decision_rejects_unknown_decision_id() -> None:
-    from handlers.remove_decision import handle_remove_decision
-
-    ledger = _FakeLedger({})  # empty store
-    ctx = _FakeCtx(ledger)
-
-    with pytest.raises(ValueError, match="No decision row for decision:missing"):
-        await handle_remove_decision(
-            ctx, decision_id="decision:missing", signer="x@y", reason="not here"
+        resp = await handle_remove_decision(
+            _ctx(adapter),
+            decision_id=did,
+            signer="kim@test",
+            reason="Duplicate of decision:abc — keeping the earlier copy",
         )
 
+        # Response shape
+        assert resp.decision_id == did
+        assert resp.was_new is True
+        assert resp.removed_at  # ISO timestamp populated
+        assert resp.previous_state == "ratified"
+        assert resp.reason.startswith("Duplicate of")
 
-async def test_remove_decision_writes_signoff_state_removed_with_all_fields() -> None:
+        # Row + every reference must be gone.
+        post_d = await adapter._client.query(f"SELECT id FROM {did}")
+        post_yields = await adapter._client.query(f"SELECT id FROM yields WHERE out = {did}")
+        post_binds = await adapter._client.query(f"SELECT id FROM binds_to WHERE in = {did}")
+        post_cc = await adapter._client.query(
+            "SELECT id FROM compliance_check WHERE decision_id = $d", {"d": did}
+        )
+        assert post_d == []
+        assert post_yields == []
+        assert post_binds == []
+        assert post_cc == []
+
+        # The input_span + code_region rows must NOT be touched — they
+        # could be referenced by other decisions; orphan removal is a
+        # separate concern.
+        post_span = await adapter._client.query(f"SELECT id FROM {sid}")
+        post_region = await adapter._client.query(f"SELECT id FROM {rid}")
+        assert post_span and post_region
+    finally:
+        await adapter._client.close()
+
+
+# ── Contract: children orphaned cleanly ──────────────────────────────────
+
+
+async def test_child_decisions_get_orphaned_to_root() -> None:
+    """When a parent decision is removed, children whose
+    ``parent_decision_id`` pointed at it must have that field set to
+    NONE — they become root-level decisions, not dangling pointers."""
     from handlers.remove_decision import handle_remove_decision
 
-    ledger = _FakeLedger({"decision:abc": {"signoff": {"state": "ratified", "signer": "old"}}})
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("orphan")
+    try:
+        parent_id = await _seed_decision(adapter, description="parent decision")
+        child_id = await _seed_decision(adapter, description="child decision", parent_id=parent_id)
 
-    resp = await handle_remove_decision(
-        ctx,
-        decision_id="decision:abc",
-        signer="kim@example.com",
-        reason="Duplicate of decision:def — transcript ingested twice",
-    )
+        await handle_remove_decision(
+            _ctx(adapter), decision_id=parent_id, signer="x@y", reason="cleanup"
+        )
 
-    assert resp.was_new is True
-    assert resp.decision_id == "decision:abc"
-    # The new signoff is the one persisted in the fake store
-    persisted = ledger._client._rows["decision:abc"]["signoff"]
-    assert persisted["state"] == "removed"
-    assert persisted["signer"] == "kim@example.com"
-    assert persisted["reason"] == "Duplicate of decision:def — transcript ingested twice"
-    assert persisted["previous_state"] == "ratified"
-    assert persisted["removed_at"]  # non-empty ISO timestamp
-    assert persisted["session_id"] == "sess-1"
+        # Parent gone, child still present but with NONE parent_decision_id.
+        post_child = await adapter._client.query(
+            f"SELECT type::string(id) AS id, parent_decision_id FROM {child_id}"
+        )
+        assert post_child, "child row should still exist"
+        assert post_child[0].get("parent_decision_id") in (None, "")
+    finally:
+        await adapter._client.close()
 
 
-async def test_remove_decision_is_idempotent_on_already_removed() -> None:
+# ── Contract: idempotent second-call returns was_new=False ───────────────
+
+
+async def test_second_call_returns_was_new_false() -> None:
+    """After a successful hard-delete, a second call with the same id
+    returns ``was_new=False`` (the row is gone) — the matching event in
+    the journal is the canonical record of the original removal."""
     from handlers.remove_decision import handle_remove_decision
 
-    existing_signoff = {
-        "state": "removed",
-        "signer": "first@x",
-        "reason": "first removal reason",
-        "removed_at": "2026-05-13T00:00:00+00:00",
-        "previous_state": "ratified",
-    }
-    ledger = _FakeLedger({"decision:abc": {"signoff": existing_signoff}})
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("idempotent")
+    try:
+        did = await _seed_decision(adapter, description="will be deleted")
 
-    resp = await handle_remove_decision(
-        ctx, decision_id="decision:abc", signer="second@x", reason="second attempt"
-    )
+        first = await handle_remove_decision(
+            _ctx(adapter), decision_id=did, signer="x@y", reason="first call"
+        )
+        assert first.was_new is True
 
-    assert resp.was_new is False
-    # The original signoff is unchanged — second call did not overwrite
-    persisted = ledger._client._rows["decision:abc"]["signoff"]
-    assert persisted == existing_signoff
-    # The returned signoff matches the existing one
-    assert resp.signoff == existing_signoff
+        second = await handle_remove_decision(
+            _ctx(adapter), decision_id=did, signer="x@y", reason="second call"
+        )
+        assert second.was_new is False
+        assert second.event_logged is False
+        assert second.removed_at is None
+    finally:
+        await adapter._client.close()
 
 
-async def test_remove_decision_emits_event_in_team_mode() -> None:
-    """When the adapter exposes ._writer (team mode), the handler emits
-    decision_removed.completed with the new signoff in the payload."""
+# ── Contract: event emitted in team mode with full snapshot ──────────────
+
+
+async def test_emits_event_with_full_snapshot_in_team_mode() -> None:
+    """When the adapter exposes ``_writer`` (team mode), the handler
+    emits one ``decision_removed.completed`` event whose payload carries
+    the FULL pre-deletion snapshot — recoverable audit trail."""
     from handlers.remove_decision import handle_remove_decision
 
-    writer = _FakeWriter()
-    ledger = _FakeLedger(
-        {"decision:abc": {"signoff": {"state": "ratified"}}},
-        writer=writer,
-    )
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("event_team")
+    try:
+        did = await _seed_decision(adapter, description="will be deleted", signoff_state="proposed")
 
-    await handle_remove_decision(ctx, decision_id="decision:abc", signer="kim@x", reason="cleanup")
+        writer = _CapturingWriter()
+        await handle_remove_decision(
+            _ctx(adapter, writer=writer),
+            decision_id=did,
+            signer="kim@test",
+            reason="Duplicate of decision:abc — keeping the earlier copy",
+        )
 
-    assert len(writer.events) == 1
-    event_type, payload = writer.events[0]
-    assert event_type == "decision_removed.completed"
-    assert payload["decision_id"] == "decision:abc"
-    assert payload["signoff"]["state"] == "removed"
-    assert payload["signoff"]["reason"] == "cleanup"
-    assert payload["signoff"]["previous_state"] == "ratified"
+        assert len(writer.events) == 1
+        event_type, payload = writer.events[0]
+        assert event_type == "decision_removed.completed"
+        assert payload["decision_id"] == did
+        assert payload["signer"] == "kim@test"
+        assert payload["reason"].startswith("Duplicate of")
+        assert payload["previous_state"] == "proposed"
+        assert payload["removed_at"]
+        # Full pre-deletion snapshot present
+        snapshot = payload["snapshot"]
+        assert snapshot["description"] == "will be deleted"
+        assert snapshot["source_type"] == "test"
+        assert snapshot["source_ref"] == "unit-test"
+        assert isinstance(snapshot["signoff"], dict)
+        assert snapshot["signoff"]["state"] == "proposed"
+    finally:
+        await adapter._client.close()
 
 
-async def test_remove_decision_skips_event_in_local_mode() -> None:
-    """No _writer attached → no event emitted, no exception."""
+async def test_skips_event_emission_in_local_mode() -> None:
+    """No ``_writer`` attached → no event emitted, no exception raised."""
     from handlers.remove_decision import handle_remove_decision
 
-    ledger = _FakeLedger({"decision:abc": {"signoff": {"state": "ratified"}}})
-    # No writer attached
-    assert not hasattr(ledger, "_writer")
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("event_local")
+    try:
+        did = await _seed_decision(adapter, description="local mode probe")
+        # Ensure the adapter genuinely has no writer attached.
+        assert not hasattr(adapter, "_writer") or adapter._writer is None
+        ctx = SimpleNamespace(
+            ledger=adapter,
+            repo_path="/tmp/test-repo",
+            session_id="sess-test",
+            authoritative_sha="testsha0",
+        )
 
-    resp = await handle_remove_decision(
-        ctx, decision_id="decision:abc", signer="kim@x", reason="cleanup"
-    )
-
-    assert resp.was_new is True
-    # Idempotency assertion is sufficient — no writer means no event capture path,
-    # but the test serves as a contract that the handler doesn't raise when
-    # the writer is absent.
+        resp = await handle_remove_decision(ctx, decision_id=did, signer="x@y", reason="cleanup")
+        assert resp.was_new is True
+        assert resp.event_logged is False
+    finally:
+        await adapter._client.close()
 
 
-async def test_remove_decision_idempotent_does_not_emit_second_event() -> None:
-    """Second call on an already-removed decision must NOT emit a second event
-    even when team mode is active."""
+async def test_idempotent_call_does_not_emit_second_event() -> None:
+    """Second call on an already-deleted decision must NOT emit a second
+    event, even when team mode is active."""
     from handlers.remove_decision import handle_remove_decision
 
-    writer = _FakeWriter()
-    existing_signoff = {"state": "removed", "signer": "first@x", "reason": "first"}
-    ledger = _FakeLedger({"decision:abc": {"signoff": existing_signoff}}, writer=writer)
-    ctx = _FakeCtx(ledger)
+    adapter = await _fresh_adapter("idem_event")
+    try:
+        did = await _seed_decision(adapter, description="probe")
+        writer = _CapturingWriter()
 
-    resp = await handle_remove_decision(
-        ctx, decision_id="decision:abc", signer="second@x", reason="second"
-    )
+        await handle_remove_decision(
+            _ctx(adapter, writer=writer), decision_id=did, signer="x", reason="first"
+        )
+        await handle_remove_decision(
+            _ctx(adapter, writer=writer), decision_id=did, signer="x", reason="second"
+        )
 
-    assert resp.was_new is False
-    assert writer.events == []  # No event emitted on the no-op path
+        assert len(writer.events) == 1, f"expected exactly one event, got {len(writer.events)}"
+    finally:
+        await adapter._client.close()
