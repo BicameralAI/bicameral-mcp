@@ -261,6 +261,49 @@ jobs:
         continue-on-error: true
         run: python tests/eval_preflight_m6_summary.py test-results/m6-preflight-recall.json >> "$GITHUB_STEP_SUMMARY"
 
+      # ── M_skill_preflight — skill-layer preflight eval (#306) ────────
+      # Two-step eval driven by the bicameral-preflight SKILL.md:
+      #   Step-1 = relevance recall over the 25-row dataset (Part A #396)
+      #   Step-0 = history-invocation rate over the 15-row dataset (Part B)
+      # Both replay from cached fixtures; cache miss requires the
+      # ANTHROPIC_API_KEY secret. Warn-only at first run per the #288 M2
+      # warn→hard pattern — flip to --gate-mode hard in a followup PR
+      # once one stable baseline lands.
+      - name: M_skill_preflight Step-1 (warn-only)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BICAMERAL_PREFLIGHT_EVAL_MODEL: claude-haiku-4-5-20251001
+        run: >
+          python tests/eval_preflight_skill_step1.py
+          --gate-mode warn
+          -o test-results/skill-step1.json
+
+      - name: M_skill_preflight Step-0 (warn-only)
+        if: matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BICAMERAL_PREFLIGHT_INVOCATION_EVAL_MODEL: claude-haiku-4-5-20251001
+        run: >
+          python tests/eval_preflight_skill_invocation.py
+          --gate-mode warn
+          -o test-results/skill-step0.json
+
+      # ── Surface M_skill_preflight metrics on the GitHub run summary ──
+      # Reads both Step-1 + Step-0 JSONs and renders per-axis recall +
+      # the 2x2 invocation confusion matrix + any FN cases. Fail-quiet
+      # when JSON missing — never gates merge.
+      - name: M_skill_preflight metrics summary
+        if: always() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: >
+          python tests/eval_preflight_skill_summary.py
+          --step1 test-results/skill-step1.json
+          --step0 test-results/skill-step0.json
+          >> "$GITHUB_STEP_SUMMARY"
+
       # ── Generate rich E2E report from artifacts ────────────────────
       # Ubuntu-only: the script consumes the medusa adversarial corpus
       # (cloned only on Ubuntu above) plus the Phase 3 E2E artifacts
