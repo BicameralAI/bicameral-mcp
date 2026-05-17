@@ -140,7 +140,7 @@ def _classify_recovery(diagnosis) -> tuple[RecoveryPath, str]:
         )
 
     if rec is not None and rec > exp:
-        path: RecoveryPath = "reset_rebuild" if has_events else "reset_destructive"
+        path = "reset_rebuild" if has_events else "reset_destructive"
         return path, (
             f"Ledger schema v{rec} is newer than this binary (v{exp}). "
             f"Upgrade `bicameral-mcp` to a version that understands v{rec}, "
