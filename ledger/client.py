@@ -115,6 +115,55 @@ class LedgerError(RuntimeError):
     """
 
 
+class LedgerDeserializationError(LedgerError):
+    """Raised when SurrealDB's embedded SDK can't decode a row on read (#301).
+
+    The on-disk SurrealKV record header carries a revision number that must
+    match the surrealdb-py deserializer. A mismatch surfaces as
+    ``Invalid revision `N` for type `Value```. This is *below* the schema
+    layer — `init_schema`/`migrate` don't help because the migration code
+    can't read the row either. The fix is to wipe the affected cursor and
+    replay from the event log via
+    ``bicameral_reset(wipe_mode="ledger", replay_from_events=True, confirm=True)``.
+
+    Subclass of ``LedgerError`` so existing ``except LedgerError`` handlers
+    catch it; callers that surface a recovery hint to the agent match on
+    ``LedgerDeserializationError`` specifically.
+    """
+
+    RECOVERY_HINT = (
+        "Row-level deserialization failed — likely a SurrealDB embedded SDK "
+        "revision mismatch on persisted rows. Run "
+        "`bicameral_reset(wipe_mode='ledger', replay_from_events=True, "
+        "confirm=True)` to wipe and replay from .bicameral/events/, or "
+        "`bicameral-mcp diagnose` for a full report."
+    )
+
+    def __init__(self, *, raw: str, sql_prefix: str) -> None:
+        self.raw = raw
+        self.sql_prefix = sql_prefix
+        super().__init__(
+            f"SurrealDB row deserialization failed: {raw}\n"
+            f"SQL: {sql_prefix}\n"
+            f"Recovery: {self.RECOVERY_HINT}"
+        )
+
+
+_DESERIALIZATION_SIGNATURES = ("Invalid revision", "deserialization error")
+
+
+def _is_deserialization_error(raw: str) -> bool:
+    """Return True when ``raw`` looks like a SurrealKV row-format mismatch.
+
+    Matches the two signatures observed in #301 and the related ``yields``
+    incident: the SDK's ``Invalid revision `N` for type `T``` and the more
+    general ``A deserialization error occured`` wrapper. Both come back as
+    strings the caller sees as ``LedgerError`` today — this helper is the
+    classification seam.
+    """
+    return any(sig in raw for sig in _DESERIALIZATION_SIGNATURES)
+
+
 class LedgerTimeoutError(LedgerError):
     """Raised when a ledger query exceeds its wallclock timeout budget.
 
@@ -270,8 +319,13 @@ class LedgerClient:
         try:
             result = await self._run_with_timeout(sql, vars, timeout_class)
         except SurrealError as exc:
+            msg = str(exc)
+            if _is_deserialization_error(msg):
+                raise LedgerDeserializationError(raw=msg, sql_prefix=sql[:300]) from exc
             raise LedgerError(f"SurrealDB rejected query: {exc}\nSQL: {sql[:300]}") from exc
         if isinstance(result, str):
+            if _is_deserialization_error(result):
+                raise LedgerDeserializationError(raw=result, sql_prefix=sql[:300])
             raise LedgerError(f"SurrealDB rejected query: {result}\nSQL: {sql[:300]}")
         return _normalize(result) if isinstance(result, list) else []
 
@@ -297,8 +351,13 @@ class LedgerClient:
         try:
             result = await self._run_with_timeout(sql, vars, timeout_class)
         except SurrealError as exc:
+            msg = str(exc)
+            if _is_deserialization_error(msg):
+                raise LedgerDeserializationError(raw=msg, sql_prefix=sql[:300]) from exc
             raise LedgerError(f"SurrealDB rejected statement: {exc}\nSQL: {sql[:300]}") from exc
         if isinstance(result, str):
+            if _is_deserialization_error(result):
+                raise LedgerDeserializationError(raw=result, sql_prefix=sql[:300])
             raise LedgerError(f"SurrealDB rejected statement: {result}\nSQL: {sql[:300]}")
 
     async def execute_many(
