@@ -121,6 +121,24 @@ def _classify_recovery(diagnosis) -> tuple[RecoveryPath, str]:
     exp = diagnosis.schema_version_expected
     has_events = _events_present(diagnosis.ledger_url)
 
+    # #301 — row-level deserialization warnings outrank the schema-version
+    # check. Schema can read clean (`schema_meta` is a tiny row, never the
+    # one that breaks) while the operational tables hit
+    # ``Invalid revision `N` for type Value``. The probe in
+    # cli/_diagnose_gather.py::_probe_row_deserialization catches that; here
+    # we route the verdict so the agent sees recovery_path=reset_rebuild
+    # instead of "clean, no remediation needed".
+    row_warnings: list[str] = list(getattr(diagnosis, "row_probe_warnings", []) or [])
+    if row_warnings:
+        path: RecoveryPath = "reset_rebuild" if has_events else "reset_destructive"
+        tables = ", ".join(sorted({w.split(":", 1)[0] for w in row_warnings}))
+        return path, (
+            f"Row-level deserialization warnings on {tables} — likely a "
+            "SurrealDB embedded-SDK record-format mismatch. Run "
+            f"`bicameral_reset(wipe_mode='ledger', replay_from_events={has_events}, "
+            "confirm=True)` to wipe and replay from .bicameral/events/."
+        )
+
     if rec is not None and rec > exp:
         path: RecoveryPath = "reset_rebuild" if has_events else "reset_destructive"
         return path, (

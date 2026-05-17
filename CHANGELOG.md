@@ -3,6 +3,24 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.15.1 — hotfix: route `ledger_sync` deserialization warnings to a wipe-and-replay recovery path (#301)
+
+Hotfix for [#301](https://github.com/BicameralAI/bicameral-mcp/issues/301). v0.15.0 already added a row-level deserialization probe to `bicameral.diagnose` ([`cli/_diagnose_gather.py::_probe_row_deserialization`](cli/_diagnose_gather.py)), but the probe's findings stopped at the `suggestions` list — `_classify_recovery` in `handlers/diagnose.py` still inspected only `schema_meta.version`, so an agent that ran `diagnose` after a `link_commit` failure would see `recovery_path: "clean"` and `next_action: "No remediation needed."` while the ledger was actually unreadable.
+
+This release closes the loop end-to-end:
+
+- **`LedgerDeserializationError`** (subclass of `LedgerError`) is raised from `ledger.client.query` / `ledger.client.execute` whenever the SurrealDB SDK returns `Invalid revision \`N\` for type \`Value\`` or a `deserialization error` wrapper. The exception message embeds the recovery command, so the agent sees the wipe-and-replay instruction inside the MCP error envelope without needing a second `diagnose` round-trip.
+- **`handlers/diagnose.py::_classify_recovery`** now consults `Diagnosis.row_probe_warnings` *before* the schema-version checks. Non-empty warnings route to `reset_rebuild` (when `.bicameral/events/*.jsonl` is present) or `reset_destructive` (no events on disk) with a `next_action` that quotes the exact `bicameral_reset(wipe_mode="ledger", replay_from_events=…, confirm=True)` call.
+- **`handlers/sync_middleware.py::ensure_ledger_synced`** re-raises `LedgerDeserializationError` instead of swallowing it at DEBUG. The broad `except Exception` is still in place for transient catch-up failures (the original "best-effort" contract); only deserialization errors break out, because they're the one class of failure the agent must surface to the user.
+
+### Fixed
+
+- **#301** — `bicameral.link_commit` no longer fails with a bare `LedgerError("SurrealDB rejected query: ...")` when `ledger_sync` rows can't be deserialized; the new exception class names the recovery path. `bicameral.diagnose` now classifies the same failure mode under `reset_rebuild` / `reset_destructive` so the agent's next_action is actionable.
+
+### Notes for v0.14.x → v0.15.x upgraders hit by #301
+
+The SurrealDB SDK pin (`surrealdb==2.0.0`) is unchanged between v0.14.x and v0.15.1; upgrading the package does NOT rewrite the persisted SurrealKV record format. An installation that hit the `Invalid revision \`3\` for type \`Value\`` error on v0.14.x will continue to see the same SDK-level deserialization failure on first `link_commit`. What changes in v0.15.1 is the *visibility*: the error now surfaces with an explicit recovery command instead of as a generic `LedgerError`, and `diagnose` correctly routes to a reset path. To recover, run `bicameral_reset(wipe_mode="ledger", replay_from_events=True, confirm=True)` (if `.bicameral/events/*.jsonl` is present) or `bicameral_reset(wipe_mode="ledger", confirm=True)` otherwise.
+
 ## v0.15.0 — PII archive, hard-delete `remove_decision`, schema v17→v24 chain, team-mode foundations
 
 Cumulative release draining the dev → main backlog accumulated since v0.14.7. Lands the **#221 PII archive** (operator-erasable PII surface), retires the **soft-delete tombstone model** for `bicameral.remove_decision` (now hard-delete by default), brings the constant-time **`bicameral_meta.decision_revision` counter** (#87) into the preflight dedup path, ships **`bicameral.admin/query`** and **dashboard source view** (#278 Phase 1+3), wires the **`LocalDirectorySourceAdapter`** and **`sync-and-brief`** team-mode flows (#344, #279), and adds the **code-locator singleton + eager startup init** that moves index work off the MCP stdio handshake (#243, #380).
