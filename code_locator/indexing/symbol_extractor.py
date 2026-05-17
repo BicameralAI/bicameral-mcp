@@ -1,7 +1,20 @@
-"""Tree-sitter symbol extraction for 9 languages.
+"""Tree-sitter symbol extraction for 10 languages.
 
 Ported from tools/bicameral-locagent/dependency_graph/build_graph.py
 and adapted to produce SymbolRecord objects for the SQLite store.
+
+Per-language coverage:
+
+- Python, JS/JSX, TS/TSX, Java, Go, Rust, C#: bespoke walkers
+  (``_extract_<lang>_defs``) — historical pattern; walker retirement
+  for the simpler four (Python, Go, Rust, JS-mode) gated on #399's
+  measurement spike.
+- **Elixir (#367)**: generic tags-query path via
+  ``tags_extractor.extract_defs_via_tags`` against the upstream
+  ``tree-sitter-elixir`` grammar's ``queries/tags.scm``. Substrate
+  introduced in #367 as the precursor to the broader hybrid refactor;
+  validated against existing Python walker output by
+  ``tests/test_tags_extractor_parity.py``.
 """
 
 from __future__ import annotations
@@ -20,6 +33,8 @@ EXTENSION_LANGUAGE = {
     ".go": "go",
     ".rs": "rust",
     ".cs": "c_sharp",
+    ".ex": "elixir",
+    ".exs": "elixir",
 }
 
 LANGUAGE_FALLBACK = {
@@ -62,6 +77,7 @@ if not _USE_LEGACY:
         "go": "tree_sitter_go",
         "rust": "tree_sitter_rust",
         "c_sharp": "tree_sitter_c_sharp",
+        "elixir": "tree_sitter_elixir",
     }
 
 # ── Parser caching ───────────────────────────────────────────────────
@@ -421,6 +437,19 @@ def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> 
         return _extract_rust_defs(tree, code, rel_path)
     if language_id == "c_sharp":
         return _extract_csharp_defs(tree, code, rel_path)
+    if language_id == "elixir":
+        # #367: tags-query path via the upstream tree-sitter-elixir tags.scm.
+        # First instance of the data-driven extractor; #399's spike measures
+        # whether the simpler walkers (Python, Go, Rust, JS-mode) can retire
+        # in favor of this same path. Walker fallback is not provided for
+        # Elixir — see pyproject.toml's tight grammar pin (>=0.3.5,<0.4).
+        from .tags_extractor import extract_defs_via_tags, load_tags_query_text
+
+        query_text = load_tags_query_text("tree_sitter_elixir")
+        if query_text is None:
+            return []
+        lang = _get_language_obj("elixir")
+        return extract_defs_via_tags(lang, tree, code, rel_path, query_text)
     return []
 
 
