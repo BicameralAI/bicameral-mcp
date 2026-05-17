@@ -43,36 +43,6 @@ Verify:
 bicameral-mcp --smoke-test
 ```
 
-### Nightly channel (design partners)
-
-Design partners opt into the nightly build to receive bug fixes the day they land on `dev`, ahead of the stable release on `main`. Nightlies use a CalVer scheme (`YYYY.M.D.devHHMMSS`, e.g. `2026.5.16.dev011742`) deliberately orthogonal to stable's semver — stable progresses by cherry-pick from dev, so anchoring nightlies to "next patch above stable" would be a fiction. `pip` and `uv` skip dev releases by default, so a plain `pip install bicameral-mcp` never picks one up unintentionally.
-
-**Step 1 — install with pre-releases enabled:**
-
-```bash
-# uv
-uv tool install bicameral-mcp --prerelease=allow
-
-# pip
-pip install --pre --upgrade bicameral-mcp
-```
-
-**Step 2 — flip your repo's channel to nightly** so `bicameral.update` tracks the nightly version pointer instead of the stable one. Edit `.bicameral/config.yaml`:
-
-```yaml
-channel: nightly  # was: stable
-```
-
-With `channel: nightly`, `bicameral.update` reads the **developer-curated** `RECOMMENDED_NIGHTLY_VERSION` file on the `dev` branch and offers to upgrade to it. Every nightly publishes to PyPI, but the pointer file is only bumped when a maintainer judges the nightly worth surfacing — major bugfix, schema migration, new tool field — so pilots aren't notified on every cron tick. See `docs/DEV_CYCLE.md` §6.9 for the bump heuristic. Stable (`channel: stable`) queries PyPI's `info.version` directly — the `dev → main` release-PR process is the curation lever there. The two channels use deliberately incompatible version schemes (CalVer for nightly, semver for stable), so `bicameral.update` never tries to cross-upgrade you from one channel to the other; flipping the `channel:` field in your config is the only way to switch.
-
-**To roll back to stable:** flip `channel: stable` in your config, then:
-
-```bash
-pip install --upgrade --force-reinstall bicameral-mcp
-```
-
-Nightlies are best-effort: the test suite has passed at PR-to-`dev` merge time, but they skip the supply-chain signing ceremony (cosign, SBOM attestation) that stable releases ship with. If you need a signed artifact for compliance review, stay on stable.
-
 ---
 
 ## How It Feels
