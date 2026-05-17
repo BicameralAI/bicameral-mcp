@@ -3,6 +3,110 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.15.1 — hotfix: route `ledger_sync` deserialization warnings to a wipe-and-replay recovery path (#301)
+
+Hotfix for [#301](https://github.com/BicameralAI/bicameral-mcp/issues/301). v0.15.0 already added a row-level deserialization probe to `bicameral.diagnose` ([`cli/_diagnose_gather.py::_probe_row_deserialization`](cli/_diagnose_gather.py)), but the probe's findings stopped at the `suggestions` list — `_classify_recovery` in `handlers/diagnose.py` still inspected only `schema_meta.version`, so an agent that ran `diagnose` after a `link_commit` failure would see `recovery_path: "clean"` and `next_action: "No remediation needed."` while the ledger was actually unreadable.
+
+This release closes the loop end-to-end:
+
+- **`LedgerDeserializationError`** (subclass of `LedgerError`) is raised from `ledger.client.query` / `ledger.client.execute` whenever the SurrealDB SDK returns `Invalid revision \`N\` for type \`Value\`` or a `deserialization error` wrapper. The exception message embeds the recovery command, so the agent sees the wipe-and-replay instruction inside the MCP error envelope without needing a second `diagnose` round-trip.
+- **`handlers/diagnose.py::_classify_recovery`** now consults `Diagnosis.row_probe_warnings` *before* the schema-version checks. Non-empty warnings route to `reset_rebuild` (when `.bicameral/events/*.jsonl` is present) or `reset_destructive` (no events on disk) with a `next_action` that quotes the exact `bicameral_reset(wipe_mode="ledger", replay_from_events=…, confirm=True)` call.
+- **`handlers/sync_middleware.py::ensure_ledger_synced`** re-raises `LedgerDeserializationError` instead of swallowing it at DEBUG. The broad `except Exception` is still in place for transient catch-up failures (the original "best-effort" contract); only deserialization errors break out, because they're the one class of failure the agent must surface to the user.
+
+### Fixed
+
+- **#301** — `bicameral.link_commit` no longer fails with a bare `LedgerError("SurrealDB rejected query: ...")` when `ledger_sync` rows can't be deserialized; the new exception class names the recovery path. `bicameral.diagnose` now classifies the same failure mode under `reset_rebuild` / `reset_destructive` so the agent's next_action is actionable.
+
+### Notes for v0.14.x → v0.15.x upgraders hit by #301
+
+The SurrealDB SDK pin (`surrealdb==2.0.0`) is unchanged between v0.14.x and v0.15.1; upgrading the package does NOT rewrite the persisted SurrealKV record format. An installation that hit the `Invalid revision \`3\` for type \`Value\`` error on v0.14.x will continue to see the same SDK-level deserialization failure on first `link_commit`. What changes in v0.15.1 is the *visibility*: the error now surfaces with an explicit recovery command instead of as a generic `LedgerError`, and `diagnose` correctly routes to a reset path. To recover, run `bicameral_reset(wipe_mode="ledger", replay_from_events=True, confirm=True)` (if `.bicameral/events/*.jsonl` is present) or `bicameral_reset(wipe_mode="ledger", confirm=True)` otherwise.
+
+## v0.15.0 — PII archive, hard-delete `remove_decision`, schema v17→v24 chain, team-mode foundations
+
+Cumulative release draining the dev → main backlog accumulated since v0.14.7. Lands the **#221 PII archive** (operator-erasable PII surface), retires the **soft-delete tombstone model** for `bicameral.remove_decision` (now hard-delete by default), brings the constant-time **`bicameral_meta.decision_revision` counter** (#87) into the preflight dedup path, ships **`bicameral.admin/query`** and **dashboard source view** (#278 Phase 1+3), wires the **`LocalDirectorySourceAdapter`** and **`sync-and-brief`** team-mode flows (#344, #279), and adds the **code-locator singleton + eager startup init** that moves index work off the MCP stdio handshake (#243, #380).
+
+Schema chain `v17 → v24` lands in one auto-applied batch. The migration is non-destructive: every step is additive (new fields with defaults, new indexes, new tables, new DEFINE EVENTs). `v17`-era data continues to read; `v22` ASSERT `text != '' OR archive_key != ''` accepts both legacy text-only spans and new archive-keyed spans.
+
+### Breaking changes
+
+- **`bicameral.remove_decision` is now hard-delete by default** (decision:i4wafafzowm3ai5eyhgs). The decision row + all references (`binds_to` / `yields` / `supersedes` / `context_for` / `about` edges + `compliance_check` cache rows) are physically removed. A `decision_removed.completed` event captures the full pre-deletion snapshot in the journal — the "soft audit trail" that replaces the prior tombstone-row model. **Response shape changed**: dropped `signoff` / `projected_status`; added `event_logged`, `removed_at`, `previous_state`, `reason`. Idempotent on missing decisions (`was_new=False`). For persistent negative signal, use `bicameral.resolve_collision action=supersede` instead.
+
+### Added
+
+- **`bicameral.remove_decision` + `bicameral.remove_source`** (#278 Phase 2) — surgical ledger-correction tools with audit-trail obligation. Initial soft-delete shape replaced mid-cycle by the hard-delete contract above for `remove_decision`. `remove_source` cascade still soft-deletes yielded decisions (separate decision pending).
+- **`bicameral.admin/query` raw SurrealQL panel** (#278 Phase 3) — gated by env flag + origin check + audit emission. Off by default.
+- **Dashboard `/source-view`** (#278 Phase 1) — side-by-side navigation between decision and source span.
+- **`LocalDirectorySourceAdapter`** (#344) — pull-based ingestion of meeting notes from any directory, not just IDE-resident files.
+- **`sync-and-brief` skill + team-mode integration** (#279 Phase 1+2) — pre-meeting context gather pulls from Granola + arbitrary local sources; team-mode integration round-trips through the event-log backend.
+- **`ChannelAdapter` foundation** (#330, #335 Phase 1) — extensibility layer for notification channels (Slack, email, etc.).
+- **`bicameral.update` channel-aware** (`stable` ↔ `nightly`) — design-partner cohort can opt into the nightly channel; auto-detect from `.dev` install version (#374, #376, #381).
+- **Constant-time revision counter** (#87 Phase 6) — `bicameral_meta.decision_revision` auto-bumped by `DEFINE EVENT decision_revision_bump` on every decision write. Replaces O(N) `MAX(updated_at)` scan in preflight dedup; p95 < 5 ms on file-backed SurrealKV.
+- **`decision.updated_at` + `idx_decision_updated_at`** (#87 precondition) — write marker for preflight dedup cache invalidation.
+- **Auto-classify `decision_level`** on ingest (#340) — heuristic deduces L1/L2/L3 when caller omits the field; v22→v23 backfill migration applies the same heuristic to legacy rows.
+- **PII archive primitive** (#221 Phase A + B-1) — operator-erasable PII surface keyed by content-hash. Ingest writes verbatim text to the archive and leaves `input_span.text=''` (the v22 ASSERT enforces `text != '' OR archive_key != ''`). Reads route through `_resolve_span_text(archive, row)` so post-erasure rows return a sentinel and are filtered from agent-visible rendering.
+- **`bicameral.ledger-export` / `bicameral.ledger-import` CLI** (#252 Layer 4) — portable JSON-Lines round-trip of the full ledger; meta-table DELETE-before-import preserves replay determinism.
+- **Query timeout with Claude-hooks surfacing** (#224) — operator-configurable read/drift timeout budgets via `BICAMERAL_QUERY_TIMEOUT_*` env vars; fail-closed reader clamps to safe range.
+- **Code-locator singleton + eager startup init** (#243 Piece B) — index work moves off the per-call hot path; `#380` further moves it off the MCP stdio handshake so the server responds to the initial `initialize` request before indexing completes.
+- **Loud graph-expansion fallback signal** in preflight (#243 Piece A) — when retrieval falls back from region-anchored to graph-expansion, the response carries a `_fallback_used` flag instead of being silent.
+- **M2 / M6 retrieval-recall eval gates** (#280, #58) — Phase A measurement gate; M2 grounding-recall flipped from advisory to hard on stable baseline.
+- **Preflight dedup decision telemetry** (#87 Phase 5) — local-only CSV when `BICAMERAL_TELEMETRY=preflight`.
+- **Broadened preflight dedup cache key** (#87 Phase 4) — M7a/b/c collision modes resolved.
+- **Linked-worktree / submodule detection + `origin/HEAD` probe + authoritative-branch prompt** in `setup_wizard` (#368, v0.14.7 carry-over).
+- **Deterministic governance doctrine + skill lint** (#205 Phase 1).
+- **MCP transport trust-boundary declaration** (#215 Track 1).
+- **Windows symlink materialization gate + file-backed SurrealKV perf gate** in CI (#357 Phase A-C).
+
+### Changed
+
+- **Soft-delete → hard-delete contract for `bicameral.remove_decision`** (see Breaking changes above; `decision:i4wafafzowm3ai5eyhgs`).
+- **`idx_input_span_dedup` now indexes `(source_type, source_ref, text, archive_key)`** (v24) instead of `(source_type, source_ref, text)` (v17). Pre-Phase-B-1 rows (`archive_key=''`) dedupe identically; archive-keyed rows (`text=''`) now distinguish on the key. Resolves the dashboard `/history` 500 that surfaced when two archive-keyed spans landed in the same `(source_type, source_ref)` bucket.
+- **`upsert_input_span` is now atomic under contention** — wraps CREATE in try/except, on `"already contains"` re-SELECTs by the appropriate dedup key, and bounded-retries the whole upsert on SurrealDB v2 MVCC `"failed to commit transaction"` conflicts (up to 10 attempts). The conflicting writer has already committed by the time the loser sees the error, so each retry's SELECT short-circuits.
+- **Recent activity tables in `**/CLAUDE.md`** are now auto-generated by claude-mem and tracked in git so the agent context stays in sync.
+- **README opener rewritten** as a two-paragraph spec-compliance-layer pitch + relocated star CTA mid-doc; hero image refreshed with double-entry ledger diagram (#299).
+
+### Fixed
+
+- **#358** — `get_context_for_ready_decisions` preserves `decision.status` (was overwriting on read).
+- **#341, #342, #281** — ephemeral stale-repair + ungrounded guard + backfill migration.
+- **#332, #334, #338** — `bind` uses head_sha on ephemeral branches instead of stale `authoritative_sha`.
+- **#308** — `v17→v18` migration tolerates legacy rows with `NONE created_at`.
+- **#157** — prune orphaned ephemeral decisions after merge to authoritative.
+- **#343, #209** — preflight suppresses noise on un-ingested code + ledger-awareness fast-path.
+- **#288** — bounded retry + per-case `eval_error` so transient API timeouts don't fail M2 hard-gate.
+- **#272, #273** — SHA-pin `test-summary/action` in preflight-eval workflow.
+- **#362** — reclassify E2E Flow 3 'no cc rows + no verdicts' as advisory.
+- **#122, #301, #232** — always-run schema CI + diagnose row probe + env-var truthy parity.
+- **#87 followup** — repair `get_ledger_revision` SurrealQL (Phase 4 dedup was silently bypassed).
+- **#221 Phase B-1 collision** — see `idx_input_span_dedup` change above.
+- **#364** — Windows symlink check ASCII-only print messages.
+- **#58 followup** — disable ingest rate limit in M6 seeder to unblock baseline.
+
+### Schema migrations
+
+| Version | Migration | Source |
+|---|---|---|
+| v17 → v18 | `decision.updated_at` + `idx_decision_updated_at` | #87 precondition |
+| v18 → v19 | `bicameral_meta.decision_revision` + `DEFINE EVENT decision_revision_bump` | #87 Phase 6 |
+| v19 → v20 | PII archive schema slot (`input_span.archive_key`) | #221 Phase A |
+| v20 → v21 | (PII archive metadata field) | #221 Phase A |
+| v21 → v22 | ASSERT `text != '' OR archive_key != ''` on `input_span.text` | #221 Phase B-1 |
+| v22 → v23 | Backfill `decision.decision_level` for legacy rows | #340 prereq |
+| v23 → v24 | `idx_input_span_dedup` extended with `archive_key` | dashboard `/history` collision fix |
+
+All migrations are additive and non-destructive. Operators upgrading from v0.14.x with persisted ledgers will see one-time migration log entries; no data loss.
+
+### Doctrine
+
+- **DEV_CYCLE.md §4** — linked-decision requirement on org-member PRs (#384).
+- **Three new ratified architectural decisions** (companion follow-up PR amends DEV_CYCLE.md):
+  - `decision:cp25jfz1nt6h3u2gjzmu` — schema migrations must be expand-only; destructive ops live in dedicated commits.
+  - `decision:adklplvfhthkdch05pe9` — code paths depending on new schema must be feature-flag gated, default off in prod.
+  - `decision:0ok1249n2tdrfud2a5j9` — DEV_CYCLE.md §10.5.1 (triage eligibility) amended: triage releases CAN carry schema migrations when (a) every migration is expand-only, (b) every feature is flag-gated. From "no schema in triage" to "no destructive schema in triage".
+
+### Removed
+
+- **Soft-delete tombstone state for `decision.signoff.state='removed'`** — replaced by hard-delete (see Breaking changes).
+
 ## v0.14.7 — Worktree-setup polish: linked-worktree notice + authoritative-branch prompt (triage)
 
 Stopgap on the v0.14.x line ahead of the v0.15.0 Ledger Locator (#368). Makes the existing per-worktree setup model **intentional and visible** so users running `bicameral-mcp setup` from a linked worktree or submodule understand where their hooks land and which branch the runtime treats as authoritative. No behavior change for plain-repo installs; the v0.14.6 submodule `.git`-pointer fix still load-bears underneath.

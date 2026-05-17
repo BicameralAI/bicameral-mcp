@@ -20,6 +20,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from ledger.client import LedgerDeserializationError
+
 if TYPE_CHECKING:
     from contracts import LinkCommitResponse, SessionStartBanner
 
@@ -288,6 +290,14 @@ async def ensure_ledger_synced(ctx) -> LinkCommitResponse | None:
             _LAST_SYNCED_SHA = live_head
             logger.debug("[sync_middleware] catch-up ran for %s", live_head[:8])
             return result
+    except LedgerDeserializationError:
+        # #301 — row-format mismatch on ledger_sync / yields / etc. This is
+        # the *opposite* of a swallowable error: the ledger is in a state
+        # the user must repair before any tool will work. Re-raise so the
+        # MCP transport layer surfaces the exception (with embedded
+        # RECOVERY_HINT) to the agent instead of silently logging at DEBUG.
+        logger.warning("[sync_middleware] ledger row-format mismatch — surfacing to agent")
+        raise
     except Exception as exc:
         logger.debug("[sync_middleware] catch-up failed: %s", exc)
     return None
