@@ -261,34 +261,48 @@ jobs:
         continue-on-error: true
         run: python tests/eval_preflight_m6_summary.py test-results/m6-preflight-recall.json >> "$GITHUB_STEP_SUMMARY"
 
-      # ── M_skill_preflight — skill-layer preflight eval (#306) ────────
+      # ── M_skill_preflight — skill-layer preflight eval (hard gate, #306) ─
       # Two-step eval driven by the bicameral-preflight SKILL.md:
       #   Step-1 = relevance recall over the 25-row dataset (Part A #396)
       #   Step-0 = history-invocation rate over the 15-row dataset (Part B)
-      # Both replay from cached fixtures; cache miss requires the
-      # ANTHROPIC_API_KEY secret. Warn-only at first run per the #288 M2
-      # warn→hard pattern — flip to --gate-mode hard in a followup PR
-      # once one stable baseline lands.
-      - name: M_skill_preflight Step-1 (warn-only)
+      # Both replay from cached fixtures at tests/eval/fixtures/skill_judge/
+      # and tests/eval/fixtures/skill_invocation_judge/ — cache miss requires
+      # the ANTHROPIC_API_KEY secret; commit the cache after a deliberate
+      # SKILL.md change.
+      #
+      # Gates flipped warn → hard (#398) after two stable baseline runs
+      # (#397 introduced the eval; #400 confirmed the substrate work
+      # didn't disturb the numbers):
+      #   Step-1: per-axis recall 100% (25/25 across M1/M4/FF1/D)
+      #   Step-0: recall 100% (8/8), precision 88.9%, fp_rate 14.3%
+      # All gates passed with ≥15 pp headroom on the load-bearing axes.
+      # Future PRs that touch skills/bicameral-preflight/SKILL.md or the
+      # eval datasets must EITHER keep:
+      #   Step-1 per-axis recall ≥ 70%
+      #   Step-0 should-invoke recall ≥ 50%
+      #   Step-0 fp_rate ≤ 30%
+      # OR explicitly re-record the cache via
+      # BICAMERAL_PREFLIGHT_EVAL_RECORD=1 /
+      # BICAMERAL_PREFLIGHT_INVOCATION_EVAL_RECORD=1 after a deliberate
+      # skill-prompt change. "Deliberate not drift."
+      - name: M_skill_preflight Step-1 (hard gate)
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_PREFLIGHT_EVAL_MODEL: claude-haiku-4-5-20251001
         run: >
           python tests/eval_preflight_skill_step1.py
-          --gate-mode warn
+          --gate-mode hard
           -o test-results/skill-step1.json
 
-      - name: M_skill_preflight Step-0 (warn-only)
+      - name: M_skill_preflight Step-0 (hard gate)
         if: matrix.os == 'ubuntu-latest'
-        continue-on-error: true
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_PREFLIGHT_INVOCATION_EVAL_MODEL: claude-haiku-4-5-20251001
         run: >
           python tests/eval_preflight_skill_invocation.py
-          --gate-mode warn
+          --gate-mode hard
           -o test-results/skill-step0.json
 
       # ── Surface M_skill_preflight metrics on the GitHub run summary ──
