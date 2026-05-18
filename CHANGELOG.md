@@ -3,6 +3,12 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+### Changed
+
+- **`M_skill_preflight` Step-1 + Step-0 CI gates promoted warn → hard (#398).** After two stable baseline CI runs ([#397](https://github.com/BicameralAI/bicameral-mcp/pull/397), [#400](https://github.com/BicameralAI/bicameral-mcp/pull/400)) with Step-1 at 100% per-axis recall (25/25 across M1/M4/FF1/D) and Step-0 at 100% recall / 88.9% precision / 14.3% fp_rate — all gates passed with ≥15 pp headroom — `.github/workflows/test-mcp-regression.yml`'s M_skill_preflight steps no longer carry `continue-on-error: true` and now invoke the eval CLIs with `--gate-mode hard`. Future PRs that touch `skills/bicameral-preflight/SKILL.md` or the eval datasets must keep Step-1 per-axis recall ≥ 70%, Step-0 should-invoke recall ≥ 50%, Step-0 fp_rate ≤ 30% — OR explicitly re-record the cache via `BICAMERAL_PREFLIGHT_EVAL_RECORD=1` / `BICAMERAL_PREFLIGHT_INVOCATION_EVAL_RECORD=1` after a deliberate skill-prompt change. Mirrors the [#288](https://github.com/BicameralAI/bicameral-mcp/pull/288) M2 warn→hard pattern. Metrics-summary step keeps `always() + continue-on-error: true` so breach detail still renders inline on failures.
+
 ## v0.15.1 — hotfix: route `ledger_sync` deserialization warnings to a wipe-and-replay recovery path (#301)
 
 Hotfix for [#301](https://github.com/BicameralAI/bicameral-mcp/issues/301). v0.15.0 already added a row-level deserialization probe to `bicameral.diagnose` ([`cli/_diagnose_gather.py::_probe_row_deserialization`](cli/_diagnose_gather.py)), but the probe's findings stopped at the `suggestions` list — `_classify_recovery` in `handlers/diagnose.py` still inspected only `schema_meta.version`, so an agent that ran `diagnose` after a `link_commit` failure would see `recovery_path: "clean"` and `next_action: "No remediation needed."` while the ledger was actually unreadable.
