@@ -79,6 +79,14 @@ class AuditEventType(enum.StrEnum):
     # than blocked replay. The diagnose pipeline picks this up and surfaces
     # the upgrade hint.
     EVENT_REPLAY_SCHEMA_VIOLATION = "event_replay_schema_violation"
+    # #419 Phase 0b — per-source ingest + auth lifecycle. Emit sites are
+    # added by the per-source adapter phases (Phase 1 Linear onward); the
+    # vocabulary ships here so future PRs have a stable target.
+    SOURCE_INGEST_ATTEMPT = "source_ingest_attempt"
+    SOURCE_INGEST_ACCEPTED = "source_ingest_accepted"
+    SOURCE_INGEST_REFUSED = "source_ingest_refused"
+    SOURCE_AUTH_GRANTED = "source_auth_granted"
+    SOURCE_AUTH_REVOKED = "source_auth_revoked"
 
 
 _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
@@ -94,6 +102,14 @@ _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
     AuditEventType.LEDGER_VERSION_DRIFT: "warn",
     AuditEventType.SCHEMA_DEFINE_SKIPPED: "warn",
     AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION: "error",
+    # #419 Phase 0b — per-source ingest is high-volume / info-class.
+    # Refusals + auth lifecycle are warn-class (security-relevant or
+    # operator-actionable).
+    AuditEventType.SOURCE_INGEST_ATTEMPT: "info",
+    AuditEventType.SOURCE_INGEST_ACCEPTED: "info",
+    AuditEventType.SOURCE_INGEST_REFUSED: "warn",
+    AuditEventType.SOURCE_AUTH_GRANTED: "warn",
+    AuditEventType.SOURCE_AUTH_REVOKED: "warn",
 }
 
 _LEVEL_RANK = {"info": 10, "warn": 20, "error": 30}
