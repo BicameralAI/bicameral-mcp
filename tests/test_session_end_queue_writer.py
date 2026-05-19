@@ -41,6 +41,10 @@ def _run_writer(stdin_payload: str | bytes, cwd: Path) -> subprocess.CompletedPr
 def _make_repo(tmp_path: Path, with_bicameral: bool = True) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
+    # #368 Phase 2B-ii: transcript_queue delegates to the locator which
+    # requires a git repo. Init one so the locator can resolve the
+    # project-scoped pending-transcripts dir.
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     if with_bicameral:
         (repo / ".bicameral").mkdir()
     return repo
@@ -53,6 +57,8 @@ def _make_transcript(tmp_path: Path, content: str = '{"type":"user","text":"hi"}
 
 
 def test_writer_copies_transcript_to_pending_dir(tmp_path: Path) -> None:
+    from events.transcript_queue import _pending_root
+
     repo = _make_repo(tmp_path)
     src = _make_transcript(tmp_path, content='{"a":1}\n{"b":2}\n')
     payload = json.dumps({"session_id": "abc", "transcript_path": str(src), "cwd": str(repo)})
@@ -60,7 +66,7 @@ def test_writer_copies_transcript_to_pending_dir(tmp_path: Path) -> None:
     result = _run_writer(payload, cwd=repo)
 
     assert result.returncode == 0
-    dst = repo / ".bicameral" / "pending-transcripts" / "abc.jsonl"
+    dst = _pending_root(str(repo)) / "abc.jsonl"
     assert dst.is_file()
     assert dst.read_bytes() == src.read_bytes()
 
@@ -77,6 +83,8 @@ def test_writer_no_op_when_no_bicameral_dir(tmp_path: Path) -> None:
 
 
 def test_writer_no_op_when_transcript_missing(tmp_path: Path) -> None:
+    from events.transcript_queue import _pending_root
+
     repo = _make_repo(tmp_path)
     payload = json.dumps(
         {"session_id": "x", "transcript_path": str(tmp_path / "nope.jsonl"), "cwd": str(repo)}
@@ -85,21 +93,25 @@ def test_writer_no_op_when_transcript_missing(tmp_path: Path) -> None:
     result = _run_writer(payload, cwd=repo)
 
     assert result.returncode == 0
-    pending = repo / ".bicameral" / "pending-transcripts"
+    pending = _pending_root(str(repo))
     assert not pending.exists() or list(pending.iterdir()) == []
 
 
 def test_writer_handles_malformed_stdin(tmp_path: Path) -> None:
+    from events.transcript_queue import _pending_root
+
     repo = _make_repo(tmp_path)
 
     result = _run_writer("not json at all", cwd=repo)
 
     assert result.returncode == 0
-    pending = repo / ".bicameral" / "pending-transcripts"
+    pending = _pending_root(str(repo))
     assert not pending.exists() or list(pending.iterdir()) == []
 
 
 def test_writer_uses_uuid_when_session_id_missing(tmp_path: Path) -> None:
+    from events.transcript_queue import _pending_root
+
     repo = _make_repo(tmp_path)
     src = _make_transcript(tmp_path)
     payload = json.dumps({"transcript_path": str(src), "cwd": str(repo)})
@@ -107,7 +119,7 @@ def test_writer_uses_uuid_when_session_id_missing(tmp_path: Path) -> None:
     result = _run_writer(payload, cwd=repo)
 
     assert result.returncode == 0
-    pending = repo / ".bicameral" / "pending-transcripts"
+    pending = _pending_root(str(repo))
     files = list(pending.iterdir())
     assert len(files) == 1
     uuid_re = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$")
@@ -146,7 +158,8 @@ def test_archive_processed_moves_pending_to_processed(tmp_path: Path) -> None:
     assert dst.is_file()
     assert dst.name == "sess1.jsonl"
     assert dst.read_text(encoding="utf-8") == "payload-A"
-    assert dst.parent == repo / ".bicameral" / "processed-transcripts"
+    from events.transcript_queue import _processed_root
+    assert dst.parent == _processed_root(str(repo))
 
 
 def test_archive_processed_idempotent_on_replay(tmp_path: Path) -> None:
@@ -184,9 +197,11 @@ def test_transcript_archive_invokes_archive_processed(tmp_path: Path) -> None:
         timeout=15,
     )
 
+    from events.transcript_queue import _processed_root
+
     assert happy.returncode == 0, happy.stderr.decode("utf-8", errors="replace")
     assert not pending.exists()
-    archived = repo / ".bicameral" / "processed-transcripts" / "sess-cli.jsonl"
+    archived = _processed_root(str(repo)) / "sess-cli.jsonl"
     assert archived.is_file()
     assert archived.read_text(encoding="utf-8") == "archived-content"
 

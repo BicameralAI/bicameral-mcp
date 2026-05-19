@@ -299,9 +299,12 @@ async def _replay_events_into_ledger(ledger) -> int:
     if events_dir is None:
         return 0
 
-    local_dir = events_dir.parent / "local"
-    watermark_path = local_dir / "watermark"
-    local_dir.mkdir(parents=True, exist_ok=True)
+    # #368 Phase 2B-ii: watermark lives at the locator-resolved project
+    # dir. The locator's `_resolved_project_dir` mkdir's parent on first
+    # use via `assert_origin`, so no explicit mkdir needed here.
+    from ledger_locator import resolve_watermark_path
+
+    watermark_path = resolve_watermark_path()
     # Reset the watermark so every event replays from offset 0. The
     # materializer's offset map is `{author: byte_offset}`; writing an
     # empty object is the canonical "start over" signal.
@@ -309,7 +312,7 @@ async def _replay_events_into_ledger(ledger) -> int:
 
     from events.materializer import EventMaterializer
 
-    materializer = EventMaterializer(events_dir, local_dir)
+    materializer = EventMaterializer(events_dir)
     return await materializer.replay_new_events(inner)
 
 
