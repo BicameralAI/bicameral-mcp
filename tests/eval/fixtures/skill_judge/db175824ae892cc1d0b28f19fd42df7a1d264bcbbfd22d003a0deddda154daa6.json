@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "reliability"
+  ],
+  "reasoning": "The \"reliability\" feature contains a decision about transient downstream failures not surfacing as customer-visible errors, which directly describes behavior that a retry-with-backoff mechanism for outbound webhooks is designed to address."
+}

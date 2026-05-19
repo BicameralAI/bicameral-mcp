@@ -13,7 +13,7 @@ import logging
 import os
 from pathlib import Path
 
-from .client import LedgerClient
+from .client import LedgerClient, LedgerError
 from .queries import (
     create_code_region,
     decision_exists,
@@ -61,6 +61,7 @@ from .queries import (
     write_subject_version,
 )
 from .schema import (
+    ASSERT_VIOLATION_PATTERNS,
     SCHEMA_VERSION,
     DestructiveMigrationRequired,
     _write_wire_format_sentinel,
@@ -156,9 +157,49 @@ logger = logging.getLogger(__name__)
 
 
 def _default_db_url() -> str:
-    db_path = Path.home() / ".bicameral" / "ledger.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return f"surrealkv://{db_path}"
+    """Delegate to the Ledger Locator (#368 Phase 2B).
+
+    Kept as a single-line helper so tests can monkey-patch it directly
+    without reaching into ledger_locator. The locator honors SURREAL_URL
+    env override; the legacy `~/.bicameral/ledger.db` literal is gone.
+    """
+    from ledger_locator import resolve_ledger_url
+
+    return resolve_ledger_url()
+
+
+class EventReplaySchemaViolation(RuntimeError):
+    """Peer event carries a value the local schema ASSERT rejects (#405).
+
+    Raised loud — and the watermark is intentionally NOT advanced — so the
+    teammate sees an actionable upgrade hint at the next replay attempt
+    instead of a silently-incomplete ledger. Recovery is to upgrade the
+    binary so the schema understands the peer's value; the queued event is
+    re-replayed automatically on the next sync.
+    """
+
+    def __init__(
+        self,
+        *,
+        table: str,
+        field: str,
+        offending_value: str,
+        peer_pinned_commit: str = "",
+        ledger_error: str = "",
+    ) -> None:
+        self.table = table
+        self.field = field
+        self.offending_value = offending_value
+        self.peer_pinned_commit = peer_pinned_commit
+        self.ledger_error = ledger_error
+        super().__init__(
+            f"Peer event rejected by local schema: {table}.{field}={offending_value!r} "
+            "is not in the local ASSERT enum. Your bicameral-mcp binary is older "
+            "than the peer that produced this event. Upgrade with "
+            "`pipx upgrade bicameral-mcp` (or `bicameral.update {action: 'apply'}`) "
+            "and re-run sync — the queued event will replay automatically. "
+            f"Underlying SurrealDB error: {ledger_error}"
+        )
 
 
 _STATUS_PRIORITY = {"drifted": 3, "reflected": 2, "pending": 1, "ungrounded": 0}
@@ -1617,19 +1658,55 @@ class SurrealDBLedgerAdapter:
         authoritative.
         """
         await self._ensure_connected()
-        await upsert_compliance_check(
-            self._client,
-            decision_id=decision_id,
-            region_id=region_id,
-            content_hash=content_hash,
-            verdict=verdict,
-            confidence="high",
-            explanation=evidence,
-            phase="drift",
-            commit_hash=pinned_commit,
-            pruned=(verdict == "not_relevant"),
-            ephemeral=False,
-        )
+        try:
+            await upsert_compliance_check(
+                self._client,
+                decision_id=decision_id,
+                region_id=region_id,
+                content_hash=content_hash,
+                verdict=verdict,
+                confidence="high",
+                explanation=evidence,
+                phase="drift",
+                commit_hash=pinned_commit,
+                pruned=(verdict == "not_relevant"),
+                ephemeral=False,
+            )
+        except LedgerError as exc:
+            # #405 — peer wrote a value our schema ASSERT rejects (e.g. a
+            # newer binary's verdict='partial' replayed into a v24 ledger).
+            # ASSERT_VIOLATION_PATTERNS (ledger/schema.py) centralizes the
+            # SurrealDB ASSERT-failure substrings so an SDK bump that
+            # changes the phrasing breaks ONE constant + its paired
+            # regression test, not this call site. Loud-fail here so the
+            # materializer's watermark advance never runs (next sync
+            # retries the same offset) and the diagnose pipeline surfaces
+            # the upgrade hint via the audit log.
+            msg_lower = str(exc).lower()
+            if not any(p in msg_lower for p in ASSERT_VIOLATION_PATTERNS):
+                raise
+            msg = str(exc)
+            try:
+                from audit_log import AuditEventType
+                from audit_log import emit as audit_emit
+
+                audit_emit(
+                    AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION,
+                    message="peer event carries value local schema does not accept",
+                    table="compliance_check",
+                    field="verdict",
+                    offending_value=verdict,
+                    peer_pinned_commit=pinned_commit,
+                )
+            except Exception:  # noqa: BLE001 — audit MUST NOT mask the underlying error
+                pass
+            raise EventReplaySchemaViolation(
+                table="compliance_check",
+                field="verdict",
+                offending_value=verdict,
+                peer_pinned_commit=pinned_commit,
+                ledger_error=msg,
+            ) from exc
 
     async def apply_ratify(self, decision_id: str, signoff: dict) -> str:
         """Write a ratify/reject signoff and re-project the decision's status.

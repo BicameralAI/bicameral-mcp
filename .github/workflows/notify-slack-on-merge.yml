@@ -1,0 +1,114 @@
+name: Slack — Linked decisions on dev merge
+
+# Fires on every PR-merge into `dev`. Extracts the `## Linked decisions`
+# section from the PR body and posts it to the configured Slack incoming
+# webhook. Skips silently when the section is absent or empty — no noise
+# on docs / chore / dependabot PRs.
+#
+# Companion to the native Slack GitHub integration (which posts basic
+# merge events). This workflow adds the decision-grounding view that
+# the native integration can't surface (it's template-locked).
+#
+# Pairs with DEV_CYCLE.md §4.3 "Linked decisions" section requirement
+# and decision:0ok1249n2tdrfud2a5j9 (triage eligibility) — once a PR
+# merges with a Linked decisions block, the team sees in Slack which
+# decisions just landed in code on dev.
+#
+# SECURITY: PR body is contributor-controlled text. We parse it inside
+# actions/github-script (Node sandbox), NEVER shell-interpolate via
+# `${{ github.event.pull_request.body }}` in a bash run-step. The same
+# audit lesson as #114 (see pr-body-refs-lint.yml's module docstring).
+#
+# Note: pull_request workflows execute the version of this file on the
+# base branch. First execution will be on the next qualifying merge
+# after THIS PR itself lands on dev.
+
+on:
+  pull_request:
+    branches: [dev]
+    types: [closed]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  notify:
+    name: Post Linked decisions to Slack
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true
+    steps:
+      - name: Extract and post
+        uses: actions/github-script@v7
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_MERGE_NOTIFY_WEBHOOK }}
+        with:
+          script: |
+            const webhook = process.env.SLACK_WEBHOOK;
+            if (!webhook) {
+              core.warning(
+                "SLACK_MERGE_NOTIFY_WEBHOOK secret is not set — " +
+                "skipping post. Configure at " +
+                "repo Settings -> Secrets and variables -> Actions."
+              );
+              return;
+            }
+
+            const pr = context.payload.pull_request;
+            const body = pr.body || "";
+
+            // Extract the `## Linked decisions` section. We anchor on
+            // the literal heading at line start (m flag), then take
+            // everything up to the next `^## ` heading or end of body.
+            const startRegex = /^## Linked decisions\s*$/m;
+            const startMatch = body.match(startRegex);
+            if (!startMatch) {
+              core.info(
+                `PR #${pr.number} has no '## Linked decisions' section; ` +
+                "skipping post."
+              );
+              return;
+            }
+            const startIdx = startMatch.index + startMatch[0].length;
+            const rest = body.slice(startIdx);
+            const endMatch = rest.match(/^## /m);
+            const sectionRaw = endMatch ? rest.slice(0, endMatch.index) : rest;
+            const section = sectionRaw.trim();
+
+            if (!section) {
+              core.info(
+                `PR #${pr.number} has an empty 'Linked decisions' ` +
+                "section; skipping post."
+              );
+              return;
+            }
+
+            // Build the Slack mrkdwn payload. Title and section go in
+            // as JS strings, then JSON.stringify escapes them safely.
+            const text = [
+              `*PR #${pr.number} merged to \`dev\`* — ${pr.title}`,
+              "",
+              "*Linked decisions:*",
+              section,
+              "",
+              `<${pr.html_url}|view PR>`,
+            ].join("\n");
+
+            const response = await fetch(webhook, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ text }),
+            });
+
+            if (!response.ok) {
+              const errText = await response.text();
+              core.setFailed(
+                `Slack post failed: ${response.status} ${response.statusText} — ${errText}`
+              );
+              return;
+            }
+
+            core.info(
+              `Posted Linked decisions for PR #${pr.number} to Slack ` +
+              `(${section.length} chars in section).`
+            );

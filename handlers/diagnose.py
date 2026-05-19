@@ -132,19 +132,28 @@ def _classify_recovery(diagnosis) -> tuple[RecoveryPath, str]:
     if row_warnings:
         path: RecoveryPath = "reset_rebuild" if has_events else "reset_destructive"
         tables = ", ".join(sorted({w.split(":", 1)[0] for w in row_warnings}))
+        replay_flag = " --replay-from-events" if has_events else ""
         return path, (
             f"Row-level deserialization warnings on {tables} — likely a "
-            "SurrealDB embedded-SDK record-format mismatch. Run "
+            "SurrealDB embedded-SDK record-format mismatch. Recover via shell "
+            "(reachable even when the MCP `bicameral_reset` tool is gated, "
+            "#410):\n"
+            f"  `bicameral-mcp reset --confirm --wipe-mode=ledger{replay_flag}`\n"
+            "MCP equivalent: "
             f"`bicameral_reset(wipe_mode='ledger', replay_from_events={has_events}, "
-            "confirm=True)` to wipe and replay from .bicameral/events/."
+            "confirm=True)`."
         )
 
     if rec is not None and rec > exp:
         path = "reset_rebuild" if has_events else "reset_destructive"
+        replay_flag = " --replay-from-events" if has_events else ""
         return path, (
             f"Ledger schema v{rec} is newer than this binary (v{exp}). "
             f"Upgrade `bicameral-mcp` to a version that understands v{rec}, "
-            f"or run `bicameral_reset(replay_from_events={has_events}, confirm=True)`."
+            f"or recover via shell:\n"
+            f"  `bicameral-mcp reset --confirm --wipe-mode=ledger{replay_flag}`\n"
+            f"MCP equivalent: "
+            f"`bicameral_reset(replay_from_events={has_events}, confirm=True)`."
         )
 
     if rec is not None and rec < exp:

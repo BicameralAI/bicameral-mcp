@@ -40,7 +40,7 @@ def _payload(intent: str, source_ref: str) -> dict:
 def _build(events_dir: Path, local_dir: Path, author: str, remote_root: Path) -> TeamWriteAdapter:
     inner = SurrealDBLedgerAdapter(url="memory://")
     writer = EventFileWriter(events_dir, author)
-    materializer = EventMaterializer(events_dir, local_dir)
+    materializer = EventMaterializer(events_dir, watermark_override=local_dir / "watermark")
     backend = LocalFolderAdapter(remote_root=remote_root, author=author)
     return TeamWriteAdapter(inner, writer, materializer, backend=backend)
 

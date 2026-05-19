@@ -78,6 +78,21 @@ jobs:
             -v --tb=short \
             --junitxml=test-results/preflight-skill-eval.xml
 
+      # Phase 2b: Step-0 invocation eval (#306 Part B). Tests the
+      # upstream decision the Phase-2 relevance eval can't see — given a
+      # handler-empty preflight result, does the agent elect to call
+      # bicameral.history() before submitting? Same cache discipline as
+      # Phase 2; rows skip cleanly without API key + cache.
+      - name: Phase 2b — Step-0 invocation eval (LLM-in-the-loop)
+        id: phase2b
+        continue-on-error: true
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pytest tests/eval/run_preflight_skill_invocation_eval.py \
+            -v --tb=short \
+            --junitxml=test-results/preflight-skill-invocation-eval.xml
+
       # Phase 3: §C cost/latency baseline. Asymmetric ±20% regression rule
       # against committed baselines in tests/eval/cost_baseline.jsonl, with
       # noise floors (10 tokens / 0.5ms) below which deltas are dismissed

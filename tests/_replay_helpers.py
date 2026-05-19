@@ -264,7 +264,7 @@ async def replay_substrate(
         path = events_dir / f"{author}.jsonl"
         with open(path, "ab") as f:
             f.write(build_event_log(events, author))
-    materializer = EventMaterializer(events_dir, local_dir)
+    materializer = EventMaterializer(events_dir, watermark_override=local_dir / "watermark")
     return await materializer.replay_new_events(adapter)
 
 

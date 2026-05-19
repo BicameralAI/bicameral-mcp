@@ -2785,3 +2785,87 @@ Same pattern as prior entries (#28, #33, #36, #41, #43–#49):
 ---
 *Chain integrity: VALID (50 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48) → team-server tier v1 RESEARCH (#49) → R1 limitation remediation RESEARCH (#50)*
+
+---
+
+### Entry #51: GATE TRIBUNAL — Ledger Locator R4 (#368)
+
+**Timestamp**: 2026-05-18T23:34:00Z
+**Phase**: audit (R4)
+**Plan target**: `thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md` (revision 4)
+**Auditor**: The Judge (solo mode; `codex-plugin` capability shortfall logged)
+**Verdict**: **VETO**
+**Risk grade**: L2
+**Findings categories**: `infrastructure-mismatch` (2), `coverage-gap` (1)
+**Gate artifact**: `.qor/gates/2026-05-18T2334-r4audit/audit.json`
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+
+**Findings summary**:
+- V1 (infrastructure-mismatch): Phase 2 cites `_edit_config_interactive` at `setup_wizard.py:1817` but actual function is `run_config_wizard`.
+- V2 (infrastructure-mismatch): `context.py` reader line numbers stale by 1-7; `412-429` cited as reader is a `BicameralContext` dataclass field block; actual reader count is 10 not 9.
+- V3 (coverage-gap): R4 test list omits (a) solo-mode short-circuit in `run_setup`, (b) `run_config_wizard` two-pane editor changes.
+
+**Required next action**: Governor amends plan text to fix V1, V2, V3; re-run `/qor-audit` for R4-bis.
+
+All three findings classify as **Plan-text** per `qor/references/doctrine-audit-report-language.md` — no `/qor-debug` invocation.
+
+---
+
+### Entry #52: GATE TRIBUNAL — Ledger Locator R4-bis (#368)
+
+**Timestamp**: 2026-05-18T23:38:00Z
+**Phase**: audit (R4-bis re-audit)
+**Plan target**: `thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md` (revision 4-bis)
+**Auditor**: The Judge (solo mode)
+**Verdict**: **PASS**
+**Risk grade**: L2
+**Cleared findings**: V1 (function name fixed), V2 (context.py reader lines + count corrected, 412-429 dropped), V3 (3 new functional tests added)
+**Gate artifact**: `.qor/gates/2026-05-18T2338-r4bis/audit.json`
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+
+**Open advisories** (non-VETO, carry forward):
+- Section 4 razor: `_write_collaboration_config` may grow past 40 lines under two-file split; pre-emptive helper split recommended.
+- Documentation drift: `docs/architecture/ledger-locator.md` (declared in plan frontmatter) does not yet exist; hard-blocks at `/qor-substantiate`, not at `/qor-audit`.
+
+**Required next action**: Governor proceeds to `/qor-implement` against R4-bis PASS.
+
+---
+
+### Entry #53: GATE TRIBUNAL — Ledger equality key indexes for symbol.name + vocab_cache.(query_text, repo)
+
+**Timestamp**: 2026-05-19T06:20:00Z
+**Phase**: audit
+**Plan target**: `thoughts/shared/plans/2026-05-18-ledger-equality-key-indexes.md`
+**Plan hash**: `sha256:0c739952c05c68ea5b281467ba34962040a78baf93bde9d2d7e636bbfb676294`
+**Auditor**: The Judge (solo mode — codex-plugin capability shortfall logged)
+**Infrastructure**: qor/ Python package not installed in this worktree; gate artifact emission skipped, verdict stands on report content
+**Verdict**: **VETO**
+**Risk grade**: L1
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+**Audit report hash**: `sha256:0574c1959663140cf16955362070d18ac637df88e201a2ac2cf540a9694ec05c`
+
+**Findings summary**:
+- V1 (test-failure): `test_v25_migration_defines_both_lookup_indexes` description hedges the observation mechanism (`INFO FOR TABLE` returns empty in embedded mode per `pilot/mcp/CLAUDE.md`; "or the SurrealDB v2 equivalent path" is unspecified). Per `qor/references/doctrine-test-functionality.md` and SG-035, the test must commit to a verification mechanism that fails when `_migrate_v24_to_v25` is silently broken.
+
+All other passes (Security L3, OWASP Top 10, Ghost UI, Razor, Dependency, Macro-Level Architecture, Infrastructure Alignment, Orphan Detection) returned no findings. The veto is narrow — one test description.
+
+**Required next action**: Governor amends the plan's Phase 1 Unit Tests section to either (a) commit to `EXPLAIN`-based query-plan inspection asserting the new lookup index is referenced, or (b) replace the index-existence test with a perf-budget assertion that fails loudly when the index is absent. Re-run `/qor-audit` after amendment. Classifies as **Plan-text** per `qor/references/doctrine-audit-report-language.md` — no `/qor-debug` invocation.
+
+---
+
+### Entry #53-R2: GATE TRIBUNAL — Ledger equality key indexes (re-audit after V1 remediation)
+
+**Timestamp**: 2026-05-19T06:30:00Z
+**Phase**: audit (R2)
+**Plan target**: `thoughts/shared/plans/2026-05-18-ledger-equality-key-indexes.md`
+**Plan hash**: `sha256:c615a74e4e6bfce81593ea830d7685b5a6926d0af4d5031b8ba3d1cdab912449` (was `sha256:0c739952...`)
+**Auditor**: The Judge (solo mode)
+**Verdict**: **PASS**
+**Risk grade**: L1
+**Cleared findings**: V1 (test mechanism committed to SurrealDB 2.x trailing `EXPLAIN` modifier; empirically validated against `memory://` adapter — pre-migration plans to `Iterate Table`, post-migration plans to `Iterate Index` with the new index name in `detail.index`)
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+**Audit report hash**: `sha256:231aaf3d36899fbc7c790f70de5d6f8a100eb79b58ec4a8aac5072ffade8f182`
+
+**Mechanism verification recorded** (R2-specific): the Judge ran `SELECT * FROM symbol WHERE name = 'x' EXPLAIN` and `SELECT * FROM symbol WHERE file_path = 'x' EXPLAIN` against a live `memory://` SurrealDB on the audit branch. The first returned `Iterate Table` (today's bug); the second returned `Iterate Index` with `detail.index = "idx_sym_file"`. The mechanism is deterministic, embedded-mode-compatible, and the amended tests will fail loudly if `_migrate_v24_to_v25` is silently broken.
+
+**Required next action**: Governor proceeds to `/qor-implement` against R2 PASS.

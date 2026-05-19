@@ -38,7 +38,7 @@ def _build_team_adapter(
     """Wire up an in-memory inner adapter + JSONL event log + materializer."""
     inner = SurrealDBLedgerAdapter(url="memory://")
     writer = EventFileWriter(events_dir, author)
-    materializer = EventMaterializer(events_dir, local_dir)
+    materializer = EventMaterializer(events_dir, watermark_override=local_dir / "watermark")
     return TeamWriteAdapter(inner, writer, materializer), inner
 
 
@@ -433,13 +433,15 @@ async def test_compliance_event_replay_writes_compliance_check_row(tmp_path: Pat
         code_graph=None,
         drift_analyzer=None,
     )
+    # #405 — never-compliant region must use 'partial', not 'drifted'.
+    # The replay path is verdict-agnostic; the label change is incidental.
     v = ComplianceVerdict(
         decision_id=decision_id_a,
         region_id=region_id_a,
         content_hash="sha256:beef0001",
-        verdict="drifted",
+        verdict="partial",
         confidence="high",
-        explanation="real drift",
+        explanation="anticipatory binding — not yet implemented",
     )
     await handle_resolve_compliance(ctx_a, phase="drift", verdicts=[v], commit_hash=ctx_a.head_sha)
 
@@ -463,8 +465,8 @@ async def test_compliance_event_replay_writes_compliance_check_row(tmp_path: Pat
         {"did": decision_id_b},
     )
     assert rows, "compliance_check.completed did not replay — no compliance_check row on B"
-    assert rows[0].get("verdict") == "drifted", (
-        f"replayed verdict should be 'drifted'; got {rows[0].get('verdict')!r}"
+    assert rows[0].get("verdict") == "partial", (
+        f"replayed verdict should be 'partial'; got {rows[0].get('verdict')!r}"
     )
 
 

@@ -63,6 +63,29 @@ The server will:
 
 Then list `migration_replay_plan` entries and ask: "Re-ingest now? (yes/no)"
 
+## Step 3.5 — Migrate state layout (v0.16 onwards, #368)
+
+After `bicameral.update(action="apply", ...)` returns successfully and BEFORE
+reporting "update complete", run:
+
+```
+bicameral-mcp migrate-state --auto
+```
+
+via a Bash tool call. This relocates any pre-v0.16 ledger / code-graph /
+bm25 / watermark / transcript-queue files out of `<repo>/.bicameral/` into
+`~/.bicameral/projects/<id>/` and partitions pre-R4 `config.yaml` keys into
+the team file and the operator file. The command is idempotent — on a
+fresh-install repo it prints `Nothing to migrate.` and exits 0; on a
+previously-installed repo it surfaces the planned moves before applying.
+
+If the binary exits non-zero:
+1. Surface the stderr verbatim to the user.
+2. Abort Step 4 — do NOT report "update complete."
+3. Tell the user the new binary is installed but state is in a mixed
+   layout; offer to run `bicameral-mcp migrate-state --dry-run --auto` so
+   they can see what the migration would do.
+
 ## Step 4 — Confirm success
 
 Report: `bicameral-mcp updated to v{recommended_version}. {skills_updated} skill(s) reinstalled.`

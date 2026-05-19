@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "orders"
+  ],
+  "reasoning": "The \"orders\" feature contains a decision about archiving cancelled orders (not erasing them) for audit purposes, which directly describes the behavior that soft delete for cancelled orders will implement."
+}

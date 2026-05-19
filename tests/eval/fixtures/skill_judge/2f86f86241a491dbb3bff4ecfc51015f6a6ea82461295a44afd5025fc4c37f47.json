@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "performance"
+  ],
+  "reasoning": "The Redis cache warming step in the deploy pipeline directly relates to performance decisions — warming the cache ensures fast page loads, which ties to the p95 latency requirement for logged-in users described in the performance feature group."
+}

@@ -133,10 +133,15 @@ class LedgerDeserializationError(LedgerError):
 
     RECOVERY_HINT = (
         "Row-level deserialization failed — likely a SurrealDB embedded SDK "
-        "revision mismatch on persisted rows. Run "
-        "`bicameral_reset(wipe_mode='ledger', replay_from_events=True, "
-        "confirm=True)` to wipe and replay from .bicameral/events/, or "
-        "`bicameral-mcp diagnose` for a full report."
+        "revision mismatch on persisted rows. Recover via the shell (works "
+        "even when the MCP `bicameral_reset` tool isn't reachable in this "
+        "session, #410):\n"
+        "  `bicameral-mcp reset --confirm --wipe-mode=ledger --replay-from-events`\n"
+        "or, if the DB is fully unreadable:\n"
+        "  `bicameral-mcp reset --confirm --wipe-mode=full`\n"
+        "MCP equivalent: `bicameral_reset(wipe_mode='ledger', "
+        "replay_from_events=True, confirm=True)`. "
+        "Run `bicameral-mcp diagnose` first for a full report."
     )
 
     def __init__(self, *, raw: str, sql_prefix: str) -> None:

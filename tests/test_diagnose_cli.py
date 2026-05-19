@@ -61,22 +61,57 @@ def test_diagnose_main_emits_all_required_sections(monkeypatch, capsys):
         assert header in out
 
 
-def test_diagnose_main_returns_one_on_adapter_connect_failure(monkeypatch, capsys):
+def test_diagnose_main_returns_one_on_raw_client_connect_failure(monkeypatch, capsys):
+    """#410: CLI diagnose now uses a raw LedgerClient (no init_schema/migrate),
+    so the failure surface is ``LedgerClient.connect``, not the adapter. The
+    error envelope must still surface a recovery path that the agent can act
+    on without an MCP session."""
     monkeypatch.setenv("SURREAL_URL", "ws://invalid-host-no-such-server:99999")
 
-    # Force a connect failure by patching the adapter to raise on connect.
-    from ledger import adapter as adapter_mod
+    from ledger import client as client_mod
 
-    class _BoomAdapter(adapter_mod.SurrealDBLedgerAdapter):
-        async def connect(self):
-            raise RuntimeError("synthetic connect failure")
+    async def _boom(self):
+        raise RuntimeError("synthetic connect failure")
 
-    monkeypatch.setattr(adapter_mod, "SurrealDBLedgerAdapter", _BoomAdapter)
+    monkeypatch.setattr(client_mod.LedgerClient, "connect", _boom)
 
     from cli.diagnose import main
 
     rc = main()
     captured = capsys.readouterr()
     assert rc == 1
-    assert "adapter connect failed" in captured.out
+    assert "raw client connect failed" in captured.out
     assert "synthetic connect failure" in captured.out
+    # Recovery hint must surface the now-callable CLI form (#410).
+    assert "bicameral-mcp reset --confirm" in captured.out
+
+
+def test_diagnose_main_cli_does_not_use_adapter_path(monkeypatch, capsys):
+    """#410 regression: the CLI must NOT route through SurrealDBLedgerAdapter
+    (which runs init_schema/migrate). If the adapter were used here, a
+    corrupted DefineTableStatement on disk would crash the bug-report tool
+    in exactly the moment it's needed.
+
+    We assert this structurally: patch the adapter's connect to blow up and
+    confirm diagnose still returns 0 against a fresh memory:// ledger.
+    """
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+
+    from ledger import adapter as adapter_mod
+
+    async def _adapter_should_not_be_called(self):
+        raise AssertionError(
+            "cli.diagnose must not use SurrealDBLedgerAdapter — it should "
+            "open a raw LedgerClient that skips init_schema/migrate (#410)."
+        )
+
+    monkeypatch.setattr(
+        adapter_mod.SurrealDBLedgerAdapter, "connect", _adapter_should_not_be_called
+    )
+
+    from cli.diagnose import main
+
+    rc = main()
+    captured = capsys.readouterr()
+    assert rc == 0, captured.out
+    assert "## Versions" in captured.out

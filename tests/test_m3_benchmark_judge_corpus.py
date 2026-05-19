@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "fixtures" / "m3_benchmark"))
 from cases import CASES  # noqa: E402
 
-_VALID_VERDICTS = {"compliant", "drifted", "not_relevant"}
+_VALID_VERDICTS = {"compliant", "drifted", "not_relevant", "partial"}
 _VALID_SEMANTIC_STATUSES = {"semantically_preserved", "semantic_change", None}
 
 
