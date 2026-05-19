@@ -58,29 +58,44 @@ async def test_backfill_rewrites_never_compliant_drifted_to_partial():
     try:
         # Pair A — has a prior compliant row, so its drifted is a real regression.
         await _seed_check(
-            c, decision_id="decision:a", region_id="code_region:a",
-            content_hash="hash_a1", verdict="compliant",
+            c,
+            decision_id="decision:a",
+            region_id="code_region:a",
+            content_hash="hash_a1",
+            verdict="compliant",
         )
         await _seed_check(
-            c, decision_id="decision:a", region_id="code_region:a",
-            content_hash="hash_a2", verdict="drifted",
+            c,
+            decision_id="decision:a",
+            region_id="code_region:a",
+            content_hash="hash_a2",
+            verdict="drifted",
         )
 
         # Pair B — only drifted rows, never compliant. Two of them at distinct
         # hashes (so the UNIQUE cache-key index doesn't reject the second).
         await _seed_check(
-            c, decision_id="decision:b", region_id="code_region:b",
-            content_hash="hash_b1", verdict="drifted",
+            c,
+            decision_id="decision:b",
+            region_id="code_region:b",
+            content_hash="hash_b1",
+            verdict="drifted",
         )
         await _seed_check(
-            c, decision_id="decision:b", region_id="code_region:b",
-            content_hash="hash_b2", verdict="drifted",
+            c,
+            decision_id="decision:b",
+            region_id="code_region:b",
+            content_hash="hash_b2",
+            verdict="drifted",
         )
 
         # Pair C — never-compliant, only drifted (single row).
         await _seed_check(
-            c, decision_id="decision:c", region_id="code_region:c",
-            content_hash="hash_c1", verdict="drifted",
+            c,
+            decision_id="decision:c",
+            region_id="code_region:c",
+            content_hash="hash_c1",
+            verdict="drifted",
         )
 
         # Re-run the v25 migration directly (the version bump already ran via
@@ -126,8 +141,11 @@ async def test_backfill_is_idempotent():
     c = await _fresh_client(ns="backfill_idempotent")
     try:
         await _seed_check(
-            c, decision_id="decision:idem", region_id="code_region:idem",
-            content_hash="hash_only", verdict="drifted",
+            c,
+            decision_id="decision:idem",
+            region_id="code_region:idem",
+            content_hash="hash_only",
+            verdict="drifted",
         )
 
         await _migrate_v24_to_v25(c)  # first pass — converts to partial
@@ -150,8 +168,11 @@ async def test_partial_verdict_accepted_by_extended_assert():
     try:
         # No exception — the extended enum accepts 'partial'.
         await _seed_check(
-            c, decision_id="decision:p", region_id="code_region:p",
-            content_hash="hash_p", verdict="partial",
+            c,
+            decision_id="decision:p",
+            region_id="code_region:p",
+            content_hash="hash_p",
+            verdict="partial",
         )
         rows = await c.query("SELECT verdict FROM compliance_check")
         assert rows[0]["verdict"] == "partial"
