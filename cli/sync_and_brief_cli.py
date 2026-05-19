@@ -204,7 +204,17 @@ async def _run_source(ctx: Any, source: dict, *, watermark_dir: Path) -> None:
 
     try:
         for payload in payloads:
-            await handle_ingest(ctx, payload, source_scope=source_type, cursor=adapter.name)
+            # #418 Phase 0a: passive caller — soft gates WARN+DLQ+continue so
+            # a single bad item from the source doesn't halt the poller. Hard
+            # gates (secret/PHI/PAN/malformed) still raise; the except below
+            # catches them and refuses to advance the watermark.
+            await handle_ingest(
+                ctx,
+                payload,
+                source_scope=source_type,
+                cursor=adapter.name,
+                ingest_mode="passive",
+            )
     except Exception as exc:  # noqa: BLE001
         # Ingest failure: do NOT advance watermark.
         print(

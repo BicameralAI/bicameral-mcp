@@ -564,6 +564,15 @@ class IngestStats(BaseModel):
     grounded_pct: float = 0.0
     grounding_deferred: int = 0
     cache_hits: int = 0
+    # #418 Phase 0a: passive-mode soft-gate refusals routed to the DLQ
+    # rather than raised. Empty dict on every active-mode call and on
+    # successful passive calls. Populated only when ``ingest_mode="passive"``
+    # and a soft gate (``size_limit_exceeded`` / ``rate_limit_exceeded`` /
+    # ``injection_canary_match``) fires — keyed by the gate's refusal reason,
+    # value is the count routed to DLQ in this call (currently always 1
+    # since handle_ingest takes a single payload; dict shape is forward-
+    # compatible with future batched ingest).
+    dlqd_count: dict[str, int] = {}
 
 
 class ContextForCandidate(BaseModel):
