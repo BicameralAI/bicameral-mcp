@@ -472,7 +472,16 @@ class ShadowMode(StrEnum):
 # overlap, Java annotation/wildcard handling, C# nested-class qualified
 # names). Stage D/E flips do NOT apply to these three languages.
 _SHADOW_MODES: dict[str, ShadowMode] = {
-    "python": ShadowMode.WALKER_ONLY,
+    # #399 Stage D (Python): flipped from WALKER_ONLY → SHADOW_SUBSTRATE
+    # on 2026-05-19. Walker stays authoritative; substrate runs silently
+    # alongside and divergence lands in ~/.bicameral/m_shadow_divergence.jsonl.
+    # Observation window: ≥2 weeks of dev telemetry. If zero
+    # "substrate-subset" events (the forbidden direction the parity gate
+    # already enforces in CI), advance to ShadowMode.SHADOW_WALKER per
+    # Stage E. If any "substrate-subset" surfaces, revert THIS LINE in a
+    # one-line PR — the substrate has a real-world gap the CI corpus
+    # didn't catch, file an issue with the divergence event payload.
+    "python": ShadowMode.SHADOW_SUBSTRATE,
     "javascript": ShadowMode.WALKER_ONLY,
     "jsx": ShadowMode.WALKER_ONLY,
     "typescript": ShadowMode.WALKER_ONLY,
