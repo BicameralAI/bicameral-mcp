@@ -163,3 +163,77 @@ def test_resolve_operator_config_path_stable_across_worktrees(
     primary_op = ledger_locator.resolve_operator_config_path(repo_path=git_repo)
     secondary_op = ledger_locator.resolve_operator_config_path(repo_path=worktree)
     assert primary_op == secondary_op
+
+
+def test_resolves_derived_state_paths_under_project_dir(git_repo: Path) -> None:
+    """R3 (#368): bm25 index, watermark, and transcript queues all share
+    the same project dir as code-graph.db (one project, one bag of state).
+    """
+    import ledger_locator
+
+    code_graph = ledger_locator.resolve_code_graph_path(repo_path=git_repo)
+    bm25 = ledger_locator.resolve_bm25_index_path(repo_path=git_repo)
+    watermark = ledger_locator.resolve_watermark_path(repo_path=git_repo)
+    pending = ledger_locator.resolve_pending_transcripts_dir(repo_path=git_repo)
+    processed = ledger_locator.resolve_processed_transcripts_dir(repo_path=git_repo)
+
+    project_dir = code_graph.parent
+    assert bm25 == project_dir / "bm25_index.pkl"
+    assert watermark == project_dir / "watermark"
+    assert pending == project_dir / "pending-transcripts"
+    assert processed == project_dir / "processed-transcripts"
+
+
+def test_derived_state_paths_stable_across_worktrees(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    """R3: derived-state paths must be identical across worktrees of one
+    project (this is the whole point of project-scoping them).
+    """
+    import ledger_locator
+
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-q", "-m", "init"], cwd=git_repo, check=True
+    )
+    worktree = tmp_path / "wt2"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "--detach", str(worktree)],
+        cwd=git_repo,
+        check=True,
+    )
+
+    for resolver in (
+        "resolve_bm25_index_path",
+        "resolve_watermark_path",
+        "resolve_pending_transcripts_dir",
+        "resolve_processed_transcripts_dir",
+    ):
+        fn = getattr(ledger_locator, resolver)
+        assert fn(repo_path=git_repo) == fn(repo_path=worktree), resolver
+
+
+def test_derived_state_paths_have_no_env_override(
+    git_repo: Path, monkeypatch
+) -> None:
+    """R3: derived-state paths are NOT user-overridable per call (unlike
+    ledger.db via SURREAL_URL and code-graph.db via CODE_LOCATOR_SQLITE_DB).
+    Setting unrelated overrides must not leak into these paths.
+    """
+    import ledger_locator
+
+    # Simulate an env where ledger + code-graph are overridden — derived
+    # state paths still resolve to the project dir, not anywhere else.
+    monkeypatch.setenv("SURREAL_URL", "memory://")
+    monkeypatch.setenv("CODE_LOCATOR_SQLITE_DB", "/tmp/x.db")
+
+    project_dir = ledger_locator.project_dir_for(repo_path=git_repo)
+    assert ledger_locator.resolve_bm25_index_path(repo_path=git_repo).parent == project_dir
+    assert ledger_locator.resolve_watermark_path(repo_path=git_repo).parent == project_dir
+    assert (
+        ledger_locator.resolve_pending_transcripts_dir(repo_path=git_repo).parent
+        == project_dir
+    )
+    assert (
+        ledger_locator.resolve_processed_transcripts_dir(repo_path=git_repo).parent
+        == project_dir
+    )
