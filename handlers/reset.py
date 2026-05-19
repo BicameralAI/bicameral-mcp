@@ -103,9 +103,9 @@ async def handle_reset(
     ]
 
     ledger_url = _resolve_ledger_url(ctx, ledger)
-    bicameral_dir = _resolve_bicameral_dir(ledger) if wipe_mode == "full" else ""
+    bicameral_dir = _resolve_bicameral_dir(ledger, ctx.repo_path) if wipe_mode == "full" else ""
 
-    events_on_disk = _count_events_on_disk(ledger) if replay_from_events else 0
+    events_on_disk = _count_events_on_disk(ctx.repo_path) if replay_from_events else 0
 
     if not confirm:
         if wipe_mode == "full":
@@ -158,7 +158,7 @@ async def handle_reset(
 
     try:
         if wipe_mode == "full":
-            bicameral_dir = await _wipe_bicameral_dir(ledger)
+            bicameral_dir = await _wipe_bicameral_dir(ledger, ctx.repo_path)
         else:
             await _wipe_ledger(ledger, ctx.repo_path)
     except Exception as exc:
@@ -190,7 +190,7 @@ async def handle_reset(
     replay_errors: list[str] = []
     if replay_from_events and wipe_mode != "full":
         try:
-            events_replayed = await _replay_events_into_ledger(ledger)
+            events_replayed = await _replay_events_into_ledger(ctx.repo_path, ledger)
         except Exception as exc:  # noqa: BLE001 — surface failure but keep wipe done
             logger.exception("[reset] replay_from_events failed: %s", exc)
             replay_errors.append(f"replay_from_events failed: {exc}")
@@ -242,35 +242,48 @@ async def handle_reset(
 # ── Wipe implementations ─────────────────────────────────────────────
 
 
-def _resolve_events_dir(ledger) -> Path | None:
-    """Return ``.bicameral/events/`` for the resolved ledger URL, or None
-    when the ledger is in-memory or the directory does not exist.
+def _resolve_events_dir(repo_path: str | None = None) -> Path | None:
+    """Return the repo-scoped events directory, or None when no
+    on-disk substrate exists.
 
-    Honours ``BICAMERAL_DATA_PATH`` symmetrically with
-    ``adapters/ledger.py:_real_ledger_instance`` so `replay_from_events`
-    targets the same substrate the team-mode write path uses.
+    Events are the canonical SOURCE for the ledger and live in the
+    REPO (committed to git pre-#373, pushed to the configured remote
+    backend post-#373). They are NOT user-local state — that bucket
+    is the locator's domain (ledger.db, code-graph, bm25, watermark,
+    transcript queues, operator.yaml). Conflating the two was the
+    root cause of the pre-#410 silent zero-replay regression: the
+    old resolver inverted the locator-resolved ledger URL to derive
+    the events dir, which only worked while ledger and events shared
+    a parent. Once R4 moved the ledger out from under the repo, the
+    inverse silently pointed at an empty path.
+
+    Forward-resolution (mirrors the production read site in
+    ``cli/sync_and_brief_cli.py``):
+        1. ``BICAMERAL_DATA_PATH`` override → ``<data>/.bicameral/events``
+           (test escape hatch).
+        2. ``<repo_path>/.bicameral/events`` — the canonical
+           committed/synced location.
     """
     import os as _os
 
-    bicameral_dir = _resolve_bicameral_dir(ledger)
     data_path = _os.environ.get("BICAMERAL_DATA_PATH")
     if data_path:
         events_dir = Path(data_path) / ".bicameral" / "events"
-    elif bicameral_dir:
-        events_dir = Path(bicameral_dir) / "events"
+    elif repo_path:
+        events_dir = Path(repo_path) / ".bicameral" / "events"
     else:
-        return None
+        events_dir = Path.cwd() / ".bicameral" / "events"
     return events_dir if events_dir.exists() else None
 
 
-def _count_events_on_disk(ledger) -> int:
+def _count_events_on_disk(repo_path: str | None = None) -> int:
     """Tally non-empty lines across every ``<author>.jsonl`` under events/.
 
-    Best-effort: returns 0 when the directory is missing, ledger is
-    in-memory, or any file read fails. Used only to surface a count in
-    the dry-run; not load-bearing for the replay itself.
+    Best-effort: returns 0 when the directory is missing or any file
+    read fails. Used only to surface a count in the dry-run; not
+    load-bearing for the replay itself.
     """
-    events_dir = _resolve_events_dir(ledger)
+    events_dir = _resolve_events_dir(repo_path)
     if events_dir is None:
         return 0
     total = 0
@@ -285,34 +298,63 @@ def _count_events_on_disk(ledger) -> int:
     return total
 
 
-async def _replay_events_into_ledger(ledger) -> int:
+async def _replay_events_into_ledger(repo_path: str | None, ledger) -> int:
     """Reset the materializer watermark and replay every event back
     through the ingest path. Returns the count of events the
     materializer applied.
+
+    Raises ``FileNotFoundError`` when the events substrate cannot be
+    located — caller surfaces it via ``replay_errors`` so a missing
+    events dir produces a loud failure rather than a passing-looking
+    zero-replay response (this was the actual symptom of the pre-fix
+    resolver bug; #410).
 
     Uses the same ``EventMaterializer`` instance team mode uses, so
     replay-vs-live divergence is impossible by construction. Determinism
     is tracked separately under issue #296.
     """
+    import os as _os
+
     inner = getattr(ledger, "_inner", ledger)
-    events_dir = _resolve_events_dir(ledger)
+    events_dir = _resolve_events_dir(repo_path)
     if events_dir is None:
-        return 0
+        expected = (
+            Path(repo_path) / ".bicameral" / "events" if repo_path else "<repo>/.bicameral/events"
+        )
+        raise FileNotFoundError(
+            f"events dir not found at {expected!s}. The replay source is "
+            "repo-local: pre-#373 these JSONLs are committed to git, "
+            "post-#373 they are pulled from the configured remote backend "
+            "via `bicameral-mcp sync-and-brief`. Run sync-and-brief first "
+            "if you're on a fresh clone with no local cache yet."
+        )
 
-    # #368 Phase 2B-ii: watermark lives at the locator-resolved project
-    # dir. The locator's `_resolved_project_dir` mkdir's parent on first
-    # use via `assert_origin`, so no explicit mkdir needed here.
-    from ledger_locator import resolve_watermark_path
-
-    watermark_path = resolve_watermark_path()
     # Reset the watermark so every event replays from offset 0. The
     # materializer's offset map is `{author: byte_offset}`; writing an
-    # empty object is the canonical "start over" signal.
-    watermark_path.write_text("{}\n", encoding="utf-8")
+    # empty object is the canonical "start over" signal. Mirrored seams:
+    # tests using BICAMERAL_DATA_PATH route the watermark to a sibling
+    # of events under .bicameral/local/ (no git context required);
+    # production routes through the locator's project dir.
+    data_path = _os.environ.get("BICAMERAL_DATA_PATH")
+    watermark_override: Path | None = None
+    if data_path:
+        watermark_override = Path(data_path) / ".bicameral" / "local" / "watermark"
+        watermark_override.parent.mkdir(parents=True, exist_ok=True)
+        watermark_override.write_text("{}\n", encoding="utf-8")
+    else:
+        from ledger_locator import resolve_watermark_path
+
+        resolve_watermark_path(Path(repo_path) if repo_path else None).write_text(
+            "{}\n", encoding="utf-8"
+        )
 
     from events.materializer import EventMaterializer
 
-    materializer = EventMaterializer(events_dir)
+    materializer = EventMaterializer(
+        events_dir,
+        repo_path=Path(repo_path) if repo_path else None,
+        watermark_override=watermark_override,
+    )
     return await materializer.replay_new_events(inner)
 
 
@@ -337,14 +379,14 @@ async def _wipe_ledger(ledger, repo_path: str) -> None:
     await inner._ensure_connected()
 
 
-async def _wipe_bicameral_dir(ledger) -> str:
+async def _wipe_bicameral_dir(ledger, repo_path: str | None = None) -> str:
     """Delete the entire .bicameral/ directory and reinitialise the schema.
 
     Returns the path that was deleted (empty string for in-memory URLs).
     """
     import shutil
 
-    bicameral_dir = _resolve_bicameral_dir(ledger)
+    bicameral_dir = _resolve_bicameral_dir(ledger, repo_path)
 
     # Close the connection on the innermost adapter.
     inner = getattr(ledger, "_inner", ledger)
@@ -366,12 +408,33 @@ async def _wipe_bicameral_dir(ledger) -> str:
     return bicameral_dir
 
 
-def _resolve_bicameral_dir(ledger) -> str:
-    """Return the .bicameral/ directory path derived from the ledger URL.
+def _resolve_bicameral_dir(ledger, repo_path: str | None = None) -> str:
+    """Return the on-disk dir to delete in a full-wipe, or "" for in-memory.
 
-    For surrealkv://<path>/ledger.db the .bicameral/ dir is the parent of
-    the ledger.db directory. Returns empty string for in-memory URLs.
+    Resolution order (#410 / #368):
+        1. ``BICAMERAL_DATA_PATH`` override (tests / pre-#368 installs)
+           → ``<data>/.bicameral`` symmetrically with
+           ``adapters/ledger.py:_real_ledger_instance``.
+        2. When no explicit ``SURREAL_URL`` is set, the URL came from
+           the locator default → return the locator's project dir.
+        3. Otherwise derive from the adapter URL — the operator
+           pointed ``SURREAL_URL`` at a specific location and we
+           operate on that dir.
     """
+    import os as _os
+
+    if _os.environ.get("BICAMERAL_DATA_PATH"):
+        data_path = _os.environ["BICAMERAL_DATA_PATH"]
+        return str(Path(data_path) / ".bicameral")
+
+    if "SURREAL_URL" not in _os.environ:
+        try:
+            from ledger_locator import ProjectIdResolutionError, project_dir_for
+
+            return str(project_dir_for(Path(repo_path) if repo_path else None))
+        except ProjectIdResolutionError:
+            pass
+
     for obj in (ledger, getattr(ledger, "_inner", None)):
         if obj is None:
             continue

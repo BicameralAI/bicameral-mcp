@@ -100,8 +100,7 @@ def _fallback_full_wipe(*, connect_error: BaseException) -> int:
         shutil.rmtree(bicameral_dir, ignore_errors=True)
     except Exception as exc:  # noqa: BLE001 — last-resort fallback
         sys.stderr.write(
-            f"reset: filesystem wipe of {bicameral_dir!r} failed: "
-            f"{type(exc).__name__}: {exc}\n"
+            f"reset: filesystem wipe of {bicameral_dir!r} failed: {type(exc).__name__}: {exc}\n"
         )
         return 1
 
@@ -128,11 +127,33 @@ def _fallback_full_wipe(*, connect_error: BaseException) -> int:
 
 
 def _bicameral_dir_for_url(url: str) -> str:
-    """Return the ``.bicameral/`` path for ``surrealkv://<path>/ledger.db``.
+    """Return the on-disk dir to filesystem-wipe in the recovery fallback.
 
-    Mirrors ``handlers.reset._resolve_bicameral_dir`` but works off a
-    bare URL string — we can't ask the (broken) adapter for it.
+    Resolution order (#410):
+        1. ``BICAMERAL_DATA_PATH`` override (tests / pre-#368 installs).
+        2. When no explicit ``SURREAL_URL`` is set, route through the
+           locator — the URL came from the locator default, so the
+           canonical state dir is the locator's project dir.
+        3. Otherwise (explicit ``SURREAL_URL``, or locator can't
+           resolve), derive from the URL via ``Path(db).parent`` — the
+           user has signalled where their ledger lives and we operate
+           on that dir.
+
+    The locator branch matters because this fallback runs when the
+    adapter can't even connect; the locator itself only needs
+    ``REPO_PATH`` + git common-dir, so it's still available.
     """
+    if dp := os.environ.get("BICAMERAL_DATA_PATH"):
+        return str(Path(dp) / ".bicameral")
+
+    if "SURREAL_URL" not in os.environ:
+        try:
+            from ledger_locator import ProjectIdResolutionError, project_dir_for
+
+            return str(project_dir_for())
+        except ProjectIdResolutionError:
+            pass
+
     if not url.startswith("surrealkv://"):
         return ""
     db_path = url[len("surrealkv://") :]
