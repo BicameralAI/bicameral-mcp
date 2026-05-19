@@ -952,7 +952,10 @@ async def upsert_compliance_check(
     """Write a compliance_check row keyed on (decision_id, region_id, content_hash).
 
     Returns True when written, False when the row already existed (first-write-wins).
-    verdict must be one of: 'compliant', 'drifted', 'not_relevant'.
+    verdict must be one of: 'compliant', 'drifted', 'not_relevant', 'partial'.
+    'partial' (#405) is the never-compliant anticipatory-binding state — see
+    ComplianceVerdict in contracts.py for the full semantics + the reflected-
+    before-drifted invariant enforced at handle_resolve_compliance.
     ephemeral=True marks the verdict as from a WIP/fixup commit; downstream
     queries filter these out when computing decision status and drift scoring.
 
@@ -1796,6 +1799,36 @@ async def has_prior_compliant_verdict(
     return int(rows[0].get("n", 0)) > 0
 
 
+async def compliance_history_summary(
+    client: LedgerClient,
+    decision_id: str,
+    region_id: str,
+) -> dict[str, int]:
+    """Count compliance_check rows by verdict for a (decision_id, region_id) pair.
+
+    Returns a dict like ``{"compliant": 0, "drifted": 1, "partial": 2,
+    "not_relevant": 0}`` — every key is present, with zero for unobserved
+    verdicts. Used by the reflected-before-drifted invariant check in
+    ``handle_resolve_compliance`` (#405) so the caller-LLM gets a structured
+    rejection payload it can act on without a second round-trip.
+
+    Includes ephemeral verdicts — feature-branch history still counts for
+    state-transition reasoning, matching ``has_prior_compliant_verdict``.
+    """
+    rows = await client.query(
+        "SELECT verdict, count() AS n FROM compliance_check "
+        "WHERE decision_id = $d AND region_id = $r "
+        "GROUP BY verdict",
+        {"d": decision_id, "r": region_id},
+    )
+    out = {"compliant": 0, "drifted": 0, "partial": 0, "not_relevant": 0}
+    for row in rows or []:
+        verdict = str(row.get("verdict") or "")
+        if verdict in out:
+            out[verdict] = int(row.get("n", 0))
+    return out
+
+
 async def project_decision_status(
     client: LedgerClient,
     decision_id: str,
@@ -1805,18 +1838,24 @@ async def project_decision_status(
     v0.9.4: signoff and status are orthogonal. signoff tracks human approval state;
     status tracks code-compliance state. Neither gates the other.
 
-    Status values: ungrounded | pending | reflected | drifted
+    Status values: ungrounded | pending | reflected | partial | drifted
 
     - No binds_to → 'ungrounded'
     - Any bound region with drifted verdict → 'drifted'
     - Any bound region with no verdict for current hash, prior compliant
       verdict existed → 'drifted' (was verified, code has since changed)
+    - Any bound region with partial verdict (#405 — never-compliant anticipatory
+      binding) and no drifted region → 'partial'
     - Any bound region with no verdict for current hash, no prior verdict
       → 'pending' (awaiting initial verification)
     - All bound regions compliant → 'reflected'
 
-    DRIFTED always wins. Superseded decisions (signoff.state='superseded') are
-    retired from tracking — callers must skip them before calling this function.
+    Precedence: DRIFTED > PARTIAL > PENDING > REFLECTED. Drifted always wins
+    because a real regression matters more than an unimplemented gap. Partial
+    beats pending because the caller has actively classified the gap rather
+    than left it un-evaluated. Superseded decisions (signoff.state='superseded')
+    are retired from tracking — callers must skip them before calling this
+    function.
     """
     dec_rows = await client.query(
         f"SELECT signoff, status FROM {decision_id} LIMIT 1",
@@ -1864,6 +1903,7 @@ async def project_decision_status(
 
     all_compliant = True
     any_drifted = False
+    any_partial = False
     any_pending = False
 
     for binding in binding_rows:
@@ -1888,12 +1928,19 @@ async def project_decision_status(
         elif verdict.get("pruned", False):
             # Pruned regions are not_relevant — invisible to aggregation
             continue
+        elif verdict.get("verdict") == "partial":
+            # #405 — never-compliant anticipatory binding. Distinct from drifted
+            # because there's no regression to surface; it's an unimplemented gap.
+            any_partial = True
+            all_compliant = False
         elif verdict.get("verdict") != "compliant":
             any_drifted = True
             all_compliant = False
 
     if any_drifted:
         return "drifted"
+    if any_partial:
+        return "partial"
     if any_pending:
         return "pending"
     if all_compliant:

@@ -115,7 +115,7 @@ class SourceCursorSummary(BaseModel):
 class DecisionStatusEntry(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
     signoff_state: str | None = (
         None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     )
@@ -144,7 +144,7 @@ class DecisionStatusResponse(BaseModel):
 class DecisionMatch(BaseModel):
     decision_id: str
     description: str  # the original decision text
-    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
     signoff_state: str | None = (
         None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     )
@@ -177,9 +177,20 @@ class PreClassificationHint(BaseModel):
 class ComplianceVerdict(BaseModel):
     """One caller-LLM judgment to write back to the compliance cache.
 
-    v0.5.0: verdict replaces compliant:bool with a three-way enum:
+    v0.5.0: verdict replaces compliant:bool with a three-way enum.
+    v0.16.x (#405): adds ``partial`` for never-compliant anticipatory bindings.
+
       - "compliant"    — code implements the decision correctly
-      - "drifted"      — code has drifted from the decision
+      - "drifted"      — code has drifted from the decision (regression).
+                         REQUIRES a prior ``compliant`` verdict for the same
+                         (decision_id, region_id) pair; the server rejects
+                         this verdict otherwise with
+                         ``reason="state_transition_invalid"`` so the caller
+                         can downgrade to ``partial`` and retry.
+      - "partial"      — region is the correct anchor; current code does NOT
+                         yet implement the decision; no prior ``compliant``
+                         verdict exists. Use for binding-as-anchor-for-future-
+                         work and for downgrading a rejected ``drifted``.
       - "not_relevant" — retrieval made a mistake; this region is not about
                          this decision. Server will prune the binds_to edge
                          and record compliance_check with pruned=true.
@@ -197,7 +208,7 @@ class ComplianceVerdict(BaseModel):
     decision_id: str
     region_id: str
     content_hash: str  # echoed from PendingComplianceCheck.content_hash
-    verdict: Literal["compliant", "drifted", "not_relevant"]
+    verdict: Literal["compliant", "drifted", "not_relevant", "partial"]
     confidence: Literal["high", "medium", "low"]
     explanation: str  # one-sentence rationale for audit trail
     phase_metadata: dict = {}
@@ -206,7 +217,16 @@ class ComplianceVerdict(BaseModel):
 
 
 class ResolveComplianceRejection(BaseModel):
-    """Structured rejection for a verdict that failed input validation."""
+    """Structured rejection for a verdict the server would not write.
+
+    ``reason`` is the rejection class. ``state_transition_invalid`` (#405)
+    fires when a caller submits ``drifted`` for a (decision_id, region_id)
+    pair that has no prior ``compliant`` row — i.e. "you cannot drift from
+    a state you never reached." When that fires, the rejection payload
+    carries ``attempted_verdict``, ``allowed_verdicts``, and
+    ``prior_history_summary`` so the caller-LLM can downgrade to ``partial``
+    and retry without re-binding.
+    """
 
     decision_id: str
     region_id: str
@@ -214,15 +234,21 @@ class ResolveComplianceRejection(BaseModel):
         "unknown_decision_id",
         "unknown_region_id",
         "invalid_content_hash",
+        "state_transition_invalid",
     ]
     detail: str = ""
+    # state_transition_invalid payload (#405) — set only for that reason;
+    # left None / [] / {} for the other rejection classes.
+    attempted_verdict: Literal["compliant", "drifted", "not_relevant", "partial"] | None = None
+    allowed_verdicts: list[Literal["compliant", "drifted", "not_relevant", "partial"]] = []
+    prior_history_summary: dict = {}
 
 
 class ResolveComplianceAccepted(BaseModel):
     decision_id: str
     region_id: str
     phase: str
-    verdict: Literal["compliant", "drifted", "not_relevant"]
+    verdict: Literal["compliant", "drifted", "not_relevant", "partial"]
     # Phase 4 (#61) additive: echoes the caller's semantic_status claim
     # (or None if the caller didn't provide one).
     semantic_status: Literal["semantically_preserved", "semantic_change"] | None = None
@@ -359,7 +385,7 @@ class SearchDecisionsResponse(BaseModel):
 class DriftEntry(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
     signoff_state: str | None = (
         None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     )
@@ -583,7 +609,7 @@ class IngestResponse(BaseModel):
 class BriefDecision(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
     signoff_state: str | None = (
         None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     )
@@ -770,7 +796,7 @@ class GapRubric(BaseModel):
 class GapJudgmentContextDecision(BaseModel):
     decision_id: str
     description: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
     source_excerpt: str = ""
     source_ref: str = ""
     meeting_date: str = ""
@@ -799,7 +825,7 @@ class RatifyResponse(BaseModel):
     decision_id: str
     was_new: bool  # True if this call set the signoff; False if already set
     signoff: dict
-    projected_status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    projected_status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
 
 
 # #278 Phase 2 — remove flows (v0.15.x: hard-delete, see decision:i4wafafzowm3ai5eyhgs)
@@ -939,7 +965,7 @@ class HistoryDecision(BaseModel):
     id: str  # decision_id
     summary: str  # canonical decision text
     featureId: str
-    status: Literal["reflected", "drifted", "pending", "ungrounded"]
+    status: Literal["reflected", "drifted", "partial", "pending", "ungrounded"]
     signoff_state: str | None = (
         None  # proposed | ratified | rejected | collision_pending | context_pending | superseded
     )

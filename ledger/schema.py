@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -50,6 +50,7 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
     23: "0.15.x",  # decision_level backfill for legacy rows; placeholder, release-eng pins final value at PR merge
     24: "0.15.x",  # idx_input_span_dedup extended with archive_key so distinct archive-keyed spans in the same (source_type, source_ref) bucket no longer collide; placeholder, release-eng pins final value at PR merge
+    25: "0.16.x",  # compliance_check.verdict gains 'partial' (#405) — never-compliant anticipatory bindings render distinct from regressions; reflected-before-drifted invariant enforced at the resolve_compliance write path; placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -142,8 +143,11 @@ _TABLES = [
     "DEFINE FIELD source_ref     ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD meeting_date   ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD speakers       ON decision TYPE array<string> DEFAULT []",
+    # 'partial' (#405) projects from compliance_check rows whose verdict is
+    # 'partial' (never-compliant anticipatory binding). Precedence in
+    # project_decision_status: drifted > partial > pending > reflected.
     "DEFINE FIELD status         ON decision TYPE string DEFAULT 'ungrounded' "
-    "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
+    "ASSERT $value IN ['reflected', 'drifted', 'partial', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON decision TYPE datetime DEFAULT time::now()",
     # v18 (#87 precondition) — monotonic write marker. Bumped by every
     # decision UPDATE call site (status/level/signoff/parent/governance/
@@ -254,8 +258,13 @@ _TABLES = [
     "DEFINE FIELD region_id    ON compliance_check TYPE string",
     "DEFINE FIELD content_hash ON compliance_check TYPE string",
     "DEFINE FIELD commit_hash  ON compliance_check TYPE string DEFAULT ''",
+    # 'partial' (#405) means: region is the correct anchor for this decision,
+    # but the current code does NOT yet implement it and no prior 'compliant'
+    # verdict exists for this (decision_id, region_id) pair. Distinct from
+    # 'drifted' (regression — there WAS a prior compliant state) and from
+    # 'not_relevant' (binding is a retrieval mistake; prune the edge).
     "DEFINE FIELD verdict      ON compliance_check TYPE string "
-    "ASSERT $value IN ['compliant', 'drifted', 'not_relevant']",
+    "ASSERT $value IN ['compliant', 'drifted', 'not_relevant', 'partial']",
     "DEFINE FIELD pruned       ON compliance_check TYPE bool DEFAULT false",
     "DEFINE FIELD confidence   ON compliance_check TYPE string "
     "ASSERT $value IN ['high', 'medium', 'low']",
@@ -1501,6 +1510,78 @@ async def _migrate_v23_to_v24(client: LedgerClient) -> None:
     logger.info("[migration] v23 → v24: idx_input_span_dedup extended with archive_key")
 
 
+async def _migrate_v24_to_v25(client: LedgerClient) -> None:
+    """v24 → v25: extend ``compliance_check.verdict`` enum with ``partial`` and
+    backfill never-compliant ``drifted`` rows.
+
+    Why (issue #405):
+      Pre-v25 the verdict enum was ``['compliant', 'drifted', 'not_relevant']``.
+      Anticipatory bindings (binding-as-anchor for unimplemented planned work)
+      had no honest verdict — the caller-LLM emitted ``drifted``, polluting the
+      drift dashboard with false regressions. ``partial`` is the missing
+      "never compliant; current code does not yet implement the decision"
+      slot.
+
+    The DEFINE FIELD OVERWRITE is also issued by ``init_schema`` on every
+    connect; running it here is a belt-and-braces safety net for the version
+    boundary in case init_schema's pass was interrupted.
+
+    Backfill: every existing ``drifted`` row whose (decision_id, region_id)
+    has zero prior ``compliant`` rows is rewritten to ``partial``. Idempotent
+    — re-running finds nothing to convert because partial rows have already
+    been moved out of the drifted bucket.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE verdict ON compliance_check TYPE string "
+        "ASSERT $value IN ['compliant', 'drifted', 'not_relevant', 'partial']",
+    )
+    # decision.status also gains 'partial' so project_decision_status can
+    # persist the new status without violating the ASSERT.
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE status ON decision TYPE string DEFAULT 'ungrounded' "
+        "ASSERT $value IN ['reflected', 'drifted', 'partial', 'pending', 'ungrounded']",
+    )
+
+    pairs = await client.query(
+        "SELECT decision_id, region_id FROM compliance_check "
+        "WHERE verdict = 'drifted' GROUP BY decision_id, region_id"
+    )
+
+    converted = 0
+    skipped = 0
+    for pair in pairs or []:
+        d_id = pair.get("decision_id")
+        r_id = pair.get("region_id")
+        if not d_id or not r_id:
+            continue
+        prior_compliant = await client.query(
+            "SELECT count() AS n FROM compliance_check "
+            "WHERE decision_id = $d AND region_id = $r AND verdict = 'compliant' "
+            "GROUP ALL",
+            {"d": d_id, "r": r_id},
+        )
+        has_prior = bool(prior_compliant) and int(prior_compliant[0].get("n", 0)) > 0
+        if has_prior:
+            skipped += 1
+            continue
+        await client.execute(
+            "UPDATE compliance_check SET verdict = 'partial' "
+            "WHERE decision_id = $d AND region_id = $r AND verdict = 'drifted'",
+            {"d": d_id, "r": r_id},
+        )
+        converted += 1
+
+    logger.info(
+        "[migration] v24 → v25: compliance_check.verdict extended with 'partial'; "
+        "backfill converted %d (decision, region) pair(s) of never-compliant 'drifted' "
+        "rows to 'partial'; %d pair(s) retained as 'drifted' (had prior compliant verdict)",
+        converted,
+        skipped,
+    )
+
+
 async def _write_wire_format_sentinel(
     client: LedgerClient,
 ) -> tuple[str | None, str | None, str]:
@@ -1586,6 +1667,7 @@ _MIGRATIONS: dict[int, ...] = {
     22: _migrate_v21_to_v22,
     23: _migrate_v22_to_v23,
     24: _migrate_v23_to_v24,
+    25: _migrate_v24_to_v25,
 }
 
 

@@ -501,10 +501,18 @@ async def list_tools() -> list[Tool]:
                                 },
                                 "verdict": {
                                     "type": "string",
-                                    "enum": ["compliant", "drifted", "not_relevant"],
+                                    "enum": ["compliant", "drifted", "not_relevant", "partial"],
                                     "description": (
                                         "'compliant' = code satisfies the decision; "
-                                        "'drifted' = code diverges from the decision; "
+                                        "'drifted' = code diverges from a previously "
+                                        "compliant state (REQUIRES a prior 'compliant' "
+                                        "verdict for the same (decision_id, region_id) "
+                                        "pair — the server returns reason="
+                                        "'state_transition_invalid' otherwise so the "
+                                        "caller can downgrade to 'partial' and retry); "
+                                        "'partial' = correct anchor, code does NOT yet "
+                                        "implement the decision and no prior 'compliant' "
+                                        "verdict exists (anticipatory binding); "
                                         "'not_relevant' = this region is unrelated to "
                                         "the decision (prunes the binds_to edge)."
                                     ),
