@@ -1,12 +1,17 @@
 """Pending-transcripts queue (#156).
 
-The SessionEnd hook copies the parent session's transcript to
-``<repo>/.bicameral/pending-transcripts/<session_id>.jsonl``. The next
-session's preflight Step 3.5 reads the queue FIFO, surfaces corrections
-as ask-findings, then archives processed files to
-``<repo>/.bicameral/processed-transcripts/``.
+The SessionEnd hook copies the parent session's transcript to the
+locator-resolved pending dir. The next session's preflight Step 3.5
+reads the queue FIFO, surfaces corrections as ask-findings, then
+archives processed files to the processed dir.
 
-This module is the single source of truth for queue layout. Future
+#368 Phase 2B-ii: queue directories now live under
+``~/.bicameral/projects/<id>/{pending,processed}-transcripts/`` (project-
+scoped, shared across worktrees) — not per-worktree under
+``<repo>/.bicameral/`` as in v0.15.x. Worktree A's transcript is now
+visible to worktree B's drain loop.
+
+This module remains the single source of truth for queue layout. Future
 team-server config may override retention and merge policy by reading
 this module's defaults.
 """
@@ -20,11 +25,21 @@ PROCESSED_DIR = "processed-transcripts"
 
 
 def _pending_root(repo_path: str) -> Path:
-    return Path(repo_path) / ".bicameral" / PENDING_DIR
+    """Resolve the project-scoped pending-transcripts dir (#368 Phase 2B-ii).
+
+    Delegates to ``ledger_locator.resolve_pending_transcripts_dir``. The
+    function signature stays so existing call sites remain unchanged.
+    """
+    from ledger_locator import resolve_pending_transcripts_dir
+
+    return resolve_pending_transcripts_dir(Path(repo_path))
 
 
 def _processed_root(repo_path: str) -> Path:
-    return Path(repo_path) / ".bicameral" / PROCESSED_DIR
+    """Resolve the project-scoped processed-transcripts dir (#368 Phase 2B-ii)."""
+    from ledger_locator import resolve_processed_transcripts_dir
+
+    return resolve_processed_transcripts_dir(Path(repo_path))
 
 
 def write_pending(repo_path: str, session_id: str, transcript_path: str) -> Path | None:

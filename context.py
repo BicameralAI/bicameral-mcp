@@ -6,9 +6,68 @@ import os
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 # Generated once per server process — all tool calls in the same session share it.
 _SESSION_ID: str = str(uuid.uuid4())
+
+# #368 R4 config split (decision:5nr66wvmapjpt58rrji8): keys partition into
+# team-identity (committed to git at ``<repo>/.bicameral/config.yaml``) vs
+# per-operator (private at ``~/.bicameral/projects/<id>/operator.yaml``).
+# Single source of truth for the wizard's writer, the context.py readers,
+# the run-config-wizard editor, and migrate-state's partitioner.
+#
+# When adding a new key: add it here too. ``test_config_split.py::
+# test_routing_table_covers_every_key`` catches drift.
+_CONFIG_KEY_ROUTING: dict[str, Literal["team", "operator"]] = {
+    # team-identity (commit-able)
+    "mode": "team",
+    "team.backend": "team",
+    "team.folder_id": "team",
+    "team.remote_root": "team",
+    "ingest_max_bytes": "team",
+    "signer_email_fallback_min_strength": "team",
+    # per-operator (private; lives under ~/.bicameral/projects/<id>/)
+    "telemetry": "operator",
+    "channel": "operator",
+    "guided": "operator",
+    "signer_email_fallback": "operator",
+    "render_source_attribution": "operator",
+    "team.author": "operator",
+    "team.role": "operator",
+    "ingest_rate_limit_burst": "operator",
+    "ingest_rate_limit_refill_per_sec": "operator",
+    "query_timeout_read_seconds": "operator",
+    "query_timeout_drift_seconds": "operator",
+}
+
+
+def _config_path_for_key(repo_path: str, key: str) -> Path:
+    """Return the config file path that owns ``key`` under the R4 split.
+
+    Unknown keys default to the team config (commit-able). The wizard's
+    writer raises on unknown keys; this reader is permissive — an old
+    server reading a forward-compat config should not crash, it should
+    fall through to the per-key default.
+
+    For operator-routed keys, the locator is consulted. If the locator
+    can't resolve a project id (non-git tmpdir in a test, no git binary),
+    we fall back to the team config path — that preserves the v0.15.x
+    behavior where every key lived in ``.bicameral/config.yaml``, so
+    existing tests that don't git-init keep passing. Collision errors
+    are NOT swallowed; the locator's whole point is to surface those.
+    """
+    routing = _CONFIG_KEY_ROUTING.get(key, "team")
+    if routing == "operator":
+        try:
+            from ledger_locator import ProjectIdResolutionError, resolve_operator_config_path
+        except ImportError:
+            return Path(repo_path) / ".bicameral" / "config.yaml"
+        try:
+            return resolve_operator_config_path(Path(repo_path))
+        except ProjectIdResolutionError:
+            return Path(repo_path) / ".bicameral" / "config.yaml"
+    return Path(repo_path) / ".bicameral" / "config.yaml"
 
 
 _GUIDED_MODE_TRUTHY = frozenset({"1", "true", "yes", "on"})
@@ -64,11 +123,13 @@ _QUERY_TIMEOUT_DRIFT_MAX = 600.0
 
 
 def _read_yaml_string_field(repo_path: str, key: str, valid: frozenset[str], default: str) -> str:
-    """Generic reader for a `.bicameral/config.yaml` string field with a
-    fixed valid-set and fail-soft default. Returns the raw config value
-    if it's in the valid set; falls back to default on missing file,
-    malformed yaml, missing key, or invalid value."""
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    """Generic reader for a config-yaml string field with a fixed valid-set
+    and fail-soft default. Reads from the file owned by ``key`` under the
+    R4 routing table (``<repo>/.bicameral/config.yaml`` for team-identity
+    keys, ``~/.bicameral/projects/<id>/operator.yaml`` for per-operator
+    keys). Falls back to default on missing file, malformed yaml, missing
+    key, or invalid value."""
+    config_path = _config_path_for_key(repo_path, key)
     if not config_path.exists():
         return default
     try:
@@ -162,14 +223,14 @@ def _resolve_agent_identity(repo_path: str) -> str:
 
 
 def _read_ingest_max_bytes(repo_path: str) -> int:
-    """Resolve ``ingest_max_bytes`` from ``.bicameral/config.yaml``.
+    """Resolve ``ingest_max_bytes`` from the team-identity config.
 
     Default 1 MiB. Clamped to ``[_INGEST_MAX_BYTES_MIN, _INGEST_MAX_BYTES_MAX]``;
     out-of-range values (negative, non-integer, beyond clamp) fall back
     to the default with no silent acceptance. Read by
     ``handlers.ingest._check_payload_size``.
     """
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    config_path = _config_path_for_key(repo_path, "ingest_max_bytes")
     if not config_path.exists():
         return _DEFAULT_INGEST_MAX_BYTES
     try:
@@ -187,13 +248,13 @@ def _read_ingest_max_bytes(repo_path: str) -> int:
 
 
 def _read_ingest_rate_limit_burst(repo_path: str) -> int:
-    """Resolve ``ingest_rate_limit_burst`` from ``.bicameral/config.yaml``.
+    """Resolve ``ingest_rate_limit_burst`` from the per-operator config.
 
     Default 10. Clamped to ``[_INGEST_RATE_LIMIT_BURST_MIN,
     _INGEST_RATE_LIMIT_BURST_MAX]``. Out-of-range / non-int / malformed
     yaml all fall back to default (no silent acceptance).
     """
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    config_path = _config_path_for_key(repo_path, "ingest_rate_limit_burst")
     if not config_path.exists():
         return _DEFAULT_INGEST_RATE_LIMIT_BURST
     try:
@@ -211,7 +272,7 @@ def _read_ingest_rate_limit_burst(repo_path: str) -> int:
 
 
 def _read_ingest_rate_limit_refill_per_sec(repo_path: str) -> float:
-    """Resolve ``ingest_rate_limit_refill_per_sec`` from ``.bicameral/config.yaml``.
+    """Resolve ``ingest_rate_limit_refill_per_sec`` from the per-operator config.
 
     Default 1.0. Clamped to ``[_INGEST_RATE_LIMIT_REFILL_MIN,
     _INGEST_RATE_LIMIT_REFILL_MAX]``. ``0.0`` would lock the bucket
@@ -219,7 +280,7 @@ def _read_ingest_rate_limit_refill_per_sec(repo_path: str) -> float:
     to default. Out-of-range / non-numeric / malformed yaml all fall
     back to default.
     """
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    config_path = _config_path_for_key(repo_path, "ingest_rate_limit_refill_per_sec")
     if not config_path.exists():
         return _DEFAULT_INGEST_RATE_LIMIT_REFILL_PER_SEC
     try:
@@ -256,7 +317,7 @@ def _read_query_timeout_seconds(
     min_val: float,
     max_val: float,
 ) -> float:
-    """Resolve a query-timeout-seconds field from ``.bicameral/config.yaml``.
+    """Resolve a query-timeout-seconds field from the config file owned by ``key``.
 
     Out-of-range values are **clamped** to ``[min_val, max_val]`` (preserve
     operator intent for "long but bounded" — silently substituting the
@@ -264,7 +325,7 @@ def _read_query_timeout_seconds(
     non-numeric / bool / malformed-yaml all fall back to the documented
     default (those aren't operator intent; they're config errors).
     """
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    config_path = _config_path_for_key(repo_path, key)
     if not config_path.exists():
         return default
     try:
@@ -321,8 +382,9 @@ def _read_guided_mode(repo_path: str) -> bool:
 
     Precedence:
       1. ``BICAMERAL_GUIDED_MODE`` env var (truthy / falsy) — one-off override
-      2. ``guided: true/false`` in ``<repo>/.bicameral/config.yaml`` — durable
-         setting chosen at ``bicameral setup`` time
+      2. ``guided: true/false`` in the per-operator config (R4 split — lives
+         at ``~/.bicameral/projects/<id>/operator.yaml``) — durable setting
+         chosen at ``bicameral setup`` time
       3. Default: ``False`` (normal mode — action hints still fire, but as
          non-blocking advisories)
     """
@@ -332,7 +394,7 @@ def _read_guided_mode(repo_path: str) -> bool:
     if env_val in _GUIDED_MODE_FALSY and env_val != "":
         return False
 
-    config_path = Path(repo_path) / ".bicameral" / "config.yaml"
+    config_path = _config_path_for_key(repo_path, "guided")
     if not config_path.exists():
         return False
     try:
