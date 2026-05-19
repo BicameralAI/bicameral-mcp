@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from audit_log import AuditEventType
 from cli.diagnose import _CANONICAL_TABLES, Diagnosis
 
 _LARGE_LEDGER_BYTES = 100 * 1024 * 1024
@@ -236,10 +237,14 @@ def _compute_suggestions(d_partial: dict[str, Any]) -> list[str]:
     # blocked replay. Recent_events carries event_type + level + ts only
     # (per allowlist), so the suggestion stays generic; the underlying
     # audit-log file has the offending field/value for deeper triage.
+    # Reference the enum's value (not a string literal) so renaming the
+    # enum entry is caught at import time rather than silently breaking
+    # this heuristic.
+    replay_violation_type = AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION.value
     replay_violations = [
         evt
         for evt in d_partial.get("recent_events", [])
-        if evt.get("event_type") == "event_replay_schema_violation"
+        if evt.get("event_type") == replay_violation_type
     ]
     if replay_violations:
         suggestions.append(

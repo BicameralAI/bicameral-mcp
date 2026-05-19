@@ -66,6 +66,22 @@ RECOVERABLE_DEFINE_PATTERNS: tuple[str, ...] = (
     "but expected",  # generic value-type assertion failure (defensive)
 )
 
+# SurrealDB error substrings that indicate a *field-level ASSERT violation*
+# — i.e. the write succeeded the type check but failed a ``ASSERT $value IN
+# [...]`` enum constraint. Distinct from ``RECOVERABLE_DEFINE_PATTERNS``:
+# those errors are swallowed (init_schema continues); these are LOUD-FAILED
+# (the cross-version event-replay safety net in
+# ``ledger/adapter.py::apply_compliance_verdict_from_event`` wraps them as
+# ``EventReplaySchemaViolation`` with an actionable pipx-upgrade hint —
+# #405). Same load-bearing-contract discipline: any new pattern must be
+# paired with a fixture-DB regression test in
+# ``tests/test_schema_recoverable_errors.py`` that produces the exact
+# string from a real memory:// SurrealDB, so an SDK bump that changes the
+# format fails CI loudly rather than silently degrading the safety net.
+ASSERT_VIOLATION_PATTERNS: tuple[str, ...] = (
+    "must conform to",  # ASSERT $value IN [...] failure (observed v1.0.8)
+)
+
 # Migrations that drop or recreate tables/data. These are never auto-applied;
 # the user must explicitly confirm via bicameral_reset(confirm=True).
 DESTRUCTIVE_MIGRATIONS: frozenset[int] = frozenset()

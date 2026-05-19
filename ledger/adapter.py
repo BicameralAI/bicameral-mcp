@@ -61,6 +61,7 @@ from .queries import (
     write_subject_version,
 )
 from .schema import (
+    ASSERT_VIOLATION_PATTERNS,
     SCHEMA_VERSION,
     DestructiveMigrationRequired,
     _write_wire_format_sentinel,
@@ -1668,15 +1669,17 @@ class SurrealDBLedgerAdapter:
         except LedgerError as exc:
             # #405 — peer wrote a value our schema ASSERT rejects (e.g. a
             # newer binary's verdict='partial' replayed into a v24 ledger).
-            # "must conform to" is the SurrealDB ASSERT-failure shape; the
-            # same canonical phrase is matched by RECOVERABLE_DEFINE_PATTERNS
-            # in ledger/schema.py for the connect-time DEFINE re-application
-            # path. Loud-fail here so the materializer's watermark advance
-            # never runs (next sync retries the same offset) and the
-            # diagnose pipeline surfaces the upgrade hint via the audit log.
-            msg = str(exc)
-            if "must conform to" not in msg.lower():
+            # ASSERT_VIOLATION_PATTERNS (ledger/schema.py) centralizes the
+            # SurrealDB ASSERT-failure substrings so an SDK bump that
+            # changes the phrasing breaks ONE constant + its paired
+            # regression test, not this call site. Loud-fail here so the
+            # materializer's watermark advance never runs (next sync
+            # retries the same offset) and the diagnose pipeline surfaces
+            # the upgrade hint via the audit log.
+            msg_lower = str(exc).lower()
+            if not any(p in msg_lower for p in ASSERT_VIOLATION_PATTERNS):
                 raise
+            msg = str(exc)
             try:
                 from audit_log import AuditEventType
                 from audit_log import emit as audit_emit

@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from ledger.client import LedgerClient, LedgerError
-from ledger.schema import RECOVERABLE_DEFINE_PATTERNS
+from ledger.schema import ASSERT_VIOLATION_PATTERNS, RECOVERABLE_DEFINE_PATTERNS
 
 
 async def _fresh_client(suffix: str) -> LedgerClient:
@@ -106,4 +106,56 @@ def test_recoverable_patterns_constant_is_lowercase() -> None:
             f"RECOVERABLE_DEFINE_PATTERNS entry {pattern!r} contains "
             "non-lowercase characters; the substring catch lower-cases "
             "the SurrealDB message before matching."
+        )
+
+
+# ── ASSERT_VIOLATION_PATTERNS (#405) ─────────────────────────────────
+# Same load-bearing-contract discipline as RECOVERABLE_DEFINE_PATTERNS,
+# but with the opposite intent: these substrings indicate a field-level
+# ASSERT enum violation that the cross-version event-replay safety net
+# in ledger/adapter.py wraps as EventReplaySchemaViolation. An SDK bump
+# that rephrases the error silently degrades the wrap — these tests
+# turn that silent degradation into a loud CI red.
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_assert_enum_violation_matches_assert_violation_pattern() -> None:
+    """A write that fails ``ASSERT $value IN [...]`` must produce one of
+    the substrings in ``ASSERT_VIOLATION_PATTERNS``. This is the contract
+    the #405 cross-version replay safety net depends on."""
+    c = await _fresh_client("assert_enum")
+    try:
+        await c.execute("DEFINE TABLE thing SCHEMAFULL")
+        await c.execute(
+            "DEFINE FIELD verdict ON thing TYPE string "
+            "ASSERT $value IN ['compliant', 'drifted', 'not_relevant']"
+        )
+        with pytest.raises(LedgerError) as exc:
+            await c.execute("CREATE thing SET verdict = 'partial'")
+        msg = str(exc.value).lower()
+        matched = [p for p in ASSERT_VIOLATION_PATTERNS if p in msg]
+        assert matched, (
+            "SurrealDB ASSERT-violation error string changed — the #405 "
+            "EventReplaySchemaViolation wrap in ledger/adapter.py will no "
+            "longer fire, and the diagnose upgrade hint will silently stop "
+            "surfacing for cross-version replay failures. Update "
+            "ASSERT_VIOLATION_PATTERNS in ledger/schema.py to include a "
+            f"substring of: {exc.value!r}"
+        )
+    finally:
+        await c.close()
+
+
+@pytest.mark.phase2
+def test_assert_violation_patterns_constant_is_lowercase() -> None:
+    """The wrap lower-cases the SurrealDB message before substring
+    matching. Patterns must be lowercase too, or they'd silently never
+    match."""
+    for pattern in ASSERT_VIOLATION_PATTERNS:
+        assert pattern == pattern.lower(), (
+            f"ASSERT_VIOLATION_PATTERNS entry {pattern!r} contains "
+            "non-lowercase characters; the substring match in "
+            "ledger/adapter.py lower-cases the SurrealDB message before "
+            "matching."
         )
