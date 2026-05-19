@@ -626,3 +626,46 @@ The cumulative catalog now reads (1-9):
 - F-B2-1: regex switched to `re.MULTILINE | re.DOTALL` flags + non-greedy span pattern; meta-test `test_anti_test_catches_fabricated_multiline_select` added.
 - F-B2-2: signature reconciled — `def _resolve_span_text(archive, row) -> str` (sync, no client param) across all sections.
 - F-B2-3: filter at `queries.py:~204` extended to exclude `[ERASED]` from `real_spans`; `_ERASED_SENTINEL` constant hoisted; test `test_post_erasure_spans_excluded_from_real_spans_filter` added.
+
+---
+
+## Entry #54: VETO — equality key indexes plan, test mechanism unanchored
+
+**Timestamp**: 2026-05-19T06:20:00Z
+**Phase**: audit
+**Plan target**: `thoughts/shared/plans/2026-05-18-ledger-equality-key-indexes.md`
+**Verdict**: VETO (narrow, one test description)
+**SG pattern**: SG-035 ("doctrine-content test unanchored")
+
+### Failure mode
+
+The plan's `test_v25_migration_defines_both_lookup_indexes` proposes to verify post-migration index existence by querying `INFO FOR TABLE symbol` / `INFO FOR TABLE vocab_cache`. The plan itself notes that `INFO FOR TABLE returns empty in embedded mode` (per `pilot/mcp/CLAUDE.md` § "Known v2 quirks") and hedges with "or the SurrealDB v2 equivalent path used in `tests/test_phase2_ledger.py`" — but the equivalent path is not enumerated in either the plan or `tests/test_phase2_ledger.py` (which has no index-introspection precedent).
+
+### Why this matters as a recurrent pattern
+
+Schema/migration tests are particularly vulnerable to presence-only weakness because the natural language of migration verification ("did the index get defined?") aliases to artifact-presence checks. When the introspection API is itself disabled in the test substrate (as `INFO FOR TABLE` is in `memory://`), the plan author defaults to "we'll figure out the mechanism at implementation" — a hedge that survives plan review precisely because it sounds plausible.
+
+The Judge's `Test Functionality Pass` (doctrine §test-functionality) is the catch. Doctrine question: *"if the unit's behavior were silently broken but the artifact still existed, would this test fail?"* Index-existence-by-INFO-FOR-TABLE in embedded mode has no observable artifact, so the test would also be silent if the migration silently failed. Three-way silence: broken migration + empty INFO + ambiguous test = green CI.
+
+### Catalog addition — heuristic #10
+
+10. **Introspection-mechanism commitment**: when a plan asserts on schema state (index presence, table definition, constraint enforcement) AND the test substrate is `memory://` or another in-memory backend with limited introspection, the plan MUST name the exact query/API that produces the observation. Hedged "or equivalent" language is rejected. Audit re-runs scan for "INFO FOR TABLE", "DESCRIBE", "PRAGMA" tokens in test descriptions and verify the cited introspection actually returns non-empty in the backend the test uses.
+
+The cumulative catalog now reads (1-10):
+
+1. Existence check
+2. Signature check
+3. Type-boundary check
+4. Helper-symmetry check
+5. Upstream-consumer check
+6. Wrapper-side-effect check
+7. Codebase-wide-grep check
+8. Cross-section signature consistency check
+9. Sentinel-value downstream-consumer audit
+10. Introspection-mechanism commitment
+
+### Remediation prescribed
+
+Replace the index-existence test with one of:
+- `EXPLAIN`-based query-plan inspection: issue `EXPLAIN UPSERT symbol ... WHERE name = $name` against a fresh `memory://` adapter post-migrate, parse the returned plan, assert the new lookup index is referenced. Loud failure when the index is missing.
+- Perf-budget assertion: seed N=5000 symbol rows; assert `upsert_symbol` returns under a fixed budget. Without the index the UPSERT runs O(n) and crosses the budget; with the index it stays O(log n).
