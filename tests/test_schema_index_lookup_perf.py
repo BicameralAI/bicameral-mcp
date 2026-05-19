@@ -158,11 +158,10 @@ async def test_schema_version_advances_to_25():
         await init_schema(client)
         await migrate(client)
         rows = await client.query("SELECT version FROM schema_meta LIMIT 1")
-        assert rows and rows[0]["version"] == 25, (
-            f"schema_meta.version must equal 25 after init+migrate, got "
-            f"{rows!r}. SCHEMA_VERSION constant = {SCHEMA_VERSION}."
+        assert rows and rows[0]["version"] == SCHEMA_VERSION, (
+            f"schema_meta.version must equal SCHEMA_VERSION ({SCHEMA_VERSION}) "
+            f"after init+migrate, got {rows!r}."
         )
-        assert SCHEMA_VERSION == 25
         assert _MIGRATIONS[25] is _migrate_v24_to_v25, (
             f"_MIGRATIONS[25] is not the v24→v25 function: {_MIGRATIONS.get(25)!r}"
         )

@@ -73,6 +73,12 @@ class AuditEventType(enum.StrEnum):
     LEDGER_VERSION_DRIFT = "ledger_version_drift"
     # #296 — recoverable schema-definition skip (init_schema deferring to migrate)
     SCHEMA_DEFINE_SKIPPED = "schema_define_skipped"
+    # #405 — peer event carries a value the local schema ASSERT rejects (e.g.
+    # a newer binary's verdict='partial' replayed into a v24-schema ledger).
+    # Raised loud rather than silently skipped — incomplete ledger is worse
+    # than blocked replay. The diagnose pipeline picks this up and surfaces
+    # the upgrade hint.
+    EVENT_REPLAY_SCHEMA_VIOLATION = "event_replay_schema_violation"
 
 
 _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
@@ -87,6 +93,7 @@ _LEVEL_BY_EVENT: dict[AuditEventType, str] = {
     AuditEventType.LEDGER_SCHEMA_VERIFIED: "info",
     AuditEventType.LEDGER_VERSION_DRIFT: "warn",
     AuditEventType.SCHEMA_DEFINE_SKIPPED: "warn",
+    AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION: "error",
 }
 
 _LEVEL_RANK = {"info": 10, "warn": 20, "error": 30}

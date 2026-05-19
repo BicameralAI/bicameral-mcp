@@ -31,7 +31,13 @@ async def handle_decision_status(
     decisions_raw = await ctx.ledger.get_all_decisions(filter=filter)
 
     entries: list[DecisionStatusEntry] = []
-    summary: dict[str, int] = {"reflected": 0, "drifted": 0, "pending": 0, "ungrounded": 0}
+    summary: dict[str, int] = {
+        "reflected": 0,
+        "drifted": 0,
+        "partial": 0,
+        "pending": 0,
+        "ungrounded": 0,
+    }
 
     for d in decisions_raw:
         if since and d.get("ingested_at", "") < since:

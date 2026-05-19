@@ -158,6 +158,52 @@ async def test_phase_enum_rejects_invalid_value():
 
 @pytest.mark.phase2
 @pytest.mark.asyncio
+async def test_verdict_enum_accepts_partial_after_v25():
+    """#405 — verdict ASSERT must accept 'partial' alongside the v0.5.0 trio."""
+    c = await _fresh_client()
+    try:
+        for i, verdict in enumerate(("compliant", "drifted", "not_relevant", "partial")):
+            await c.execute(
+                "CREATE compliance_check SET decision_id = $i, region_id = $r, "
+                "content_hash = $h, verdict = $v, confidence = 'high', "
+                "explanation = '', phase = 'ingest'",
+                {
+                    "i": f"intent:v_{i}",
+                    "r": f"code_region:v_{i}",
+                    "h": f"hash_v_{i}",
+                    "v": verdict,
+                },
+            )
+        rows = await c.query("SELECT verdict FROM compliance_check")
+        assert {r["verdict"] for r in rows} == {
+            "compliant",
+            "drifted",
+            "not_relevant",
+            "partial",
+        }
+    finally:
+        await c.close()
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
+async def test_verdict_enum_rejects_unknown_value():
+    """ASSERT $value IN [...] must still reject values outside the enum."""
+    c = await _fresh_client()
+    try:
+        with pytest.raises(LedgerError, match="verdict"):
+            await c.execute(
+                "CREATE compliance_check SET decision_id = 'intent:bad', "
+                "region_id = 'code_region:bad', content_hash = 'h', "
+                "verdict = 'maybe', confidence = 'high', "
+                "explanation = '', phase = 'ingest'"
+            )
+    finally:
+        await c.close()
+
+
+@pytest.mark.phase2
+@pytest.mark.asyncio
 async def test_phase_accepts_all_five_reserved_values():
     """ingest, drift, regrounding, supersession, divergence all accepted.
 

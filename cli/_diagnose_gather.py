@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from audit_log import AuditEventType
 from cli.diagnose import _CANONICAL_TABLES, Diagnosis
 
 _LARGE_LEDGER_BYTES = 100 * 1024 * 1024
@@ -230,6 +231,29 @@ def _compute_suggestions(d_partial: dict[str, Any]) -> list[str]:
             + "; ".join(row_warnings)
             + ". This usually indicates a SurrealDB SDK version mismatch. "
             "Back up the ledger file and `bicameral-mcp reset` to reinitialise."
+        )
+    # #405 — peer event replay rejected by local schema ASSERT.
+    # Surface the upgrade path the moment the diagnostic runs after a
+    # blocked replay. Recent_events carries event_type + level + ts only
+    # (per allowlist), so the suggestion stays generic; the underlying
+    # audit-log file has the offending field/value for deeper triage.
+    # Reference the enum's value (not a string literal) so renaming the
+    # enum entry is caught at import time rather than silently breaking
+    # this heuristic.
+    replay_violation_type = AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION.value
+    replay_violations = [
+        evt
+        for evt in d_partial.get("recent_events", [])
+        if evt.get("event_type") == replay_violation_type
+    ]
+    if replay_violations:
+        suggestions.append(
+            f"Peer event replay blocked by local schema ({len(replay_violations)} "
+            "violation(s) in recent_events). A teammate's bicameral-mcp wrote an "
+            "event with a value your binary's schema does not accept. Upgrade with "
+            "`pipx upgrade bicameral-mcp` (or `bicameral.update {action: 'apply'}`) "
+            "and re-run sync — the watermark was held, so queued events replay "
+            "automatically. Inspect the audit log for the offending field + value."
         )
     return suggestions
 

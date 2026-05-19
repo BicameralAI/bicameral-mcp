@@ -34,11 +34,13 @@ from contracts import (
     ResolveComplianceResponse,
 )
 from ledger.queries import (
+    compliance_history_summary,
     decision_exists,
     delete_binds_to_edge,
     get_canonical_id,
     get_decision_source,
     get_region_descriptor,
+    has_prior_compliant_verdict,
     project_decision_status,
     promote_ephemeral_verdict,
     region_exists,
@@ -98,9 +100,18 @@ async def handle_resolve_compliance(
 ) -> ResolveComplianceResponse:
     """Persist a batch of caller-LLM compliance verdicts.
 
-    Three-way verdict semantics:
+    Four-way verdict semantics (#405 added ``partial``):
       "compliant"    — write compliance_check(verdict='compliant'), keep binds_to
-      "drifted"      — write compliance_check(verdict='drifted'), keep binds_to
+      "drifted"      — write compliance_check(verdict='drifted'), keep binds_to.
+                       REQUIRES a prior 'compliant' verdict for the same
+                       (decision_id, region_id) pair (reflected-before-drifted
+                       invariant). Otherwise the verdict is rejected with
+                       reason='state_transition_invalid' and the caller-LLM
+                       should downgrade to 'partial' and retry.
+      "partial"      — write compliance_check(verdict='partial'), keep binds_to.
+                       The correct verdict for binding-as-anchor-for-future-work
+                       and for any never-compliant region the caller would
+                       otherwise have called 'drifted'.
       "not_relevant" — write compliance_check(verdict='not_relevant', pruned=True),
                        DELETE the binds_to edge (retrieval mistake, not drift)
 
@@ -162,6 +173,32 @@ async def handle_resolve_compliance(
                     region_id=v.region_id,
                     reason="unknown_region_id",
                     detail=f"no code_region row for {v.region_id}",
+                )
+            )
+            continue
+
+        # #405 — reflected-before-drifted invariant. You cannot drift from a
+        # state you never reached. If the caller submits 'drifted' for a
+        # (decision, region) pair with no prior 'compliant' row, return a
+        # structured rejection that tells the caller to downgrade to 'partial'
+        # and retry. No row is written for this verdict.
+        if v.verdict == "drifted" and not await has_prior_compliant_verdict(
+            client, v.decision_id, v.region_id
+        ):
+            history = await compliance_history_summary(client, v.decision_id, v.region_id)
+            rejected.append(
+                ResolveComplianceRejection(
+                    decision_id=v.decision_id,
+                    region_id=v.region_id,
+                    reason="state_transition_invalid",
+                    detail=(
+                        "cannot transition to 'drifted' — no prior 'compliant' verdict "
+                        "exists for this (decision_id, region_id) pair. Downgrade to "
+                        "'partial' (never-compliant anticipatory binding) and retry."
+                    ),
+                    attempted_verdict="drifted",
+                    allowed_verdicts=["compliant", "partial", "not_relevant"],
+                    prior_history_summary=history,
                 )
             )
             continue

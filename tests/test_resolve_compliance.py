@@ -508,9 +508,17 @@ async def test_e2e_pending_to_reflected_via_resolve(_repo_ctx):
 
 @pytest.mark.phase3
 @pytest.mark.asyncio
-async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
-    """When the caller LLM returns verdict='drifted', the decision
-    projects DRIFTED with the stored explanation as drift_evidence.
+async def test_e2e_noncompliant_verdict_on_never_compliant_yields_partial(_repo_ctx):
+    """#405 — the never-compliant case is 'partial', not 'drifted'.
+
+    Pre-#405 the caller-LLM emitted 'drifted' for an anchored region whose
+    code never matched the decision. That polluted drift dashboards with
+    false regressions. Post-#405:
+
+    - the server REJECTS 'drifted' on a never-compliant pair with
+      reason='state_transition_invalid' (caller must downgrade);
+    - the correct first-pass verdict for this case is 'partial';
+    - the projected decision.status is 'partial', not 'drifted'.
     """
     ledger = get_ledger()
     await ledger.connect()
@@ -550,8 +558,8 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
     assert ingest_resp.sync_status is not None
     p = ingest_resp.sync_status.pending_compliance_checks[0]
 
-    # Caller LLM rejects: 10% discount in code ≠ "50% discount" decision.
-    verdict = ComplianceVerdict(
+    # Step A — caller-LLM tries 'drifted' first (the pre-#405 habit).
+    drifted_attempt = ComplianceVerdict(
         decision_id=p.decision_id,
         region_id=p.region_id,
         content_hash=p.content_hash,
@@ -559,15 +567,42 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
         confidence="high",
         explanation="Code applies 10% discount, but decision specifies 50%.",
     )
-    await handle_resolve_compliance(_ctx(), phase=p.phase, verdicts=[verdict])
-
-    post = await handle_decision_status(_ctx(), filter="all")
-    assert post.summary.get("drifted", 0) == 1, (
-        f"Non-compliant verdict should flip status to DRIFTED, got {post.summary!r}"
+    rejected_resp = await handle_resolve_compliance(
+        _ctx(), phase=p.phase, verdicts=[drifted_attempt]
     )
-    # Verify the verdict actually persisted with the explanation.
-    drifted = [d for d in post.decisions if d.status == "drifted"]
-    assert len(drifted) == 1
+    assert len(rejected_resp.accepted) == 0
+    assert len(rejected_resp.rejected) == 1
+    rej = rejected_resp.rejected[0]
+    assert rej.reason == "state_transition_invalid"
+    assert rej.attempted_verdict == "drifted"
+    assert "partial" in rej.allowed_verdicts
+    assert rej.prior_history_summary.get("compliant", 0) == 0
+
+    # Step B — caller-LLM downgrades to 'partial' and retries the same batch.
+    partial_verdict = ComplianceVerdict(
+        decision_id=p.decision_id,
+        region_id=p.region_id,
+        content_hash=p.content_hash,
+        verdict="partial",
+        confidence="high",
+        explanation="Code applies 10% discount; decision specifies 50%. Never implemented.",
+    )
+    accepted_resp = await handle_resolve_compliance(
+        _ctx(), phase=p.phase, verdicts=[partial_verdict]
+    )
+    assert len(accepted_resp.accepted) == 1
+    assert accepted_resp.accepted[0].verdict == "partial"
+
+    # Projected status is 'partial', not 'drifted' — the drift dashboard stays clean.
+    post = await handle_decision_status(_ctx(), filter="all")
+    assert post.summary.get("drifted", 0) == 0, (
+        f"Never-compliant region must NOT count as drifted, got {post.summary!r}"
+    )
+    assert post.summary.get("partial", 0) == 1, (
+        f"Never-compliant region must project as 'partial', got {post.summary!r}"
+    )
+
+    # Verify persistence.
     inner = getattr(ledger, "_inner", ledger)
     cached = await get_compliance_verdict(
         inner._client,
@@ -576,7 +611,4 @@ async def test_e2e_noncompliant_verdict_yields_drifted(_repo_ctx):
         p.content_hash,
     )
     assert cached is not None
-    assert cached["verdict"] == "drifted"
-    assert "10%" in cached["explanation"] or "50%" in cached["explanation"], (
-        f"Compliance row should hold the LLM rationale, got {cached['explanation']!r}"
-    )
+    assert cached["verdict"] == "partial"
