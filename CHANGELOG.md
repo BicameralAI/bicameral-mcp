@@ -3,7 +3,31 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## v0.16.0 — Ledger Locator (out-of-tree state) + `partial` verdict + recovery-path hardening
+
+Triage release draining the dev → main backlog. Lands the **#368 Ledger Locator** (relocates project-scoped state out of the working tree and gives worktrees / submodules a clean contract), introduces the **`partial` verdict** for in-progress work (#405), wires the missing **`bicameral_reset` CLI + `bicameral_diagnose` recovery path** (#410), and flips the **`M_skill_preflight` CI gates from warn → hard** (#398).
+
+### Breaking changes
+
+- **State layout moved** from `<repo>/.bicameral/ledger.db` + `<repo>/.bicameral/local/code-graph.db` (and bm25, watermark, transcript-queue derived state) to `~/.bicameral/projects/<id>/...` (#368, decision tree under `thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md`). The locator computes `<id>` from the `origin` remote URL — same repo cloned twice resolves to the same project dir. `.bicameral/events/*.jsonl` and `.bicameral/config.yaml` stay in-tree (config split into team-identity vs. operator files; see Added below).
+- **`compliance_check.verdict` literal extended** with `'partial'` (was `'reflected' | 'drifted'`) — `idx_compliance_status` now matches `'partial'` rows. Schema migration `v25` backfills existing rows that had been incorrectly marked `drifted` despite never reaching `reflected`. Callers that switch on the verdict must add a `'partial'` arm (#405).
+
+### Migration
+
+This release changes the canonical on-disk state layout. Run **`bicameral-mcp migrate-state --auto`** once after upgrading. The CLI is idempotent (fresh repos print `Nothing to migrate.`), archives on collision, and prints a planned-moves preview under `--dry-run`. `/bicameral-update` runs this automatically at Step 3.5; **restart your Claude Code / Cursor session when the skill tells you to, before firing any more bicameral tool calls** — the running MCP server's adapter still holds file descriptors to the pre-move paths until restart (see [#366](https://github.com/BicameralAI/bicameral-mcp/issues/366), closed as wontfix with this disclaimer). Operators who upgrade via `pipx`/`uv install --force` outside the skill must run `migrate-state --auto` manually, then restart the session.
+
+### Added
+
+- **Ledger Locator** (#368) — `ledger_locator/` resolves ledger / code-graph / bm25 / watermark / transcript-queue paths under `~/.bicameral/projects/<id>/`. Explicit VCS contract: worktrees, submodules, and bare-clone setups all map to the same project dir as the canonical clone via the origin-URL identity guard (`ledger_locator/_origin_guard.py`).
+- **R4 config split + git-native onboarding wizard** (#368 Phase 2C) — `.bicameral/config.yaml` partitioned into a team-identity file (committed) and an operator file (in-tree, gitignored). `setup_wizard` detects linked worktrees / `origin/HEAD` / authoritative branch and writes config without prompting for state-path env vars.
+- **`bicameral-mcp migrate-state`** (alias `migrate-ledger`) + **`bicameral-mcp gc`** CLIs (#368 Phases 3+4) — `migrate-state` is manifest-resumable, archives on collision, and post-flight summary names the ephemeral-environment caveat (Codespaces / devcontainer / CI). `gc` reclaims abandoned project dirs.
+- **`'partial'` verdict + reflected-before-drifted state transition** (#405) — `bicameral.link_commit` now writes `partial` when grounded code is incomplete (not yet `reflected`). Distinct migration `v25` backfills the legacy false-drift rows; the index is rebuilt to include the new literal.
+- **`bicameral_reset` CLI + diagnose row-revision mismatch recovery** (#410) — the missing in-tool recovery path that #301's `LedgerDeserializationError` was supposed to invoke is now wired. Reset's dry-run handles broken `ledger_sync` reads by returning `unknown — error reading` instead of crashing. `cli/reset_cli.py` + `handlers/reset.py` split events-dir (repo-local) from bicameral-dir (locator) so the operations don't blast each other's state.
+- **Equality-key indexes for UPSERT lookups** (#410) — `decision`, `compliance_check`, `input_span` UPSERT hot path no longer table-scans on conflict; perf gate via `tests/test_schema_index_lookup_perf.py`.
+- **Loud-fail cross-version event replay** (#405) — `adapters/ledger.py` raises a structured error with a `bicameral.diagnose` upgrade hint when a replayed event was written by a binary newer than the current SDK, instead of silently corrupting state.
+- **Elixir code-locator substrate** (#367) — tags-query-based extractor + Python parity gate.
+- **`#399` Stages A/B/C — Go/Rust shadow-substrate parity** (internal infra, no user-visible behavior change). Type→class mapping for Go struct/interface (Stage A), Rust + Go parity gates via clone-on-demand corpora (Stage B), shadow-mode dispatch + `M_shadow_parity` CI gate (Stage C) — sets up future migration off the walker.
+- **`#306` skill-preflight evaluation harness** — expanded dataset 3 → 25 rows, Step-0 invocation harness, baseline records.
 
 ### Changed
 
