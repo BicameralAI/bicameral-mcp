@@ -73,14 +73,23 @@ def _read_log(log_path: Path) -> list[dict]:
 # ── Mode default state ─────────────────────────────────────────────
 
 
-def test_default_modes_match_stage_c_initial_state():
-    """The dispatch table starts every walker-backed language at
-    WALKER_ONLY and Elixir at SUBSTRATE_ONLY. Flipping these is Stages
-    D and E — if this test fails after a Stage C-and-below PR, somebody
-    edited the table prematurely."""
+def test_modes_match_current_rollout_state():
+    """Locks the per-language ``_SHADOW_MODES`` state at its current
+    rollout point. Each Stage D/E PR that flips a language updates this
+    test in lockstep — if a flip lands without updating this test, the
+    PR breaks CI immediately, which is the desired tripwire.
+
+    Current state (#399 rollout):
+      - Python: SHADOW_SUBSTRATE (Stage D / 2026-05-19) — walker
+        authoritative, substrate runs silently, divergence logged.
+      - Go, Rust: WALKER_ONLY (Stage D pending observation of Python).
+      - JS/TS, Java, C#: WALKER_ONLY (walker-only forever per Stage A
+        decision — upstream tags.scm gaps make these untouchable).
+      - Elixir: SUBSTRATE_ONLY (no walker; was always this).
+    """
     from code_locator.indexing.symbol_extractor import _SHADOW_MODES, ShadowMode
 
-    assert _SHADOW_MODES["python"] is ShadowMode.WALKER_ONLY
+    assert _SHADOW_MODES["python"] is ShadowMode.SHADOW_SUBSTRATE
     assert _SHADOW_MODES["go"] is ShadowMode.WALKER_ONLY
     assert _SHADOW_MODES["rust"] is ShadowMode.WALKER_ONLY
     assert _SHADOW_MODES["javascript"] is ShadowMode.WALKER_ONLY
@@ -94,12 +103,23 @@ def test_default_modes_match_stage_c_initial_state():
 
 
 def test_walker_only_writes_no_shadow_log(monkeypatch, tmp_path):
-    """Default Python (walker-only) runs without touching the shadow
-    log. Pins the cost-zero property — production indexing of a fully-
-    walker-only workload pays nothing for telemetry."""
+    """Walker-only mode runs without touching the shadow log. Pins the
+    cost-zero property — production indexing of a fully-walker-only
+    workload pays nothing for telemetry.
+
+    Forces Python into WALKER_ONLY for this test even though its
+    current rollout state is SHADOW_SUBSTRATE (Stage D, 2026-05-19) —
+    the property under test is a property of the WALKER_ONLY enum
+    value, not of any specific language."""
     log_path = _reset_shadow_log(monkeypatch, tmp_path)
 
-    from code_locator.indexing.symbol_extractor import extract_symbols_from_content
+    from code_locator.indexing.symbol_extractor import (
+        _SHADOW_MODES,
+        ShadowMode,
+        extract_symbols_from_content,
+    )
+
+    monkeypatch.setitem(_SHADOW_MODES, "python", ShadowMode.WALKER_ONLY)
 
     records = extract_symbols_from_content(_PY_FIXTURE_EQUAL, "python", "fixture.py")
 
