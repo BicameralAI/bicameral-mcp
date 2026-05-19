@@ -6,18 +6,42 @@ and adapted to produce SymbolRecord objects for the SQLite store.
 Per-language coverage:
 
 - Python, JS/JSX, TS/TSX, Java, Go, Rust, C#: bespoke walkers
-  (``_extract_<lang>_defs``) — historical pattern; walker retirement
-  for the simpler four (Python, Go, Rust, JS-mode) gated on #399's
-  measurement spike.
+  (``_extract_<lang>_defs``) — historical pattern.
 - **Elixir (#367)**: generic tags-query path via
   ``tags_extractor.extract_defs_via_tags`` against the upstream
   ``tree-sitter-elixir`` grammar's ``queries/tags.scm``. Substrate
-  introduced in #367 as the precursor to the broader hybrid refactor;
-  validated against existing Python walker output by
-  ``tests/test_tags_extractor_parity.py``.
+  introduced in #367 as the precursor to the broader hybrid refactor.
+
+Dispatch routing (#399 Stage C):
+
+  Per-language ``ShadowMode`` enum in ``_SHADOW_MODES`` controls how
+  ``_extract_definitions`` routes a given language. Four modes per the
+  #399 rollout pattern:
+
+  - ``walker-only`` — runs the bespoke walker, authoritative. Current
+    state for Python/Go/Rust/JS/TS/Java/C#.
+  - ``shadow-substrate`` — runs walker AND substrate; walker
+    authoritative, divergence logged to ``m_shadow_divergence``
+    telemetry. Stage D flips Python/Go/Rust here.
+  - ``shadow-walker`` — runs walker AND substrate; substrate
+    authoritative, divergence logged. Stage E pre-retirement.
+  - ``substrate-only`` — runs the tags-query substrate only. Current
+    state for Elixir (no walker exists).
+
+  Per-language ``_WALKER_VOCAB`` defines the symbol-type vocabulary
+  the walker emits for that language. Shadow mode filters substrate
+  output to this vocabulary before comparing — substrate-only kinds
+  (e.g. Rust ``macro``, Python ``constant``) are by design and aren't
+  divergences.
+
+  Walker retirement is staged behind these modes; mode flips are one-
+  line edits to ``_SHADOW_MODES`` that ship in their own small PRs
+  (see #399 Stages D and E).
 """
 
 from __future__ import annotations
+
+from enum import StrEnum
 
 from .sqlite_store import SymbolRecord
 
@@ -421,10 +445,76 @@ def _extract_csharp_defs(tree, code: bytes, rel_path: str) -> list[SymbolRecord]
     return records
 
 
-# ── Dispatch ─────────────────────────────────────────────────────────
+# ── Shadow-mode dispatch (#399 Stage C) ──────────────────────────────
 
 
-def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+class ShadowMode(StrEnum):
+    """How ``_extract_definitions`` routes a given language.
+
+    See module docstring for the four-stage rollout pattern. Each
+    transition (walker-only → shadow-substrate → shadow-walker →
+    substrate-only) is a one-line edit to ``_SHADOW_MODES``, gated by
+    the observation windows in #399 Stages D and E.
+    """
+
+    WALKER_ONLY = "walker-only"
+    SHADOW_SUBSTRATE = "shadow-substrate"  # walker authoritative, substrate runs silently
+    SHADOW_WALKER = "shadow-walker"  # substrate authoritative, walker runs silently
+    SUBSTRATE_ONLY = "substrate-only"
+
+
+# Per-language dispatch table. Initial state per #399's locked rollout:
+# every walker-backed language starts at WALKER_ONLY; Elixir is
+# substrate-only because no walker was ever written.
+#
+# JS/TS, Java, C# are documented as walker-only forever (#399 Stage A):
+# the upstream tags.scm grammars have gaps these walkers fill (JS/TS
+# overlap, Java annotation/wildcard handling, C# nested-class qualified
+# names). Stage D/E flips do NOT apply to these three languages.
+_SHADOW_MODES: dict[str, ShadowMode] = {
+    "python": ShadowMode.WALKER_ONLY,
+    "javascript": ShadowMode.WALKER_ONLY,
+    "jsx": ShadowMode.WALKER_ONLY,
+    "typescript": ShadowMode.WALKER_ONLY,
+    "tsx": ShadowMode.WALKER_ONLY,
+    "java": ShadowMode.WALKER_ONLY,
+    "go": ShadowMode.WALKER_ONLY,
+    "rust": ShadowMode.WALKER_ONLY,
+    "c_sharp": ShadowMode.WALKER_ONLY,
+    "elixir": ShadowMode.SUBSTRATE_ONLY,
+}
+
+
+# Per-language walker vocabulary — the ``SymbolRecord.type`` values
+# the bespoke walker emits for this language. Used by shadow-mode
+# dispatch to filter substrate output to a comparable vocabulary
+# before computing divergence. Substrate-only kinds outside this set
+# (e.g. Python ``constant``, Rust ``macro``, JS ``module``) are by
+# design and aren't divergences.
+#
+# Locked in by ``tests/test_tags_extractor_parity.py`` — these match
+# ``PY_WALKER_VOCAB`` / ``GO_WALKER_VOCAB`` / ``RUST_WALKER_VOCAB``
+# defined there.
+_WALKER_VOCAB: dict[str, frozenset[str]] = {
+    "python": frozenset({"function", "class", "method"}),
+    "javascript": frozenset({"function", "class"}),
+    "jsx": frozenset({"function", "class"}),
+    "typescript": frozenset({"function", "class"}),
+    "tsx": frozenset({"function", "class"}),
+    "java": frozenset({"function", "class"}),
+    "go": frozenset({"function", "class"}),
+    "rust": frozenset({"function", "class"}),
+    "c_sharp": frozenset({"function", "class"}),
+    # Elixir is substrate-only — no walker, no vocab.
+}
+
+
+def _run_walker(language_id: str, tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    """Dispatch to the bespoke walker for ``language_id``.
+
+    Returns ``[]`` if the language has no walker — caller should check
+    ``_SHADOW_MODES`` before calling and never invoke this for Elixir.
+    """
     if language_id == "python":
         return _extract_python_defs(tree, code, rel_path)
     if language_id in ("javascript", "jsx", "typescript", "tsx"):
@@ -437,20 +527,96 @@ def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> 
         return _extract_rust_defs(tree, code, rel_path)
     if language_id == "c_sharp":
         return _extract_csharp_defs(tree, code, rel_path)
-    if language_id == "elixir":
-        # #367: tags-query path via the upstream tree-sitter-elixir tags.scm.
-        # First instance of the data-driven extractor; #399's spike measures
-        # whether the simpler walkers (Python, Go, Rust, JS-mode) can retire
-        # in favor of this same path. Walker fallback is not provided for
-        # Elixir — see pyproject.toml's tight grammar pin (>=0.3.5,<0.4).
-        from .tags_extractor import extract_defs_via_tags, load_tags_query_text
-
-        query_text = load_tags_query_text("tree_sitter_elixir")
-        if query_text is None:
-            return []
-        lang = _get_language_obj("elixir")
-        return extract_defs_via_tags(lang, tree, code, rel_path, query_text)
     return []
+
+
+def _run_substrate(language_id: str, tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    """Dispatch to the tags-query substrate for ``language_id``.
+
+    Returns ``[]`` if the grammar package's ``queries/tags.scm`` is
+    missing — matches the pre-Stage-C Elixir fallback behavior.
+    """
+    from .tags_extractor import extract_defs_via_tags, load_tags_query_text
+
+    pkg_name = _LANG_PACKAGE_MAP.get(language_id)
+    if pkg_name is None:
+        return []
+    query_text = load_tags_query_text(pkg_name)
+    if query_text is None:
+        return []
+    try:
+        lang = _get_language_obj(language_id)
+    except (ImportError, KeyError):
+        return []
+    return extract_defs_via_tags(lang, tree, code, rel_path, query_text)
+
+
+def _log_shadow_divergence(
+    language_id: str,
+    mode: ShadowMode,
+    rel_path: str,
+    walker_records: list[SymbolRecord],
+    substrate_records: list[SymbolRecord],
+) -> None:
+    """Compute the (name, type) sets, filter to walker vocabulary, and
+    hand them to the divergence log. Wrapped in try/except so a
+    telemetry failure can never break extraction — same pattern as
+    ``handlers/bind.py``'s m2 telemetry call site.
+    """
+    vocab = _WALKER_VOCAB.get(language_id)
+    if vocab is None:
+        return  # no walker vocab → no meaningful comparison
+    walker_set = {(r.name, r.type) for r in walker_records if r.type in vocab}
+    substrate_set = {(r.name, r.type) for r in substrate_records if r.type in vocab}
+    try:
+        from m_shadow_divergence_log import record_divergence
+
+        record_divergence(
+            language_id=language_id,
+            mode=mode.value,
+            rel_path=rel_path,
+            walker_set=walker_set,
+            substrate_set=substrate_set,
+        )
+    except Exception:
+        # Telemetry must never break extraction. Swallow silently —
+        # the import-side fail-loud invariant is for the user-facing
+        # parity gate, not the in-process indexer.
+        pass
+
+
+def _extract_definitions(language_id: str, tree, code: bytes, rel_path: str) -> list[SymbolRecord]:
+    """Extract definitions for ``language_id``, routing through the
+    shadow-mode dispatch table.
+
+    Unknown languages return ``[]`` — preserves the pre-Stage-C
+    behavior for an extension whose grammar isn't wired.
+    """
+    mode = _SHADOW_MODES.get(language_id)
+    if mode is None:
+        return []
+
+    if mode is ShadowMode.WALKER_ONLY:
+        return _run_walker(language_id, tree, code, rel_path)
+
+    if mode is ShadowMode.SUBSTRATE_ONLY:
+        return _run_substrate(language_id, tree, code, rel_path)
+
+    # Shadow modes: run BOTH, log divergence, return authoritative side.
+    walker_records = _run_walker(language_id, tree, code, rel_path)
+    substrate_records = _run_substrate(language_id, tree, code, rel_path)
+
+    _log_shadow_divergence(language_id, mode, rel_path, walker_records, substrate_records)
+
+    if mode is ShadowMode.SHADOW_SUBSTRATE:
+        return walker_records  # walker authoritative
+    if mode is ShadowMode.SHADOW_WALKER:
+        return substrate_records  # substrate authoritative
+
+    # Unreachable — exhaustive over the four enum members. Defensive
+    # fallback returns the walker side so the indexer never crashes
+    # on a future enum value introduced without updating this branch.
+    return walker_records
 
 
 # ── Public API ───────────────────────────────────────────────────────
