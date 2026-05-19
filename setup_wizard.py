@@ -356,6 +356,44 @@ def _resolve_authoritative_ref(repo_path: Path) -> tuple[str, bool]:
     return branch, needs_override
 
 
+def _read_committed_config(repo_path: Path, ref: str = "HEAD") -> dict | None:
+    """Return the parsed YAML at ``ref:.bicameral/config.yaml`` via ``git show``.
+
+    R4 git-native onboarding (decision:ew9rgegdlblexsraesss): the wizard
+    detects whether team-mode is already configured for this clone by
+    asking git for the committed config, not by walking the filesystem.
+    Works uniformly across worktrees, submodules, bare-repo deployments,
+    sparse checkouts, devcontainers, Codespaces, CI runners, and
+    ``--separate-git-dir`` layouts — none of which a filesystem-topology
+    probe could classify correctly.
+
+    Returns the parsed config dict on success, ``None`` on any failure
+    (no commit yet, file not tracked at ``ref``, malformed YAML, git
+    binary missing). The caller should treat ``None`` as "no committed
+    config — proceed with the prompt flow."
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f"{ref}:.bicameral/config.yaml"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0 or not result.stdout.strip():
+        return None
+    try:
+        import yaml
+
+        parsed = yaml.safe_load(result.stdout)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
 def _detect_agents() -> list[str]:
     """Auto-detect which coding agents are available."""
     found = []
@@ -448,8 +486,10 @@ def _build_config(
     Keeping data_path separate lets history live in a private parent repo
     while REPO_PATH points to the public code repo.
 
-    In team mode, local DBs go under .bicameral/local/ (gitignored)
-    so they don't leak into the tracked events directory.
+    The ledger and code-graph paths are NOT written here — `ledger_locator`
+    resolves both at runtime to `~/.bicameral/projects/<id>/` (#368). Users
+    who need a non-default path set `SURREAL_URL` / `CODE_LOCATOR_SQLITE_DB`
+    in their own environment.
 
     authoritative_ref: when set, written into the config env as
     ``BICAMERAL_AUTHORITATIVE_REF`` so the runtime detector pins the
@@ -461,16 +501,8 @@ def _build_config(
     data_root = (data_path or repo_path) / ".bicameral"
     data_root.mkdir(parents=True, exist_ok=True)
 
-    if mode == "team":
-        local_dir = data_root / "local"
-        local_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        local_dir = data_root
-
     env: dict[str, str] = {
         "REPO_PATH": str(repo_path),
-        "SURREAL_URL": f"surrealkv://{local_dir / 'ledger.db'}",
-        "CODE_LOCATOR_SQLITE_DB": str(local_dir / "code-graph.db"),
         "BICAMERAL_TELEMETRY": "1" if telemetry else "0",
     }
     if data_path is not None and data_path.resolve() != repo_path.resolve():
@@ -1532,45 +1564,123 @@ def _write_collaboration_config(
     telemetry: bool = False,
     team_backend: dict | None = None,
     channel: str | None = None,
+    operator_path: Path | None = None,
 ) -> None:
-    """Write .bicameral/config.yaml with collaboration mode, guided-mode, telemetry,
-    signer-email fallback, and (optionally) the team-backend block.
+    """Write the team-identity and per-operator config files (R4 split, #368).
 
-    `signer_email_fallback` (#200 Phase 2) defaults to `local-part-only` —
-    privacy-positive: preserves attribution prefix on session-originated
-    ingests without leaking the full git user.email to the ledger / team-
-    mode JSONL substrate. Modes: `redact` (strongest, no attribution),
-    `local-part-only` (default), `full` (legacy verbatim email).
+    Two destinations under the R4 split (decision:5nr66wvmapjpt58rrji8):
 
-    `team_backend` (#277): when present, persists `team:` block with
-    `backend`, `role`, and either `folder_id` (Drive) or `remote_root`
-    (LocalFolder).
+      - ``<data_path>/.bicameral/config.yaml`` — team-identity keys:
+        ``mode``, the ``team.backend``/``team.folder_id``/``team.remote_root``
+        block. Committed to git so teammates inherit on clone.
+      - ``operator_path`` (default: ``ledger_locator.resolve_operator_config_path(data_path)``,
+        which lives under ``~/.bicameral/projects/<id>/``) — per-operator
+        keys: ``guided``, ``telemetry``, ``channel``,
+        ``signer_email_fallback``, ``render_source_attribution``,
+        ``team.role``. Per-machine, never committed.
 
-    `channel`: release channel for ``bicameral.update``. Defaults to
-    auto-detect via ``_detect_install_channel()`` — a ``.devN`` install
-    writes ``channel: nightly``, anything else writes ``channel: stable``.
-    Tests pass an explicit value to lock behavior.
+    Atomic two-file write: both files are first written to ``<dest>.tmp``,
+    then renamed in sequence (operator first → config second). If the
+    second rename fails, the newly-renamed operator file is unlinked and
+    any remaining temp files are cleaned up before re-raising — neither
+    destination ends up in a half-written state.
+
+    Fallback: when ``operator_path`` is None and ``data_path`` isn't
+    inside a git work tree (locator can't resolve a project id), every
+    key is written to the single team config.yaml — the v0.15.x layout.
+    This preserves behavior for pre-R4 tests and non-git scratch dirs;
+    real ``run_setup`` always runs in a git repo so the split fires.
+
+    ``signer_email_fallback`` (#200 Phase 2) defaults to ``local-part-only``
+    (privacy-positive). ``team_backend`` (#277): the ``backend`` /
+    ``folder_id`` / ``remote_root`` keys land in the team file; ``role``
+    lands in the operator file. ``channel`` defaults to auto-detect via
+    ``_detect_install_channel()``.
     """
     resolved_channel = channel if channel is not None else _detect_install_channel()
     config_path = data_path / ".bicameral" / "config.yaml"
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    base = (
-        "# Bicameral configuration\n"
-        f"mode: {mode}\n"
-        f"guided: {'true' if guided else 'false'}\n"
-        f"telemetry: {'true' if telemetry else 'false'}\n"
-        f"channel: {resolved_channel}\n"
-        "signer_email_fallback: local-part-only\n"
-        "render_source_attribution: redacted\n"  # #209: privacy-positive default
-    )
+
+    resolved_operator_path = operator_path
+    if resolved_operator_path is None:
+        try:
+            from ledger_locator import (
+                ProjectIdResolutionError,
+                resolve_operator_config_path,
+            )
+
+            resolved_operator_path = resolve_operator_config_path(data_path)
+        except (ImportError, ProjectIdResolutionError):
+            resolved_operator_path = None  # fall through to single-file legacy layout
+
+    # Team-identity body (always written to <data_path>/.bicameral/config.yaml).
+    team_body = "# Bicameral configuration (team identity — committed)\n"
+    team_body += f"mode: {mode}\n"
     if team_backend:
         team_lines = ["team:"]
-        for key in ("backend", "folder_id", "remote_root", "role"):
+        for key in ("backend", "folder_id", "remote_root"):
             if key in team_backend:
-                value = team_backend[key]
-                team_lines.append(f"  {key}: {value}")
-        base += "\n".join(team_lines) + "\n"
-    config_path.write_text(base, encoding="utf-8")
+                team_lines.append(f"  {key}: {team_backend[key]}")
+        team_body += "\n".join(team_lines) + "\n"
+
+    # Per-operator body (written to operator.yaml under the project state dir).
+    operator_body = "# Bicameral operator configuration (per-machine — private)\n"
+    operator_body += f"guided: {'true' if guided else 'false'}\n"
+    operator_body += f"telemetry: {'true' if telemetry else 'false'}\n"
+    operator_body += f"channel: {resolved_channel}\n"
+    operator_body += "signer_email_fallback: local-part-only\n"
+    operator_body += "render_source_attribution: redacted\n"  # #209: privacy-positive default
+    if team_backend and "role" in team_backend:
+        operator_body += "team:\n"
+        operator_body += f"  role: {team_backend['role']}\n"
+
+    if resolved_operator_path is None:
+        # Non-git fallback: collapse to single config.yaml. Keep the legacy
+        # body shape so v0.15.x readers (and old tests) keep working.
+        legacy_body = (
+            "# Bicameral configuration\n"
+            f"mode: {mode}\n"
+            f"guided: {'true' if guided else 'false'}\n"
+            f"telemetry: {'true' if telemetry else 'false'}\n"
+            f"channel: {resolved_channel}\n"
+            "signer_email_fallback: local-part-only\n"
+            "render_source_attribution: redacted\n"
+        )
+        if team_backend:
+            team_lines = ["team:"]
+            for key in ("backend", "folder_id", "remote_root", "role"):
+                if key in team_backend:
+                    team_lines.append(f"  {key}: {team_backend[key]}")
+            legacy_body += "\n".join(team_lines) + "\n"
+        config_path.write_text(legacy_body, encoding="utf-8")
+    else:
+        resolved_operator_path.parent.mkdir(parents=True, exist_ok=True)
+        config_tmp = config_path.with_suffix(config_path.suffix + ".tmp")
+        operator_tmp = resolved_operator_path.with_suffix(
+            resolved_operator_path.suffix + ".tmp"
+        )
+        config_tmp.write_text(team_body, encoding="utf-8")
+        operator_tmp.write_text(operator_body, encoding="utf-8")
+        operator_promoted = False
+        try:
+            operator_tmp.replace(resolved_operator_path)
+            operator_promoted = True
+            config_tmp.replace(config_path)
+        except Exception:
+            # Roll back any partial state: unlink the freshly renamed
+            # operator.yaml (if step 1 succeeded) and any leftover temps.
+            if operator_promoted:
+                try:
+                    resolved_operator_path.unlink()
+                except FileNotFoundError:
+                    pass
+            for tmp in (config_tmp, operator_tmp):
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+            raise
+
     print(f"  Collaboration: {mode} mode")
     print(f"  Guided mode: {'on — blocking hints' if guided else 'off — advisory hints'}")
     print(f"  Telemetry: {'on — anonymous usage stats' if telemetry else 'off'}")
@@ -1588,6 +1698,9 @@ def _write_collaboration_config(
         "in config.yaml to change)"
     )
     print("  Preflight bypass tracking: enabled (writes ~/.bicameral/preflight_events.jsonl)")
+    if resolved_operator_path is not None:
+        print(f"  team config → {config_path} (commit this)")
+        print(f"  your settings → {resolved_operator_path} (private)")
 
 
 def _patch_gitignore(path: Path, entries: list[str], comment: str) -> None:
@@ -1725,14 +1838,55 @@ def run_setup(
         return 1
 
     # Step 4: Collaboration mode + guided intensity + telemetry + gitignore
-    collab_mode = _select_collaboration_mode()
+    # R4 git-native onboarding (decision:ew9rgegdlblexsraesss): if HEAD
+    # already has a committed .bicameral/config.yaml, inherit its mode +
+    # team backend instead of prompting. Falls through to the interactive
+    # path on no-commit / no-config / non-team / parse failure.
+    committed = _read_committed_config(repo_path, "HEAD")
+    collab_mode: str
+    team_backend: dict | None = None
+    if committed is not None and committed.get("mode") in ("team", "solo"):
+        collab_mode = committed["mode"]
+        if collab_mode == "team" and isinstance(committed.get("team"), dict):
+            team_block = committed["team"]
+            backend = team_block.get("backend")
+            target = team_block.get("folder_id") or team_block.get("remote_root")
+            print(
+                f"  Detected team config: backend={backend}, "
+                f"folder={target} ✓ (auto-joining)"
+            )
+            team_backend = {k: v for k, v in team_block.items() if v is not None}
+        else:
+            print(f"  Detected committed config: mode={collab_mode} ✓ (auto-inheriting)")
+    else:
+        # R4 divergence guard (decision:ogdfx014sqgc6fi6ky1a): HEAD has no
+        # committed config — is it living on a feature branch where the
+        # default branch DID commit one? Surface the inheritance gap
+        # before we let the operator persist a fresh-setup config.
+        default_branch = auth_ref
+        default_committed = _read_committed_config(repo_path, default_branch)
+        if default_committed is not None and default_committed.get("mode") in ("team", "solo"):
+            print()
+            print(
+                f"  Your branch doesn't have .bicameral/config.yaml, but {default_branch} does."
+            )
+            if not _prompt_yes_no(
+                "  Continue with fresh setup? (Choosing No exits so you can merge first.)",
+                default=False,
+            ):
+                print(
+                    f"  Aborted. Run `git merge {default_branch}` to inherit the team config, "
+                    f"then re-run `bicameral-mcp setup`."
+                )
+                return 1
+
+        collab_mode = _select_collaboration_mode()
+        if collab_mode == "team":
+            # #277: Create vs Join vs LocalFolder dispatch for the shared ledger.
+            team_backend = _select_team_backend(repo_path)
+
     guided = _select_guided_mode()
     telemetry = _select_telemetry()
-
-    team_backend: dict | None = None
-    if collab_mode == "team":
-        # #277: Create vs Join vs LocalFolder dispatch for the shared ledger.
-        team_backend = _select_team_backend(repo_path)
 
     _write_collaboration_config(
         data_path,
@@ -1813,20 +1967,53 @@ def run_setup(
     return 0
 
 
-def run_config_wizard() -> int:
-    """Interactive CLI wizard for editing bicameral config.yaml.
+def _resolve_config_paths(repo_path: Path) -> tuple[Path, Path | None]:
+    """Resolve (team_config_path, operator_config_path) under the R4 split.
 
-    Reads the current config, prompts for each setting via questionary,
-    writes updated config.yaml, and reinstalls skills/hooks so changes
-    take effect immediately.
+    Returns the team config path always (``<repo>/.bicameral/config.yaml``)
+    and the operator config path when the locator can resolve a project id
+    for ``repo_path``. When the locator can't resolve (non-git scratch
+    dir), operator_path is None — callers should fall through to the
+    legacy single-file v0.15.x behavior.
+    """
+    team_path = repo_path / ".bicameral" / "config.yaml"
+    try:
+        from ledger_locator import (
+            ProjectIdResolutionError,
+            resolve_operator_config_path,
+        )
+
+        return team_path, resolve_operator_config_path(repo_path)
+    except (ImportError, ProjectIdResolutionError):
+        return team_path, None
+
+
+def _read_yaml_dict(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        import yaml
+
+        return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+
+
+def run_config_wizard() -> int:
+    """Interactive CLI wizard for editing bicameral config under the R4 split.
+
+    Two source files (decision:5nr66wvmapjpt58rrji8):
+      - ``<repo>/.bicameral/config.yaml`` — team-identity keys (committed)
+      - ``~/.bicameral/projects/<id>/operator.yaml`` — per-operator keys
+
+    Each prompt is tagged ``[team]`` or ``[your machine]`` so the operator
+    sees which file their answer lands in before they pick. Writes go
+    through ``_write_collaboration_config`` so both files land atomically
+    or roll back together. Skills/hooks are reinstalled after a successful
+    write so changes take effect immediately.
     """
     import subprocess
     import sys
-
-    try:
-        import yaml
-    except ImportError:
-        import json as yaml  # fallback: won't write yaml but will read
 
     _ensure_utf8_stdout()
     print()
@@ -1836,47 +2023,60 @@ def run_config_wizard() -> int:
     print()
 
     repo_path = _detect_repo()
-    config_path = repo_path / ".bicameral" / "config.yaml"
+    team_path, operator_path = _resolve_config_paths(repo_path)
 
-    # Read current values
-    if config_path.exists():
-        try:
-            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            cfg = {}
-    else:
-        cfg = {}
+    team_cfg = _read_yaml_dict(team_path)
+    operator_cfg = _read_yaml_dict(operator_path) if operator_path else {}
 
-    cur_mode = cfg.get("mode", "team")
-    cur_guided = cfg.get("guided", True)
-    cur_telemetry = cfg.get("telemetry", True)
-    # Preserve the channel field across the config-wizard rewrite. Without
-    # this, re-running `bicameral-mcp config` after the user opted into
-    # nightly would silently drop `channel: nightly` and the rewrite would
-    # default to stable — re-stranding nightly installs (the exact bug the
+    cur_mode = team_cfg.get("mode", "team")
+    # Per-operator settings come from operator.yaml under R4; pre-R4 repos
+    # may still have them in config.yaml — fall back so re-running config
+    # on an unmigrated repo doesn't silently drop the operator's prior choices.
+    cur_guided = operator_cfg.get("guided", team_cfg.get("guided", True))
+    cur_telemetry = operator_cfg.get("telemetry", team_cfg.get("telemetry", True))
+    # Preserve the channel field across the rewrite. Without this,
+    # re-running `bicameral-mcp config` after the user opted into nightly
+    # would silently drop `channel: nightly` and the rewrite would default
+    # to stable — re-stranding nightly installs (the exact bug the
     # auto-detect in `_write_collaboration_config` fixed for fresh setups).
-    cur_channel = cfg.get("channel") or _detect_install_channel()
+    cur_channel = (
+        operator_cfg.get("channel") or team_cfg.get("channel") or _detect_install_channel()
+    )
+    # Preserve team_backend across the rewrite — it's set by the setup
+    # wizard's team-mode dispatch, not by run_config_wizard, but we must
+    # not wipe it on a re-run.
+    cur_team_backend: dict | None = team_cfg.get("team")
+    if cur_team_backend is not None:
+        # Merge the operator-routed `team.role` from operator.yaml so the
+        # downstream writer sees the full team_backend block.
+        op_team = operator_cfg.get("team", {}) or {}
+        if "role" in op_team and "role" not in cur_team_backend:
+            cur_team_backend = {**cur_team_backend, "role": op_team["role"]}
 
-    print(f"  Current config ({config_path}):")
-    print(f"    mode:      {cur_mode}")
-    print(f"    guided:    {cur_guided}")
-    print(f"    telemetry: {cur_telemetry}")
-    print(f"    channel:   {cur_channel}")
+    print("  Current config:")
+    print(f"    [team]         {team_path}")
+    if operator_path is not None:
+        print(f"    [your machine] {operator_path}")
+    else:
+        print("    [your machine] (legacy single-file layout)")
+    print(f"    mode:      {cur_mode}        [team]")
+    print(f"    guided:    {cur_guided}      [your machine]")
+    print(f"    telemetry: {cur_telemetry}   [your machine]")
+    print(f"    channel:   {cur_channel}     [your machine]")
     print()
 
     new_mode = _select_collaboration_mode_with_default(cur_mode)
     new_guided = _select_guided_mode_with_default(cur_guided)
     new_telemetry = _select_telemetry_with_default(cur_telemetry)
 
-    # Write updated config
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(
-        "# Bicameral configuration\n"
-        f"mode: {new_mode}\n"
-        f"guided: {'true' if new_guided else 'false'}\n"
-        f"telemetry: {'true' if new_telemetry else 'false'}\n"
-        f"channel: {cur_channel}\n",
-        encoding="utf-8",
+    _write_collaboration_config(
+        data_path=repo_path,
+        mode=new_mode,
+        guided=new_guided,
+        telemetry=new_telemetry,
+        team_backend=cur_team_backend,
+        channel=cur_channel,
+        operator_path=operator_path,
     )
 
     # Reinstall skills and hooks via subprocess (avoids stale sys.modules)
@@ -1927,7 +2127,7 @@ def _select_collaboration_mode_with_default(current: str) -> str:
         questionary.Choice("Solo  — decisions stored locally", value="solo"),
     ]
     result = questionary.select(
-        "Collaboration mode:",
+        "[team] Collaboration mode:",
         choices=choices,
         default=next((c for c in choices if c.value == current), choices[0]),
     ).ask()
@@ -1944,7 +2144,7 @@ def _select_guided_mode_with_default(current: bool) -> bool:
         questionary.Choice("Normal  — advisory hints only", value=False),
     ]
     result = questionary.select(
-        "Interaction intensity:",
+        "[your machine] Interaction intensity:",
         choices=choices,
         default=next((c for c in choices if c.value == current), choices[0]),
     ).ask()
@@ -1961,7 +2161,7 @@ def _select_telemetry_with_default(current: bool) -> bool:
         questionary.Choice("No   — keep telemetry off", value=False),
     ]
     result = questionary.select(
-        "Anonymous telemetry:",
+        "[your machine] Anonymous telemetry:",
         choices=choices,
         default=next((c for c in choices if c.value == current), choices[0]),
     ).ask()
