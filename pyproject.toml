@@ -58,6 +58,11 @@ dependencies = [
   # Google Drive backend for team-mode replication (#277).
   "google-auth-oauthlib>=1.2",
   "google-api-python-client>=2.100",
+  # #419 Phase 0b — OS-native secret storage for per-source OAuth tokens
+  # and API keys. Linux Secret Service / macOS Keychain / Windows
+  # Credential Locker. `keyrings.alt` is intentionally NOT added — its
+  # plaintext-file backend would defeat the security posture.
+  "keyring>=24.0",
 ]
 
 [project.optional-dependencies]
