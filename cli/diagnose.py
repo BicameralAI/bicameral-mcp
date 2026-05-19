@@ -202,25 +202,47 @@ def format_diagnosis(d: Diagnosis) -> str:
 def main(repo_path: str | None = None) -> int:
     """CLI entrypoint for ``bicameral-mcp diagnose``.
 
-    Connects an adapter against the resolved ledger URL, gathers the
-    Diagnosis, prints the rendered markdown to stdout, returns 0.
-    Exits 1 on adapter-connect failure (operator needs the failure
-    context in the bug report).
+    Opens a raw ``LedgerClient`` (no ``init_schema``/``migrate``) and
+    forwards to ``gather_diagnosis_raw`` — the same defensive path the
+    MCP ``bicameral_diagnose`` handler uses (#410). Going through the
+    adapter would re-run the migration step that's the very thing
+    likely to be broken when an operator runs ``diagnose``.
+
+    Exits 0 on success, 1 on raw-connect failure (operator still gets
+    the failure-class envelope to paste into the bug report).
     """
     import asyncio
+    import os
 
-    from cli._diagnose_gather import gather_diagnosis
-    from ledger.adapter import SurrealDBLedgerAdapter
+    from cli._diagnose_gather import gather_diagnosis_raw
+    from ledger.adapter import _default_db_url
+    from ledger.client import LedgerClient
+
+    ledger_url = os.environ.get("SURREAL_URL", _default_db_url())
 
     async def _run() -> Diagnosis:
-        adapter = SurrealDBLedgerAdapter()
-        await adapter.connect()
-        return await gather_diagnosis(adapter)
+        client = LedgerClient(url=ledger_url)
+        await client.connect()
+        try:
+            return await gather_diagnosis_raw(client, ledger_url)
+        finally:
+            try:
+                await client.close()
+            except Exception:  # noqa: BLE001 — close is best-effort
+                pass
 
     try:
         diagnosis = asyncio.run(_run())
     except Exception as exc:  # noqa: BLE001 — operator needs failure context
-        sys.stdout.write(f"# bicameral-mcp diagnose — adapter connect failed\n\n```\n{exc}\n```\n")
+        sys.stdout.write(
+            "# bicameral-mcp diagnose — raw client connect failed\n\n"
+            f"- ledger URL: `{ledger_url}`\n\n"
+            f"```\n{type(exc).__name__}: {exc}\n```\n\n"
+            "Recovery: the DB file may be missing, locked, or unreadable. "
+            "Run `bicameral-mcp reset --confirm` to reinitialise, or "
+            "`bicameral-mcp reset --confirm --replay-from-events` to rebuild "
+            "from `.bicameral/events/` after wipe.\n"
+        )
         return 1
 
     sys.stdout.write(format_diagnosis(diagnosis))
