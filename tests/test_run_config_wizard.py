@@ -73,9 +73,7 @@ class _Ask:
         return self._value
 
 
-def _install_fake_questionary(
-    monkeypatch, script: dict[str, object], captured: list[dict]
-) -> None:
+def _install_fake_questionary(monkeypatch, script: dict[str, object], captured: list[dict]) -> None:
     """Stub `questionary` so the wizard's interactive prompts return
     scripted values and record what they were asked."""
     import types
@@ -116,9 +114,7 @@ def test_editor_reads_from_both_files(git_repo: Path, tmp_path: Path, monkeypatc
         "mode: team\nteam:\n  backend: google_drive\n  folder_id: x\n",
         encoding="utf-8",
     )
-    operator_path.write_text(
-        "guided: true\ntelemetry: false\nchannel: stable\n", encoding="utf-8"
-    )
+    operator_path.write_text("guided: true\ntelemetry: false\nchannel: stable\n", encoding="utf-8")
 
     captured: list[dict] = []
     # Empty script → every prompt returns the displayed default → no edits.
@@ -157,9 +153,7 @@ def test_editor_writes_to_routed_file(git_repo: Path, tmp_path: Path, monkeypatc
         encoding="utf-8",
     )
     operator_path.parent.mkdir(parents=True, exist_ok=True)
-    operator_path.write_text(
-        "guided: true\ntelemetry: false\nchannel: stable\n", encoding="utf-8"
-    )
+    operator_path.write_text("guided: true\ntelemetry: false\nchannel: stable\n", encoding="utf-8")
 
     captured: list[dict] = []
     _install_fake_questionary(

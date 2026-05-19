@@ -47,7 +47,9 @@ def test_first_resolve_writes_origin_txt(git_repo: Path) -> None:
         text=True,
         check=True,
     ).stdout.strip()
-    expected = str(Path(common_dir if Path(common_dir).is_absolute() else git_repo / common_dir).resolve())
+    expected = str(
+        Path(common_dir if Path(common_dir).is_absolute() else git_repo / common_dir).resolve()
+    )
     assert content == expected
 
 

@@ -1656,9 +1656,7 @@ def _write_collaboration_config(
     else:
         resolved_operator_path.parent.mkdir(parents=True, exist_ok=True)
         config_tmp = config_path.with_suffix(config_path.suffix + ".tmp")
-        operator_tmp = resolved_operator_path.with_suffix(
-            resolved_operator_path.suffix + ".tmp"
-        )
+        operator_tmp = resolved_operator_path.with_suffix(resolved_operator_path.suffix + ".tmp")
         config_tmp.write_text(team_body, encoding="utf-8")
         operator_tmp.write_text(operator_body, encoding="utf-8")
         operator_promoted = False
@@ -1851,10 +1849,7 @@ def run_setup(
             team_block = committed["team"]
             backend = team_block.get("backend")
             target = team_block.get("folder_id") or team_block.get("remote_root")
-            print(
-                f"  Detected team config: backend={backend}, "
-                f"folder={target} ✓ (auto-joining)"
-            )
+            print(f"  Detected team config: backend={backend}, folder={target} ✓ (auto-joining)")
             team_backend = {k: v for k, v in team_block.items() if v is not None}
         else:
             print(f"  Detected committed config: mode={collab_mode} ✓ (auto-inheriting)")
@@ -1867,9 +1862,7 @@ def run_setup(
         default_committed = _read_committed_config(repo_path, default_branch)
         if default_committed is not None and default_committed.get("mode") in ("team", "solo"):
             print()
-            print(
-                f"  Your branch doesn't have .bicameral/config.yaml, but {default_branch} does."
-            )
+            print(f"  Your branch doesn't have .bicameral/config.yaml, but {default_branch} does.")
             if not _prompt_yes_no(
                 "  Continue with fresh setup? (Choosing No exits so you can merge first.)",
                 default=False,

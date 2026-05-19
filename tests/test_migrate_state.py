@@ -100,16 +100,12 @@ def test_idempotent_second_run_is_noop(git_repo: Path, capsys) -> None:
     pdir = _project_dir(git_repo)
     migrate_state.main(["--repo", str(git_repo), "--auto"])
     capsys.readouterr()  # discard first-run output
-    mtimes_before = {
-        p: p.stat().st_mtime for p in pdir.rglob("*") if p.is_file()
-    }
+    mtimes_before = {p: p.stat().st_mtime for p in pdir.rglob("*") if p.is_file()}
     rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "Nothing to migrate." in out
-    mtimes_after = {
-        p: p.stat().st_mtime for p in pdir.rglob("*") if p.is_file()
-    }
+    mtimes_after = {p: p.stat().st_mtime for p in pdir.rglob("*") if p.is_file()}
     assert mtimes_after == mtimes_before, "second run touched destination files"
 
 

@@ -47,7 +47,7 @@ def test_default_resolves_under_home_bicameral_projects(git_repo: Path) -> None:
     assert code_graph.name == "code-graph.db"
 
     # Same project — ledger and code-graph live side by side.
-    assert code_graph.parent == Path(url[len("surrealkv://"):]).parent
+    assert code_graph.parent == Path(url[len("surrealkv://") :]).parent
 
 
 def test_env_override_wins_for_ledger_only(git_repo: Path, monkeypatch) -> None:
@@ -150,9 +150,7 @@ def test_resolve_operator_config_path_stable_across_worktrees(
     """R4: same project + different worktrees → same operator.yaml path."""
     import ledger_locator
 
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-q", "-m", "init"], cwd=git_repo, check=True
-    )
+    subprocess.run(["git", "commit", "--allow-empty", "-q", "-m", "init"], cwd=git_repo, check=True)
     worktree = tmp_path / "wt2"
     subprocess.run(
         ["git", "worktree", "add", "-q", "--detach", str(worktree)],
@@ -184,17 +182,13 @@ def test_resolves_derived_state_paths_under_project_dir(git_repo: Path) -> None:
     assert processed == project_dir / "processed-transcripts"
 
 
-def test_derived_state_paths_stable_across_worktrees(
-    git_repo: Path, tmp_path: Path
-) -> None:
+def test_derived_state_paths_stable_across_worktrees(git_repo: Path, tmp_path: Path) -> None:
     """R3: derived-state paths must be identical across worktrees of one
     project (this is the whole point of project-scoping them).
     """
     import ledger_locator
 
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-q", "-m", "init"], cwd=git_repo, check=True
-    )
+    subprocess.run(["git", "commit", "--allow-empty", "-q", "-m", "init"], cwd=git_repo, check=True)
     worktree = tmp_path / "wt2"
     subprocess.run(
         ["git", "worktree", "add", "-q", "--detach", str(worktree)],
@@ -212,9 +206,7 @@ def test_derived_state_paths_stable_across_worktrees(
         assert fn(repo_path=git_repo) == fn(repo_path=worktree), resolver
 
 
-def test_derived_state_paths_have_no_env_override(
-    git_repo: Path, monkeypatch
-) -> None:
+def test_derived_state_paths_have_no_env_override(git_repo: Path, monkeypatch) -> None:
     """R3: derived-state paths are NOT user-overridable per call (unlike
     ledger.db via SURREAL_URL and code-graph.db via CODE_LOCATOR_SQLITE_DB).
     Setting unrelated overrides must not leak into these paths.
@@ -229,11 +221,7 @@ def test_derived_state_paths_have_no_env_override(
     project_dir = ledger_locator.project_dir_for(repo_path=git_repo)
     assert ledger_locator.resolve_bm25_index_path(repo_path=git_repo).parent == project_dir
     assert ledger_locator.resolve_watermark_path(repo_path=git_repo).parent == project_dir
+    assert ledger_locator.resolve_pending_transcripts_dir(repo_path=git_repo).parent == project_dir
     assert (
-        ledger_locator.resolve_pending_transcripts_dir(repo_path=git_repo).parent
-        == project_dir
-    )
-    assert (
-        ledger_locator.resolve_processed_transcripts_dir(repo_path=git_repo).parent
-        == project_dir
+        ledger_locator.resolve_processed_transcripts_dir(repo_path=git_repo).parent == project_dir
     )

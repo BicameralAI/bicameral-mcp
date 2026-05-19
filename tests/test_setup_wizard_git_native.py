@@ -97,9 +97,7 @@ def test_onboarding_skips_team_prompts_when_head_has_team_config(
     monkeypatch.setattr(setup_wizard, "_install_for_agent", lambda *a, **kw: None)
     monkeypatch.setattr(setup_wizard, "_install_skills", lambda *a, **kw: 0)
     monkeypatch.setattr(setup_wizard, "_install_claude_hooks", lambda *a, **kw: False)
-    monkeypatch.setattr(
-        setup_wizard, "_install_user_permissions_allowlist", lambda *a, **kw: False
-    )
+    monkeypatch.setattr(setup_wizard, "_install_user_permissions_allowlist", lambda *a, **kw: False)
 
     rc = setup_wizard.run_setup(repo_hint=str(git_repo))
     assert rc == 0
@@ -121,9 +119,7 @@ def test_onboarding_skips_solo_prompts_when_head_has_solo_config(
     monkeypatch.setattr(setup_wizard, "_install_for_agent", lambda *a, **kw: None)
     monkeypatch.setattr(setup_wizard, "_install_skills", lambda *a, **kw: 0)
     monkeypatch.setattr(setup_wizard, "_install_claude_hooks", lambda *a, **kw: False)
-    monkeypatch.setattr(
-        setup_wizard, "_install_user_permissions_allowlist", lambda *a, **kw: False
-    )
+    monkeypatch.setattr(setup_wizard, "_install_user_permissions_allowlist", lambda *a, **kw: False)
 
     rc = setup_wizard.run_setup(repo_hint=str(git_repo))
     assert rc == 0

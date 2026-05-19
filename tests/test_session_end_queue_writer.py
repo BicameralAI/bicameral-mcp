@@ -159,6 +159,7 @@ def test_archive_processed_moves_pending_to_processed(tmp_path: Path) -> None:
     assert dst.name == "sess1.jsonl"
     assert dst.read_text(encoding="utf-8") == "payload-A"
     from events.transcript_queue import _processed_root
+
     assert dst.parent == _processed_root(str(repo))
 
 

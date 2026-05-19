@@ -63,9 +63,13 @@ def _print_table(rows: list[tuple[str, Path, Status, str | None]]) -> None:
 def _confirm_delete(project_dir: Path, status: Status, origin: str | None) -> bool:
     """Per-item prompt. Empty / `y` / `yes` confirms; anything else declines."""
     try:
-        response = input(
-            f"  Delete {project_dir.name} ({status} — origin={origin or 'unreadable'})? [y/N]: "
-        ).strip().lower()
+        response = (
+            input(
+                f"  Delete {project_dir.name} ({status} — origin={origin or 'unreadable'})? [y/N]: "
+            )
+            .strip()
+            .lower()
+        )
     except (EOFError, OSError):
         return False
     return response in ("y", "yes")

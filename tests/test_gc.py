@@ -46,9 +46,7 @@ def test_lists_orphans_and_keeps_live_projects(tmp_path: Path, capsys) -> None:
     assert "live" in out
 
 
-def test_delete_prompts_per_item_and_removes_confirmed_ones(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_delete_prompts_per_item_and_removes_confirmed_ones(tmp_path: Path, monkeypatch) -> None:
     state_root = tmp_path / "projects"
     a = _seed(state_root, "orphan-aaaa1234567890", tmp_path / "gone-a" / ".git")
     b = _seed(state_root, "orphan-bbbb1234567890", tmp_path / "gone-b" / ".git")

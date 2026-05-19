@@ -62,9 +62,7 @@ def _archive(dest: Path, archive_dir: Path) -> Path:
     return archive_path
 
 
-def _plan_file_moves(
-    repo: Path, project_dir: Path
-) -> list[tuple[Path, Path]]:
+def _plan_file_moves(repo: Path, project_dir: Path) -> list[tuple[Path, Path]]:
     """Plan the (src, dest) pairs for single files (not dir contents)."""
     plan: list[tuple[Path, Path]] = []
     for rel in _FILE_SOURCES:
@@ -74,9 +72,7 @@ def _plan_file_moves(
     return plan
 
 
-def _plan_dir_contents_moves(
-    repo: Path, project_dir: Path
-) -> list[tuple[Path, Path]]:
+def _plan_dir_contents_moves(repo: Path, project_dir: Path) -> list[tuple[Path, Path]]:
     """Plan (src_file, dest_file) pairs for every file inside the
     pending/processed-transcripts source dirs."""
     plan: list[tuple[Path, Path]] = []
@@ -241,7 +237,7 @@ def _execute_plan(
     return log
 
 
-def _cleanup_empty_source_dirs(repo: Path, *, dry_run: bool) -> list[Path] :
+def _cleanup_empty_source_dirs(repo: Path, *, dry_run: bool) -> list[Path]:
     """Remove `<repo>/.bicameral/{local,pending-transcripts,processed-transcripts}`
     if they're empty after the migration. Returns the list of removed dirs."""
     removed: list[Path] = []
@@ -294,12 +290,8 @@ def _build_argparser() -> argparse.ArgumentParser:
         prog="bicameral-mcp migrate-state",
         description="Move project-scoped state into ~/.bicameral/projects/<id>/ (#368).",
     )
-    p.add_argument(
-        "--repo", default=None, metavar="PATH", help="repo path (default: cwd)"
-    )
-    p.add_argument(
-        "--auto", action="store_true", help="non-interactive — skip the confirm prompt"
-    )
+    p.add_argument("--repo", default=None, metavar="PATH", help="repo path (default: cwd)")
+    p.add_argument("--auto", action="store_true", help="non-interactive — skip the confirm prompt")
     p.add_argument("--dry-run", action="store_true", help="plan only; write nothing")
     p.add_argument(
         "--archive-dir",
@@ -351,9 +343,9 @@ def main(argv: list[str] | None = None) -> int:
     if not args.auto and not args.dry_run and plan:
         # Best-effort confirmation. Stdin not a tty → fall through.
         try:
-            response = input(
-                f"  Migrate {len(plan)} files into {project_dir}? [y/N]: "
-            ).strip().lower()
+            response = (
+                input(f"  Migrate {len(plan)} files into {project_dir}? [y/N]: ").strip().lower()
+            )
         except (EOFError, OSError):
             response = "y"
         if response not in ("y", "yes"):
