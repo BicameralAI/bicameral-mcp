@@ -92,9 +92,33 @@ def test_emit_ledger_schema_verified_dropped_when_min_level_is_warn(monkeypatch)
 
 
 def test_audit_log_policy_doc_documents_new_event_types():
-    """Doc/code drift lock — both new event types must appear in the policy doc."""
+    """Doc/code drift lock — every event type added since the original
+    taxonomy bake must appear in the policy doc."""
     repo_root = Path(__file__).resolve().parent.parent
     doc = repo_root / "docs" / "policies" / "audit-log.md"
     content = doc.read_text(encoding="utf-8")
     assert "ledger_schema_verified" in content
     assert "ledger_version_drift" in content
+    # #405 — peer replay schema violation. Loud-fail audit event so the
+    # diagnose pipeline can surface the cross-version upgrade hint.
+    assert "event_replay_schema_violation" in content
+
+
+def test_audit_event_type_includes_event_replay_schema_violation():
+    assert AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION.value == "event_replay_schema_violation"
+
+
+def test_emit_event_replay_schema_violation_renders_at_error_level():
+    record = _capture_emit(
+        AuditEventType.EVENT_REPLAY_SCHEMA_VIOLATION,
+        table="compliance_check",
+        field="verdict",
+        offending_value="partial",
+        peer_pinned_commit="cafef00d",
+    )
+    assert record["level"] == "error"
+    assert record["event_type"] == "event_replay_schema_violation"
+    assert record["table"] == "compliance_check"
+    assert record["field"] == "verdict"
+    assert record["offending_value"] == "partial"
+    assert record["peer_pinned_commit"] == "cafef00d"

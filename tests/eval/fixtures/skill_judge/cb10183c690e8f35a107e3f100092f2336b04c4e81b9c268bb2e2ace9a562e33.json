@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "observability"
+  ],
+  "reasoning": "The observability feature group contains a decision about measuring service health independently, which directly relates to building a p95 latency dashboard for API endpoints — both concern monitoring and quantifying service performance."
+}

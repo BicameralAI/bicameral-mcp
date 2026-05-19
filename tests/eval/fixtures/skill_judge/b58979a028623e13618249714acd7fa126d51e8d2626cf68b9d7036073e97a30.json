@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "api"
+  ],
+  "reasoning": "The \"api\" feature group contains a decision about rate limiting API calls per customer, which directly describes behavior the API throttling middleware task will implement and depend on."
+}

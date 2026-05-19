@@ -71,7 +71,7 @@ def _build(
 ) -> tuple[TeamWriteAdapter, SurrealDBLedgerAdapter]:
     inner = SurrealDBLedgerAdapter(url="memory://")
     writer = EventFileWriter(events_dir, author)
-    materializer = EventMaterializer(events_dir, local_dir)
+    materializer = EventMaterializer(events_dir, watermark_override=local_dir / "watermark")
     return TeamWriteAdapter(inner, writer, materializer, backend=backend), inner
 
 

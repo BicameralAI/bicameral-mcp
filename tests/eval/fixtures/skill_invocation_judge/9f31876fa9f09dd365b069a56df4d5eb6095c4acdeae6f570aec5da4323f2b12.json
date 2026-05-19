@@ -1,0 +1,8 @@
+{
+  "invoked_history": true,
+  "submitted": true,
+  "reasoning": "Fetched bicameral_history because the topic (file cleanup cron) involves cross-cutting retention policy decisions likely not pinned to specific files; found ungrounded retention decision (90-day deletion window) that directly informs this implementation.",
+  "turns": 2,
+  "tokens_in": 995,
+  "tokens_out": 571
+}

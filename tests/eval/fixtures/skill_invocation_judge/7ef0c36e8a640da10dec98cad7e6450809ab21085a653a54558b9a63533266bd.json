@@ -1,0 +1,8 @@
+{
+  "invoked_history": true,
+  "submitted": true,
+  "reasoning": "Fetched bicameral_history and found one directly relevant ungrounded decision on API rate-limiting (100 calls/min per customer) that should inform the throttling implementation.",
+  "turns": 2,
+  "tokens_in": 986,
+  "tokens_out": 552
+}

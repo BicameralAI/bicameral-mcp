@@ -30,6 +30,12 @@ dependencies = [
   "tree-sitter-go>=0.23",
   "tree-sitter-rust>=0.23",
   "tree-sitter-c-sharp>=0.23",
+  # #367: pinned tighter than the others because Elixir is the first language
+  # extracted via the generic tags-query path — we have no walker fallback,
+  # so a grammar bump that shifts node names breaks Elixir indexing silently.
+  # Bump the upper bound deliberately after verifying tests/test_extract_elixir.py
+  # still passes on the new grammar version.
+  "tree-sitter-elixir>=0.3.5,<0.4",
   "rapidfuzz>=3.6.0",
   "pydantic>=2.0.0",
   "pyyaml>=6.0",

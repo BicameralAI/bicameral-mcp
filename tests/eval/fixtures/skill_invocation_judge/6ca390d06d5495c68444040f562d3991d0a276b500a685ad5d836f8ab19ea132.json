@@ -1,0 +1,8 @@
+{
+  "invoked_history": false,
+  "submitted": true,
+  "reasoning": "CHANGELOG entry is documentation-only with no source code change; exits at Tier 2 without bicameral_history read.",
+  "turns": 1,
+  "tokens_in": 403,
+  "tokens_out": 277
+}

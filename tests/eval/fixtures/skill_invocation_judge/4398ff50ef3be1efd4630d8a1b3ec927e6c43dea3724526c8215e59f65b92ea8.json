@@ -1,0 +1,8 @@
+{
+  "invoked_history": false,
+  "submitted": true,
+  "reasoning": "Unit test coverage for a helper function is a narrow, mechanical task with no plausible intersection with architectural decisions or cross-cutting concerns; preflight already returned fired=false, so a full ledger read is not warranted.",
+  "turns": 1,
+  "tokens_in": 401,
+  "tokens_out": 448
+}

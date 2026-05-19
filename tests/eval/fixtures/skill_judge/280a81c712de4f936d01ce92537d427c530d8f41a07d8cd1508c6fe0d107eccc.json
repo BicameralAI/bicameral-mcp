@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "performance"
+  ],
+  "reasoning": "The performance feature group contains a decision about product page first-meaningful-paint completing within 2 seconds globally, which directly relates to CDN edge caching configuration for product images — caching strategy will impact load times and FMP targets."
+}

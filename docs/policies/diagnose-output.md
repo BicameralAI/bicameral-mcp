@@ -28,13 +28,15 @@ The `bicameral-mcp diagnose` CLI emits a markdown-styled report containing **str
 
 ## Suggestion heuristic catalog
 
-5 hardcoded heuristics fire based on the assembled Diagnosis fields:
+7 hardcoded heuristics fire based on the assembled Diagnosis fields:
 
 1. **drift detected** — `drift_status == "drift"` → recommend `pip install --upgrade surrealdb==<recorded>` or `bicameral-mcp reset` after backup.
 2. **recommended-version mismatch** — `bicameral_version` differs from the fetched `RECOMMENDED_VERSION` → recommend `bicameral.update {action: "apply"}`.
 3. **audit log disabled** — `audit_log_channel == "stderr"` (default) → recommend setting `BICAMERAL_AUDIT_LOG=<path>` for SOC 2 evidence capture.
 4. **ledger > 100 MiB** — `ledger_size_bytes > 100 * 1024 * 1024` → recommend future `bicameral-mcp ledger-export` (Layer 4) for backup.
 5. **schema version old** — `schema_version_recorded < schema_version_expected` → recommend running `bicameral-mcp` once to apply pending migrations.
+6. **row-level deserialization errors** — `row_probe_warnings` non-empty → recommend backing up the ledger and `bicameral-mcp reset` (typically a SurrealDB SDK version mismatch).
+7. **peer event replay blocked by local schema** (#405) — `recent_events` contains `event_type == "event_replay_schema_violation"` → recommend `pipx upgrade bicameral-mcp` (or `bicameral.update {action: "apply"}`) and re-running sync. The watermark is held by the replay path so queued events drain automatically once the binary understands the offending value. Inspect the audit log for the offending field + value (which are stripped from `recent_events` by the Layer 3 allowlist).
 
 Operators with custom diagnostic needs run `python -m cli.diagnose` directly and inspect the `Diagnosis` dataclass; the suggestion engine is a UX layer over the structural data, not a gate.
 

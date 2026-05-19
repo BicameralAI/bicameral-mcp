@@ -127,9 +127,29 @@ For each entry in the list:
 2. **Compare** `decision_description` against `code_body`. Ask: does this code
    *functionally implement* the decision, or just share keywords?
    - `"compliant"` — code implements the decision correctly
-   - `"drifted"` — code has diverged (threshold changed, behavior removed, etc.)
-   - `"not_relevant"` — retrieval mismatch; this region is unrelated to the decision
-     (server will prune the `binds_to` edge)
+   - `"drifted"` — code has **regressed**: a prior `"compliant"` verdict
+     exists for this `(decision_id, region_id)` pair, but the current code
+     no longer matches the decision (threshold changed, behavior removed,
+     etc.). Use ONLY when downgrading from a prior compliant state. The
+     server enforces this — see the *reflected-before-drifted invariant*
+     below.
+   - `"partial"` — region is the correct anchor for the decision, but the
+     current code does NOT yet implement it AND no prior `"compliant"`
+     verdict exists. This is the right verdict for the binding-as-anchor-
+     for-future-work pattern (anticipatory bindings), and the right
+     downgrade when the server rejects a `"drifted"` verdict.
+   - `"not_relevant"` — retrieval mismatch; this region is unrelated to the
+     decision (server will prune the `binds_to` edge).
+
+   **Reflected-before-drifted invariant (#405).** You cannot drift from a
+   state you never reached. If you submit `"drifted"` for a pair with no
+   prior `"compliant"` row, the server rejects the verdict with
+   `reason="state_transition_invalid"` and returns a structured payload
+   carrying `attempted_verdict`, `allowed_verdicts`, and
+   `prior_history_summary` (counts of `compliant`/`drifted`/`partial`/
+   `not_relevant` rows seen). When you see that rejection, **resubmit the
+   same verdict batch with `"partial"` in place of `"drifted"`** for that
+   pair — no re-binding required.
 
 3. **Batch all verdicts into one call** — never one call per check:
 

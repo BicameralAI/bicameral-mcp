@@ -176,13 +176,21 @@ async def test_resolve_compliance_response_echoes_semantic_status(
     ctx_with_seed,
 ) -> None:
     """``ResolveComplianceAccepted.semantic_status`` is set on the
-    accepted entry when the caller provided one."""
+    accepted entry when the caller provided one.
+
+    Pre-#405 this test used ``verdict='drifted'``; that's now rejected on
+    never-compliant regions by the reflected-before-drifted invariant.
+    Switched to ``'partial'`` — semantically: the region is the correct
+    anchor, the code does NOT yet implement the decision, and the gap is
+    a real semantic change (not cosmetic). The semantic_status echo path
+    is the same.
+    """
     ctx, client, decision_id, region_id = ctx_with_seed
     verdict = ComplianceVerdict(
         decision_id=decision_id,
         region_id=region_id,
         content_hash="h-1",
-        verdict="drifted",
+        verdict="partial",
         confidence="medium",
         explanation="real change",
         semantic_status="semantic_change",

@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 #   - edges: yields(input_span→decision), binds_to(decision→code_region),
 #             locates(symbol→code_region)
 #   - removed: maps_to, implements
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 26
 
 # Maps schema version → minimum bicameral-mcp code version that understands it.
 # Used to produce actionable "upgrade your binary" messages.
@@ -50,6 +50,8 @@ SCHEMA_COMPATIBILITY: dict[int, str] = {
     19: "0.14.x",  # bicameral_meta.decision_revision counter + DEFINE EVENT on decision (#87 Phase 6 — constant-time replacement for ORDER BY DESC); placeholder, release-eng pins final value at PR merge
     23: "0.15.x",  # decision_level backfill for legacy rows; placeholder, release-eng pins final value at PR merge
     24: "0.15.x",  # idx_input_span_dedup extended with archive_key so distinct archive-keyed spans in the same (source_type, source_ref) bucket no longer collide; placeholder, release-eng pins final value at PR merge
+    25: "0.15.x",  # equality key indexes on symbol.name + vocab_cache.(query_text, repo) — UPSERT-WHERE lookups now use Iterate Index instead of full table scan; placeholder, release-eng pins final value at PR merge
+    26: "0.16.x",  # compliance_check.verdict gains 'partial' (#405) — never-compliant anticipatory bindings render distinct from regressions; reflected-before-drifted invariant enforced at the resolve_compliance write path; placeholder, release-eng pins final value at PR merge
 }
 
 # SurrealDB error substrings that init_schema treats as recoverable: the row
@@ -63,6 +65,22 @@ RECOVERABLE_DEFINE_PATTERNS: tuple[str, ...] = (
     "already contains",  # UNIQUE index attempted on table w/ duplicates
     "expected a record<",  # TYPE constraint mismatch (rename of IN/OUT type)
     "but expected",  # generic value-type assertion failure (defensive)
+)
+
+# SurrealDB error substrings that indicate a *field-level ASSERT violation*
+# — i.e. the write succeeded the type check but failed a ``ASSERT $value IN
+# [...]`` enum constraint. Distinct from ``RECOVERABLE_DEFINE_PATTERNS``:
+# those errors are swallowed (init_schema continues); these are LOUD-FAILED
+# (the cross-version event-replay safety net in
+# ``ledger/adapter.py::apply_compliance_verdict_from_event`` wraps them as
+# ``EventReplaySchemaViolation`` with an actionable pipx-upgrade hint —
+# #405). Same load-bearing-contract discipline: any new pattern must be
+# paired with a fixture-DB regression test in
+# ``tests/test_schema_recoverable_errors.py`` that produces the exact
+# string from a real memory:// SurrealDB, so an SDK bump that changes the
+# format fails CI loudly rather than silently degrading the safety net.
+ASSERT_VIOLATION_PATTERNS: tuple[str, ...] = (
+    "must conform to",  # ASSERT $value IN [...] failure (observed v1.0.8)
 )
 
 # Migrations that drop or recreate tables/data. These are never auto-applied;
@@ -142,8 +160,11 @@ _TABLES = [
     "DEFINE FIELD source_ref     ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD meeting_date   ON decision TYPE string DEFAULT ''",
     "DEFINE FIELD speakers       ON decision TYPE array<string> DEFAULT []",
+    # 'partial' (#405) projects from compliance_check rows whose verdict is
+    # 'partial' (never-compliant anticipatory binding). Precedence in
+    # project_decision_status: drifted > partial > pending > reflected.
     "DEFINE FIELD status         ON decision TYPE string DEFAULT 'ungrounded' "
-    "ASSERT $value IN ['reflected', 'drifted', 'pending', 'ungrounded']",
+    "ASSERT $value IN ['reflected', 'drifted', 'partial', 'pending', 'ungrounded']",
     "DEFINE FIELD created_at     ON decision TYPE datetime DEFAULT time::now()",
     # v18 (#87 precondition) — monotonic write marker. Bumped by every
     # decision UPDATE call site (status/level/signoff/parent/governance/
@@ -199,6 +220,7 @@ _TABLES = [
     "DEFINE FIELD last_seen      ON symbol TYPE datetime DEFAULT time::now()",
     "DEFINE FIELD hit_count      ON symbol TYPE int DEFAULT 0",
     "DEFINE INDEX idx_sym_name   ON symbol FIELDS name SEARCH ANALYZER code_analyzer BM25(1.2, 0.75)",
+    "DEFINE INDEX idx_sym_name_lookup ON symbol FIELDS name",
     "DEFINE INDEX idx_sym_file   ON symbol FIELDS file_path",
     # code_region — a specific span within a file. Shared between the two tiers:
     # decision tier addresses it via binds_to; retrieval tier via locates.
@@ -221,6 +243,7 @@ _TABLES = [
     "DEFINE FIELD hit_count      ON vocab_cache TYPE int DEFAULT 0",
     "DEFINE FIELD last_hit       ON vocab_cache TYPE datetime DEFAULT time::now()",
     "DEFINE INDEX idx_vocab_query ON vocab_cache FIELDS query_text SEARCH ANALYZER biz_analyzer BM25(1.2, 0.75)",
+    "DEFINE INDEX idx_vocab_query_lookup ON vocab_cache FIELDS query_text, repo",
     "DEFINE INDEX idx_vocab_repo  ON vocab_cache FIELDS repo",
     # ledger_sync — idempotency cursor (last synced commit per repo)
     "DEFINE TABLE ledger_sync SCHEMAFULL",
@@ -254,8 +277,13 @@ _TABLES = [
     "DEFINE FIELD region_id    ON compliance_check TYPE string",
     "DEFINE FIELD content_hash ON compliance_check TYPE string",
     "DEFINE FIELD commit_hash  ON compliance_check TYPE string DEFAULT ''",
+    # 'partial' (#405) means: region is the correct anchor for this decision,
+    # but the current code does NOT yet implement it and no prior 'compliant'
+    # verdict exists for this (decision_id, region_id) pair. Distinct from
+    # 'drifted' (regression — there WAS a prior compliant state) and from
+    # 'not_relevant' (binding is a retrieval mistake; prune the edge).
     "DEFINE FIELD verdict      ON compliance_check TYPE string "
-    "ASSERT $value IN ['compliant', 'drifted', 'not_relevant']",
+    "ASSERT $value IN ['compliant', 'drifted', 'not_relevant', 'partial']",
     "DEFINE FIELD pruned       ON compliance_check TYPE bool DEFAULT false",
     "DEFINE FIELD confidence   ON compliance_check TYPE string "
     "ASSERT $value IN ['high', 'medium', 'low']",
@@ -1498,7 +1526,110 @@ async def _migrate_v23_to_v24(client: LedgerClient) -> None:
         "DEFINE INDEX OVERWRITE idx_input_span_dedup ON input_span "
         "FIELDS source_type, source_ref, text, archive_key UNIQUE",
     )
+
+
+async def _migrate_v24_to_v25(client: LedgerClient) -> None:
+    """v24 → v25: Add equality key indexes for UPSERT-WHERE lookups on
+    ``symbol.name`` and ``vocab_cache.(query_text, repo)``.
+
+    Pre-v25 both columns were indexed only via SEARCH/BM25
+    (``idx_sym_name``, ``idx_vocab_query``), which accelerates ``@0@``
+    matches but **not** ``WHERE field = $value`` equality. The UPSERT
+    call sites in ``ledger/queries.py`` (``upsert_symbol`` line ~838,
+    vocab_cache UPSERT line ~419) fell back to full table scans —
+    O(n) per call. Replays of large event logs (>2,500 symbols) crossed
+    the 5.0s read budget near the end of ``reset --replay-from-events``
+    runs, surfacing as ``LedgerTimeoutError`` (#410 dogfood).
+
+    Both indexes are additive and non-unique — rows valid under the old
+    schema remain valid post-migration. Per ``docs/DEV_CYCLE.md`` §4.7.1
+    these are in the ✅ Allowed column (new index, only relaxes nothing,
+    discriminator-free). ``init_schema`` re-issues every DEFINE on
+    connect; this migration is the version-boundary safety belt that
+    runs the DEFINE INDEX OVERWRITE explicitly even when init_schema's
+    pass is interrupted. Idempotent via ``_execute_define_idempotent``.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX OVERWRITE idx_sym_name_lookup ON symbol FIELDS name",
+    )
+    await _execute_define_idempotent(
+        client,
+        "DEFINE INDEX OVERWRITE idx_vocab_query_lookup ON vocab_cache FIELDS query_text, repo",
+    )
     logger.info("[migration] v23 → v24: idx_input_span_dedup extended with archive_key")
+
+
+async def _migrate_v25_to_v26(client: LedgerClient) -> None:
+    """v25 → v26: extend ``compliance_check.verdict`` enum with ``partial`` and
+    backfill never-compliant ``drifted`` rows.
+
+    Why (issue #405):
+      Pre-v26 the verdict enum was ``['compliant', 'drifted', 'not_relevant']``.
+      Anticipatory bindings (binding-as-anchor for unimplemented planned work)
+      had no honest verdict — the caller-LLM emitted ``drifted``, polluting the
+      drift dashboard with false regressions. ``partial`` is the missing
+      "never compliant; current code does not yet implement the decision"
+      slot.
+
+    The DEFINE FIELD OVERWRITE is also issued by ``init_schema`` on every
+    connect; running it here is a belt-and-braces safety net for the version
+    boundary in case init_schema's pass was interrupted.
+
+    Backfill: every existing ``drifted`` row whose (decision_id, region_id)
+    has zero prior ``compliant`` rows is rewritten to ``partial``. Idempotent
+    — re-running finds nothing to convert because partial rows have already
+    been moved out of the drifted bucket.
+    """
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE verdict ON compliance_check TYPE string "
+        "ASSERT $value IN ['compliant', 'drifted', 'not_relevant', 'partial']",
+    )
+    # decision.status also gains 'partial' so project_decision_status can
+    # persist the new status without violating the ASSERT.
+    await _execute_define_idempotent(
+        client,
+        "DEFINE FIELD OVERWRITE status ON decision TYPE string DEFAULT 'ungrounded' "
+        "ASSERT $value IN ['reflected', 'drifted', 'partial', 'pending', 'ungrounded']",
+    )
+
+    pairs = await client.query(
+        "SELECT decision_id, region_id FROM compliance_check "
+        "WHERE verdict = 'drifted' GROUP BY decision_id, region_id"
+    )
+
+    converted = 0
+    skipped = 0
+    for pair in pairs or []:
+        d_id = pair.get("decision_id")
+        r_id = pair.get("region_id")
+        if not d_id or not r_id:
+            continue
+        prior_compliant = await client.query(
+            "SELECT count() AS n FROM compliance_check "
+            "WHERE decision_id = $d AND region_id = $r AND verdict = 'compliant' "
+            "GROUP ALL",
+            {"d": d_id, "r": r_id},
+        )
+        has_prior = bool(prior_compliant) and int(prior_compliant[0].get("n", 0)) > 0
+        if has_prior:
+            skipped += 1
+            continue
+        await client.execute(
+            "UPDATE compliance_check SET verdict = 'partial' "
+            "WHERE decision_id = $d AND region_id = $r AND verdict = 'drifted'",
+            {"d": d_id, "r": r_id},
+        )
+        converted += 1
+
+    logger.info(
+        "[migration] v25 → v26: compliance_check.verdict extended with 'partial'; "
+        "backfill converted %d (decision, region) pair(s) of never-compliant 'drifted' "
+        "rows to 'partial'; %d pair(s) retained as 'drifted' (had prior compliant verdict)",
+        converted,
+        skipped,
+    )
 
 
 async def _write_wire_format_sentinel(
@@ -1586,6 +1717,8 @@ _MIGRATIONS: dict[int, ...] = {
     22: _migrate_v21_to_v22,
     23: _migrate_v22_to_v23,
     24: _migrate_v23_to_v24,
+    25: _migrate_v24_to_v25,
+    26: _migrate_v25_to_v26,
 }
 
 

@@ -110,11 +110,13 @@ def get_ledger():
             data_path = os.getenv("BICAMERAL_DATA_PATH", repo_path)
             bicameral_dir = Path(data_path) / ".bicameral"
             events_dir = bicameral_dir / "events"
-            local_dir = bicameral_dir / "local"
 
             author = _get_git_email(repo_path)
             writer = EventFileWriter(events_dir, author)
-            materializer = EventMaterializer(events_dir, local_dir)
+            # #368 Phase 2B-ii: watermark lives at the locator-resolved
+            # project dir, not bicameral_dir/"local"/"watermark". The
+            # materializer derives the watermark path from `repo_path`.
+            materializer = EventMaterializer(events_dir, Path(repo_path))
 
             cfg.setdefault("team", {})["author"] = author
             try:

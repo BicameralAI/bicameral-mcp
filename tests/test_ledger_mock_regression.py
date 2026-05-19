@@ -37,7 +37,7 @@ from audit_sociable_coverage import compute_audit  # noqa: E402
 # when a backfill PR fixes a trap row. NEVER increment. If you find
 # yourself wanting to increment, you are about to ship #309-class risk —
 # write a sociable test instead.
-EXPECTED_TRAP_CAP = 5
+EXPECTED_TRAP_CAP = 0
 
 
 def test_no_new_ledger_query_mock_traps():

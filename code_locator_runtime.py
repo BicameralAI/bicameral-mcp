@@ -31,21 +31,22 @@ class RepoIndexState:
     branch: str
 
 
-def _default_cache_root() -> Path:
-    """Writable repo-level cache root for MCP-owned Code Locator state."""
-    repo_root = os.getenv("REPO_PATH")
-    if repo_root:
-        root = Path(repo_root).resolve() / ".bicameral"
-    else:
-        root = Path(__file__).resolve().parents[2] / ".bicameral"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
 def ensure_runtime_env() -> None:
-    """Provide repo-local defaults so the MCP server works without home-dir writes."""
-    cache_root = _default_cache_root()
-    os.environ.setdefault("CODE_LOCATOR_SQLITE_DB", str(cache_root / "code-graph.db"))
+    """Set `CODE_LOCATOR_SQLITE_DB` from the Ledger Locator if not already set (#368 Phase 2B).
+
+    Repo-local fallback (`<repo>/.bicameral/code-graph.db`) is gone — the
+    locator's per-project home dir is now canonical. If the locator can't
+    resolve (e.g. not inside a git repo), leaves the env unset; the
+    None-safe `code_locator.config.resolve_paths()` then handles the
+    direct-construction fallback.
+    """
+    from ledger_locator import ProjectIdResolutionError, resolve_code_graph_path
+
+    try:
+        os.environ.setdefault("CODE_LOCATOR_SQLITE_DB", str(resolve_code_graph_path()))
+    except ProjectIdResolutionError:
+        # Not in a git repo — leave env to None-safe config-load fallback.
+        pass
 
 
 def _git_stdout(repo_path: str, *args: str) -> str:
@@ -274,7 +275,16 @@ def ensure_index_matches_repo(repo_path: str, config) -> bool:
     current = get_repo_index_state(repo_path)
     indexed_repo = _get_meta(config.sqlite_db, "repo_path")
     indexed_head = _get_meta(config.sqlite_db, "head_commit")
-    bm25_path = Path(config.sqlite_db).parent / "bm25_index.pkl"
+    # #368 Phase 2B: bm25 path now comes from the locator independently of
+    # config.sqlite_db. Removes the implicit "bm25 lives next to sqlite_db"
+    # coupling — both paths come from the locator's project dir.
+    from ledger_locator import ProjectIdResolutionError, resolve_bm25_index_path
+
+    try:
+        bm25_path = resolve_bm25_index_path(repo_path=Path(repo_path))
+    except ProjectIdResolutionError:
+        # Not in a git repo — fall back to the legacy sibling-of-sqlite_db location.
+        bm25_path = Path(config.sqlite_db).parent / "bm25_index.pkl"
 
     refresh_reason = ""
     if not indexed_repo:

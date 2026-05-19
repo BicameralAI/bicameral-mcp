@@ -1,8 +1,12 @@
 """EventMaterializer — replays JSONL event logs into the local ledger (v0.4.20).
 
 One file per contributor: ``.bicameral/events/{email}.jsonl``. Watermark
-is a JSON ``{email: byte_offset}`` map at ``.bicameral/local/watermark``.
-Replay resumes from the stored offset per author.
+is a JSON ``{email: byte_offset}`` map at the locator-resolved
+``~/.bicameral/projects/<id>/watermark`` (#368 Phase 2B-ii). Replay
+resumes from the stored offset per author.
+
+Per-worktree watermark layout (pre-#368) caused peer JSONL to replay N
+times across N worktrees; project-scoping fixes that.
 
 Auto-migrates legacy ``{email}/*.json`` layout (v0.4.13 – v0.4.19) on
 first startup, then deletes the old files. DB-level ``canonical_id``
@@ -19,10 +23,42 @@ logger = logging.getLogger(__name__)
 
 
 class EventMaterializer:
-    def __init__(self, events_dir: Path, local_dir: Path) -> None:
+    def __init__(
+        self,
+        events_dir: Path,
+        repo_path: Path | None = None,
+        *,
+        watermark_override: Path | None = None,
+    ) -> None:
+        """#368 Phase 2B-ii: watermark path is locator-resolved by default.
+
+        ``events_dir`` is the per-repo JSONL substrate (commit-tracked or
+        remote-synced). The watermark file (offset-per-author map) is
+        now project-scoped under the locator's project dir so worktrees
+        of one repo share it.
+
+        Arguments:
+            events_dir: the JSONL events directory (unchanged contract).
+            repo_path: optional repo to scope the locator's project id
+                to. Defaults to ``Path.cwd()`` via the locator.
+            watermark_override: keyword-only test escape hatch. When
+                provided, used verbatim as the watermark file path and
+                the locator is not consulted. Production callers should
+                NOT pass this — it's a tests-only knob so fixtures can
+                operate outside a git repo without git-init'ing
+                tmp_path-derived dirs.
+        """
         self._events_dir = events_dir
-        self._watermark_path = local_dir / "watermark"
-        local_dir.mkdir(parents=True, exist_ok=True)
+        if watermark_override is not None:
+            self._watermark_path = watermark_override
+        else:
+            from ledger_locator import resolve_watermark_path
+
+            self._watermark_path = resolve_watermark_path(repo_path)
+        # Belt-and-braces mkdir: locator's `_resolved_project_dir` mkdir's
+        # the project dir via `assert_origin`, but watermark_override path
+        # may live anywhere (test fixtures). Idempotent.
+        self._watermark_path.parent.mkdir(parents=True, exist_ok=True)
 
     def _read_offsets(self) -> dict[str, int]:
         if not self._watermark_path.exists():

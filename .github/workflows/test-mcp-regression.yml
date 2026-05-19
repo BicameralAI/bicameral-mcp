@@ -134,6 +134,11 @@ jobs:
           clone_at_commit https://github.com/medusajs/medusa test-results/.repos/medusa dbff8196af90042829a5b8fd06adb27d7b8b5df3
 
       # ── Run all phases in a single pytest invocation ───────────────
+      # #399 Stage C: shadow-mode tests + parity gate join the regression
+      # suite. The parity tests (test_tags_extractor_parity.py,
+      # test_extract_go_substrate.py) do clone-on-demand sparse fetches of
+      # k8s / hugo / ripgrep / cargo — net effect adds ~10s per CI run.
+      # The shadow dispatch + telemetry tests are pure-function and add ~0.3s.
       - name: Run MCP regression tests
         run: >
           pytest
@@ -144,9 +149,39 @@ jobs:
           tests/test_schema_recoverable_errors.py
           tests/test_replay_helpers_unit.py
           tests/test_replay_determinism.py
+          tests/test_tags_extractor_parity.py
+          tests/test_extract_go_substrate.py
+          tests/test_m_shadow_divergence_log.py
+          tests/test_shadow_dispatch.py
           -v --tb=short
           --junitxml=test-results/results.xml
           --html=test-results/report.html --self-contained-html
+
+      # ── M_shadow_parity — rate-based CI gate (#399 Stage C) ─────────
+      # Walks the Python in-repo corpus + clone-on-demand Go/Rust corpora
+      # used by the parity tests, runs walker AND substrate per file,
+      # aggregates ``divergence_kind`` counts per language, and fails the
+      # gate when ``substrate-subset`` rate > 1% per the #399 plan.
+      #
+      # Different from the pytest parity gate (binary pass/fail per file) —
+      # M_shadow_parity is the rate-based metric mirroring how production
+      # shadow telemetry will surface drift once Stages D-E flip languages
+      # to shadow mode. Both gates currently agree (every file passes both)
+      # but M_shadow_parity gives the per-language summary needed for
+      # operating the rollout.
+      #
+      # Ubuntu-only: corpora live on Ubuntu (mirrors the existing
+      # Linux-only eval steps). Cache is per-job; the script re-clones each
+      # run (~5s for all four sources combined via sparse-checkout).
+      - name: M_shadow_parity (hard gate)
+        if: matrix.os == 'ubuntu-latest'
+        run: >
+          python tests/eval_shadow_parity.py
+          --gate-mode hard
+          --max-subset-rate 0.01
+          -o test-results/m-shadow-parity.json
+          --github-summary
+          >> "$GITHUB_STEP_SUMMARY"
 
       # ── Diagnostic: report ANTHROPIC_API_KEY visibility ───────────
       # GitHub masks secret values in logs, but we can safely report
@@ -260,6 +295,63 @@ jobs:
         if: always() && matrix.os == 'ubuntu-latest'
         continue-on-error: true
         run: python tests/eval_preflight_m6_summary.py test-results/m6-preflight-recall.json >> "$GITHUB_STEP_SUMMARY"
+
+      # ── M_skill_preflight — skill-layer preflight eval (hard gate, #306) ─
+      # Two-step eval driven by the bicameral-preflight SKILL.md:
+      #   Step-1 = relevance recall over the 25-row dataset (Part A #396)
+      #   Step-0 = history-invocation rate over the 15-row dataset (Part B)
+      # Both replay from cached fixtures at tests/eval/fixtures/skill_judge/
+      # and tests/eval/fixtures/skill_invocation_judge/ — cache miss requires
+      # the ANTHROPIC_API_KEY secret; commit the cache after a deliberate
+      # SKILL.md change.
+      #
+      # Gates flipped warn → hard (#398) after two stable baseline runs
+      # (#397 introduced the eval; #400 confirmed the substrate work
+      # didn't disturb the numbers):
+      #   Step-1: per-axis recall 100% (25/25 across M1/M4/FF1/D)
+      #   Step-0: recall 100% (8/8), precision 88.9%, fp_rate 14.3%
+      # All gates passed with ≥15 pp headroom on the load-bearing axes.
+      # Future PRs that touch skills/bicameral-preflight/SKILL.md or the
+      # eval datasets must EITHER keep:
+      #   Step-1 per-axis recall ≥ 70%
+      #   Step-0 should-invoke recall ≥ 50%
+      #   Step-0 fp_rate ≤ 30%
+      # OR explicitly re-record the cache via
+      # BICAMERAL_PREFLIGHT_EVAL_RECORD=1 /
+      # BICAMERAL_PREFLIGHT_INVOCATION_EVAL_RECORD=1 after a deliberate
+      # skill-prompt change. "Deliberate not drift."
+      - name: M_skill_preflight Step-1 (hard gate)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BICAMERAL_PREFLIGHT_EVAL_MODEL: claude-haiku-4-5-20251001
+        run: >
+          python tests/eval_preflight_skill_step1.py
+          --gate-mode hard
+          -o test-results/skill-step1.json
+
+      - name: M_skill_preflight Step-0 (hard gate)
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BICAMERAL_PREFLIGHT_INVOCATION_EVAL_MODEL: claude-haiku-4-5-20251001
+        run: >
+          python tests/eval_preflight_skill_invocation.py
+          --gate-mode hard
+          -o test-results/skill-step0.json
+
+      # ── Surface M_skill_preflight metrics on the GitHub run summary ──
+      # Reads both Step-1 + Step-0 JSONs and renders per-axis recall +
+      # the 2x2 invocation confusion matrix + any FN cases. Fail-quiet
+      # when JSON missing — never gates merge.
+      - name: M_skill_preflight metrics summary
+        if: always() && matrix.os == 'ubuntu-latest'
+        continue-on-error: true
+        run: >
+          python tests/eval_preflight_skill_summary.py
+          --step1 test-results/skill-step1.json
+          --step0 test-results/skill-step0.json
+          >> "$GITHUB_STEP_SUMMARY"
 
       # ── Generate rich E2E report from artifacts ────────────────────
       # Ubuntu-only: the script consumes the medusa adversarial corpus

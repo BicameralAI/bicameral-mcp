@@ -20,6 +20,10 @@
   --amber-soft:  #fdf4e7;
   --purple:      #5B3A8F;
   --purple-soft: #f2edfb;
+  /* #405 — distinct from amber (drifted/regression) so never-compliant
+     anticipatory bindings ('partial') read as gaps, not regressions. */
+  --yellow:      #B5891A;
+  --yellow-soft: #fcf7ea;
   --border:      #D4CFBE;
   --border-dark: #9B9482;
   --mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
@@ -135,6 +139,7 @@ body {
 }
 .dec.s-reflected::before  { background: var(--green); }
 .dec.s-drifted::before    { background: var(--amber); }
+.dec.s-partial::before    { background: var(--yellow); }
 .dec.s-ungrounded::before { background: var(--border-dark); }
 .dec.is-discovered::before { background: var(--purple); }
 .dec.is-superseded::before { background: var(--border); }
@@ -209,6 +214,7 @@ body {
 /* code state */
 .fs-reflected  { background: var(--green-soft);          color: var(--green); }
 .fs-drifted    { background: var(--amber-soft);          color: var(--amber); }
+.fs-partial    { background: var(--yellow-soft);         color: var(--yellow); }
 .fs-pending    { background: var(--canvas);              color: var(--text-dim); }
 .fs-ungrounded { background: rgba(0,0,0,0.02);           color: var(--text-light); }
 
@@ -834,6 +840,7 @@ function renderStateCell(d) {
   const conf = {
     reflected:  { cls: 'fs-reflected',  text: '✓ reflected' },
     drifted:    { cls: 'fs-drifted',    text: '⚠ drifted'   },
+    partial:    { cls: 'fs-partial',    text: '◐ partial'   },
     pending:    { cls: 'fs-pending',    text: '… pending'   },
     ungrounded: { cls: 'fs-ungrounded', text: '○ tracked'   },
   };
@@ -841,6 +848,8 @@ function renderStateCell(d) {
   let tip = '';
   if (d.status === 'drifted' && d.drift_evidence) {
     tip = ` data-tip="${esc(d.drift_evidence)}"`;
+  } else if (d.status === 'partial') {
+    tip = ' data-tip="Anticipatory binding — current code does not yet implement this decision. Not a regression."';
   } else if (d.status === 'pending') {
     tip = ' data-tip="Pending compliance — run /bicameral-sync in your Claude Code session to resolve."';
   }

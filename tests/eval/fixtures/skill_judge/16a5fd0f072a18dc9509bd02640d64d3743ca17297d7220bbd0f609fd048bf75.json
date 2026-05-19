@@ -1,0 +1,6 @@
+{
+  "relevant_features": [
+    "retention"
+  ],
+  "reasoning": "The retention feature's decision directly describes the requirement to remove customer PII within 30 days of account closure (GDPR Art. 17), which is exactly the behavior the nightly PII purge cron job for closed accounts will implement."
+}
