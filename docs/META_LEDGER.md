@@ -2828,3 +2828,44 @@ All three findings classify as **Plan-text** per `qor/references/doctrine-audit-
 - Documentation drift: `docs/architecture/ledger-locator.md` (declared in plan frontmatter) does not yet exist; hard-blocks at `/qor-substantiate`, not at `/qor-audit`.
 
 **Required next action**: Governor proceeds to `/qor-implement` against R4-bis PASS.
+
+---
+
+### Entry #53: GATE TRIBUNAL — Ledger equality key indexes for symbol.name + vocab_cache.(query_text, repo)
+
+**Timestamp**: 2026-05-19T06:20:00Z
+**Phase**: audit
+**Plan target**: `thoughts/shared/plans/2026-05-18-ledger-equality-key-indexes.md`
+**Plan hash**: `sha256:0c739952c05c68ea5b281467ba34962040a78baf93bde9d2d7e636bbfb676294`
+**Auditor**: The Judge (solo mode — codex-plugin capability shortfall logged)
+**Infrastructure**: qor/ Python package not installed in this worktree; gate artifact emission skipped, verdict stands on report content
+**Verdict**: **VETO**
+**Risk grade**: L1
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+**Audit report hash**: `sha256:0574c1959663140cf16955362070d18ac637df88e201a2ac2cf540a9694ec05c`
+
+**Findings summary**:
+- V1 (test-failure): `test_v25_migration_defines_both_lookup_indexes` description hedges the observation mechanism (`INFO FOR TABLE` returns empty in embedded mode per `pilot/mcp/CLAUDE.md`; "or the SurrealDB v2 equivalent path" is unspecified). Per `qor/references/doctrine-test-functionality.md` and SG-035, the test must commit to a verification mechanism that fails when `_migrate_v24_to_v25` is silently broken.
+
+All other passes (Security L3, OWASP Top 10, Ghost UI, Razor, Dependency, Macro-Level Architecture, Infrastructure Alignment, Orphan Detection) returned no findings. The veto is narrow — one test description.
+
+**Required next action**: Governor amends the plan's Phase 1 Unit Tests section to either (a) commit to `EXPLAIN`-based query-plan inspection asserting the new lookup index is referenced, or (b) replace the index-existence test with a perf-budget assertion that fails loudly when the index is absent. Re-run `/qor-audit` after amendment. Classifies as **Plan-text** per `qor/references/doctrine-audit-report-language.md` — no `/qor-debug` invocation.
+
+---
+
+### Entry #53-R2: GATE TRIBUNAL — Ledger equality key indexes (re-audit after V1 remediation)
+
+**Timestamp**: 2026-05-19T06:30:00Z
+**Phase**: audit (R2)
+**Plan target**: `thoughts/shared/plans/2026-05-18-ledger-equality-key-indexes.md`
+**Plan hash**: `sha256:c615a74e4e6bfce81593ea830d7685b5a6926d0af4d5031b8ba3d1cdab912449` (was `sha256:0c739952...`)
+**Auditor**: The Judge (solo mode)
+**Verdict**: **PASS**
+**Risk grade**: L1
+**Cleared findings**: V1 (test mechanism committed to SurrealDB 2.x trailing `EXPLAIN` modifier; empirically validated against `memory://` adapter — pre-migration plans to `Iterate Table`, post-migration plans to `Iterate Index` with the new index name in `detail.index`)
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+**Audit report hash**: `sha256:231aaf3d36899fbc7c790f70de5d6f8a100eb79b58ec4a8aac5072ffade8f182`
+
+**Mechanism verification recorded** (R2-specific): the Judge ran `SELECT * FROM symbol WHERE name = 'x' EXPLAIN` and `SELECT * FROM symbol WHERE file_path = 'x' EXPLAIN` against a live `memory://` SurrealDB on the audit branch. The first returned `Iterate Table` (today's bug); the second returned `Iterate Index` with `detail.index = "idx_sym_file"`. The mechanism is deterministic, embedded-mode-compatible, and the amended tests will fail loudly if `_migrate_v24_to_v25` is silently broken.
+
+**Required next action**: Governor proceeds to `/qor-implement` against R2 PASS.

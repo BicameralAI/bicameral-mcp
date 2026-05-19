@@ -1447,7 +1447,30 @@ def cli_main(argv: list[str] | None = None) -> int:
 def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     """Wire all subparser definitions + top-level flags onto parser."""
     subparsers.add_parser("config", help="interactive config editor")
-    subparsers.add_parser("reset", help="interactive ledger reset — wipes state with confirmation")
+    reset = subparsers.add_parser(
+        "reset",
+        help=(
+            "ledger reset — interactive wizard by default; with --confirm runs "
+            "non-interactively (the agent escape hatch when the MCP "
+            "`bicameral_reset` tool isn't reachable, #410)"
+        ),
+    )
+    reset.add_argument(
+        "--confirm",
+        action="store_true",
+        help="execute the wipe non-interactively (skips the wizard)",
+    )
+    reset.add_argument(
+        "--wipe-mode",
+        choices=("ledger", "full"),
+        default="ledger",
+        help="ledger = wipe DB rows only (default); full = delete .bicameral/ entirely",
+    )
+    reset.add_argument(
+        "--replay-from-events",
+        action="store_true",
+        help="after wipe (ledger-mode only), replay .bicameral/events/*.jsonl",
+    )
     setup = subparsers.add_parser("setup", help="interactive setup — configure MCP client")
     setup.add_argument("repo_path", nargs="?", default=None, help="repo path (auto-detected)")
     setup.add_argument(
@@ -1525,6 +1548,13 @@ def _dispatch(args: Any) -> int:
 
         return run_config_wizard()
     if args.command == "reset":
+        if getattr(args, "confirm", False):
+            from cli.reset_cli import run_noninteractive_reset
+
+            return run_noninteractive_reset(
+                wipe_mode=args.wipe_mode,
+                replay_from_events=args.replay_from_events,
+            )
         from setup_wizard import run_reset_wizard
 
         return run_reset_wizard()
