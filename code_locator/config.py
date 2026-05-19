@@ -13,8 +13,11 @@ import yaml
 class CodeLocatorConfig:
     """Code Locator configuration."""
 
-    # Storage
-    sqlite_db: str = "~/.bicameral/code-graph.db"
+    # Storage. #368 Phase 2B — default is None; resolve_paths() substitutes
+    # the locator-resolved path on construction. Direct-construction callers
+    # that bypass `load_config()` still get the locator default via
+    # resolve_paths(). The legacy `~/.bicameral/code-graph.db` literal is gone.
+    sqlite_db: str | None = None
 
     # Indexing backend — "legacy" (tree-sitter + sqlite) or "cocoindex"
     # (tree-sitter via cocoindex pipeline, writes to same sqlite_db).
@@ -34,8 +37,28 @@ class CodeLocatorConfig:
     min_candidate_length: int = 2
 
     def resolve_paths(self) -> CodeLocatorConfig:
-        """Expand ~ in all path fields."""
-        self.sqlite_db = str(Path(self.sqlite_db).expanduser())
+        """Resolve all path fields. #368 Phase 2B — None-safe; locator-only.
+
+        When `sqlite_db is None`, defers to
+        `ledger_locator.resolve_code_graph_path()`. Belt-and-braces guard
+        against direct-construction callers that bypass `load_config()`.
+
+        No legacy / cross-platform fallback. Per decision:c2eqcwimhe4lpaexrddw
+        ("Users in unsupported environments must set SURREAL_URL explicitly;
+        behavior is otherwise undefined"), callers outside a git repo with
+        no `CODE_LOCATOR_SQLITE_DB` env override get a
+        `ProjectIdResolutionError` propagated from the locator — naming
+        the actual problem (not-a-git-repo) rather than silently writing
+        to a parallel hardcoded path that drifts from the locator's
+        canonical layout. Tests that need a custom path must set
+        `CODE_LOCATOR_SQLITE_DB` explicitly.
+        """
+        if self.sqlite_db is None:
+            from ledger_locator import resolve_code_graph_path
+
+            self.sqlite_db = str(resolve_code_graph_path())
+        else:
+            self.sqlite_db = str(Path(self.sqlite_db).expanduser())
         return self
 
 
