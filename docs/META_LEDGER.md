@@ -2785,3 +2785,46 @@ Same pattern as prior entries (#28, #33, #36, #41, #43–#49):
 ---
 *Chain integrity: VALID (50 entries on this branch)*
 *Genesis: `29dfd085` → ... → v0-release-blockers SEAL: `7cc405fc` → #218 Phase 1 SEAL (#43) → #218 LLM-06 SEAL (#44, PR #251) → #227 SOC2-06+OWASP-06 SEAL (#45, PR #253) → #252 Layer 2 SEAL (#46, PR #256) → #252 Layer 3 SEAL (#47, PR #257) → #252 Layer 4 SEAL (#48) → team-server tier v1 RESEARCH (#49) → R1 limitation remediation RESEARCH (#50)*
+
+---
+
+### Entry #51: GATE TRIBUNAL — Ledger Locator R4 (#368)
+
+**Timestamp**: 2026-05-18T23:34:00Z
+**Phase**: audit (R4)
+**Plan target**: `thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md` (revision 4)
+**Auditor**: The Judge (solo mode; `codex-plugin` capability shortfall logged)
+**Verdict**: **VETO**
+**Risk grade**: L2
+**Findings categories**: `infrastructure-mismatch` (2), `coverage-gap` (1)
+**Gate artifact**: `.qor/gates/2026-05-18T2334-r4audit/audit.json`
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+
+**Findings summary**:
+- V1 (infrastructure-mismatch): Phase 2 cites `_edit_config_interactive` at `setup_wizard.py:1817` but actual function is `run_config_wizard`.
+- V2 (infrastructure-mismatch): `context.py` reader line numbers stale by 1-7; `412-429` cited as reader is a `BicameralContext` dataclass field block; actual reader count is 10 not 9.
+- V3 (coverage-gap): R4 test list omits (a) solo-mode short-circuit in `run_setup`, (b) `run_config_wizard` two-pane editor changes.
+
+**Required next action**: Governor amends plan text to fix V1, V2, V3; re-run `/qor-audit` for R4-bis.
+
+All three findings classify as **Plan-text** per `qor/references/doctrine-audit-report-language.md` — no `/qor-debug` invocation.
+
+---
+
+### Entry #52: GATE TRIBUNAL — Ledger Locator R4-bis (#368)
+
+**Timestamp**: 2026-05-18T23:38:00Z
+**Phase**: audit (R4-bis re-audit)
+**Plan target**: `thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md` (revision 4-bis)
+**Auditor**: The Judge (solo mode)
+**Verdict**: **PASS**
+**Risk grade**: L2
+**Cleared findings**: V1 (function name fixed), V2 (context.py reader lines + count corrected, 412-429 dropped), V3 (3 new functional tests added)
+**Gate artifact**: `.qor/gates/2026-05-18T2338-r4bis/audit.json`
+**Audit report**: `.agent/staging/AUDIT_REPORT.md`
+
+**Open advisories** (non-VETO, carry forward):
+- Section 4 razor: `_write_collaboration_config` may grow past 40 lines under two-file split; pre-emptive helper split recommended.
+- Documentation drift: `docs/architecture/ledger-locator.md` (declared in plan frontmatter) does not yet exist; hard-blocks at `/qor-substantiate`, not at `/qor-audit`.
+
+**Required next action**: Governor proceeds to `/qor-implement` against R4-bis PASS.
