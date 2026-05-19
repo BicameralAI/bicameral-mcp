@@ -231,6 +231,25 @@ def _compute_suggestions(d_partial: dict[str, Any]) -> list[str]:
             + ". This usually indicates a SurrealDB SDK version mismatch. "
             "Back up the ledger file and `bicameral-mcp reset` to reinitialise."
         )
+    # #405 — peer event replay rejected by local schema ASSERT.
+    # Surface the upgrade path the moment the diagnostic runs after a
+    # blocked replay. Recent_events carries event_type + level + ts only
+    # (per allowlist), so the suggestion stays generic; the underlying
+    # audit-log file has the offending field/value for deeper triage.
+    replay_violations = [
+        evt
+        for evt in d_partial.get("recent_events", [])
+        if evt.get("event_type") == "event_replay_schema_violation"
+    ]
+    if replay_violations:
+        suggestions.append(
+            f"Peer event replay blocked by local schema ({len(replay_violations)} "
+            "violation(s) in recent_events). A teammate's bicameral-mcp wrote an "
+            "event with a value your binary's schema does not accept. Upgrade with "
+            "`pipx upgrade bicameral-mcp` (or `bicameral.update {action: 'apply'}`) "
+            "and re-run sync — the watermark was held, so queued events replay "
+            "automatically. Inspect the audit log for the offending field + value."
+        )
     return suggestions
 
 

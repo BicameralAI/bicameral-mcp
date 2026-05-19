@@ -40,6 +40,7 @@ The closed enum `audit_log.AuditEventType` captures every event class:
 | `error` | error | catch-all for unknown `event_type` strings (coerced from string with `original_event_type` field) | (caller-defined) |
 | `ledger_schema_verified` | info | `adapter.connect()` after `init_schema` + `migrate` (#252 Layer 2) | `surrealdb_client_version_running`, `bicameral_schema_version`, `status` (`first-write` / `match`) |
 | `ledger_version_drift` | warn | `adapter.connect()` after `init_schema` + `migrate` (#252 Layer 2) | `surrealdb_client_version_recorded`, `surrealdb_client_version_running`, `bicameral_schema_version` |
+| `event_replay_schema_violation` | error | `ledger/adapter.py::apply_compliance_verdict_from_event` when peer event carries a value the local schema ASSERT rejects (#405) | `table`, `field`, `offending_value`, `peer_pinned_commit`. The materializer's watermark is intentionally NOT advanced; the queued event re-replays automatically once the operator upgrades the binary. The diagnose pipeline picks this up and emits the upgrade suggestion. |
 
 ## Forbid-list discipline
 
