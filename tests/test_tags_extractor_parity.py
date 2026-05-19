@@ -28,8 +28,10 @@ filtered out before downstream consumers by ``_KIND_TO_TYPE`` and the
   ``tests/_oss_corpus.py``'s sparse-clone helper — see that module's
   docstring for the "why clone-on-demand" rationale and bandwidth
   budget.
-
-Rust is out of scope for this PR (Stage B follow-up).
+- **Rust** (#399 Stage B, Rust half): clone-on-demand corpus from
+  ``BurntSushi/ripgrep@14.1.1`` (``crates/core``) and
+  ``rust-lang/cargo@0.81.0`` (``src/cargo/core``). Same delivery
+  pipeline as Go.
 
 ## When this gate fails
 
@@ -53,6 +55,7 @@ import pytest
 import tree_sitter as ts
 import tree_sitter_go as tsgo
 import tree_sitter_python as tsp
+import tree_sitter_rust as tsrs
 
 from code_locator.indexing.symbol_extractor import extract_symbols_from_content
 from code_locator.indexing.tags_extractor import (
@@ -119,6 +122,48 @@ GO_EXCLUDE_GLOBS = ("*_test.go",)
 # fold into "function" — see locked #367 mapping decision).
 GO_WALKER_VOCAB = {"function", "class"}
 
+# ── Rust corpus (clone-on-demand, #399 Stage B) ─────────────────────
+
+# BurntSushi/ripgrep — focused, well-organized Rust at scale. Covers
+# traits, generics, impl blocks, lifetimes, derive macros. The
+# ``crates/core`` directory holds the CLI front-end and flag parser —
+# a behavior-heavy slice with many impls and trait implementations
+# (the densest method-bearing surface in the repo).
+RUST_SOURCE_RIPGREP = OssSource(
+    repo="BurntSushi/ripgrep",
+    ref="14.1.1",
+    sparse_path="crates/core",
+)
+
+# rust-lang/cargo — real-world Rust workspace; covers complex trait
+# hierarchies and cross-module patterns. ``src/cargo/core`` is the
+# package-graph + dependency-resolution core, a struct-heavy slice
+# that complements ripgrep's behavior-heavy CLI code.
+RUST_SOURCE_CARGO = OssSource(
+    repo="rust-lang/cargo",
+    ref="0.81.0",
+    sparse_path="src/cargo/core",
+)
+
+# Max files per source (#399 plan targets ~20 from ripgrep + ~5 from
+# cargo). Sort-then-cap = deterministic file selection across runs.
+RUST_MAX_FILES_RIPGREP = 20
+RUST_MAX_FILES_CARGO = 5
+
+# Rust convention is inline ``#[cfg(test)] mod tests`` rather than
+# separate ``*_test.rs`` files (unlike Go), so this exclude rarely
+# fires — kept as defensive parity with the Go branch in case a future
+# crate adopts a different convention.
+RUST_EXCLUDE_GLOBS = ("*_test.rs",)
+
+# Rust walker (symbol_extractor._extract_rust_defs) emits "class" for
+# ``struct_item`` / ``enum_item`` / ``trait_item`` and "function" for
+# ``function_item``. The substrate's tags.scm captures additional
+# kinds — ``macro`` (no walker emits), ``module``, ``interface``
+# (trait) — which fall outside the walker vocab below and are
+# substrate-only extras (allowed by design, #367 spec).
+RUST_WALKER_VOCAB = {"function", "class"}
+
 
 # ── Tree-sitter language/parser fixtures ────────────────────────────
 
@@ -165,6 +210,27 @@ def go_tags_query_text() -> str:
     return text
 
 
+@pytest.fixture(scope="module")
+def rust_language() -> ts.Language:
+    return ts.Language(tsrs.language())
+
+
+@pytest.fixture(scope="module")
+def rust_parser(rust_language: ts.Language) -> ts.Parser:
+    return ts.Parser(rust_language)
+
+
+@pytest.fixture(scope="module")
+def rust_tags_query_text() -> str:
+    text = load_tags_query_text("tree_sitter_rust")
+    if text is None:
+        pytest.skip(
+            "tree_sitter_rust is not installed or doesn't ship queries/tags.scm; "
+            "the parity gate cannot run on this environment."
+        )
+    return text
+
+
 # ── Go corpus fixture (session-scoped: one clone per pytest run) ────
 
 
@@ -196,6 +262,39 @@ def go_corpus_files(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
                 source,
                 extension="go",
                 exclude_globs=GO_EXCLUDE_GLOBS,
+                max_files=max_files,
+            )
+        )
+
+    return files
+
+
+# ── Rust corpus fixture (session-scoped: one clone per pytest run) ──
+
+
+@pytest.fixture(scope="session")
+def rust_corpus_files(tmp_path_factory: pytest.TempPathFactory) -> list[Path]:
+    """Materialize the Rust corpus once per session via sparse clones.
+
+    Two sparse clones (ripgrep + cargo) into ``tmp_path_factory.mktemp(...)``.
+    Same failure model as the Go corpus fixture — see ``tests/_oss_corpus.py``
+    for the fail-loud rationale.
+    """
+    cache_root = tmp_path_factory.mktemp("oss_corpus_rust")
+    files: list[Path] = []
+
+    for source, max_files in (
+        (RUST_SOURCE_RIPGREP, RUST_MAX_FILES_RIPGREP),
+        (RUST_SOURCE_CARGO, RUST_MAX_FILES_CARGO),
+    ):
+        clone_dir = cache_root / source.cache_dirname()
+        sparse_clone(source, clone_dir)
+        files.extend(
+            discover_files(
+                clone_dir,
+                source,
+                extension="rs",
+                exclude_globs=RUST_EXCLUDE_GLOBS,
                 max_files=max_files,
             )
         )
@@ -321,6 +420,77 @@ def test_go_walker_subset_of_substrate(
             )
         pytest.fail(
             f"Go parity gate FAIL — {len(violations)}/{len(go_corpus_files)} "
+            f"corpus file(s) had walker-only symbols the substrate missed.\n\n"
+            + "\n\n".join(blocks)
+            + "\n\nAggregate: walker emitted "
+            f"{total_walker} symbols, substrate emitted {total_substrate} "
+            "(filtered to walker vocab).\n\n"
+            "Most likely (a) substrate bug in capture interpretation, (b) "
+            "_KIND_TO_TYPE missing a kind, or (c) walker emits symbols a "
+            "tags.scm pattern doesn't cover. Fix the substrate before "
+            "merging — Elixir relies on this code path and Stages C-E of "
+            "#399 cannot proceed without this guarantee."
+        )
+
+
+def test_rust_walker_subset_of_substrate(
+    rust_corpus_files: list[Path],
+    rust_language: ts.Language,
+    rust_parser: ts.Parser,
+    rust_tags_query_text: str,
+) -> None:
+    """Rust parity check — same shape as the Go test (aggregating loop,
+    single rich failure message). Restricted to ``RUST_WALKER_VOCAB``
+    (``{"function", "class"}``) since the Rust walker doesn't emit
+    ``method`` (impl methods are ``function_item`` in tree-sitter-rust
+    and fold into the walker's ``function`` vocabulary).
+
+    See module docstring for the "what to do if this fails" runbook.
+    """
+    assert rust_corpus_files, (
+        "Rust corpus fixture produced zero files; investigate _oss_corpus.discover_files"
+    )
+
+    violations: list[tuple[Path, set[tuple[str, str]], int, int]] = []
+    total_walker = 0
+    total_substrate = 0
+
+    for fp in rust_corpus_files:
+        content = fp.read_text(encoding="utf-8")
+        code_bytes = content.encode("utf-8")
+        rel = str(fp)
+
+        walker_records = extract_symbols_from_content(content, "rust", rel)
+        walker_set = {(r.name, r.type) for r in walker_records if r.type in RUST_WALKER_VOCAB}
+
+        tree = rust_parser.parse(code_bytes)
+        substrate_records = extract_defs_via_tags(
+            rust_language, tree, code_bytes, rel, rust_tags_query_text
+        )
+        substrate_set = {(r.name, r.type) for r in substrate_records if r.type in RUST_WALKER_VOCAB}
+
+        total_walker += len(walker_set)
+        total_substrate += len(substrate_set)
+
+        missing = walker_set - substrate_set
+        if missing:
+            violations.append((fp, missing, len(walker_set), len(substrate_set)))
+
+    if violations:
+        blocks = []
+        for fp, missing, w_total, s_total in violations:
+            try:
+                pretty = fp.relative_to(fp.parents[3])
+            except (ValueError, IndexError):
+                pretty = fp
+            blocks.append(
+                f"FILE: {pretty}\n"
+                f"  walker total: {w_total}, substrate total (filtered): {s_total}\n"
+                f"  walker-only symbols (substrate gap):\n"
+                + "\n".join(f"    - {n} (type={t})" for n, t in sorted(missing))
+            )
+        pytest.fail(
+            f"Rust parity gate FAIL — {len(violations)}/{len(rust_corpus_files)} "
             f"corpus file(s) had walker-only symbols the substrate missed.\n\n"
             + "\n\n".join(blocks)
             + "\n\nAggregate: walker emitted "
