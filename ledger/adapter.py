@@ -157,9 +157,15 @@ logger = logging.getLogger(__name__)
 
 
 def _default_db_url() -> str:
-    db_path = Path.home() / ".bicameral" / "ledger.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return f"surrealkv://{db_path}"
+    """Delegate to the Ledger Locator (#368 Phase 2B).
+
+    Kept as a single-line helper so tests can monkey-patch it directly
+    without reaching into ledger_locator. The locator honors SURREAL_URL
+    env override; the legacy `~/.bicameral/ledger.db` literal is gone.
+    """
+    from ledger_locator import resolve_ledger_url
+
+    return resolve_ledger_url()
 
 
 class EventReplaySchemaViolation(RuntimeError):

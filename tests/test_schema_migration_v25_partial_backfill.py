@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from ledger.client import LedgerClient
-from ledger.schema import _migrate_v24_to_v25, init_schema, migrate
+from ledger.schema import _migrate_v25_to_v26, init_schema, migrate
 
 
 async def _fresh_client(ns: str = "v25_backfill") -> LedgerClient:
@@ -102,7 +102,7 @@ async def test_backfill_rewrites_never_compliant_drifted_to_partial():
         # _fresh_client's migrate(); this exercises the backfill logic again,
         # which must be idempotent and additionally must process the just-
         # seeded rows on first pass).
-        await _migrate_v24_to_v25(c)
+        await _migrate_v25_to_v26(c)
 
         rows = await c.query(
             "SELECT decision_id, content_hash, verdict FROM compliance_check "
@@ -148,9 +148,9 @@ async def test_backfill_is_idempotent():
             verdict="drifted",
         )
 
-        await _migrate_v24_to_v25(c)  # first pass — converts to partial
-        await _migrate_v24_to_v25(c)  # second pass — must be a no-op
-        await _migrate_v24_to_v25(c)  # third pass — must still be a no-op
+        await _migrate_v25_to_v26(c)  # first pass — converts to partial
+        await _migrate_v25_to_v26(c)  # second pass — must be a no-op
+        await _migrate_v25_to_v26(c)  # third pass — must still be a no-op
 
         rows = await c.query("SELECT verdict FROM compliance_check")
         assert len(rows) == 1

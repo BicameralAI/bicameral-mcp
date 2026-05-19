@@ -109,3 +109,26 @@ new mutating capabilities.
 |------|------------|-------|--------|
 | `mocks/code_locator.py` | `RealCodeLocatorAdapter` in `adapters/code_locator.py` | Phase 1 | **Deleted** |
 | `mocks/decision_ledger.py` | `SurrealDBLedgerAdapter` in `ledger/adapter.py` | Phase 2 | **Deleted** |
+
+---
+
+## Ledger Locator (#368)
+
+Plan: [`thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md`](thoughts/shared/plans/2026-05-16-ledger-locator-and-migration.md).
+R4 audit: PASS (locator + delegation + wizard split + git-native onboarding + migrate-state + gc).
+
+- [x] **Phase 1** — `ledger_locator/` module: `_project_id.py`, `_origin_guard.py`,
+      `__init__.py` with `resolve_*` paths (ledger, code_graph, bm25,
+      watermark, pending/processed transcripts, operator_config); explicit
+      VCS contract; origin-collision guard
+- [x] **Phase 2A** — derived-state resolvers (bm25, watermark, transcripts)
+- [x] **Phase 2B-i** — ledger + code-graph delegation in adapter / runtime / config
+- [x] **Phase 2B-ii** — events/materializer + events/transcript_queue delegate to locator
+- [x] **Phase 2C** — setup_wizard env-var strip + R4 config split
+      (`context._CONFIG_KEY_ROUTING`, `_write_collaboration_config` atomic
+      two-file write, git-native onboarding detection + divergence guard,
+      `run_config_wizard` two-pane editor)
+- [x] **Phase 3** — `cli/migrate_state.py` + `migrate-state` / `migrate-ledger`
+      server subparsers + R4 `config.yaml` key partition + bicameral-update
+      skill post-upgrade hook
+- [x] **Phase 4** — `cli/gc.py` orphan project-dir reclaim (list + `--delete`)

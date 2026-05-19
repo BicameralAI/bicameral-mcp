@@ -39,10 +39,27 @@ from .sqlite_store import SymbolRecord
 # Kinds not in this map are filtered out — most notably ``constant`` (which
 # tags.scm emits for module-level assignments but our walkers explicitly
 # skip) and any future kinds we don't yet support downstream.
+#
+# Per-grammar coverage (verified by reading upstream queries/tags.scm):
+# - Python: emits class/function/constant — constant filtered out (walker
+#   skips module-level assignments).
+# - JS/TS:  emits class/method/function/module/interface — all mapped.
+# - Java:   emits class/method/interface — all mapped.
+# - Go:     emits function/method/type — ``type`` is load-bearing because
+#   the Go walker emits struct/interface declarations as type='class'
+#   via the ``type_spec`` branch (symbol_extractor.py:_extract_go_defs).
+#   Without the ``type → class`` mapping, the substrate silently drops
+#   them and the parity gate would fail on any Go file. Stage A of
+#   #399 closes this gap.
+# - Rust:   emits class/method/function/interface/module/macro — macro
+#   filtered out (no walker emits it; substrate-only is the allowed
+#   direction).
+# - Elixir: emits module/function — both mapped.
 _KIND_TO_TYPE: dict[str, str] = {
     "module": "class",
     "class": "class",
     "interface": "class",
+    "type": "class",
     "function": "function",
     "method": "function",
 }
