@@ -117,6 +117,50 @@ def get_user_info(*, token: str, user_id: str) -> dict:
     return data.get("user") or {}
 
 
+def list_channels(*, token: str, include_private: bool = True) -> list[dict]:
+    """Enumerate channels the bot has access to.
+
+    Returns dicts shaped ``{"id", "name", "is_private", "is_member",
+    "num_members"}``. Used by the ``bicameral-mcp source-list slack``
+    discovery primitive — operator picks channel IDs to add to
+    ``sources.channels`` config.
+
+    ``include_private`` toggles ``public_channel,private_channel``
+    types in the request. The bot must have ``groups:read`` scope
+    additionally for private channels; without it, Slack silently
+    returns only public ones.
+    """
+    types = "public_channel,private_channel" if include_private else "public_channel"
+    out: list[dict] = []
+    cursor: str | None = None
+    pages = 0
+    while True:
+        params: dict[str, str] = {"types": types, "limit": "200", "exclude_archived": "true"}
+        if cursor is not None:
+            params["cursor"] = cursor
+        data = _get(token=token, method="conversations.list", params=params)
+        for ch in data.get("channels") or []:
+            out.append(
+                {
+                    "id": ch.get("id") or "",
+                    "name": ch.get("name") or "",
+                    "is_private": bool(ch.get("is_private")),
+                    "is_member": bool(ch.get("is_member")),
+                    "num_members": int(ch.get("num_members") or 0),
+                }
+            )
+        pages += 1
+        cursor = (data.get("response_metadata") or {}).get("next_cursor")
+        if not cursor:
+            break
+        if pages >= _MAX_PAGINATION_PAGES:
+            raise SlackAPIError(
+                f"workspace has more than {_MAX_PAGINATION_PAGES * 200} channels — "
+                "narrow include_private or paginate manually"
+            )
+    return out
+
+
 def get_conversations_history(
     *,
     token: str,

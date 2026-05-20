@@ -16,6 +16,56 @@ is Docs-only.
 from __future__ import annotations
 
 _DOC_MIME = "application/vnd.google-apps.document"
+_FOLDER_MIME = "application/vnd.google-apps.folder"
+
+
+def list_visible_folders(creds) -> list[dict]:
+    """Enumerate Google Drive folders the OAuth token has access to.
+
+    Returns dicts shaped ``{"id", "name", "owners"}`` where owners is
+    the comma-joined email list (Drive API field ``owners[].emailAddress``).
+    Used by the ``bicameral-mcp source-list google_drive`` discovery
+    primitive.
+
+    Capped at 500 folders (5 pages × 100) — operators with deeper folder
+    hierarchies should narrow by sharing only the relevant subset with
+    the integration's service account.
+    """
+    from googleapiclient.discovery import build  # type: ignore[import-not-found]
+    from googleapiclient.errors import HttpError  # type: ignore[import-not-found]
+
+    service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    q = f"mimeType = '{_FOLDER_MIME}' and trashed = false"
+    results: list[dict] = []
+    page_token: str | None = None
+    pages = 0
+    while True:
+        try:
+            resp = (
+                service.files()
+                .list(
+                    q=q,
+                    fields="nextPageToken, files(id, name, owners(emailAddress))",
+                    pageSize=_PAGE_SIZE,
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+        except HttpError as exc:
+            raise RuntimeError(
+                f"Drive folder enumeration failed: HTTP "
+                f"{exc.resp.status if hasattr(exc, 'resp') else '?'}"
+            ) from exc
+        for f in resp.get("files") or []:
+            owners = ",".join((o.get("emailAddress") or "") for o in (f.get("owners") or []))
+            results.append({"id": f.get("id") or "", "name": f.get("name") or "", "owners": owners})
+        pages += 1
+        page_token = resp.get("nextPageToken")
+        if not page_token or pages >= 5:
+            break
+    return results
+
+
 _PAGE_SIZE = 100
 _MAX_PAGES = 20  # 20 * 100 = 2000 docs max per pull; misuse bound
 

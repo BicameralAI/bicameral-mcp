@@ -1515,6 +1515,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.source_auth_cli import _build_argparser as _sa_build
 
     _sa_build(source_auth)
+    source_list = subparsers.add_parser(
+        "source-list",
+        help="enumerate resources visible to a configured source (#337 foundations)",
+    )
+    from cli.source_list_cli import _build_argparser as _sl_build
+
+    _sl_build(source_list)
     subparsers.add_parser(
         "ledger-export",
         help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
@@ -1597,6 +1604,10 @@ def _dispatch(args: Any) -> int:
         from cli.source_auth_cli import main as source_auth_main
 
         return source_auth_main(args)
+    if args.command == "source-list":
+        from cli.source_list_cli import main as source_list_main
+
+        return source_list_main(args)
     if args.command == "ledger-export":
         from cli.ledger_export_cli import main as export_main
 
