@@ -1508,6 +1508,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.sync_and_brief_cli import _build_argparser as _sb_build
 
     _sb_build(sync_and_brief)
+    source_auth = subparsers.add_parser(
+        "source-auth",
+        help="run the OAuth handshake for an ingest source and persist the token (#337 Phase 5b)",
+    )
+    from cli.source_auth_cli import _build_argparser as _sa_build
+
+    _sa_build(source_auth)
     subparsers.add_parser(
         "ledger-export",
         help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
@@ -1586,6 +1593,10 @@ def _dispatch(args: Any) -> int:
         from cli.sync_and_brief_cli import main as sync_and_brief_main
 
         return sync_and_brief_main(args)
+    if args.command == "source-auth":
+        from cli.source_auth_cli import main as source_auth_main
+
+        return source_auth_main(args)
     if args.command == "ledger-export":
         from cli.ledger_export_cli import main as export_main
 
