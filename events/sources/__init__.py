@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from .google_drive import GoogleDriveFolderAdapter
 from .granola import GranolaAdapter, MissingApiKeyError
 from .local_directory import LocalDirectoryAdapter
 
@@ -44,11 +45,13 @@ class SourceAdapter(Protocol):
 ADAPTERS: dict[str, type] = {
     "granola": GranolaAdapter,
     "local_directory": LocalDirectoryAdapter,
+    "google_drive": GoogleDriveFolderAdapter,
 }
 
 
 __all__ = [
     "ADAPTERS",
+    "GoogleDriveFolderAdapter",
     "GranolaAdapter",
     "LocalDirectoryAdapter",
     "MissingApiKeyError",
