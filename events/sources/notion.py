@@ -91,6 +91,16 @@ class NotionPollingAdapter:
             self._pending_watermark = None
             return []
 
+        # #337 cycle 2: universal filter (source-level — Notion's
+        # database_id is the resource).
+        from filters import FilterSpec, evaluate_universal
+
+        try:
+            source_spec = FilterSpec(**(config.get("filters") or {}))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[notion] malformed filter block ignored: {exc}", file=sys.stderr)
+            source_spec = FilterSpec()
+
         active = NotionAdapter()
         payloads: list[dict] = []
         highest_edited = last_watermark or ""
@@ -107,6 +117,20 @@ class NotionPollingAdapter:
                     f"[notion] page {page_id!r} fetch failed (skipped): {exc}",
                     file=sys.stderr,
                 )
+                continue
+            text_bits = [
+                str(payload.get("query") or ""),
+                *(d.get("description", "") for d in (payload.get("decisions") or [])),
+            ]
+            participants = payload.get("participants") or []
+            candidate = {
+                "text": " ".join(text_bits),
+                "author": participants[0] if participants else "",
+                "timestamp": edited,
+            }
+            if not evaluate_universal(candidate, source_spec):
+                if edited > highest_edited:
+                    highest_edited = edited
                 continue
             label = config.get("source_type_label")
             if label:

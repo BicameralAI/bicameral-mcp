@@ -57,16 +57,31 @@ class SlackPollingAdapter:
         watermark_dir.mkdir(parents=True, exist_ok=True)
         self._watermark_path = watermark_dir / _WATERMARK_FILENAME
 
+        # #337 foundations cycle 2: parse source-level filters + per-resource
+        # entries. ``channels`` accepts either bare strings (legacy: inherit
+        # source-level filter, no overrides) or dicts of shape
+        # ``{id: "C…", filters: {...}}`` (per-resource filter overrides).
+        from filters import FilterSpec, evaluate_universal, merge_specs
+
+        source_level_filter = _parse_filter_block(config.get("filters") or {})
         channels_raw = config.get("channels") or []
-        # Filter out anything that looks like a DM (D…) — multi-party
-        # group IDs (G…) are kept because Slack reuses G for private
-        # channels too. Operator carries the channel-vs-DM responsibility
-        # for G IDs.
-        channels = [
-            str(c)
-            for c in channels_raw
-            if str(c).strip() and not str(c).strip().upper().startswith("D")
-        ]
+        # Each entry becomes (channel_id, effective_filter_spec).
+        channel_specs: list[tuple[str, FilterSpec]] = []
+        for entry in channels_raw:
+            if isinstance(entry, str):
+                cid = entry.strip()
+                spec = source_level_filter
+            elif isinstance(entry, dict):
+                cid = str(entry.get("id") or "").strip()
+                res_spec = _parse_filter_block(entry.get("filters") or {})
+                spec = merge_specs(source_level_filter, res_spec)
+            else:
+                continue
+            if not cid or cid.upper().startswith("D"):
+                continue
+            channel_specs.append((cid, spec))
+
+        channels = [c for c, _ in channel_specs]
         if not channels:
             print(
                 "[slack] at least one channel ID is required in source.channels; "
@@ -122,8 +137,7 @@ class SlackPollingAdapter:
             user_cache[user_id] = profile
             return profile
 
-        for channel_id in channels:
-            channel_id = channel_id.strip()
+        for channel_id, channel_spec in channel_specs:
             last_ts = all_watermarks.get(channel_id)
             try:
                 messages = list_new_messages(token=token, channel=channel_id, oldest=last_ts)
@@ -146,6 +160,21 @@ class SlackPollingAdapter:
                         highest_ts = msg_ts
                     continue
                 if not _is_decision_bearing(msg):
+                    if msg_ts > highest_ts:
+                        highest_ts = msg_ts
+                    continue
+                # #337 cycle 2: universal-filter gate. Slack candidate
+                # shape: text from message body, author from user_id
+                # (email resolution happens in normalize, but for filter
+                # eval we use the raw user ID — operators can configure
+                # author_include with user IDs OR delegate to extensions
+                # in a future cycle).
+                candidate = {
+                    "text": msg.get("text") or "",
+                    "author": msg.get("user") or "",
+                    "timestamp": _slack_ts_to_iso_safe(msg_ts),
+                }
+                if not evaluate_universal(candidate, channel_spec):
                     if msg_ts > highest_ts:
                         highest_ts = msg_ts
                     continue
@@ -182,6 +211,34 @@ class SlackPollingAdapter:
                 exc,
             )
         self._pending_watermarks = {}
+
+
+def _parse_filter_block(raw: dict | None):
+    """Coerce a YAML filter block into a FilterSpec, never raises.
+
+    Malformed filter config logs to stderr and falls through to the
+    no-filter default — operator gets stderr feedback but the poller
+    doesn't halt on a typo.
+    """
+    from filters import FilterSpec
+
+    if not raw or not isinstance(raw, dict):
+        return FilterSpec()
+    try:
+        return FilterSpec(**raw)
+    except Exception as exc:  # noqa: BLE001 — surface, don't halt
+        print(f"[slack] malformed filter block ignored: {exc}", file=sys.stderr)
+        return FilterSpec()
+
+
+def _slack_ts_to_iso_safe(ts: str) -> str:
+    """Slack ts → ISO 8601 for filter time-window comparison. Empty on parse failure."""
+    try:
+        from datetime import UTC, datetime
+
+        return datetime.fromtimestamp(float(ts), tz=UTC).isoformat()
+    except (ValueError, OSError, OverflowError):
+        return ""
 
 
 def _read_watermarks(path: Path) -> dict[str, str]:
