@@ -75,6 +75,77 @@ def get_page(*, api_key: str, page_id: str) -> dict:
     return _get(api_key=api_key, path=f"/pages/{page_id}")
 
 
+def list_databases(*, api_key: str) -> list[dict]:
+    """Enumerate databases the Notion integration has been shared with.
+
+    Uses the `search` endpoint with `filter.value=database` since Notion's
+    integration-permission model doesn't expose a simple list-shared call.
+    Returns dicts shaped ``{"id", "title"}`` where title is the first
+    rich-text plain string of the database title.
+
+    Capped at 200 results (two pages) — operator workspaces with more
+    Notion databases shared with one integration than that are rare.
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Notion-Version": _NOTION_VERSION,
+        "Content-Type": "application/json",
+        "User-Agent": "bicameral-mcp/source-notion-discovery",
+    }
+    out: list[dict] = []
+    cursor: str | None = None
+    pages = 0
+    while True:
+        body: dict = {
+            "filter": {"value": "database", "property": "object"},
+            "page_size": 100,
+        }
+        if cursor is not None:
+            body["start_cursor"] = cursor
+        req = urllib.request.Request(
+            f"{_API_BASE}/search",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT_SECONDS) as resp:
+                raw = resp.read(_MAX_RESPONSE_BYTES + 1)
+                if len(raw) > _MAX_RESPONSE_BYTES:
+                    raise NotionAPIError(
+                        f"Notion response exceeded {_MAX_RESPONSE_BYTES} bytes",
+                        status_code=resp.status,
+                    )
+        except urllib.error.HTTPError as exc:
+            raise NotionAPIError(
+                f"Notion search HTTP {exc.code}: {exc.reason}",
+                status_code=exc.code,
+            ) from exc
+        except urllib.error.URLError as exc:
+            raise NotionAPIError(f"Notion search network error: {exc.reason}") from exc
+
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except json.JSONDecodeError as exc:
+            raise NotionAPIError(f"Notion search returned non-JSON: {exc}") from exc
+
+        for db in data.get("results") or []:
+            title_rich = db.get("title") or []
+            title = "".join(t.get("plain_text", "") for t in title_rich) or "(untitled)"
+            out.append({"id": db.get("id") or "", "title": title})
+        pages += 1
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+        if not cursor or pages >= 2:
+            break
+    return out
+
+
 def get_all_blocks(*, api_key: str, page_id: str) -> list[dict]:
     """Fetch every child block of ``page_id``, paginating until exhausted
     or until the per-call page cap fires (misuse bound)."""

@@ -78,6 +78,65 @@ def get_pull(*, api_key: str, owner: str, repo: str, number: int) -> dict:
     return data
 
 
+def list_repos(*, api_key: str) -> list[dict]:
+    """Enumerate repos the token has access to.
+
+    For PATs: returns repos owned by + collaborated on by the
+    authenticated user (``/user/repos``). For GitHub App installation
+    tokens: returns repos the app is installed on (``/installation/repositories``).
+
+    The auth-mode detection is heuristic — PATs start with ``ghp_`` or
+    ``github_pat_`` (modern), GitHub App tokens start with ``ghs_``.
+    Falls back to ``/user/repos`` if ambiguous.
+
+    Returns dicts shaped ``{"full_name", "private", "default_branch"}``.
+    Capped at 1000 repos (10 pages × 100) — operators with more
+    accessible repos should narrow via the API key's scope.
+    """
+    # GitHub App installation tokens start with ghs_; everything else
+    # treats as PAT.
+    path = (
+        "/installation/repositories"
+        if api_key.startswith("ghs_")
+        else "/user/repos?sort=updated&direction=desc&per_page=100"
+    )
+    # /installation/repositories returns {repositories: [...]};
+    # /user/repos returns the array directly. Handle both.
+    out: list[dict] = []
+    pages = 0
+    current_path: str | None = path
+    while current_path:
+        data, headers = _get(api_key=api_key, path=current_path)
+        if isinstance(data, dict) and "repositories" in data:
+            repos = data.get("repositories") or []
+        elif isinstance(data, list):
+            repos = data
+        else:
+            raise GitHubAPIError(f"unexpected repos response shape: {type(data).__name__}")
+        for r in repos:
+            out.append(
+                {
+                    "full_name": r.get("full_name") or "",
+                    "private": bool(r.get("private")),
+                    "default_branch": r.get("default_branch") or "",
+                }
+            )
+        pages += 1
+        if pages >= _MAX_PAGINATION_PAGES:
+            break
+        link = headers.get("Link") or headers.get("link")
+        if not link:
+            break
+        next_url = _parse_link_next(link)
+        if not next_url:
+            break
+        if next_url.startswith(_API_BASE):
+            current_path = next_url[len(_API_BASE) :]
+        else:
+            current_path = next_url
+    return out
+
+
 def get_issue(*, api_key: str, owner: str, repo: str, number: int) -> dict:
     """Fetch a single issue (or PR; GitHub's issue endpoint covers both)."""
     data, _ = _get(api_key=api_key, path=f"/repos/{owner}/{repo}/issues/{number}")

@@ -87,3 +87,28 @@ def query(*, api_key: str, document: str, variables: dict | None = None) -> dict
         raise LinearAPIError(f"Linear GraphQL error: {msg}")
 
     return parsed.get("data") or {}
+
+
+_LIST_TEAMS_QUERY = """
+query ListTeams {
+  teams(first: 100) {
+    nodes { id key name }
+  }
+}
+"""
+
+
+def list_teams(*, api_key: str) -> list[dict]:
+    """Enumerate teams the API key has access to.
+
+    Returns dicts shaped ``{"id", "key", "name"}``. The ``key`` is the
+    short team prefix (e.g. ``"BIC"``) used in ``team_keys`` config.
+    Capped at 100 teams per query (Linear's default page size) — enough
+    for any sensible workspace.
+    """
+    data = query(api_key=api_key, document=_LIST_TEAMS_QUERY)
+    teams = (data.get("teams") or {}).get("nodes") or []
+    return [
+        {"id": t.get("id") or "", "key": t.get("key") or "", "name": t.get("name") or ""}
+        for t in teams
+    ]
