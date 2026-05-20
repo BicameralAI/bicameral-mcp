@@ -155,34 +155,18 @@ class GoogleDriveAdapter:
             raise RuntimeError(f"Google Docs API call failed: {exc}") from exc
 
     def _resolve_credentials(self):
-        """Build google.oauth2 Credentials from the stored token JSON.
+        """Return live OAuth credentials for the Docs API call.
 
-        Raises ``RuntimeError`` when no token is stored — with a hint
-        directing the operator to the (future) OAuth handshake flow.
+        Phase 5b (#337): delegates to ``sources.google_drive.auth.load_credentials``
+        which adds the auto-refresh path — expired tokens get a new access
+        token via the refresh token without operator re-consent, and the
+        rotated JSON is re-persisted so the next fetch sees it. Missing /
+        unrefreshable tokens raise ``RuntimeError`` pointing at the
+        ``bicameral-mcp source-auth google_drive`` command.
         """
-        import json as _json
+        from sources.google_drive.auth import load_credentials
 
-        from secrets_store import get_secret
-
-        token_json = get_secret(source_id=self.source_id, key="oauth_token")
-        if not token_json:
-            raise RuntimeError(
-                "Google Drive OAuth token not configured. The Phase 5b OAuth "
-                "handshake flow will populate this automatically; for now, "
-                "store the token JSON (output of `credentials.to_json()`) via:\n"
-                '  python -c "from secrets_store import put_secret; '
-                "put_secret(source_id='google_drive', key='oauth_token', value='<json>')\""
-            )
-        try:
-            from google.oauth2.credentials import Credentials  # type: ignore[import-not-found]
-        except ImportError as exc:
-            raise RuntimeError(
-                "google-auth not installed; reinstall bicameral-mcp to pick up the dep"
-            ) from exc
-        info = _json.loads(token_json)
-        return Credentials.from_authorized_user_info(
-            info, scopes=["https://www.googleapis.com/auth/documents.readonly"]
-        )
+        return load_credentials()
 
     def _build_docs_service(self, creds):
         """Build the Docs API service. Separate method for test override."""
