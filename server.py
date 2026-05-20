@@ -1522,6 +1522,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.source_list_cli import _build_argparser as _sl_build
 
     _sl_build(source_list)
+    webhook_server = subparsers.add_parser(
+        "webhook-server",
+        help="start the HTTP webhook receiver (#337 cycle 5)",
+    )
+    from cli.webhook_server_cli import _build_argparser as _ws_build
+
+    _ws_build(webhook_server)
     subparsers.add_parser(
         "ledger-export",
         help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
@@ -1608,6 +1615,10 @@ def _dispatch(args: Any) -> int:
         from cli.source_list_cli import main as source_list_main
 
         return source_list_main(args)
+    if args.command == "webhook-server":
+        from cli.webhook_server_cli import main as webhook_server_main
+
+        return webhook_server_main(args)
     if args.command == "ledger-export":
         from cli.ledger_export_cli import main as export_main
 
