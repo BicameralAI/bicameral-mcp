@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from .github import GitHubPollingAdapter
 from .google_drive import GoogleDriveFolderAdapter
 from .granola import GranolaAdapter, MissingApiKeyError
 from .linear import LinearPollingAdapter
@@ -50,11 +51,13 @@ ADAPTERS: dict[str, type] = {
     "google_drive": GoogleDriveFolderAdapter,
     "linear": LinearPollingAdapter,
     "notion": NotionPollingAdapter,
+    "github": GitHubPollingAdapter,
 }
 
 
 __all__ = [
     "ADAPTERS",
+    "GitHubPollingAdapter",
     "GoogleDriveFolderAdapter",
     "GranolaAdapter",
     "LinearPollingAdapter",
