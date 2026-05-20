@@ -48,7 +48,7 @@ class GitHubPollingAdapter:
 
         # #337 cycle 2: per-repo filter overrides. Accept both bare strings
         # ("owner/repo") and dicts ({owner_repo: "...", filters: {...}}).
-        from filters import FilterSpec, evaluate_universal, merge_specs
+        from filters import FilterSpec, evaluate_filters, merge_specs
 
         source_level_filter = _parse_github_filter_block(config.get("filters") or {})
         repos_raw = config.get("repos") or []
@@ -155,7 +155,7 @@ class GitHubPollingAdapter:
                     "author": participants[0] if participants else "",
                     "timestamp": updated_at,
                 }
-                if not evaluate_universal(candidate, repo_spec):
+                if not evaluate_filters(candidate, repo_spec):
                     if updated_at > highest_updated:
                         highest_updated = updated_at
                     continue

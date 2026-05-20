@@ -61,7 +61,7 @@ class SlackPollingAdapter:
         # entries. ``channels`` accepts either bare strings (legacy: inherit
         # source-level filter, no overrides) or dicts of shape
         # ``{id: "C…", filters: {...}}`` (per-resource filter overrides).
-        from filters import FilterSpec, evaluate_universal, merge_specs
+        from filters import FilterSpec, evaluate_filters, merge_specs
 
         source_level_filter = _parse_filter_block(config.get("filters") or {})
         channels_raw = config.get("channels") or []
@@ -174,7 +174,7 @@ class SlackPollingAdapter:
                     "author": msg.get("user") or "",
                     "timestamp": _slack_ts_to_iso_safe(msg_ts),
                 }
-                if not evaluate_universal(candidate, channel_spec):
+                if not evaluate_filters(candidate, channel_spec):
                     if msg_ts > highest_ts:
                         highest_ts = msg_ts
                     continue

@@ -111,7 +111,7 @@ class GoogleDriveFolderAdapter:
 
         # #337 cycle 2: universal filter (source-level — folder_id is the
         # resource for Drive polling).
-        from filters import FilterSpec, evaluate_universal
+        from filters import FilterSpec, evaluate_filters
 
         try:
             source_spec = FilterSpec(**(config.get("filters") or {}))
@@ -147,7 +147,7 @@ class GoogleDriveFolderAdapter:
                 "author": participants[0] if participants else "",
                 "timestamp": mtime,
             }
-            if not evaluate_universal(candidate, source_spec):
+            if not evaluate_filters(candidate, source_spec):
                 if mtime > highest_mtime:
                     highest_mtime = mtime
                 continue

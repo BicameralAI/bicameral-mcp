@@ -93,7 +93,7 @@ class NotionPollingAdapter:
 
         # #337 cycle 2: universal filter (source-level — Notion's
         # database_id is the resource).
-        from filters import FilterSpec, evaluate_universal
+        from filters import FilterSpec, evaluate_filters
 
         try:
             source_spec = FilterSpec(**(config.get("filters") or {}))
@@ -128,7 +128,7 @@ class NotionPollingAdapter:
                 "author": participants[0] if participants else "",
                 "timestamp": edited,
             }
-            if not evaluate_universal(candidate, source_spec):
+            if not evaluate_filters(candidate, source_spec):
                 if edited > highest_edited:
                     highest_edited = edited
                 continue
