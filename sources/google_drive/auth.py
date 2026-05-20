@@ -28,11 +28,24 @@ from __future__ import annotations
 
 import json
 
-# documents.readonly is the minimum scope needed for the
-# ``service.documents().get(documentId=...)`` call in the adapter.
-# drive.readonly (for listing / watching) is deliberately out of scope
-# in Phase 5b — adding scopes later forces a re-consent which is fine.
-INGEST_SCOPE = "https://www.googleapis.com/auth/documents.readonly"
+# Scopes required by the Google Drive / Docs ingest flow.
+# - documents.readonly: read Google Docs body via the Docs API
+#   (used by sources.google_drive.adapter.fetch_active).
+# - drive.metadata.readonly: list files in a configured folder by mtime
+#   (used by events.sources.google_drive.GoogleDriveFolderAdapter,
+#   Phase 5c). Metadata-only — does NOT grant read access to non-Docs
+#   files; doc content still flows through the documents.readonly scope.
+#
+# Operators who consented under Phase 5b (documents.readonly only) must
+# re-run `bicameral-mcp source-auth google_drive` after upgrading; the
+# refresh path can't expand scope on its own.
+INGEST_SCOPES = [
+    "https://www.googleapis.com/auth/documents.readonly",
+    "https://www.googleapis.com/auth/drive.metadata.readonly",
+]
+# Back-compat alias kept until external callers migrate. Renamed in 5c
+# (#337) to reflect the multi-scope reality.
+INGEST_SCOPE = INGEST_SCOPES[0]
 
 _SOURCE_ID = "google_drive"
 _TOKEN_KEY = "oauth_token"
@@ -81,7 +94,7 @@ def run_oauth_handshake() -> None:
     from secrets_store import put_secret
 
     client_config = _bundled_client_config()
-    flow = InstalledAppFlow.from_client_config(client_config, [INGEST_SCOPE])
+    flow = InstalledAppFlow.from_client_config(client_config, INGEST_SCOPES)
     creds = flow.run_local_server(port=0)
     if creds is None:
         raise OAuthFlowAbortedError(
@@ -126,7 +139,7 @@ def load_credentials():
             "Re-run: bicameral-mcp source-auth google_drive"
         ) from exc
 
-    creds = Credentials.from_authorized_user_info(info, scopes=[INGEST_SCOPE])
+    creds = Credentials.from_authorized_user_info(info, scopes=INGEST_SCOPES)
     if creds.valid:
         return creds
     if creds.expired and creds.refresh_token:
