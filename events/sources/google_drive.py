@@ -109,6 +109,19 @@ class GoogleDriveFolderAdapter:
             self._pending_watermark = None
             return []
 
+        # #337 cycle 2: universal filter (source-level — folder_id is the
+        # resource for Drive polling).
+        from filters import FilterSpec, evaluate_universal
+
+        try:
+            source_spec = FilterSpec(**(config.get("filters") or {}))
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[google_drive] malformed filter block ignored: {exc}",
+                file=sys.stderr,
+            )
+            source_spec = FilterSpec()
+
         active = GoogleDriveAdapter()
         for doc in docs:
             doc_id = doc.get("id")
@@ -123,6 +136,20 @@ class GoogleDriveFolderAdapter:
                     f"[google_drive] doc {doc_id!r} fetch failed (skipped): {exc}",
                     file=sys.stderr,
                 )
+                continue
+            text_bits = [
+                str(payload.get("query") or ""),
+                *(d.get("description", "") for d in (payload.get("decisions") or [])),
+            ]
+            participants = payload.get("participants") or []
+            candidate = {
+                "text": " ".join(text_bits),
+                "author": participants[0] if participants else "",
+                "timestamp": mtime,
+            }
+            if not evaluate_universal(candidate, source_spec):
+                if mtime > highest_mtime:
+                    highest_mtime = mtime
                 continue
             # Optional operator-facing label override.
             label = config.get("source_type_label")

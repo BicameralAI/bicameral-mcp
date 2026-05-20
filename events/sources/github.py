@@ -46,8 +46,26 @@ class GitHubPollingAdapter:
         watermark_dir.mkdir(parents=True, exist_ok=True)
         self._watermark_path = watermark_dir / _WATERMARK_FILENAME
 
+        # #337 cycle 2: per-repo filter overrides. Accept both bare strings
+        # ("owner/repo") and dicts ({owner_repo: "...", filters: {...}}).
+        from filters import FilterSpec, evaluate_universal, merge_specs
+
+        source_level_filter = _parse_github_filter_block(config.get("filters") or {})
         repos_raw = config.get("repos") or []
-        repos = [str(r) for r in repos_raw if "/" in str(r)]
+        repo_specs: list[tuple[str, FilterSpec]] = []
+        for entry in repos_raw:
+            if isinstance(entry, str):
+                or_str = entry.strip()
+                spec = source_level_filter
+            elif isinstance(entry, dict):
+                or_str = str(entry.get("owner_repo") or "").strip()
+                res_spec = _parse_github_filter_block(entry.get("filters") or {})
+                spec = merge_specs(source_level_filter, res_spec)
+            else:
+                continue
+            if "/" in or_str:
+                repo_specs.append((or_str, spec))
+        repos = [r for r, _ in repo_specs]
         if not repos:
             print(
                 "[github] at least one 'owner/repo' entry is required in source.repos; skipping.",
@@ -86,7 +104,7 @@ class GitHubPollingAdapter:
         payloads: list[dict] = []
         new_watermarks: dict[str, str] = dict(all_watermarks)
 
-        for owner_repo in repos:
+        for owner_repo, repo_spec in repo_specs:
             try:
                 owner, repo = owner_repo.split("/", 1)
             except ValueError:
@@ -127,6 +145,20 @@ class GitHubPollingAdapter:
                         file=sys.stderr,
                     )
                     continue
+                text_bits = [
+                    str(payload.get("query") or ""),
+                    *(d.get("description", "") for d in (payload.get("decisions") or [])),
+                ]
+                participants = payload.get("participants") or []
+                candidate = {
+                    "text": " ".join(text_bits),
+                    "author": participants[0] if participants else "",
+                    "timestamp": updated_at,
+                }
+                if not evaluate_universal(candidate, repo_spec):
+                    if updated_at > highest_updated:
+                        highest_updated = updated_at
+                    continue
                 label = config.get("source_type_label")
                 if label:
                     payload = {**payload, "source": str(label)}
@@ -155,6 +187,19 @@ class GitHubPollingAdapter:
                 exc,
             )
         self._pending_watermarks = {}
+
+
+def _parse_github_filter_block(raw: dict | None):
+    """Coerce a YAML filter block into a FilterSpec, never raises."""
+    from filters import FilterSpec
+
+    if not raw or not isinstance(raw, dict):
+        return FilterSpec()
+    try:
+        return FilterSpec(**raw)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[github] malformed filter block ignored: {exc}", file=sys.stderr)
+        return FilterSpec()
 
 
 def _read_watermarks(path: Path) -> dict[str, str]:

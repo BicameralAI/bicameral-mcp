@@ -87,6 +87,16 @@ class LinearPollingAdapter:
             self._pending_watermark = None
             return []
 
+        # #337 cycle 2: universal filter for Linear. Source-level only —
+        # Linear team-keys already serve as per-resource selection.
+        from filters import FilterSpec, evaluate_universal
+
+        try:
+            source_spec = FilterSpec(**(config.get("filters") or {}))
+        except Exception as exc:  # noqa: BLE001
+            print(f"[linear] malformed filter block ignored: {exc}", file=sys.stderr)
+            source_spec = FilterSpec()
+
         active = LinearAdapter()
         payloads: list[dict] = []
         highest_completed = last_watermark or ""
@@ -103,6 +113,22 @@ class LinearPollingAdapter:
                     f"[linear] issue {identifier!r} fetch failed (skipped): {exc}",
                     file=sys.stderr,
                 )
+                continue
+            # Filter on title + description aggregate.
+            text_bits = [
+                str(payload.get("query") or ""),
+                *(d.get("description", "") for d in (payload.get("decisions") or [])),
+            ]
+            participants = payload.get("participants") or []
+            author = participants[0] if participants else ""
+            candidate = {
+                "text": " ".join(text_bits),
+                "author": author,
+                "timestamp": completed_at,
+            }
+            if not evaluate_universal(candidate, source_spec):
+                if completed_at > highest_completed:
+                    highest_completed = completed_at
                 continue
             label = config.get("source_type_label")
             if label:
