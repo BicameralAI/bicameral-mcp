@@ -48,7 +48,18 @@ class GitHubPollingAdapter:
 
         # #337 cycle 2: per-repo filter overrides. Accept both bare strings
         # ("owner/repo") and dicts ({owner_repo: "...", filters: {...}}).
-        from filters import FilterSpec, evaluate_filters, merge_specs
+        from filters import (
+            FilterSpec,
+            evaluate_filters,
+            get_max_bytes,
+            get_max_items,
+            merge_specs,
+            payload_within_cap,
+        )
+
+        # cycle 4: per-source quota (applies across all repos in this pull)
+        max_items = get_max_items(config)
+        max_bytes = get_max_bytes(config)
 
         source_level_filter = _parse_github_filter_block(config.get("filters") or {})
         repos_raw = config.get("repos") or []
@@ -105,6 +116,10 @@ class GitHubPollingAdapter:
         new_watermarks: dict[str, str] = dict(all_watermarks)
 
         for owner_repo, repo_spec in repo_specs:
+            # cycle 4: cap applies across all repos in the pull; once
+            # reached, stop processing further repos too.
+            if max_items and len(payloads) >= max_items:
+                break
             try:
                 owner, repo = owner_repo.split("/", 1)
             except ValueError:
@@ -132,6 +147,8 @@ class GitHubPollingAdapter:
 
             highest_updated = last_updated or ""
             for pr in pulls:
+                if max_items and len(payloads) >= max_items:
+                    break
                 url = pr.get("html_url") or ""
                 updated_at = pr.get("updated_at") or ""
                 if not url:
@@ -162,6 +179,16 @@ class GitHubPollingAdapter:
                 label = config.get("source_type_label")
                 if label:
                     payload = {**payload, "source": str(label)}
+                if not payload_within_cap(payload, max_bytes):
+                    pr_number = pr.get("number", "?")
+                    print(
+                        f"[github] {owner_repo}#{pr_number} exceeds "
+                        f"max_payload_bytes ({max_bytes}); skipped.",
+                        file=sys.stderr,
+                    )
+                    if updated_at > highest_updated:
+                        highest_updated = updated_at
+                    continue
                 payloads.append(payload)
                 if updated_at > highest_updated:
                     highest_updated = updated_at
