@@ -2869,3 +2869,65 @@ All other passes (Security L3, OWASP Top 10, Ghost UI, Razor, Dependency, Macro-
 **Mechanism verification recorded** (R2-specific): the Judge ran `SELECT * FROM symbol WHERE name = 'x' EXPLAIN` and `SELECT * FROM symbol WHERE file_path = 'x' EXPLAIN` against a live `memory://` SurrealDB on the audit branch. The first returned `Iterate Table` (today's bug); the second returned `Iterate Index` with `detail.index = "idx_sym_file"`. The mechanism is deterministic, embedded-mode-compatible, and the amended tests will fail loudly if `_migrate_v24_to_v25` is silently broken.
 
 **Required next action**: Governor proceeds to `/qor-implement` against R2 PASS.
+
+---
+
+### Entry #54: RESEARCH BRIEF — Google Drive Push Notifications
+
+**Timestamp**: 2026-05-20T00:00:00Z
+**Phase**: research
+**Analyst**: The Qor-logic Analyst (research mode)
+**Target**: `docs/research-brief-google-drive-push-notifications-2026-05-20.md`
+**Risk Grade**: L2 (security-boundary research; cycle 9 implementation will land code with a public HTTP attack surface)
+
+**Content Hash**:
+```
+SHA256(research-brief-google-drive-push-notifications-2026-05-20.md)
+= bdbca98eddb62f827db4ef1bed46ffa7c4bf2dd2f2fc0291c2afb617cdbc3faf
+```
+
+**Previous Hash**: `sha256:231aaf3d36899fbc7c790f70de5d6f8a100eb79b58ec4a8aac5072ffade8f182` (Entry #53-R2)
+
+**Chain Hash**:
+```
+SHA256(content_hash + previous_hash)
+= 3f39073bc254bf0ac10790d6c91670ac817aaccdf191dd62c1a8c573c361140b
+```
+
+**Decision**: Google Drive's Push Notifications model is fundamentally weaker than HMAC-signed providers (no body signature, operator-supplied opaque token as the only authenticity signal, empty notification body that's a trigger rather than a payload). No drift against `docs/ARCHITECTURE_PLAN.md`. Two scope additions identified for cycle 9: a channel-lifecycle registry (channel_id ↔ resource_id ↔ token ↔ expiration) and a `startPageToken` watermark store. Recommended cycle-9 strategy: `files.watch` (per-file, scope-compatible with existing `drive.metadata.readonly`) over `changes.watch` (account-wide, requires `drive` scope expansion and operator re-consent). Renewal job required because Drive does not notify on expiration. Adversarial `code-reviewer` pass mandatory before push, per cycle-6/7 precedent — reviewer must specifically scrutinize token-comparison constant-time correctness, channel-id ↔ resource-id cross-validation (signed-header/unsigned-header analogue to Linear H3), and the registry-miss edge case.
+
+**Infrastructure**: `qor/` Python package not installed in this worktree; gate artifact emission to `.qor/gates/<session_id>/research.json` skipped, brief stands on its content per the Entry #53 precedent.
+
+**Required next action**: Governor decides cycle ordering — Notion webhook receiver (cycle 8, separate research brief still pending) vs Drive webhook receiver (cycle 9, brief above). When cycle 9 begins, the implementer must (a) link this brief in the PR description, (b) follow the Priority-1 / Priority-2 recommendations as the plan skeleton, (c) gate on an adversarial `code-reviewer` pass.
+
+---
+
+### Entry #55: RESEARCH BRIEF — Notion Webhooks
+
+**Timestamp**: 2026-05-20T01:00:00Z
+**Phase**: research
+**Analyst**: The Qor-logic Analyst (research mode)
+**Target**: `docs/research-brief-notion-webhooks-2026-05-20.md`
+**Risk Grade**: L2 (security-boundary research; cycle 8 implementation will land code with a public HTTP attack surface)
+
+**Content Hash**:
+```
+SHA256(research-brief-notion-webhooks-2026-05-20.md)
+= 4c7952b418be9cb643b74e91d1091a1d3ab48edda6270c2007131c5fe012c5ab
+```
+
+**Previous Hash**: `3f39073bc254bf0ac10790d6c91670ac817aaccdf191dd62c1a8c573c361140b` (Entry #54)
+
+**Chain Hash**:
+```
+SHA256(content_hash + previous_hash)
+= 144fcdccd63a7ca7e01712decc267bbe881dde4b19b2ac6ce5ae75b9c77fb7f6
+```
+
+**Note on redaction**: The example `verification_token` quoted from Notion's docs (originally appearing at brief:50) was redacted to `secret_REDACTED_PLACEHOLDER_VALUE_FROM_NOTION_DOCS` before push because GitHub secret scanning treats the literal `secret_<base64-ish>` shape as a real credential. Content and chain hashes above reflect the redacted form; the original brief carried hash `a860a8aabaea8701339f85849e4f74a80194342c70b6341ca3337d60bc111b40` and is recoverable from local git reflog if anyone needs to verify the pre-redaction chain match.
+
+**Decision**: Notion's webhook contract is HMAC-signed (`X-Notion-Signature: sha256=<hex>` over body, GitHub-style) but secret provisioning is unique — Notion mints the `verification_token` and POSTs it to our endpoint; the operator then pastes that token back into Notion's UI to activate the subscription. The same token doubles as the long-term HMAC secret. Body envelope rich (`id`, `timestamp`, `subscription_id`, `integration_id`, `type`, `authors`, `accessible_by`, `attempt_number`, `entity`, `data`); retry envelope 8 attempts over ~24h; `page.content_updated` aggregates across short windows. ONE DRIFT detected in existing code: `sources/notion/poller.py:4-5` carries a stale comment claiming Notion has no webhooks — must be corrected during cycle 8. Recommended cycle-8 design: reuse `webhooks/github.py:verify_signature` as the template (two-line delta), persist verification_token in `secrets_store` under `source_id="notion", key=f"subscription:{subscription_id}"`, surface pending verifications via stderr + CLI for operator paste-back, dedup on body-side `id` via existing `webhooks/dedup` LRU (24h TTL already covers Notion's retry envelope per the cycle-5 fix). Adversarial `code-reviewer` pass mandatory before push, per cycles 6/7/9 precedent — reviewer must scrutinize verification-POST clobber attack, subscription-id-as-lookup-key edge cases, and HMAC implementation parity with `webhooks/github.py`.
+
+**Infrastructure**: `qor/` Python package not installed in this worktree; gate artifact emission to `.qor/gates/<session_id>/research.json` skipped, brief stands on its content per the Entries #53-#54 precedent.
+
+**Required next action**: Governor authorizes cycle 8 implementation. When cycle 8 begins, the implementer must (a) link this brief in the PR description, (b) follow the Priority-1 / Priority-2 recommendations as the plan skeleton, (c) update the stale `sources/notion/poller.py` comment in the same PR, (d) gate on an adversarial `code-reviewer` pass.
