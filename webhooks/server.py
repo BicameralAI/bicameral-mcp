@@ -198,6 +198,16 @@ async def _process_request(reader: asyncio.StreamReader, writer: asyncio.StreamW
         await _respond(writer, status, message)
         return
 
+    if path == "/webhooks/slack":
+        # Slack handler returns (status, body, content_type) — H1 review
+        # finding: server passes content type through verbatim instead of
+        # guessing by inspecting the body.
+        status, message, content_type = await asyncio.to_thread(
+            _dispatch_slack, body, MappingProxyType(dict(headers))
+        )
+        await _respond(writer, status, message, content_type=content_type)
+        return
+
     await _respond(writer, 404, "not found")
 
 
@@ -216,7 +226,30 @@ def _dispatch_github(body: bytes, headers) -> tuple[int, str]:
     )
 
 
-async def _respond(writer: asyncio.StreamWriter, status: int, message: str) -> None:
+def _dispatch_slack(body: bytes, headers) -> tuple[int, str, str]:
+    """Sync entrypoint into the Slack handler (called via to_thread).
+
+    Returns ``(status, body, content_type)`` — content type is explicit
+    rather than guessed from body shape (H1 review finding).
+    """
+    from webhooks.slack import handle
+
+    timestamp = headers.get("x-slack-request-timestamp")
+    signature = headers.get("x-slack-signature")
+    return handle(
+        body=body,
+        timestamp_header=timestamp,
+        signature_header=signature,
+    )
+
+
+async def _respond(
+    writer: asyncio.StreamWriter,
+    status: int,
+    message: str,
+    *,
+    content_type: str = "text/plain; charset=utf-8",
+) -> None:
     """Write a minimal HTTP/1.0 response and flush."""
     reason = {
         200: "OK",
@@ -231,10 +264,15 @@ async def _respond(writer: asyncio.StreamWriter, status: int, message: str) -> N
         500: "Internal Server Error",
         503: "Service Unavailable",
     }.get(status, "Unknown")
-    body = (message + "\n").encode("utf-8")
+    # For JSON content (e.g. Slack url_verification challenge echo) we
+    # don't append a trailing newline — preserves byte-exact response.
+    if content_type.startswith("application/json"):
+        body = message.encode("utf-8")
+    else:
+        body = (message + "\n").encode("utf-8")
     response = (
         f"HTTP/1.0 {status} {reason}\r\n"
-        f"Content-Type: text/plain; charset=utf-8\r\n"
+        f"Content-Type: {content_type}\r\n"
         f"Content-Length: {len(body)}\r\n"
         f"Cache-Control: no-store\r\n"
         f"Connection: close\r\n"
