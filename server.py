@@ -1529,6 +1529,16 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.webhook_server_cli import _build_argparser as _ws_build
 
     _ws_build(webhook_server)
+    notion_pending = subparsers.add_parser(
+        "notion-pending",
+        help=(
+            "retrieve pending Notion verification_token by fingerprint, or list "
+            "all pending entries (#337 cycle 8b)"
+        ),
+    )
+    from cli.notion_pending_cli import _build_argparser as _np_build
+
+    _np_build(notion_pending)
     subparsers.add_parser(
         "ledger-export",
         help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
@@ -1619,6 +1629,10 @@ def _dispatch(args: Any) -> int:
         from cli.webhook_server_cli import main as webhook_server_main
 
         return webhook_server_main(args)
+    if args.command == "notion-pending":
+        from cli.notion_pending_cli import main as notion_pending_main
+
+        return notion_pending_main(args)
     if args.command == "ledger-export":
         from cli.ledger_export_cli import main as export_main
 
