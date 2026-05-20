@@ -148,7 +148,7 @@ def _release_lock(fd) -> None:
             import msvcrt
 
             try:
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
             except OSError:
                 pass
     finally:
