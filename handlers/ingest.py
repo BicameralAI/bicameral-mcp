@@ -19,12 +19,14 @@ Limitations — aggregate-rate worst case (#230 Finding 2):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import threading
 import time
 from datetime import UTC
+from typing import Literal
 
 import preflight_telemetry
 
@@ -64,7 +66,37 @@ class _IngestRefused(Exception):
         super().__init__(f"{reason}: {detail}" if detail else reason)
 
 
-def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
+# #418 Phase 0a: gate classification. Hard gates raise unconditionally in
+# both active and passive ingest modes — operator MUST intervene (rotate
+# credential, handle regulated data out-of-band, fix caller serialization
+# bug). Soft gates fail-fast in active mode (today's behavior) but
+# WARN+DLQ+continue in passive mode (poller resilience).
+#
+# Classification is principled, not arbitrary:
+#   - ``sensitive_data:*`` — credential/PHI/PAN leak; skipping the item is
+#     not safe (the data is already in the agent's context window).
+#   - ``malformed_payload`` — caller bug; the payload isn't even JSON-
+#     serializable, so we couldn't write the DLQ sidecar even if we wanted to.
+#   - ``size_limit_exceeded``, ``rate_limit_exceeded``,
+#     ``injection_canary_match`` — recoverable by skipping the item;
+#     operator reviews the DLQ.
+_HARD_GATE_PREFIXES = ("sensitive_data:",)
+_HARD_GATE_REASONS = frozenset({"malformed_payload"})
+
+
+def _is_hard_gate(reason: str) -> bool:
+    """Return True when a refusal must fail-fast in both ingest modes."""
+    if reason in _HARD_GATE_REASONS:
+        return True
+    return any(reason.startswith(p) for p in _HARD_GATE_PREFIXES)
+
+
+def _emit_ingest_refusal_telemetry(
+    reason: str,
+    session_id: str,
+    *,
+    disposition: str = "rejected",
+) -> None:
     """Dual-write the refusal event to JSONL telemetry + audit log.
 
     Side-effect-only helper invoked by ``handle_ingest`` after a guard
@@ -78,6 +110,12 @@ def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
     to raise, but the explicit ``try/except`` formalizes that trust at
     the helper level and is required for the bidirectional-independence
     test contract (#227 Phase 2).
+
+    ``disposition`` (#418 Phase 0a): one of ``"rejected"`` (default,
+    hard-gate OR active-mode soft-gate refusal) or ``"warned_and_dlqd"``
+    (passive-mode soft-gate refusal — item routed to the DLQ store and
+    the caller continues). Additive on the audit event; existing
+    consumers see the field appear without schema migration.
     """
     from audit_log import AuditEventType
     from audit_log import emit as audit_emit
@@ -87,7 +125,12 @@ def _emit_ingest_refusal_telemetry(reason: str, session_id: str) -> None:
     except Exception:  # noqa: BLE001 — audit-log surface must not be blocked
         pass
     try:
-        audit_emit(AuditEventType.INGEST_REFUSAL, session_id=session_id, reason=reason)
+        audit_emit(
+            AuditEventType.INGEST_REFUSAL,
+            session_id=session_id,
+            reason=reason,
+            disposition=disposition,
+        )
     except Exception:  # noqa: BLE001 — refusal flow must not be broken by emit
         pass
 
@@ -461,6 +504,8 @@ async def handle_ingest(
     payload: dict,
     source_scope: str = "",
     cursor: str = "",
+    *,
+    ingest_mode: Literal["active", "passive"] = "active",
 ) -> IngestResponse:
     # #216: enforce entry-time guardrails BEFORE any ledger work, including
     # the SurrealDB connection handshake. A refused payload should cost zero
@@ -485,6 +530,16 @@ async def handle_ingest(
     # Canary first because injection is upstream of leakage — block the
     # manipulation attempt before scanning for leaks. #212 LLM-01,
     # #213 LLM-04 + HIPAA-01 + PCI-01 fold.
+    #
+    # #418 Phase 0a: ``ingest_mode`` splits soft-gate posture by transport.
+    # ``ingest_mode="active"`` (default, MCP tool surface) keeps fail-fast
+    # behavior — the caller-LLM sees the refusal, fixes the payload,
+    # retries. ``ingest_mode="passive"`` (pollers, webhook receivers, the
+    # sync-and-brief CLI) WARNs + DLQs + continues for soft gates so a
+    # single bad item can't halt the whole poller. Hard gates
+    # (``sensitive_data:*``, ``malformed_payload``) fail-fast in BOTH modes —
+    # the failure is not safely recoverable by skipping.
+    dlqd_count: dict[str, int] = {}
     try:
         _check_payload_size(payload, ctx.ingest_max_bytes)
         _check_rate_limit(
@@ -495,7 +550,65 @@ async def handle_ingest(
         _check_canary(payload)
         _check_sensitive(payload)
     except _IngestRefused as exc:
-        _emit_ingest_refusal_telemetry(exc.reason, getattr(ctx, "session_id", ""))
+        session_id_for_emit = getattr(ctx, "session_id", "")
+        if ingest_mode == "passive" and not _is_hard_gate(exc.reason):
+            # Soft gate + passive caller: route to DLQ, emit refusal with
+            # warned_and_dlqd disposition, return an empty stats-only
+            # IngestResponse so the poller continues with the next item.
+            try:
+                from dlq.store import write_dlq_entry
+
+                try:
+                    serialized = json.dumps(payload, default=str).encode("utf-8")
+                except Exception:  # noqa: BLE001 — should be impossible (malformed is hard-gate)
+                    serialized = repr(payload).encode("utf-8", errors="replace")
+                content_hash = "sha256:" + hashlib.sha256(serialized).hexdigest()
+                derived_source_ref = _derive_last_source_ref(payload) or str(
+                    payload.get("title") or ""
+                )
+                write_dlq_entry(
+                    source_id=source_scope or "unknown",
+                    source_ref=derived_source_ref or "<unknown>",
+                    reason=exc.reason,
+                    byte_size=len(serialized),
+                    content_hash=content_hash,
+                    raw_content=serialized,
+                )
+            except Exception as dlq_exc:  # noqa: BLE001 — audit emit must still fire
+                logger.warning(
+                    "[ingest] DLQ write failed for reason=%s: %s",
+                    exc.reason,
+                    dlq_exc,
+                )
+            _emit_ingest_refusal_telemetry(
+                exc.reason,
+                session_id_for_emit,
+                disposition="warned_and_dlqd",
+            )
+            dlqd_count[exc.reason] = dlqd_count.get(exc.reason, 0) + 1
+            return IngestResponse(
+                ingested=False,
+                repo=str(payload.get("repo") or getattr(ctx, "repo_path", "")),
+                query=str(payload.get("query", "")),
+                source_refs=[],
+                stats=IngestStats(
+                    intents_created=0,
+                    symbols_mapped=0,
+                    regions_linked=0,
+                    ungrounded=0,
+                    grounded=0,
+                    grounded_pct=0.0,
+                    grounding_deferred=0,
+                    dlqd_count=dlqd_count,
+                ),
+                created_decisions=[],
+            )
+        # Hard gate OR active-mode soft gate: today's fail-fast path.
+        _emit_ingest_refusal_telemetry(
+            exc.reason,
+            session_id_for_emit,
+            disposition="rejected",
+        )
         raise
 
     ledger = ctx.ledger
@@ -687,6 +800,7 @@ async def handle_ingest(
             grounded=grounded_count,
             grounded_pct=grounded_pct,
             grounding_deferred=0,
+            dlqd_count=dlqd_count,
         ),
         created_decisions=[
             CreatedDecision(
