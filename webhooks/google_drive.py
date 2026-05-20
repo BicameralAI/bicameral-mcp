@@ -73,11 +73,9 @@ def verify_notification(
        resource_id). Missing any → reject.
     2. Channel-id lookup. Unknown channel → reject.
     3. Constant-time token compare via :func:`hmac.compare_digest`.
-       Tokens are operator-set strings, so length is not a fixed
-       constant; we pad to the longer length before compare to keep
-       the compare itself constant-time (compare_digest's own length
-       check leaks length, but length is not the secret — the token
-       value is).
+       Tokens are operator-set strings of variable length;
+       compare_digest's length-mismatch fast-path leaks length, but
+       length is not the secret here (the token value is).
     4. Resource-id equality (constant-time). An attacker who has
        learned (channel_id, token) but not the matching resource_id
        still cannot pass — and we DO log a divergent resource_id
@@ -212,17 +210,24 @@ def handle(
         )
         return 200, f"sync acknowledged for channel {channel_id!r}"
 
-    # Non-sync state: log the "channel dirty" marker and ack.
-    # Cycle 9b will add a worker that consumes these markers and runs
-    # files.get for the affected file_id. For v0 we just log + 200 so
-    # operators can verify the wire works.
-    if state in {"add", "remove", "update", "trash", "untrash", "change"}:
+    # Non-sync state: look up the file_id in the registry, fetch via
+    # the active adapter, pipe through handle_ingest.
+    # ``trash``/``remove`` are append-only-contract acks: we do NOT
+    # propagate deletes to the ledger (operator uses #221 / GDPR path
+    # for erasure, not this).
+    if state in {"add", "update", "change", "untrash"}:
+        # verify_notification rejected missing channel_id above, so by
+        # this point channel_id is guaranteed non-empty. Assert it for
+        # the type-checker (mypy can't propagate the implicit narrow).
+        assert channel_id is not None
+        return _ingest_change(channel_id, state, registry=registry)
+    if state in {"remove", "trash"}:
         print(
             f"[drive-webhook] channel {channel_id!r} state={state!r} "
-            f"(ingest follow-up deferred to cycle 9b)",
+            f"acknowledged (append-only contract; no ingest)",
             file=sys.stderr,
         )
-        return 200, f"channel {channel_id!r} state={state!r} acknowledged"
+        return 200, f"channel {channel_id!r} state={state!r} acknowledged (no ingest)"
 
     # Unknown / future state — still 200 (Drive's retry posture
     # would retry on 5xx, and we don't want to retry on a state we
@@ -232,3 +237,122 @@ def handle(
         file=sys.stderr,
     )
     return 200, f"channel {channel_id!r} state={state!r} acknowledged (unknown)"
+
+
+def _ingest_change(channel_id: str, state: str, *, registry=None) -> tuple[int, str]:
+    """Look up the channel's file_id, fetch via GoogleDriveAdapter, ingest.
+
+    Failure posture (per cycle-9 docs + Drive's retry contract):
+    Drive retries on 5xx ONLY (not on 4xx like Notion). We use:
+    - 500 for transient fetch failures so Drive retries.
+    - 200 for deterministic failures (file gone, permission revoked,
+      hard-gate refusal) so Drive does not amplify.
+
+    The cycle-9 review M3 finding about nested ``asyncio.run`` is
+    inherited here — same pattern as Notion's ``_ingest_page``. A
+    follow-up cycle makes ``handle()`` itself async to retire the
+    pattern across all five handlers.
+    """
+    if registry is None:
+        from sources.google_drive.channels import get_registry
+
+        registry = get_registry()
+
+    record = registry.get(channel_id)
+    if record is None:
+        # Verification passed (so we DID know this channel a moment
+        # ago) but the registry was mutated between verify and
+        # dispatch — race on operator-driven drive-stop. 200 ack
+        # because Drive's retry won't help (the channel is gone).
+        print(
+            f"[drive-webhook] channel {channel_id!r} missing from registry "
+            f"during ingest dispatch (raced with drive-stop?); acking",
+            file=sys.stderr,
+        )
+        return 200, f"channel {channel_id!r} state={state!r} acknowledged (registry race)"
+
+    file_id = record.file_id
+    if not file_id:
+        print(
+            f"[drive-webhook] channel {channel_id!r} has no file_id; acking",
+            file=sys.stderr,
+        )
+        return 200, f"channel {channel_id!r} state={state!r} acknowledged (no file_id)"
+
+    try:
+        from sources.google_drive.adapter import GoogleDriveAdapter
+
+        adapter = GoogleDriveAdapter()
+        # Build a canonical Drive URL from the file_id.
+        # ``parse_gdrive_url`` accepts both docs.google.com and
+        # drive.google.com forms; we use docs.google.com because
+        # the adapter normalizes to the Docs API endpoint.
+        page_url = f"https://docs.google.com/document/d/{file_id}/edit"
+        ingest_payload = adapter.fetch_active(page_url)
+    except RuntimeError as exc:
+        # GoogleDriveAdapter wraps every API failure in RuntimeError
+        # (sources/google_drive/adapter.py:154). Inspect ``__cause__``
+        # to demote 4xx-not-429 to 200 (deterministic — file gone,
+        # permission revoked, malformed request); 5xx + 429 + non-
+        # HttpError causes default to 500 so Drive's 8-retry envelope
+        # acts as backoff. Cycle 9b review M1 fix.
+        cause = exc.__cause__
+        http_status = getattr(getattr(cause, "resp", None), "status", None)
+        is_deterministic = (
+            isinstance(http_status, int) and 400 <= http_status < 500 and http_status != 429
+        )
+        print(
+            f"[drive-webhook] file fetch failed for {file_id!r} "
+            f"(channel={channel_id!r}, state={state!r}, http_status={http_status}, "
+            f"deterministic={is_deterministic}): {exc}",
+            file=sys.stderr,
+        )
+        if is_deterministic:
+            return 200, (
+                f"channel {channel_id!r} acknowledged (fetch http={http_status}, no retry)"
+            )
+        return 500, (f"channel {channel_id!r} fetch failed (transient); Drive will retry")
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[drive-webhook] adapter raised non-RuntimeError for {file_id!r}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 500, (f"channel {channel_id!r} fetch failed (unclassified); Drive will retry")
+
+    try:
+        import asyncio
+
+        from context import BicameralContext
+        from handlers.ingest import _IngestRefused, handle_ingest
+
+        ctx = BicameralContext.from_env()
+
+        async def _ingest() -> None:
+            await handle_ingest(
+                ctx, ingest_payload, source_scope="google_drive", ingest_mode="passive"
+            )
+
+        asyncio.run(_ingest())
+    except _IngestRefused as exc:
+        # Hard-gate refusal (PHI/secret/PAN). 200 ack — Drive will
+        # not retry on 200, and the gate's own audit-log emit is the
+        # operator-visibility surface.
+        print(
+            f"[drive-webhook] hard-gate refusal for file {file_id!r} "
+            f"(channel={channel_id!r}): {exc.reason}",
+            file=sys.stderr,
+        )
+        return 200, f"channel {channel_id!r} acknowledged (refused: {exc.reason})"
+    except Exception as exc:  # noqa: BLE001
+        # Generic post-fetch ingest failure (ledger error, etc.).
+        # 500 so Drive retries — operator's environment will recover
+        # if the failure was transient.
+        print(
+            f"[drive-webhook] ingest failed for file {file_id!r} "
+            f"(channel={channel_id!r}): {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 500, (f"channel {channel_id!r} ingest failed (transient); Drive will retry")
+
+    return 200, (f"channel {channel_id!r} state={state!r} ingested file {file_id!r}")

@@ -1539,6 +1539,20 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.notion_pending_cli import _build_argparser as _np_build
 
     _np_build(notion_pending)
+    drive_watch = subparsers.add_parser(
+        "drive-watch",
+        help="start a Google Drive Push Notification channel for a file (#337 cycle 9b)",
+    )
+    from cli.drive_watch_cli import _build_argparser as _dw_build
+
+    _dw_build(drive_watch)
+    drive_stop = subparsers.add_parser(
+        "drive-stop",
+        help="cancel a Google Drive Push Notification channel (#337 cycle 9b)",
+    )
+    from cli.drive_stop_cli import _build_argparser as _ds_build
+
+    _ds_build(drive_stop)
     subparsers.add_parser(
         "ledger-export",
         help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
@@ -1633,6 +1647,14 @@ def _dispatch(args: Any) -> int:
         from cli.notion_pending_cli import main as notion_pending_main
 
         return notion_pending_main(args)
+    if args.command == "drive-watch":
+        from cli.drive_watch_cli import main as drive_watch_main
+
+        return drive_watch_main(args)
+    if args.command == "drive-stop":
+        from cli.drive_stop_cli import main as drive_stop_main
+
+        return drive_stop_main(args)
     if args.command == "ledger-export":
         from cli.ledger_export_cli import main as export_main
 
