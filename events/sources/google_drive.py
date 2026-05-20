@@ -111,7 +111,13 @@ class GoogleDriveFolderAdapter:
 
         # #337 cycle 2: universal filter (source-level — folder_id is the
         # resource for Drive polling).
-        from filters import FilterSpec, evaluate_filters
+        from filters import (
+            FilterSpec,
+            evaluate_filters,
+            get_max_bytes,
+            get_max_items,
+            payload_within_cap,
+        )
 
         try:
             source_spec = FilterSpec(**(config.get("filters") or {}))
@@ -122,8 +128,14 @@ class GoogleDriveFolderAdapter:
             )
             source_spec = FilterSpec()
 
+        # cycle 4: per-source quota
+        max_items = get_max_items(config)
+        max_bytes = get_max_bytes(config)
+
         active = GoogleDriveAdapter()
         for doc in docs:
+            if max_items and len(payloads) >= max_items:
+                break
             doc_id = doc.get("id")
             mtime = doc.get("modifiedTime") or ""
             if not doc_id:
@@ -155,6 +167,15 @@ class GoogleDriveFolderAdapter:
             label = config.get("source_type_label")
             if label:
                 payload = {**payload, "source": str(label)}
+            if not payload_within_cap(payload, max_bytes):
+                print(
+                    f"[google_drive] doc {doc_id!r} exceeds max_payload_bytes "
+                    f"({max_bytes}); skipped.",
+                    file=sys.stderr,
+                )
+                if mtime > highest_mtime:
+                    highest_mtime = mtime
+                continue
             payloads.append(payload)
             if mtime > highest_mtime:
                 highest_mtime = mtime

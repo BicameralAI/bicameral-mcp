@@ -34,12 +34,16 @@ from filters.evaluator import (
     merge_specs,
     run_eval_hook,
 )
+from filters.quota import get_max_bytes, get_max_items, payload_within_cap
 from filters.spec import FilterSpec
 
 __all__ = [
     "FilterSpec",
     "evaluate_filters",
     "evaluate_universal",
+    "get_max_bytes",
+    "get_max_items",
     "merge_specs",
+    "payload_within_cap",
     "run_eval_hook",
 ]

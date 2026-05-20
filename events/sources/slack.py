@@ -61,7 +61,18 @@ class SlackPollingAdapter:
         # entries. ``channels`` accepts either bare strings (legacy: inherit
         # source-level filter, no overrides) or dicts of shape
         # ``{id: "C…", filters: {...}}`` (per-resource filter overrides).
-        from filters import FilterSpec, evaluate_filters, merge_specs
+        from filters import (
+            FilterSpec,
+            evaluate_filters,
+            get_max_bytes,
+            get_max_items,
+            merge_specs,
+            payload_within_cap,
+        )
+
+        # cycle 4: per-source quota (applies across all channels in this pull)
+        max_items = get_max_items(config)
+        max_bytes = get_max_bytes(config)
 
         source_level_filter = _parse_filter_block(config.get("filters") or {})
         channels_raw = config.get("channels") or []
@@ -138,6 +149,9 @@ class SlackPollingAdapter:
             return profile
 
         for channel_id, channel_spec in channel_specs:
+            # cycle 4: cap stops processing further channels too.
+            if max_items and len(payloads) >= max_items:
+                break
             last_ts = all_watermarks.get(channel_id)
             try:
                 messages = list_new_messages(token=token, channel=channel_id, oldest=last_ts)
@@ -150,6 +164,8 @@ class SlackPollingAdapter:
 
             highest_ts = last_ts or ""
             for msg in messages:
+                if max_items and len(payloads) >= max_items:
+                    break
                 msg_ts = msg.get("ts") or ""
                 # Only top-level messages — replies don't have parent_user_id
                 # and don't carry thread_ts == ts? Actually Slack sets
@@ -187,6 +203,15 @@ class SlackPollingAdapter:
                 label = config.get("source_type_label")
                 if label:
                     payload = {**payload, "source": str(label)}
+                if not payload_within_cap(payload, max_bytes):
+                    print(
+                        f"[slack] {channel_id}#{msg_ts} exceeds "
+                        f"max_payload_bytes ({max_bytes}); skipped.",
+                        file=sys.stderr,
+                    )
+                    if msg_ts > highest_ts:
+                        highest_ts = msg_ts
+                    continue
                 payloads.append(payload)
                 if msg_ts > highest_ts:
                     highest_ts = msg_ts

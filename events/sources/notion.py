@@ -93,7 +93,13 @@ class NotionPollingAdapter:
 
         # #337 cycle 2: universal filter (source-level — Notion's
         # database_id is the resource).
-        from filters import FilterSpec, evaluate_filters
+        from filters import (
+            FilterSpec,
+            evaluate_filters,
+            get_max_bytes,
+            get_max_items,
+            payload_within_cap,
+        )
 
         try:
             source_spec = FilterSpec(**(config.get("filters") or {}))
@@ -101,10 +107,16 @@ class NotionPollingAdapter:
             print(f"[notion] malformed filter block ignored: {exc}", file=sys.stderr)
             source_spec = FilterSpec()
 
+        # cycle 4: per-source quota
+        max_items = get_max_items(config)
+        max_bytes = get_max_bytes(config)
+
         active = NotionAdapter()
         payloads: list[dict] = []
         highest_edited = last_watermark or ""
         for page in pages:
+            if max_items and len(payloads) >= max_items:
+                break
             page_id = page.get("id") or ""
             edited = page.get("last_edited_time") or ""
             url = page.get("url") or ""
@@ -135,6 +147,14 @@ class NotionPollingAdapter:
             label = config.get("source_type_label")
             if label:
                 payload = {**payload, "source": str(label)}
+            if not payload_within_cap(payload, max_bytes):
+                print(
+                    f"[notion] page {page_id!r} exceeds max_payload_bytes ({max_bytes}); skipped.",
+                    file=sys.stderr,
+                )
+                if edited > highest_edited:
+                    highest_edited = edited
+                continue
             payloads.append(payload)
             if edited > highest_edited:
                 highest_edited = edited

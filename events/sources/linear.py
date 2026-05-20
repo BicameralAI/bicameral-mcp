@@ -89,7 +89,13 @@ class LinearPollingAdapter:
 
         # #337 cycle 2: universal filter for Linear. Source-level only —
         # Linear team-keys already serve as per-resource selection.
-        from filters import FilterSpec, evaluate_filters
+        from filters import (
+            FilterSpec,
+            evaluate_filters,
+            get_max_bytes,
+            get_max_items,
+            payload_within_cap,
+        )
 
         try:
             source_spec = FilterSpec(**(config.get("filters") or {}))
@@ -97,10 +103,21 @@ class LinearPollingAdapter:
             print(f"[linear] malformed filter block ignored: {exc}", file=sys.stderr)
             source_spec = FilterSpec()
 
+        # #337 cycle 4: per-source quota. max_items_per_pull caps payloads
+        # this pull (0 = no cap); max_payload_bytes overrides the global
+        # ingest_max_bytes for size-rejection.
+        max_items = get_max_items(config)
+        max_bytes = get_max_bytes(config)
+
         active = LinearAdapter()
         payloads: list[dict] = []
         highest_completed = last_watermark or ""
         for issue in issues:
+            # cycle 4: stop processing if cap reached. Watermark stays
+            # at the last actually-processed item; unprocessed items
+            # remain for next pull.
+            if max_items and len(payloads) >= max_items:
+                break
             url = issue.get("url") or ""
             completed_at = issue.get("completedAt") or ""
             if not url:
@@ -133,6 +150,18 @@ class LinearPollingAdapter:
             label = config.get("source_type_label")
             if label:
                 payload = {**payload, "source": str(label)}
+            # cycle 4: per-source byte cap, applied before append. Oversize
+            # payload is rejected as if it failed the universal filter —
+            # watermark still advances so we don't re-fetch it.
+            if not payload_within_cap(payload, max_bytes):
+                print(
+                    f"[linear] issue {issue.get('identifier', '?')!r} exceeds "
+                    f"max_payload_bytes ({max_bytes}); skipped.",
+                    file=sys.stderr,
+                )
+                if completed_at > highest_completed:
+                    highest_completed = completed_at
+                continue
             payloads.append(payload)
             if completed_at > highest_completed:
                 highest_completed = completed_at
