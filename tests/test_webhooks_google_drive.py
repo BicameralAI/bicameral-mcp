@@ -48,7 +48,37 @@ def reg(tmp_path: Path) -> ChannelRegistry:
 
 
 @pytest.fixture(autouse=True)
-def _reset_singleton():
+def _reset_singleton(monkeypatch):
+    # Cycle 9b: stub fetch_active by default so tests that don't
+    # explicitly care about the ingest path (most pre-cycle-9b
+    # tests, written when the handler was ack-only) don't fail
+    # when the default ingest-trigger states (update/change/etc.)
+    # try to fetch ``docs.google.com/document/d/file-1/edit`` — not
+    # a real Drive URL. Individual tests that exercise the
+    # fetch/ingest failure paths override this stub.
+    def _default_fetch(self, url):
+        return {
+            "query": "stub-title",
+            "source": "google_drive",
+            "title": "stub-title",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "stub", "title": "stub-title"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _default_fetch
+    )
+
+    async def _default_ingest(ctx, payload, *, source_scope, ingest_mode):
+        pass
+
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _default_ingest)
+
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
     yield
     _channels_reset()
 
@@ -428,14 +458,23 @@ def test_handle_sync_message_with_unexpected_message_number_still_acks(
     assert "9999" in captured.err
 
 
-@pytest.mark.parametrize(
-    "state",
-    ["add", "remove", "update", "trash", "untrash", "change"],
-)
-def test_handle_known_states_return_200_with_dirty_marker(
-    reg: ChannelRegistry, capsys: pytest.CaptureFixture, state: str
+@pytest.mark.parametrize("state", ["remove", "trash"])
+def test_handle_delete_states_acked_no_ingest(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, state: str, monkeypatch
 ):
+    """Cycle 9b: ``remove`` and ``trash`` are append-only-contract
+    acks — we do NOT propagate deletes to the ledger."""
     reg.register(_record())
+    # Defensive: monkeypatch the adapter so a regression that
+    # accidentally routes deletes to ingest is loud, not silent.
+    fetch_called = []
+
+    def _fake_fetch(self, url):
+        fetch_called.append(url)
+        return {}
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fake_fetch)
+
     status, msg = handle(
         body=b"",
         channel_id="ch-1",
@@ -446,10 +485,298 @@ def test_handle_known_states_return_200_with_dirty_marker(
         registry=reg,
     )
     assert status == 200
-    assert state in msg
-    captured = capsys.readouterr()
-    assert "deferred to cycle 9b" in captured.err
-    assert state in captured.err
+    assert "no ingest" in msg or "append-only" in msg
+    assert fetch_called == []
+
+
+@pytest.mark.parametrize("state", ["add", "update", "change", "untrash"])
+def test_handle_ingest_states_fetch_and_pipe(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, state: str, monkeypatch
+):
+    """Cycle 9b: ``add``/``update``/``change``/``untrash`` trigger
+    fetch via GoogleDriveAdapter + handle_ingest in passive mode."""
+    reg.register(_record(file_id="abc123def456ghi789jkl012mno345pq"))
+    captured_data: dict = {}
+
+    def _fake_fetch(self, url):
+        captured_data["fetch_url"] = url
+        return {
+            "query": "doc-title",
+            "source": "google_drive",
+            "title": "doc-title",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "doc body", "title": "doc-title"}],
+        }
+
+    async def _fake_ingest(ctx, payload, *, source_scope, ingest_mode):
+        captured_data["scope"] = source_scope
+        captured_data["mode"] = ingest_mode
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fake_fetch)
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _fake_ingest)
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state=state,
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 200
+    assert "ingested" in msg
+    assert captured_data["scope"] == "google_drive"
+    assert captured_data["mode"] == "passive"
+    # URL is built from file_id in the registry record.
+    assert "abc123def456ghi789jkl012mno345pq" in captured_data["fetch_url"]
+
+
+def test_handle_ingest_state_fetch_4xx_returns_200_deterministic(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, monkeypatch
+):
+    """M1 review fix: 4xx-not-429 wrapped in RuntimeError → 200
+    (file deleted / permission revoked → no point retrying)."""
+    reg.register(_record())
+
+    from unittest.mock import MagicMock
+
+    from googleapiclient.errors import HttpError
+
+    def _fetch_404(self, url):
+        resp = MagicMock(status=404, reason="Not Found")
+        cause = HttpError(resp=resp, content=b"not found")
+        raise RuntimeError("Google Docs API call failed: 404") from cause
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fetch_404)
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 200
+    assert "no retry" in msg or "http=404" in msg
+    err = capsys.readouterr().err
+    assert "deterministic=True" in err
+    assert "http_status=404" in err
+
+
+def test_handle_ingest_state_fetch_5xx_returns_500_transient(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, monkeypatch
+):
+    """M1 review fix corollary: 5xx wrapped in RuntimeError → 500
+    so Drive's 8-retry envelope kicks in."""
+    reg.register(_record())
+
+    from unittest.mock import MagicMock
+
+    from googleapiclient.errors import HttpError
+
+    def _fetch_503(self, url):
+        resp = MagicMock(status=503, reason="Service Unavailable")
+        cause = HttpError(resp=resp, content=b"")
+        raise RuntimeError("Google Docs API call failed: 503") from cause
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fetch_503)
+
+    status, _ = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 500
+    err = capsys.readouterr().err
+    assert "deterministic=False" in err
+
+
+def test_handle_ingest_state_fetch_429_returns_500_transient(reg: ChannelRegistry, monkeypatch):
+    """M1 review fix corollary: 429 (rate limit) is 4xx but NOT
+    deterministic — retry envelope is the right backpressure."""
+    reg.register(_record())
+
+    from unittest.mock import MagicMock
+
+    from googleapiclient.errors import HttpError
+
+    def _fetch_429(self, url):
+        resp = MagicMock(status=429, reason="Too Many Requests")
+        cause = HttpError(resp=resp, content=b"")
+        raise RuntimeError("Google Docs API call failed: 429") from cause
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fetch_429)
+
+    status, _ = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 500
+
+
+def test_handle_ingest_state_fetch_failure_returns_500_for_retry(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, monkeypatch
+):
+    """RuntimeError from the adapter → 500 so Drive's 8-retry
+    envelope kicks in. Without distinguishing 4xx from 5xx (the
+    adapter doesn't expose status), conservative default is
+    transient."""
+    reg.register(_record())
+
+    def _broken_fetch(self, url):
+        raise RuntimeError("simulated Drive API failure")
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _broken_fetch
+    )
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 500
+    assert "transient" in msg or "retry" in msg
+    err = capsys.readouterr().err
+    assert "simulated Drive API failure" in err
+
+
+def test_handle_ingest_state_hard_gate_refusal_returns_200(reg: ChannelRegistry, monkeypatch):
+    """Hard-gate refusal → 200 (NOT 500) so Drive doesn't retry the
+    refused payload 8 times."""
+    reg.register(_record())
+
+    def _fake_fetch(self, url):
+        return {
+            "query": "x",
+            "source": "google_drive",
+            "title": "x",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "x", "title": "x"}],
+        }
+
+    from handlers.ingest import _IngestRefused
+
+    async def _refuse(ctx, payload, *, source_scope, ingest_mode):
+        raise _IngestRefused(reason="sensitive_data:phi")
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fake_fetch)
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _refuse)
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 200
+    assert "refused" in msg
+    assert "phi" in msg
+
+
+def test_handle_ingest_state_post_fetch_ingest_failure_returns_500(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, monkeypatch
+):
+    """Generic ingest failure post-fetch → 500 (transient default).
+    Operator's environment will recover if the failure was
+    transient; if not, Drive's 24h retry envelope is enough time
+    to investigate."""
+    reg.register(_record())
+
+    def _fake_fetch(self, url):
+        return {
+            "query": "x",
+            "source": "google_drive",
+            "title": "x",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "x", "title": "x"}],
+        }
+
+    async def _fail(ctx, payload, *, source_scope, ingest_mode):
+        raise RuntimeError("simulated ledger failure")
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fake_fetch)
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _fail)
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 500
+    assert "transient" in msg
+    err = capsys.readouterr().err
+    assert "simulated ledger failure" in err
+
+
+def test_handle_ingest_state_registry_race_acked(
+    reg: ChannelRegistry, capsys: pytest.CaptureFixture, monkeypatch
+):
+    """Verify passed (registry had the channel) but by the time
+    _ingest_change runs, the entry is gone (operator ran drive-stop
+    mid-notification). 200 ack — Drive's retry won't help."""
+    reg.register(_record())
+    # Verify call captures the record; subsequent registry.get
+    # in _ingest_change returns None to simulate the race.
+    original_get = reg.get
+    call_count = [0]
+
+    def _flaky_get(channel_id):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return original_get(channel_id)  # verify sees the record
+        return None  # _ingest_change sees the race
+
+    monkeypatch.setattr(reg, "get", _flaky_get)
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 200
+    assert "registry race" in msg or "acknowledged" in msg
+    err = capsys.readouterr().err
+    assert "drive-stop" in err or "race" in err
 
 
 def test_handle_unknown_state_returns_200_with_unknown_marker(
