@@ -216,6 +216,10 @@ def handle(
     # propagate deletes to the ledger (operator uses #221 / GDPR path
     # for erasure, not this).
     if state in {"add", "update", "change", "untrash"}:
+        # verify_notification rejected missing channel_id above, so by
+        # this point channel_id is guaranteed non-empty. Assert it for
+        # the type-checker (mypy can't propagate the implicit narrow).
+        assert channel_id is not None
         return _ingest_change(channel_id, state, registry=registry)
     if state in {"remove", "trash"}:
         print(
