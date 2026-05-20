@@ -38,9 +38,11 @@ consumes this inventory as its spec.
 | Per-source DLQ | **SHIPPED** | `~/.bicameral/dlq/<source_id>.jsonl` + mode-0600 raw sidecar. Phase 0a #422. |
 | Per-source audit events | **SHIPPED** | `SOURCE_INGEST_ATTEMPT` / `_ACCEPTED` / `_REFUSED` / `_AUTH_GRANTED` / `_REVOKED`. Phase 0b #423. |
 | `ingest_mode="passive"` | **SHIPPED** | Soft-gate WARN+DLQ+continue. Phase 0a. |
-| Per-source rate limits | **PARTIAL** | Process-wide token bucket exists (`context.py:ingest_rate_limit_*`). NOT per-source. **TBD**: per-source override. |
-| Per-source max-payload-bytes | **PARTIAL** | Global `ingest_max_bytes`. Per-source override **TBD**. |
-| Content-evaluation hook | **TBD** | Pluggable callable for declarative-filter escape hatch. No source supports it yet. Design open. |
+| Per-source rate limits | **PARTIAL** | Process-wide token bucket exists (`context.py:ingest_rate_limit_*`). Per-source token bucket override is **NOT** in cycle 4 (cycle 4b if real demand). |
+| Per-source max items per pull | **SHIPPED** | `max_items_per_pull` config key, cycle 4 (#445). Cap applies globally across all resources in a source-config entry. |
+| Per-source max payload bytes | **SHIPPED** | `max_payload_bytes` config key overrides global `ingest_max_bytes`, cycle 4 (#445). Oversized items skipped with stderr warn; watermark still advances. |
+| Content-evaluation hook | **SHIPPED** | `eval_hook: "module.path:fn"` dotted import path, cycle 3 (#444). Runs AFTER universal primitives. Every failure mode (import error, exception, non-bool return) → reject + stderr warn + cache. |
+| Universal filter primitives | **SHIPPED** | `FilterSpec` (cycle 2 #443): keyword_include/exclude, author_include/exclude, time_window_after/before. Per-resource overrides via `merge_specs` distinguish "explicitly set to empty" from "inherit" via pydantic `model_fields_set`. |
 | Discovery primitive | **SHIPPED** | `bicameral-mcp source-list <source>` CLI lands in #441 / foundations cycle 1. Covers slack, linear, notion, github, google_drive (granola + local_directory are N/A). |
 | Active-vs-passive per resource | **TBD** | Currently source-level only (the *type* is the toggle). Per-resource toggle (e.g. "channel X active-only, channel Y polling") not designed yet. |
 | Webhook receivers | **TBD** | Push model alternative to polling. Needs public HTTP surface. Tracker design pending. |
@@ -56,8 +58,8 @@ consumes this inventory as its spec.
 | Auth | **SHIPPED** | `api_key_env` config entry → `os.environ[<name>]` (pre-`secrets_store` pattern; migration **TBD**) |
 | Discovery | **N/A** | API exposes all transcripts the key can see; no enumeration step |
 | Selection | **N/A** | No per-transcript opt-in; all incoming transcripts ingest |
-| Filtering | **TBD** | No keyword/participant/duration filter |
-| Content eval hook | **TBD** | — |
+| Filtering | **SHIPPED** | Universal `FilterSpec` (#443) — keyword / author / time window. `eval_hook` (#444) for ops beyond declarative. |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Active/passive toggle | Passive-only | No active URL-based path; legacy |
 | Rate / quota | **PARTIAL** | Inherits global ingest gates |
 
@@ -69,7 +71,7 @@ consumes this inventory as its spec.
 | Discovery | **TBD** | No `list-directories` enumerator; operator must already know the path |
 | Selection | **SHIPPED** | `path:` config entry — one directory per source-config entry |
 | Filtering | **SHIPPED** | `extensions: [...]` whitelist (`.md/.txt/.json` default), `max_file_bytes` cap |
-| Content eval hook | **TBD** | — |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Active/passive toggle | Passive-only | — |
 | Rate / quota | **SHIPPED** | `max_file_bytes` per file |
 | Operator label override | **SHIPPED** | `source_type_label` |
@@ -85,7 +87,7 @@ consumes this inventory as its spec.
 | Selection — active | URL paste | Operator pastes Docs URL, adapter fetches via Docs API |
 | Selection — passive | **SHIPPED** | `folder_id:` config entry, one folder per source-config entry |
 | Filtering | **PARTIAL** | MIME-type filter is hard-coded (Docs only). No keyword/title/author filter |
-| Content eval hook | **TBD** | — |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Active/passive toggle | Both | Active = URL paste, Passive = folder_id polling |
 | Rate / quota | **PARTIAL** | Pagination capped at 2000 docs/cycle. No operator override |
 | Sub-folder recursion | **TBD** (deliberately) | Phase 5c documented as non-recursive |
@@ -102,7 +104,7 @@ consumes this inventory as its spec.
 | Filtering — state | **SHIPPED** | Hard-coded to `completedAt` > watermark (state="Done" or workflow-state-completed) |
 | Filtering — labels | **TBD** | No label-include / label-exclude |
 | Filtering — assignees | **TBD** | — |
-| Content eval hook | **TBD** | — |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Active/passive toggle | Both | URL active + polling passive |
 | Webhook receiver | **TBD** | Phase 1c |
 | Rate / quota | **PARTIAL** | Pagination capped at 500 issues/cycle |
@@ -118,7 +120,7 @@ consumes this inventory as its spec.
 | Selection — passive | **SHIPPED** | `database_id:` config entry, one database per source-config entry |
 | Filtering — page properties | **TBD** | No tag/property-value filter (e.g. only pages with `decision-source` tag) |
 | Filtering — last_edited_by | **TBD** | — |
-| Content eval hook | **TBD** | — |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Active/passive toggle | Both | URL active + database polling passive |
 | Webhook receiver | **N/A** | Notion has no webhook product. Polling is the only option. |
 | Sub-page recursion | **TBD** | Currently single page (active) or top-level pages in database (passive) |
@@ -136,7 +138,7 @@ consumes this inventory as its spec.
 | Filtering — labels | **TBD** | No label include/exclude |
 | Filtering — paths | **TBD** | No file-path-touched filter |
 | Filtering — authors | **TBD** | — |
-| Content eval hook | **TBD** | — |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Webhook receiver | **TBD** | Phase 3c. GitHub has a mature webhook product (Events API) — strong candidate for first webhook implementation. |
 | Active/passive toggle | Both | URL active + repos polling passive |
 | Rate / quota | **PARTIAL** | Pagination capped at 1000 records/cycle. Per-source rate-limit window **TBD** |
@@ -155,7 +157,7 @@ consumes this inventory as its spec.
 | Filtering — user include/exclude | **TBD** | — |
 | Filtering — message subtypes | **SHIPPED** | Hard-coded exclusion list (bot_message, channel_topic/join/leave, etc.) |
 | Filtering — reply skipping | **SHIPPED** (passive only) | Polling skips replies; active fetches full thread |
-| Content eval hook | **TBD** | — |
+| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
 | Active/passive toggle | Both | URL active + channel polling passive |
 | Webhook receiver | **TBD** | Phase 4c. Slack Events API. Bigger commit (public HTTP surface) |
 | DM policy | **SHIPPED** | Channel-only enforced at URL parser (active) + ID-prefix filter (passive) |
@@ -174,8 +176,12 @@ consumes this inventory as its spec.
 
 ### Most-requested gaps (rolling up "TBD" frequency)
 
-1. ~~**Discovery CLI primitive**~~ — **SHIPPED** in foundations cycle 1 (#441). `bicameral-mcp source-list <source>` covers slack / linear / notion / github / google_drive.
-2. **Resource-level filters** — keyword, label, reaction, author, path filters per watched resource. Currently the only filter dimension that ships is "which resource(s)." *Affects: every source.* **Next: foundations cycle 2 — design TBD pending operator direction.**
+1. ~~**Discovery CLI primitive**~~ — **SHIPPED** in foundations cycle 1 (#441).
+2. ~~**Universal filter primitives**~~ — **SHIPPED** in foundations cycle 2 (#443). `keyword_include/exclude`, `author_include/exclude`, `time_window_after/before` per source AND per-resource (Slack channels, GitHub repos). Source-specific extensions (Slack reactions, GitHub paths) deferred — `FilterSpec.extensions` dict reserved for them.
+3. ~~**Content evaluation hook**~~ — **SHIPPED** in foundations cycle 3 (#444). `eval_hook: "module.path:fn"` operator-defined callable, runs after universal primitives. Conservative reject on any failure.
+4. ~~**Per-source quota**~~ — **SHIPPED** (partial) in foundations cycle 4 (#445). `max_items_per_pull` + `max_payload_bytes`. Per-source rate-limit token bucket remains TBD (cycle 4b if needed).
+5. **Webhook receivers** — push model alternative to polling. Mature on GitHub/Slack/Linear; absent from Notion. *Affects: 3 of 7 sources.* **Next up.**
+6. **Per-resource active/passive toggle** — currently the source TYPE is the toggle. Operator can't say "channel X active-only, channel Y polling." *Affects: every source.* Deferred.
 3. **Content evaluation hook** — pluggable callable for ops that need filtering beyond declarative criteria. Design open. *Affects: every source.*
 4. **Per-source rate / quota overrides** — global ingest gates apply uniformly; no per-source budget. *Affects: every source.*
 5. **Webhook receivers** — push model alternative to polling. Mature on GitHub/Slack/Linear; absent from Notion. *Affects: 3 of 7 sources.*
