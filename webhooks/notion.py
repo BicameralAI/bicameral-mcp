@@ -81,6 +81,13 @@ class WebhookVerificationError(Exception):
 _PENDING_PREFIX = "pending_"
 _SUBSCRIPTION_PREFIX = "subscription_"
 _PENDING_TTL_SECONDS = 24 * 60 * 60
+# LOW-2 review fix: cap the number of pending entries to bound the
+# memory cost of attacker-driven fake-verification POSTs. At ~120
+# bytes per JSON entry, 100 entries ≈ 12 KiB — well within the
+# dict-fallback memory budget. New verifications past the cap are
+# rejected with 429 (operator can investigate via
+# ``bicameral-mcp notion-pending``).
+_MAX_PENDING_ENTRIES = 100
 # secrets_store keys must match [A-Za-z0-9._-]+; subscription_id
 # from Notion is a UUID but we validate defensively in case the
 # body is attacker-crafted.
@@ -240,7 +247,25 @@ def _handle_verification(payload: dict) -> tuple[int, str]:
     entry = json.dumps({"token": token, "received_at": int(time.time())})
 
     try:
-        from secrets_store import put_secret
+        from secrets_store import list_keys, put_secret
+
+        # LOW-2 review fix: bound the pending-entries set. Idempotent
+        # re-receipt of the same fingerprint (Notion retrying the
+        # verification POST itself, or operator-side retry) is
+        # ALLOWED — it overwrites the existing entry and doesn't
+        # count against the cap. Only NEW fingerprints past the cap
+        # are rejected.
+        existing = [k for k in list_keys(source_id="notion") if k.startswith(_PENDING_PREFIX)]
+        is_new = _pending_key(fingerprint) not in existing
+        if is_new and len(existing) >= _MAX_PENDING_ENTRIES:
+            print(
+                f"[notion-webhook] pending-entries cap reached "
+                f"({len(existing)} >= {_MAX_PENDING_ENTRIES}); rejecting new "
+                f"fingerprint={fingerprint!r}. Use `bicameral-mcp notion-pending` "
+                "to inspect and clean up stale entries.",
+                file=sys.stderr,
+            )
+            return 429, f"pending-entries cap reached ({_MAX_PENDING_ENTRIES})"
 
         put_secret(source_id="notion", key=_pending_key(fingerprint), value=entry)
     except Exception as exc:  # noqa: BLE001
@@ -434,12 +459,129 @@ def _handle_event(body: bytes, payload: dict, signature_header: str | None) -> t
             file=sys.stderr,
         )
 
-    # v0: ack-only with a dirty-marker log. Cycle 8b adds the actual
-    # handle_ingest invocations once the wire is validated against
-    # real operator deliveries.
+    # Cycle 8b: actually ingest decision-bearing events. The
+    # webhook is the trigger; the canonical content still flows
+    # through ``sources/notion/adapter.py:fetch_active`` so the
+    # passive and active paths land identical payloads.
+    #
+    # ``page.*`` events with a non-deleted entity → fetch + ingest.
+    # ``page.deleted`` → ack only (append-only contract, same
+    # posture as Linear's Issue/Comment remove path).
+    # ``comment.*``, ``data_source.*``, ``database.*`` → ack only;
+    # later cycles add comment fetching, schema-change handling.
+    if event_type in {"page.created", "page.content_updated", "page.properties_updated"}:
+        entity = payload.get("entity") or {}
+        page_id = entity.get("id")
+        if not page_id or not isinstance(page_id, str):
+            print(
+                f"[notion-webhook] event_id={event_id!r} type={event_type!r} "
+                f"missing entity.id; skipping ingest",
+                file=sys.stderr,
+            )
+            return 200, f"event id={event_id!r} type={event_type!r} acknowledged (no entity.id)"
+        return _ingest_page(event_id, event_type, page_id)
+
+    # Acknowledged, no ingest. Cycle 8c-or-later will add comment
+    # fetching (needs a new Notion API path beyond the existing
+    # adapter) and decide whether schema / data_source events get
+    # any treatment.
     print(
         f"[notion-webhook] event_id={event_id!r} type={event_type!r} "
-        f"subscription_id={subscription_id!r} (ingest follow-up deferred to cycle 8b)",
+        f"subscription_id={subscription_id!r} (no ingest for this event type)",
         file=sys.stderr,
     )
     return 200, f"event id={event_id!r} type={event_type!r} acknowledged"
+
+
+def _ingest_page(event_id: str, event_type: str, page_id: str) -> tuple[int, str]:
+    """Fetch a Notion page via the active adapter and pipe through
+    ``handle_ingest`` in passive mode.
+
+    Mirrors the GitHub/Slack/Linear webhook → handle_ingest path:
+    ``asyncio.run()`` inside the to_thread worker. Cycle 9 review
+    M3 flagged this nested-loop pattern as a latent reliability
+    issue (per-request loop create/teardown overhead); a follow-up
+    cycle will revisit by making handle() itself async. Until
+    then, the pattern matches the rest of the chain.
+
+    Failure posture: ALL failures (fetch error, refusal, generic
+    ingest error) return 200 to Notion. Notion retries on every
+    non-2xx (not just 5xx like Drive), and we do NOT want 8 retries
+    of a payload that's already failed for a deterministic reason.
+    Operator visibility is via stderr + the gate's own audit-log
+    emit. This deviates from cycles 5/6/7 (which return 422 on
+    refusal) — the deviation is documented in the
+    research-brief-notion §5 retry-policy analysis.
+    """
+    try:
+        from sources.notion.adapter import NotionAdapter
+        from sources.notion.client import NotionAPIError
+
+        adapter = NotionAdapter()
+        # Build a canonical Notion URL from the page_id. The
+        # adapter accepts both dashed and undashed UUIDs; the
+        # webhook payload provides the undashed form.
+        page_url = f"https://www.notion.so/{page_id.replace('-', '')}"
+        ingest_payload = adapter.fetch_active(page_url)
+    except NotionAPIError as exc:
+        # MED-1 fix: split transient from deterministic fetch
+        # failures. 5xx + 429 are exactly the cases where Notion's
+        # 8-retry / 24h envelope is the right backpressure — return
+        # 500 so the provider retries and the operator sees the
+        # storm in their network metrics. 4xx-not-429 (page gone,
+        # permission revoked, malformed page_id) is genuinely
+        # deterministic; 200-ack with stderr so we don't amplify.
+        status_code = exc.status_code
+        is_transient = status_code is None or status_code == 429 or status_code >= 500
+        print(
+            f"[notion-webhook] page fetch failed for {page_id!r} "
+            f"(event_id={event_id!r}, http_status={status_code}, "
+            f"transient={is_transient}): {exc}",
+            file=sys.stderr,
+        )
+        if is_transient:
+            return 500, (
+                f"event id={event_id!r} fetch failed (transient http={status_code}); "
+                "Notion will retry"
+            )
+        return 200, f"event id={event_id!r} type={event_type!r} acknowledged (fetch failed)"
+    except Exception as exc:  # noqa: BLE001
+        # Non-NotionAPIError exceptions (e.g. malformed URL parse,
+        # adapter import failure, transport-layer bugs we haven't
+        # classified). Treat as transient by default — operator
+        # visibility via the retry storm is more useful than silent
+        # loss.
+        print(
+            f"[notion-webhook] page fetch raised non-API exception for {page_id!r} "
+            f"(event_id={event_id!r}): {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 500, f"event id={event_id!r} fetch failed (unclassified); Notion will retry"
+
+    try:
+        import asyncio
+
+        from context import BicameralContext
+        from handlers.ingest import _IngestRefused, handle_ingest
+
+        ctx = BicameralContext.from_env()
+
+        async def _ingest() -> None:
+            await handle_ingest(ctx, ingest_payload, source_scope="notion", ingest_mode="passive")
+
+        asyncio.run(_ingest())
+    except _IngestRefused as exc:
+        print(
+            f"[notion-webhook] hard-gate refusal for page {page_id!r} "
+            f"(event_id={event_id!r}): {exc.reason}",
+            file=sys.stderr,
+        )
+        return 200, f"event id={event_id!r} acknowledged (refused: {exc.reason})"
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"[notion-webhook] ingest failed for page {page_id!r} (event_id={event_id!r}): {exc}",
+            file=sys.stderr,
+        )
+        return 200, f"event id={event_id!r} acknowledged (ingest failed)"
+
+    return 200, f"event id={event_id!r} type={event_type!r} ingested page {page_id!r}"

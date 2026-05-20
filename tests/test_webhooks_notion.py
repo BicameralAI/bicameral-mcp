@@ -34,6 +34,38 @@ def _disable_keyring_and_reset_dedup(monkeypatch):
 
     _secrets_reset()
     _dedup_reset()
+
+    # Cycle 8b: stub fetch_active by default so tests that don't
+    # explicitly care about the ingest path (most pre-cycle-8b
+    # tests, written when the handler was ack-only) don't fail
+    # when the default ``page.content_updated`` event triggers a
+    # fetch against ``https://www.notion.so/page1`` (a non-real
+    # URL). Individual tests that exercise the fetch/ingest
+    # failure paths override this stub.
+    def _default_fetch(self, url):
+        return {
+            "query": "stub-title",
+            "source": "notion",
+            "title": "stub-title",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "stub", "title": "stub-title"}],
+        }
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _default_fetch)
+
+    # Default ingest stub — tests that care about the ingest call
+    # override with their own monkeypatch. The stub matches the
+    # signature handle_ingest exposes (async + keyword-only args).
+    async def _default_ingest(ctx, payload, *, source_scope, ingest_mode):
+        pass
+
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _default_ingest)
+
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
     yield
     _secrets_reset()
     _dedup_reset()
@@ -201,6 +233,74 @@ def test_handle_verification_token_too_long_rejected():
     assert "length" in msg
 
 
+def test_handle_verification_pending_cap_rejects_new_fingerprint(
+    capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+):
+    """LOW-2 review fix: when the pending-entries set is at the cap,
+    NEW fingerprints are rejected with 429. Idempotent re-receipt
+    of an existing fingerprint still works."""
+    import webhooks.notion as _notion_mod
+
+    # Shrink the cap for testability.
+    monkeypatch.setattr(_notion_mod, "_MAX_PENDING_ENTRIES", 2)
+
+    from secrets_store import put_secret
+
+    put_secret(
+        source_id="notion",
+        key="pending_" + "a" * 16,
+        value=json.dumps({"token": "tok_a", "received_at": 1}),
+    )
+    put_secret(
+        source_id="notion",
+        key="pending_" + "b" * 16,
+        value=json.dumps({"token": "tok_b", "received_at": 1}),
+    )
+
+    body = json.dumps({"verification_token": "secret_third_attempt"}).encode("utf-8")
+    status, msg = handle(body=body, signature_header=None)
+    assert status == 429
+    assert "cap" in msg
+    err = capsys.readouterr().err
+    assert "cap reached" in err
+
+
+def test_handle_verification_pending_cap_allows_idempotent_resend(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """LOW-2 review fix: re-receiving a verification POST with the
+    SAME token (same fingerprint) is allowed even at the cap. Notion
+    may retry the verification POST during operator setup."""
+    import webhooks.notion as _notion_mod
+
+    monkeypatch.setattr(_notion_mod, "_MAX_PENDING_ENTRIES", 2)
+
+    import hashlib
+
+    from secrets_store import get_secret, put_secret
+
+    existing_token = "secret_already_pending"
+    existing_fp = hashlib.sha256(existing_token.encode()).hexdigest()[:16]
+    put_secret(
+        source_id="notion",
+        key=f"pending_{existing_fp}",
+        value=json.dumps({"token": existing_token, "received_at": 1}),
+    )
+    put_secret(
+        source_id="notion",
+        key="pending_" + "f" * 16,
+        value=json.dumps({"token": "filler", "received_at": 1}),
+    )
+    # Now at cap (2). Re-send the verification for `existing_token`.
+    body = json.dumps({"verification_token": existing_token}).encode("utf-8")
+    status, _ = handle(body=body, signature_header=None)
+    assert status == 200
+    # received_at was refreshed.
+    raw = get_secret(source_id="notion", key=f"pending_{existing_fp}")
+    entry = json.loads(raw)
+    assert entry["received_at"] != 1
+
+
 def test_handle_verification_token_in_event_body_does_not_clobber():
     """Structural marker safety: if an attacker smuggles
     verification_token INTO an event payload (with `type` set), we
@@ -295,6 +395,282 @@ def test_handle_event_dedup_by_id():
     assert s1 == 200
     assert s2 == 200
     assert "duplicate" in msg2
+
+
+def test_handle_event_page_created_triggers_ingest(monkeypatch):
+    """Cycle 8b: page.created with a non-empty entity.id fetches the
+    page via NotionAdapter and pipes through handle_ingest."""
+    _put_token("sub-1", token="secret_token")
+
+    captured: dict = {}
+
+    # LOW-5 review fix: patch fetch_active on the real adapter
+    # class (narrower seam) rather than swapping the whole class.
+    # Catches constructor / _resolve_api_key regressions that a
+    # class-level swap would silently mask.
+    def _fake_fetch(self, url):
+        captured["fetch_url"] = url
+        return {
+            "query": "fetched-title",
+            "source": "notion",
+            "title": "fetched-title",
+            "date": "2026-05-20",
+            "participants": [],
+            "decisions": [{"description": "fetched-decision", "title": "fetched-title"}],
+        }
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fake_fetch)
+
+    async def _fake_handle_ingest(ctx, payload, *, source_scope, ingest_mode):
+        captured["scope"] = source_scope
+        captured["mode"] = ingest_mode
+        captured["payload"] = payload
+
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _fake_handle_ingest)
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
+    body = _event_body(event_type="page.created")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert "ingested" in msg
+    assert captured["scope"] == "notion"
+    assert captured["mode"] == "passive"
+    assert captured["payload"]["decisions"][0]["description"] == "fetched-decision"
+    # The fetch URL is built from entity.id with dashes stripped
+    # (handler normalizes to Notion's undashed UUID form). Test
+    # fixture entity.id is "page-1" → URL contains "page1".
+    assert "page1" in captured["fetch_url"]
+    assert "notion.so" in captured["fetch_url"]
+
+
+def test_handle_event_page_content_updated_triggers_ingest(monkeypatch):
+    """Same flow as page.created — pin that update events also
+    trigger fetch+ingest, not just create events."""
+    _put_token("sub-1", token="secret_token")
+
+    captured: dict = {}
+
+    def _fake_fetch(self, url):
+        return {
+            "query": "x",
+            "source": "notion",
+            "title": "x",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "x", "title": "x"}],
+        }
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fake_fetch)
+
+    async def _fake(ctx, payload, *, source_scope, ingest_mode):
+        captured["called"] = True
+
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _fake)
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
+    body = _event_body(event_type="page.content_updated")
+    status, _ = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert captured.get("called") is True
+
+
+def test_handle_event_page_deleted_does_not_trigger_ingest(monkeypatch):
+    """page.deleted is acked but NOT fetched/ingested — same posture
+    as Linear's Issue.remove path (append-only contract)."""
+    _put_token("sub-1", token="secret_token")
+    fetch_called = []
+    ingest_called = []
+
+    def _fake_fetch(self, url):
+        fetch_called.append(url)
+        return {}
+
+    async def _fake(ctx, payload, *, source_scope, ingest_mode):
+        ingest_called.append(payload)
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fake_fetch)
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _fake)
+
+    body = _event_body(event_type="page.deleted")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert "no ingest" in msg or "acknowledged" in msg
+    assert fetch_called == []
+    assert ingest_called == []
+
+
+def test_handle_event_page_event_missing_entity_id_skips_ingest(
+    monkeypatch, capsys: pytest.CaptureFixture
+):
+    """Defensive: page.* events with a missing entity.id are 200-acked
+    with a log but do NOT attempt to fetch (would otherwise hit the
+    Notion API with garbage)."""
+    _put_token("sub-1", token="secret_token")
+    fetch_called = []
+
+    def _fake_fetch(self, url):
+        fetch_called.append(url)
+        return {}
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fake_fetch)
+
+    body = json.dumps(
+        {
+            "id": "evt-noent",
+            "timestamp": "2026-05-20T12:00:00.000Z",
+            "subscription_id": "sub-1",
+            "type": "page.content_updated",
+            "entity": {"type": "page"},  # NO id
+            "data": {},
+        }
+    ).encode("utf-8")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert "entity.id" in msg or "acknowledged" in msg
+    assert fetch_called == []
+
+
+def test_handle_event_fetch_failure_acks_200_no_retry_amplification(
+    monkeypatch, capsys: pytest.CaptureFixture
+):
+    """Fetch failure is logged + 200-acked. Returning 5xx would cause
+    Notion to retry 8 times over 24h, amplifying transient fetch
+    failures into log spam. The audit log on stderr is the operator's
+    signal."""
+    _put_token("sub-1", token="secret_token")
+
+    # MED-1 fix: non-NotionAPIError exceptions (unclassified) now
+    # return 500 (transient default) so operator gets retry-storm
+    # visibility instead of silent loss. Pin the new posture.
+    def _broken_fetch(self, url):
+        raise RuntimeError("simulated transport failure")
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _broken_fetch)
+
+    body = _event_body(event_type="page.created")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 500
+    assert "transient" in msg or "retry" in msg
+    err = capsys.readouterr().err
+    assert "simulated transport failure" in err
+
+
+def test_handle_event_fetch_5xx_returns_500_for_retry(monkeypatch, capsys: pytest.CaptureFixture):
+    """MED-1 fix: NotionAPIError with 5xx status → 500 so Notion's
+    8-retry envelope is the right backpressure mechanism."""
+    _put_token("sub-1", token="secret_token")
+
+    from sources.notion.client import NotionAPIError
+
+    def _fetch_503(self, url):
+        raise NotionAPIError("Service Unavailable", status_code=503)
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fetch_503)
+
+    body = _event_body(event_type="page.created")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 500
+    assert "transient" in msg
+    err = capsys.readouterr().err
+    assert "transient=True" in err
+
+
+def test_handle_event_fetch_429_returns_500_for_retry(monkeypatch, capsys: pytest.CaptureFixture):
+    """MED-1 fix: NotionAPIError with 429 (rate limit) → 500 so
+    Notion's retry envelope acts as the backoff."""
+    _put_token("sub-1", token="secret_token")
+
+    from sources.notion.client import NotionAPIError
+
+    def _fetch_429(self, url):
+        raise NotionAPIError("Rate limited", status_code=429)
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fetch_429)
+
+    body = _event_body(event_type="page.created")
+    status, _ = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 500
+
+
+def test_handle_event_fetch_404_returns_200_no_retry(monkeypatch, capsys: pytest.CaptureFixture):
+    """MED-1 fix: NotionAPIError with 4xx-not-429 (page deleted,
+    permission revoked) is deterministic → 200 ack. Retry would
+    amplify the deterministic failure."""
+    _put_token("sub-1", token="secret_token")
+
+    from sources.notion.client import NotionAPIError
+
+    def _fetch_404(self, url):
+        raise NotionAPIError("Not Found", status_code=404)
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fetch_404)
+
+    body = _event_body(event_type="page.created")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert "fetch failed" in msg
+    err = capsys.readouterr().err
+    assert "transient=False" in err
+
+
+def test_handle_event_ingest_hard_gate_refusal_acks_200(monkeypatch):
+    """Hard-gate refusal (e.g. PHI detected): _IngestRefused → 200 ack
+    (NOT 422 like the cycle-5/6/7 receivers). Reason: Notion retries
+    on ALL non-2xx (not just 5xx), and we don't want 8 retries of a
+    payload that the gate already rejected for compliance reasons.
+    Operator visibility via the gate's own audit-log emit."""
+    _put_token("sub-1", token="secret_token")
+
+    def _fake_fetch(self, url):
+        return {
+            "query": "x",
+            "source": "notion",
+            "title": "x",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "x", "title": "x"}],
+        }
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fake_fetch)
+
+    from handlers.ingest import _IngestRefused
+
+    async def _refuse(ctx, payload, *, source_scope, ingest_mode):
+        raise _IngestRefused(reason="sensitive_data:phi")
+
+    monkeypatch.setattr("handlers.ingest.handle_ingest", _refuse)
+    from types import SimpleNamespace as _SN
+
+    monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
+
+    body = _event_body(event_type="page.created")
+    status, msg = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert "refused" in msg
+    assert "phi" in msg
+
+
+def test_handle_event_comment_created_does_not_fetch(monkeypatch):
+    """v0 scope: comment.* events ack-only; comment fetching requires
+    a Notion API path the adapter doesn't yet expose. Defer to a
+    later cycle. Pin that no fetch attempt happens."""
+    _put_token("sub-1", token="secret_token")
+    fetch_called = []
+
+    def _fake_fetch(self, url):
+        fetch_called.append(url)
+        return {}
+
+    monkeypatch.setattr("sources.notion.adapter.NotionAdapter.fetch_active", _fake_fetch)
+
+    body = _event_body(event_type="comment.created")
+    status, _ = handle(body=body, signature_header=_sign("secret_token", body))
+    assert status == 200
+    assert fetch_called == []
 
 
 def test_handle_event_attempt_number_4_logged(capsys: pytest.CaptureFixture):
