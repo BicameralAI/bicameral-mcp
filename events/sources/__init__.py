@@ -26,6 +26,7 @@ from .granola import GranolaAdapter, MissingApiKeyError
 from .linear import LinearPollingAdapter
 from .local_directory import LocalDirectoryAdapter
 from .notion import NotionPollingAdapter
+from .slack import SlackPollingAdapter
 
 
 @runtime_checkable
@@ -52,6 +53,7 @@ ADAPTERS: dict[str, type] = {
     "linear": LinearPollingAdapter,
     "notion": NotionPollingAdapter,
     "github": GitHubPollingAdapter,
+    "slack": SlackPollingAdapter,
 }
 
 
@@ -64,5 +66,6 @@ __all__ = [
     "LocalDirectoryAdapter",
     "MissingApiKeyError",
     "NotionPollingAdapter",
+    "SlackPollingAdapter",
     "SourceAdapter",
 ]
