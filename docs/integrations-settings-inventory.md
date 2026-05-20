@@ -41,7 +41,7 @@ consumes this inventory as its spec.
 | Per-source rate limits | **PARTIAL** | Process-wide token bucket exists (`context.py:ingest_rate_limit_*`). NOT per-source. **TBD**: per-source override. |
 | Per-source max-payload-bytes | **PARTIAL** | Global `ingest_max_bytes`. Per-source override **TBD**. |
 | Content-evaluation hook | **TBD** | Pluggable callable for declarative-filter escape hatch. No source supports it yet. Design open. |
-| Discovery primitive | **TBD** | `bicameral-mcp source-list <source>` CLI to enumerate available resources for the operator. No source supports it yet. Foundational gap. |
+| Discovery primitive | **SHIPPED** | `bicameral-mcp source-list <source>` CLI lands in #441 / foundations cycle 1. Covers slack, linear, notion, github, google_drive (granola + local_directory are N/A). |
 | Active-vs-passive per resource | **TBD** | Currently source-level only (the *type* is the toggle). Per-resource toggle (e.g. "channel X active-only, channel Y polling") not designed yet. |
 | Webhook receivers | **TBD** | Push model alternative to polling. Needs public HTTP surface. Tracker design pending. |
 
@@ -80,7 +80,7 @@ consumes this inventory as its spec.
 |---|---|---|
 | Auth | **SHIPPED** | OAuth bot-app flow via `bicameral-mcp source-auth google_drive` → `secrets_store`. Scope: `documents.readonly` + `drive.metadata.readonly` |
 | Auth refresh | **SHIPPED** | Automatic via `load_credentials()` refresh_token path |
-| Discovery — folders | **TBD** | No CLI to list folders the operator has access to. Operator must paste folder ID from Drive URL bar. **Critical UX gap.** |
+| Discovery — folders | **SHIPPED** | `bicameral-mcp source-list google_drive` enumerates folders via Drive `files.list` (#441). |
 | Discovery — docs in folder | **SHIPPED** (runtime) | Adapter enumerates via `files.list` filtered to Docs MIME, modifiedTime > watermark |
 | Selection — active | URL paste | Operator pastes Docs URL, adapter fetches via Docs API |
 | Selection — passive | **SHIPPED** | `folder_id:` config entry, one folder per source-config entry |
@@ -95,7 +95,7 @@ consumes this inventory as its spec.
 | Field | State | Detail |
 |---|---|---|
 | Auth | **SHIPPED** | Personal API key (`lin_...`) or OAuth token via `secrets_store` |
-| Discovery — teams | **TBD** | No CLI to list teams the API key can see |
+| Discovery — teams | **SHIPPED** | `bicameral-mcp source-list linear` (#441). |
 | Discovery — projects | **TBD** | — |
 | Selection — active | URL paste | Operator pastes Linear issue URL |
 | Selection — passive | **PARTIAL** | `team_keys: [...]` filter optional. No project-level filter. No "watch all teams" explicit setting (omitting filter implies it) |
@@ -112,7 +112,7 @@ consumes this inventory as its spec.
 | Field | State | Detail |
 |---|---|---|
 | Auth | **SHIPPED** | Internal-integration token via `secrets_store` |
-| Discovery — databases | **TBD** | No CLI to list databases shared with the integration |
+| Discovery — databases | **SHIPPED** | `bicameral-mcp source-list notion` via Notion `search` filtered to databases (#441). |
 | Discovery — pages | **TBD** | Page-level enumeration would be `databases/{id}/query` — adapter does this at runtime, no operator-facing enumerator |
 | Selection — active | URL paste | Operator pastes Notion page URL |
 | Selection — passive | **SHIPPED** | `database_id:` config entry, one database per source-config entry |
@@ -129,7 +129,7 @@ consumes this inventory as its spec.
 | Field | State | Detail |
 |---|---|---|
 | Auth | **SHIPPED** | PAT (`repo` scope) OR GitHub App install token via `secrets_store` |
-| Discovery — repos | **TBD** | No CLI to list repos the token has access to (operator can use `gh repo list` outside Bicameral) |
+| Discovery — repos | **SHIPPED** | `bicameral-mcp source-list github` (#441). Auto-routes ghs_ tokens to /installation/repositories, others to /user/repos. |
 | Selection — active | URL paste | PR / issue / commit URL |
 | Selection — passive | **SHIPPED** | `repos: ["owner/repo", ...]` config entry. Multiple repos per source-config entry |
 | Filtering — PR state | **SHIPPED** | Hard-coded: state=closed + merged_at not null |
@@ -146,7 +146,7 @@ consumes this inventory as its spec.
 | Field | State | Detail |
 |---|---|---|
 | Auth | **SHIPPED** | Bot token (`xoxb-...`) via `secrets_store`. Required scopes: `channels:history`, `groups:history`, `users:read` (latter implicit for `users.info`) |
-| Discovery — channels | **TBD** | **Critical gap** per user feedback. Bot token enables `conversations.list` but no CLI / UI exposes it yet. Operator must look up channel IDs in Slack's UI |
+| Discovery — channels | **SHIPPED** | `bicameral-mcp source-list slack` via `conversations.list` (#441). Public + private (latter needs `groups:read` scope). |
 | Discovery — users | **PARTIAL** | `users.info` called at runtime for participant resolution; no explicit operator-facing user enumeration |
 | Selection — active | URL paste | Operator pastes thread URL |
 | Selection — passive | **PARTIAL** | `channels: [...]` config entry with hand-typed channel IDs. No UI for select-from-discovered-list |
@@ -174,8 +174,8 @@ consumes this inventory as its spec.
 
 ### Most-requested gaps (rolling up "TBD" frequency)
 
-1. **Discovery CLI primitive** — `bicameral-mcp source-list <source>` to enumerate channels/teams/repos/folders/databases. Currently the operator must look up IDs outside Bicameral. *Affects: every source.*
-2. **Resource-level filters** — keyword, label, reaction, author, path filters per watched resource. Currently the only filter dimension that ships is "which resource(s)." *Affects: every source.*
+1. ~~**Discovery CLI primitive**~~ — **SHIPPED** in foundations cycle 1 (#441). `bicameral-mcp source-list <source>` covers slack / linear / notion / github / google_drive.
+2. **Resource-level filters** — keyword, label, reaction, author, path filters per watched resource. Currently the only filter dimension that ships is "which resource(s)." *Affects: every source.* **Next: foundations cycle 2 — design TBD pending operator direction.**
 3. **Content evaluation hook** — pluggable callable for ops that need filtering beyond declarative criteria. Design open. *Affects: every source.*
 4. **Per-source rate / quota overrides** — global ingest gates apply uniformly; no per-source budget. *Affects: every source.*
 5. **Webhook receivers** — push model alternative to polling. Mature on GitHub/Slack/Linear; absent from Notion. *Affects: 3 of 7 sources.*
