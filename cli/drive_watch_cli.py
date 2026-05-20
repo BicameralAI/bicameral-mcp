@@ -203,6 +203,9 @@ def main(args: argparse.Namespace) -> int:
             expiration_ms=expiration_ms,
             file_id=file_id,
             watched_resource_kind="file",
+            # Cycle 9c: persist callback_url so drive-renew can issue
+            # successor channels without operator intervention.
+            callback_url=args.callback_url,
             created_at_ms=int(time.time() * 1000),
         )
         get_registry().register(record)

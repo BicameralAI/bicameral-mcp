@@ -1553,6 +1553,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.drive_stop_cli import _build_argparser as _ds_build
 
     _ds_build(drive_stop)
+    drive_renew = subparsers.add_parser(
+        "drive-renew",
+        help=("renew Drive Push Notification channels approaching expiration (#337 cycle 9c)"),
+    )
+    from cli.drive_renew_cli import _build_argparser as _dr_build
+
+    _dr_build(drive_renew)
     subparsers.add_parser(
         "ledger-export",
         help="export the full ledger as JSON-Lines to stdout (#252 Layer 4)",
@@ -1655,6 +1662,10 @@ def _dispatch(args: Any) -> int:
         from cli.drive_stop_cli import main as drive_stop_main
 
         return drive_stop_main(args)
+    if args.command == "drive-renew":
+        from cli.drive_renew_cli import main as drive_renew_main
+
+        return drive_renew_main(args)
     if args.command == "ledger-export":
         from cli.ledger_export_cli import main as export_main
 

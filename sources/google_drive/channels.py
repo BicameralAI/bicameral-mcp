@@ -69,6 +69,13 @@ class ChannelRecord:
     # future account-wide ``changes.watch`` (cycle 9b). v0 only emits
     # ``"file"``.
     watched_resource_kind: str = "file"
+    # Cycle 9c: persisted so the renewal job can issue a successor
+    # channel pointing at the same callback URL without operator
+    # intervention. Defaults to empty for back-compat with cycle-9b
+    # rows written before the field existed; renewal of those rows
+    # is impossible without an operator-supplied URL (which the CLI
+    # will surface as a clear error).
+    callback_url: str = ""
     # Metadata captured at register-time. Reserved for renewal job.
     created_at_ms: int = 0
     extra: dict = field(default_factory=dict)
@@ -126,6 +133,7 @@ class ChannelRegistry:
                     expiration_ms=int(row["expiration_ms"]),
                     file_id=str(row["file_id"]),
                     watched_resource_kind=str(row.get("watched_resource_kind", "file")),
+                    callback_url=str(row.get("callback_url", "")),
                     created_at_ms=int(row.get("created_at_ms", 0)),
                     extra=row.get("extra") or {},
                 )
