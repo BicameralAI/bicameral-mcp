@@ -13,6 +13,7 @@ Routes:
 - ``POST /webhooks/github``         → ``webhooks.github.handle``
 - ``POST /webhooks/slack``          → ``webhooks.slack.handle``
 - ``POST /webhooks/google-drive``   → ``webhooks.google_drive.handle``
+- ``POST /webhooks/notion``         → ``webhooks.notion.handle``
 - ``GET /health``                   → 200 ack (for load-balancer health checks)
 
 ## Hardening (post code-review)
@@ -210,6 +211,13 @@ async def _process_request(reader: asyncio.StreamReader, writer: asyncio.StreamW
         await _respond(writer, status, message, content_type=content_type)
         return
 
+    if path == "/webhooks/notion":
+        status, message = await asyncio.to_thread(
+            _dispatch_notion, body, MappingProxyType(dict(headers))
+        )
+        await _respond(writer, status, message)
+        return
+
     if path == "/webhooks/google-drive":
         status, message = await asyncio.to_thread(
             _dispatch_google_drive, body, MappingProxyType(dict(headers))
@@ -232,6 +240,16 @@ def _dispatch_github(body: bytes, headers) -> tuple[int, str]:
         delivery_id=delivery,
         body=body,
         signature_header=signature,
+    )
+
+
+def _dispatch_notion(body: bytes, headers) -> tuple[int, str]:
+    """Sync entrypoint into the Notion handler (called via to_thread)."""
+    from webhooks.notion import handle
+
+    return handle(
+        body=body,
+        signature_header=headers.get("x-notion-signature"),
     )
 
 

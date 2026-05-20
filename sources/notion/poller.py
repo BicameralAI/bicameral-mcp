@@ -1,8 +1,11 @@
 """Notion polling helper for Phase 2b passive ingest (#337).
 
 Wraps the Phase 2 REST client with a database query that returns pages
-edited strictly after the watermark. Notion has no webhook story for
-shared workspaces, so polling is the only viable passive path.
+edited strictly after the watermark. Notion shipped webhooks in 2024
+GA (see ``webhooks/notion.py`` and
+``docs/research-brief-notion-webhooks-2026-05-20.md``); passive ingest
+can now be either webhook-driven or poll-driven. Operators choose per
+subscription based on whether they can host an HTTPS endpoint.
 
 Pagination cap: 20 pages × 100 results = 2000 pages per pull. Mirrors
 the Phase 2 blocks pagination cap.
