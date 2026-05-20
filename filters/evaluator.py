@@ -2,7 +2,30 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 from filters.spec import FilterSpec
+
+
+def evaluate_filters(candidate: dict, spec: FilterSpec) -> bool:
+    """Combined filter gate: universal primitives + content-eval hook.
+
+    Adapters call this once per candidate. Returns True iff the
+    candidate passes both layers:
+
+    1. :func:`evaluate_universal` — declarative primitives. Cheap.
+    2. :func:`run_eval_hook` — operator-defined callable (only invoked
+       when ``spec.eval_hook`` is non-empty). Expensive.
+
+    The two-layer ordering keeps the operator hook on the hot path only
+    for candidates that already survived the cheap declarative filter.
+    """
+    if not evaluate_universal(candidate, spec):
+        return False
+    if spec.eval_hook:
+        return run_eval_hook(spec.eval_hook, candidate)
+    return True
 
 
 def evaluate_universal(candidate: dict, spec: FilterSpec) -> bool:
@@ -51,6 +74,96 @@ def evaluate_universal(candidate: dict, spec: FilterSpec) -> bool:
             return False
 
     return True
+
+
+_HOOK_CACHE: dict[str, Callable[[dict], Any]] = {}
+_FAILED_HOOKS: set[str] = set()
+
+
+def run_eval_hook(hook_path: str, candidate: dict) -> bool:
+    """Resolve ``hook_path`` (``"module.path:function_name"``) and run it.
+
+    Returns False on any failure (malformed path, import error, callable
+    not found, hook raises, non-bool return). Logs to stderr the first
+    time each unique hook_path fails — subsequent items in the same
+    process don't re-spam.
+
+    Module + callable are cached after first successful resolution.
+    Failed paths are remembered in ``_FAILED_HOOKS`` and short-circuit
+    to False without re-attempting the import.
+
+    Never raises. The operator's hook is treated as a best-effort filter,
+    not a critical gate — filter failures should not kill the poll loop.
+    """
+    import importlib
+    import sys
+
+    fn = _HOOK_CACHE.get(hook_path)
+    if fn is None:
+        if hook_path in _FAILED_HOOKS:
+            return False
+        if ":" not in hook_path:
+            print(
+                f"[filters] eval_hook {hook_path!r} malformed (expected "
+                "'module.path:function_name'); items will be rejected.",
+                file=sys.stderr,
+            )
+            _FAILED_HOOKS.add(hook_path)
+            return False
+        module_path, _, attr = hook_path.partition(":")
+        try:
+            mod = importlib.import_module(module_path)
+        except Exception as exc:  # noqa: BLE001 — surface, never crash poller
+            print(
+                f"[filters] eval_hook {hook_path!r} import failed "
+                f"({type(exc).__name__}: {exc}); items will be rejected.",
+                file=sys.stderr,
+            )
+            _FAILED_HOOKS.add(hook_path)
+            return False
+        try:
+            fn = getattr(mod, attr)
+        except AttributeError:
+            print(
+                f"[filters] eval_hook {hook_path!r}: module imported but "
+                f"has no attribute {attr!r}; items will be rejected.",
+                file=sys.stderr,
+            )
+            _FAILED_HOOKS.add(hook_path)
+            return False
+        if not callable(fn):
+            print(
+                f"[filters] eval_hook {hook_path!r}: {attr!r} is not "
+                "callable; items will be rejected.",
+                file=sys.stderr,
+            )
+            _FAILED_HOOKS.add(hook_path)
+            return False
+        _HOOK_CACHE[hook_path] = fn
+
+    try:
+        result = fn(candidate)
+    except Exception as exc:  # noqa: BLE001 — hook is operator code, treat as filter
+        print(
+            f"[filters] eval_hook {hook_path!r} raised on candidate "
+            f"({type(exc).__name__}: {exc}); item rejected.",
+            file=sys.stderr,
+        )
+        return False
+    if not isinstance(result, bool):
+        print(
+            f"[filters] eval_hook {hook_path!r} returned non-bool "
+            f"({type(result).__name__}); item rejected. Hook must return bool.",
+            file=sys.stderr,
+        )
+        return False
+    return result
+
+
+def _reset_hook_caches_for_tests() -> None:
+    """Test-only — clear the module-level resolution caches."""
+    _HOOK_CACHE.clear()
+    _FAILED_HOOKS.clear()
 
 
 def merge_specs(source_level: FilterSpec, resource_level: FilterSpec | None) -> FilterSpec:

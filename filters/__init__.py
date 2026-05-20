@@ -28,7 +28,18 @@ one via :func:`merge_specs`). Per-resource filters override source-level
 filters for the same field; non-overridden fields inherit.
 """
 
-from filters.evaluator import evaluate_universal, merge_specs
+from filters.evaluator import (
+    evaluate_filters,
+    evaluate_universal,
+    merge_specs,
+    run_eval_hook,
+)
 from filters.spec import FilterSpec
 
-__all__ = ["FilterSpec", "evaluate_universal", "merge_specs"]
+__all__ = [
+    "FilterSpec",
+    "evaluate_filters",
+    "evaluate_universal",
+    "merge_specs",
+    "run_eval_hook",
+]

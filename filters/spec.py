@@ -65,6 +65,22 @@ class FilterSpec(BaseModel):
             "BEFORE this. Empty string disables."
         ),
     )
+    eval_hook: str = Field(
+        default="",
+        description=(
+            "Dotted import path to an operator-defined callable that returns "
+            "True for candidates that should pass the filter. Shape: "
+            "``'module.submodule:function_name'``. The callable receives "
+            "the same normalized candidate dict the universal evaluator "
+            "sees (``{text, author, timestamp}``) and must return a bool. "
+            "Hook runs AFTER the universal primitives — cheap declarative "
+            "filters cull first, expensive operator logic only sees survivors. "
+            "Operator's hook code runs in the same Python process; we don't "
+            "sandbox (operator owns their Bicameral install). Resolution "
+            "errors, non-bool returns, and exceptions all reject the "
+            "candidate conservatively and log to stderr."
+        ),
+    )
     extensions: dict[str, Any] = Field(
         default_factory=dict,
         description=(

@@ -89,7 +89,7 @@ class LinearPollingAdapter:
 
         # #337 cycle 2: universal filter for Linear. Source-level only —
         # Linear team-keys already serve as per-resource selection.
-        from filters import FilterSpec, evaluate_universal
+        from filters import FilterSpec, evaluate_filters
 
         try:
             source_spec = FilterSpec(**(config.get("filters") or {}))
@@ -126,7 +126,7 @@ class LinearPollingAdapter:
                 "author": author,
                 "timestamp": completed_at,
             }
-            if not evaluate_universal(candidate, source_spec):
+            if not evaluate_filters(candidate, source_spec):
                 if completed_at > highest_completed:
                     highest_completed = completed_at
                 continue
