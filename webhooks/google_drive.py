@@ -187,6 +187,30 @@ def handle(
         print(f"[drive-webhook] verification failed: {exc}", file=sys.stderr)
         return 401, f"verification failed: {exc}"
 
+    # Cycle 9d: per-delivery dedup. Drive auto-retries on 5xx with the
+    # same (channel_id, message_number); without dedup, a single logical
+    # event can fire `_ingest_change` multiple times. The
+    # `upsert_decision` / `upsert_input_span` canonical_id UUIDv5 upserts
+    # in the ledger are the idempotency safety net for any retries that
+    # slip past this gate, but suppressing the duplicate before
+    # `_ingest_change` also avoids the wasted Drive API quota of a
+    # second `files.get` for content we already ingested. Dedup is
+    # placed AFTER verification so unverified deliveries cannot poison
+    # the cache. Empty `message_number` (Drive does not guarantee the
+    # header) fail-opens through `is_duplicate`'s existing empty-id
+    # contract; canonical_id upsert remains the safety net.
+    from webhooks.dedup import get_dedup_cache
+
+    delivery_id = f"{channel_id}:{message_number}" if message_number else ""
+    cache = get_dedup_cache()
+    if cache.is_duplicate("google_drive", delivery_id):
+        print(
+            f"[drive-webhook] duplicate delivery {channel_id!r}:{message_number!r} ignored",
+            file=sys.stderr,
+        )
+        return 200, "duplicate"
+    cache.mark_seen("google_drive", delivery_id)
+
     state = (resource_state or "").strip().lower()
 
     # Sync message: Drive sends one of these immediately after

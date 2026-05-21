@@ -11,20 +11,29 @@ renewal cadence or ingest stops at the 24h mark.
 During the renewal window (between step 2 / persist-new and step 3
 / stop-old) BOTH the old and new channels are active on Drive's
 side. Drive will deliver the same change notification to both
-channels with DIFFERENT ``X-Goog-Channel-Id`` headers. The
-:mod:`webhooks.google_drive` handler does NOT currently consult
-:mod:`webhooks.dedup` (unlike the other four providers' handlers)
-— so a change inside the renewal window will fire ``handle_ingest``
-TWICE for the same file_id. Suppression of the duplicate falls to
-the ledger's content-hash idempotency (`#216`), which is a
-weaker contract than per-delivery dedup.
+channels with DIFFERENT ``X-Goog-Channel-Id`` headers — so a
+change inside the renewal window fires ``handle_ingest`` once per
+channel for the same file_id.
 
-This is a pre-existing cycle-9b gap that renewal aggravates.
-Cycle 9d adds proper dedup keyed on ``(channel_id,
-message_number)``. Until then, operators running this CLI should
-expect a small rate of duplicate-ledger-row attempts during
-renewal windows (suppressed by content-hash idempotency, visible
-in the audit log).
+Cycle 9d wired :mod:`webhooks.google_drive` into
+:mod:`webhooks.dedup`, but that dedup keys on
+``(channel_id, message_number)`` — it suppresses Drive's
+provider-side RETRY of the *same* delivery (5xx retry envelope,
+identical headers). It does NOT suppress the renewal-window
+duplicate above: the old and successor channels carry different
+``channel_id`` values, so the two deliveries produce different
+dedup keys and both reach ``handle_ingest``.
+
+The renewal-window duplicate is therefore suppressed one layer
+down, by the ledger's ``canonical_id`` upsert idempotency
+(``upsert_decision`` / ``upsert_input_span``; tracked under #216):
+a re-ingest of the same file content resolves to the same
+``canonical_id`` and updates rather than inserts. The only cost of
+the renewal-window overlap is a wasted ``files.get`` for content
+already ingested — no duplicate ledger row. This is an accepted
+floor, not a gap to close: a notification carries no cross-channel
+change identifier, so per-delivery dedup structurally cannot key
+the two channels together.
 
 This CLI does one pass over the channel registry. For each channel
 expiring within the threshold (default: 43200s = 12h), it issues a

@@ -79,8 +79,16 @@ def _reset_singleton(monkeypatch):
 
     monkeypatch.setattr("context.BicameralContext.from_env", classmethod(lambda cls: _SN()))
 
+    # Cycle 9d: dedup singleton is process-local; without reset between
+    # tests the dedup cache cross-contaminates and tests that re-use
+    # default (channel_id="ch-1", message_number="42") would silently
+    # short-circuit on the second-and-later test.
+    from webhooks.dedup import _reset_for_tests as _dedup_reset
+
+    _dedup_reset()
     yield
     _channels_reset()
+    _dedup_reset()
 
 
 def _record(
@@ -833,8 +841,48 @@ def test_handle_body_is_ignored(reg: ChannelRegistry):
         message_number="42",
         registry=reg,
     )
+    # Use a distinct message_number so cycle-9d dedup does not short-
+    # circuit the second call and mask the body-is-ignored invariant.
     status2, _ = handle(
         body=b'{"unexpected": "body"}',
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="43",
+        registry=reg,
+    )
+    assert status1 == status2 == 200
+
+
+# ── cycle 9d: per-delivery dedup ────────────────────────────────────────────
+
+
+def test_handle_duplicate_delivery_returns_200_no_ingest(reg: ChannelRegistry, monkeypatch):
+    """Replay of the same (channel_id, message_number) short-circuits
+    with 200 + "duplicate" on the second hit. The adapter's
+    fetch_active must be called EXACTLY ONCE across two invocations
+    — proves dedup runs before _ingest_change."""
+    reg.register(_record(file_id="dedup-file-1"))
+    fetch_count: list[int] = []
+
+    def _counting_fetch(self, url):
+        fetch_count.append(1)
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _counting_fetch
+    )
+
+    status1, msg1 = handle(
+        body=b"",
         channel_id="ch-1",
         channel_token="tok-1",
         resource_id="res-1",
@@ -842,4 +890,250 @@ def test_handle_body_is_ignored(reg: ChannelRegistry):
         message_number="42",
         registry=reg,
     )
-    assert status1 == status2 == 200
+    status2, msg2 = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status1 == 200
+    assert status2 == 200
+    assert "ingested" in msg1
+    assert msg2 == "duplicate"
+    assert len(fetch_count) == 1, f"fetch_active called {len(fetch_count)} times; want 1"
+
+
+def test_handle_dedup_isolates_by_channel_id(reg: ChannelRegistry, monkeypatch):
+    """Same message_number from two distinct channel_ids must BOTH
+    process (no cross-channel collision)."""
+    reg.register(_record(channel_id="ch-A", resource_id="res-A", token="tok-A"))
+    reg.register(_record(channel_id="ch-B", resource_id="res-B", token="tok-B"))
+    fetch_count: list[int] = []
+
+    def _counting_fetch(self, url):
+        fetch_count.append(1)
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _counting_fetch
+    )
+
+    for cid, rid, tok in [("ch-A", "res-A", "tok-A"), ("ch-B", "res-B", "tok-B")]:
+        status, msg = handle(
+            body=b"",
+            channel_id=cid,
+            channel_token=tok,
+            resource_id=rid,
+            resource_state="update",
+            message_number="7",
+            registry=reg,
+        )
+        assert status == 200
+        assert "ingested" in msg, f"channel {cid!r} short-circuited; cross-channel collision"
+    assert len(fetch_count) == 2
+
+
+def test_handle_dedup_isolates_by_message_number(reg: ChannelRegistry, monkeypatch):
+    """Same channel_id with two distinct message_numbers must BOTH
+    process (not a same-channel collision)."""
+    reg.register(_record())
+    fetch_count: list[int] = []
+
+    def _counting_fetch(self, url):
+        fetch_count.append(1)
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _counting_fetch
+    )
+
+    for mn in ["100", "101"]:
+        status, msg = handle(
+            body=b"",
+            channel_id="ch-1",
+            channel_token="tok-1",
+            resource_id="res-1",
+            resource_state="update",
+            message_number=mn,
+            registry=reg,
+        )
+        assert status == 200
+        assert "ingested" in msg, f"message_number {mn!r} short-circuited; same-channel collision"
+    assert len(fetch_count) == 2
+
+
+def test_handle_dedup_isolates_by_source(reg: ChannelRegistry, monkeypatch):
+    """A mark_seen under source='github' for the same delivery_id
+    must NOT cause the Drive handler to short-circuit (source scoping
+    pin; closes a class of webhook-source-collision bugs)."""
+    reg.register(_record())
+    fetch_count: list[int] = []
+
+    def _counting_fetch(self, url):
+        fetch_count.append(1)
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _counting_fetch
+    )
+
+    # Poison the cache under a different source with the same key shape.
+    from webhooks.dedup import get_dedup_cache
+
+    get_dedup_cache().mark_seen("github", "ch-1:42")
+
+    status, msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status == 200
+    assert "ingested" in msg, "cross-source dedup leak — source scoping broken"
+    assert len(fetch_count) == 1
+
+
+def test_handle_missing_message_number_does_not_dedup(reg: ChannelRegistry, monkeypatch):
+    """When Drive omits X-Goog-Message-Number (no contract guarantee),
+    dedup MUST fail-open — two back-to-back identical deliveries with
+    None message_number both reach _ingest_change. Canonical_id
+    upsert at the ledger layer is the safety net."""
+    reg.register(_record())
+    fetch_count: list[int] = []
+
+    def _counting_fetch(self, url):
+        fetch_count.append(1)
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _counting_fetch
+    )
+
+    for _ in range(2):
+        status, msg = handle(
+            body=b"",
+            channel_id="ch-1",
+            channel_token="tok-1",
+            resource_id="res-1",
+            resource_state="update",
+            message_number=None,
+            registry=reg,
+        )
+        assert status == 200
+        assert "ingested" in msg, "missing message_number caused dedup short-circuit"
+    assert len(fetch_count) == 2
+
+
+def test_handle_verification_failure_does_not_mark_dedup(reg: ChannelRegistry, monkeypatch):
+    """An unverified delivery (401) MUST NOT poison the cache —
+    otherwise an attacker who controls (channel_id, message_number)
+    but lacks the token could pre-burn cache slots and block legit
+    deliveries. After a 401, the same (channel_id, message_number)
+    with valid credentials must still process normally."""
+    reg.register(_record())
+    fetch_count: list[int] = []
+
+    def _counting_fetch(self, url):
+        fetch_count.append(1)
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr(
+        "sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _counting_fetch
+    )
+
+    # Bad delivery — wrong token → 401.
+    bad_status, _ = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="WRONG-TOK",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert bad_status == 401
+
+    # Good delivery, same (channel_id, message_number) — must process.
+    good_status, good_msg = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert good_status == 200
+    assert "ingested" in good_msg, "401 poisoned the dedup cache; good delivery short-circuited"
+    assert len(fetch_count) == 1
+
+
+def test_handle_sync_message_dedup(reg: ChannelRegistry):
+    """A replayed sync message returns 200+"duplicate" on the second
+    hit — dedup is the single gate at the top of handle(), before
+    the sync branch. The first sync still acks normally."""
+    reg.register(_record())
+
+    status1, msg1 = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="sync",
+        message_number="1",
+        registry=reg,
+    )
+    status2, msg2 = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="sync",
+        message_number="1",
+        registry=reg,
+    )
+    assert status1 == 200
+    assert "sync acknowledged" in msg1
+    assert status2 == 200
+    assert msg2 == "duplicate"
