@@ -2,7 +2,8 @@
 
 Matches the harness pattern of test_dashboard_unclassified_rendering.py and
 test_dashboard_source_view.py: pure string assertions against
-assets/dashboard.html.
+assets/dashboard-legacy.html (Dashboard v2 M1 moved this hand-written view
+there; still shipped via the dashboard server's `/legacy` route).
 
 Pins:
   1. "Remove decision" button in renderDec body (gated by signoff.state).
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard.html"
+DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard-legacy.html"
 
 
 @pytest.fixture(scope="module")
@@ -39,7 +40,7 @@ def html() -> str:
 def _extract_function_body(html: str, fn_name: str) -> str:
     match = re.search(rf"function\s+{re.escape(fn_name)}\s*\([^)]*\)\s*\{{", html)
     if not match:
-        raise AssertionError(f"function {fn_name} not found in dashboard.html")
+        raise AssertionError(f"function {fn_name} not found in dashboard-legacy.html")
     start = match.end() - 1
     depth = 0
     for i in range(start, len(html)):

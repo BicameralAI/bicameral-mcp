@@ -1,7 +1,9 @@
 """Phase 3B — static-HTML pattern tests for the dashboard admin SurrealQL panel.
 
 Mirrors the harness from Phase 1 + Phase 2 dashboard tests: pure string
-assertions against assets/dashboard.html. The panel is off-by-default at
+assertions against assets/dashboard-legacy.html (Dashboard v2 M1 moved this
+hand-written view there; still shipped via the server's `/legacy` route). The
+panel is off-by-default at
 the server level (env flag); these tests verify the UI two-step toggle +
 XSS discipline carried from prior phases.
 """
@@ -13,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard.html"
+DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard-legacy.html"
 
 
 @pytest.fixture(scope="module")
@@ -25,7 +27,7 @@ def html() -> str:
 def _extract_function_body(html: str, fn_name: str) -> str:
     match = re.search(rf"function\s+{re.escape(fn_name)}\s*\([^)]*\)\s*\{{", html)
     if not match:
-        raise AssertionError(f"function {fn_name} not found in dashboard.html")
+        raise AssertionError(f"function {fn_name} not found in dashboard-legacy.html")
     start = match.end() - 1
     depth = 0
     for i in range(start, len(html)):
