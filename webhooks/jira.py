@@ -47,9 +47,13 @@ Mark-after-ack (the cycle-9d Drive precedent): the delivery is marked seen
 only once an acked outcome (a 200 or a 422) has been decided. A 500 path is
 left UNMARKED so Jira's retry re-dispatches the delivery.
 
-Event handling (Phase B):
+Event handling:
 - ``jira:issue_created`` / ``jira:issue_updated`` / ``comment_created`` /
   ``comment_updated`` → normalize the inline ``issue`` object and ingest.
+- ``jira:issue_updated`` additionally (Phase C): if the ``changelog`` shows a
+  status transition into a configured terminal status (``jira.status_transitions``
+  in ``.bicameral/config.yaml``), an extra status-transition decision is
+  appended to the ingest payload. Fail-closed — unconfigured → nothing added.
 - ``jira:issue_deleted`` / ``comment_deleted`` / every other ``webhookEvent``
   → 200 acknowledged, no ingest (append-only contract — deletes are not
   propagated to the ledger).
@@ -311,6 +315,19 @@ def _ingest_issue(payload: dict, event: str, delivery_identifier: str) -> tuple[
         )
         return 500, f"normalization failed for {issue_key!r}; Jira will retry"
 
+    # Phase C: a status transition into a configured terminal status is itself
+    # a decision — append it to the decisions Phase B built. Wrapped so a
+    # Phase C fault can never break Phase B's ingest path.
+    if event == "jira:issue_updated":
+        try:
+            _append_status_transition_decisions(payload, ingest_payload, issue_key)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[jira-webhook] status-transition detection failed for {issue_key!r} "
+                f"(delivery={delivery_identifier!r}): {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+
     try:
         import asyncio
 
@@ -345,3 +362,85 @@ def _ingest_issue(payload: dict, event: str, delivery_identifier: str) -> tuple[
         return 500, f"ingest failed for {issue_key!r}; Jira will retry"
 
     return 200, f"event={event!r} ingested {issue_key}"
+
+
+def _status_transitions(changelog: object) -> list[tuple[str, str]]:
+    """Extract ``(from_status, to_status)`` pairs from a webhook ``changelog``.
+
+    The ``changelog`` (present only on ``jira:issue_updated``) carries an
+    ``items`` array; a status transition is an item with ``field == "status"``,
+    its ``fromString`` / ``toString`` the old / new status display names.
+
+    Defensive by design — ``docs/vendor/jira/webhooks.md`` §5 flags the nested
+    shape as best-effort, so anything unexpected yields no transition rather
+    than raising. Pairs are returned in ``items`` order (deterministic).
+    """
+    if not isinstance(changelog, dict):
+        return []
+    items = changelog.get("items")
+    if not isinstance(items, list):
+        return []
+    out: list[tuple[str, str]] = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("field") != "status":
+            continue
+        from_s = item.get("fromString")
+        to_s = item.get("toString")
+        out.append(
+            (
+                from_s if isinstance(from_s, str) else "",
+                to_s if isinstance(to_s, str) else "",
+            )
+        )
+    return out
+
+
+def _append_status_transition_decisions(
+    payload: dict, ingest_payload: dict, issue_key: str
+) -> None:
+    """Append one decision per configured terminal-status transition.
+
+    Phase C — additive. For each ``changelog`` status transition whose target
+    status is in the issue's project's configured terminal-status set
+    (``.bicameral/config.yaml`` ``jira.status_transitions``), append a decision
+    to ``ingest_payload["decisions"]``. Fail-closed: an unconfigured project or
+    status, or an absent/malformed config, appends nothing. The downstream
+    caller-LLM / gap-judge chain decides whether the transition is a real
+    decision — same posture as comments.
+    """
+    from sources.jira.transition_config import load_terminal_statuses
+
+    terminal_by_project = load_terminal_statuses()
+    if not terminal_by_project:
+        return
+    project_key = issue_key.split("-", 1)[0].casefold()
+    terminal = terminal_by_project.get(project_key)
+    if not terminal:
+        return
+
+    transitions = _status_transitions(payload.get("changelog"))
+    if not transitions:
+        return
+
+    decisions = ingest_payload.get("decisions")
+    if not isinstance(decisions, list):
+        return
+
+    summary = ""
+    issue = payload.get("issue")
+    if isinstance(issue, dict):
+        fields = issue.get("fields")
+        if isinstance(fields, dict) and isinstance(fields.get("summary"), str):
+            summary = fields["summary"]
+
+    for from_s, to_s in transitions:
+        if not to_s or to_s.casefold() not in terminal:
+            continue
+        decisions.append(
+            {
+                "description": (
+                    f'{issue_key} ("{summary}") transitioned: {from_s or "(none)"} -> {to_s}'
+                ),
+                "title": f"{issue_key}#status-{to_s}",
+            }
+        )
