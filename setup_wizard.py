@@ -20,31 +20,29 @@ import sys
 from pathlib import Path
 
 
-def _bundled_manifest_paths() -> tuple[Path, Path, Path] | None:
-    """Locate bundled ``hooks-manifest.json`` + ``.sig`` + ``.crt``.
+def _bundled_manifest_paths() -> tuple[Path, Path] | None:
+    """Locate bundled ``hooks-manifest.json`` + its ``.sigstore`` bundle.
 
     Returns ``None`` when no artifacts are bundled (dev install from
     source checkout — no production wheel context, so no LLM-11 threat
-    surface). Returns the triple only when ALL THREE artifacts are
-    found alongside the installed package via hatch ``shared-data``.
+    surface). Returns the ``(manifest, bundle)`` pair only when BOTH
+    are found alongside the installed package via hatch ``shared-data``.
 
-    The all-or-nothing check guards against the interim packaging
-    state where the wheel ships the manifest but the release-side
-    sigstore-python signing step has not yet been wired up — without
-    this guard the verifier hits a missing-signature path that the
-    docstring of ``release.manifest_verify._sigstore_verify`` claims
-    is unreachable. Restoring the check is a no-op once the release
-    pipeline starts emitting ``.sig``/``.crt`` alongside the manifest.
+    The all-or-nothing check guards against the local-dev packaging
+    state where the build hook writes an empty placeholder ``.sigstore``
+    so hatch ``shared-data`` resolves. A zero-byte bundle is treated as
+    absent (never signed, never verifies) → ``None``, so verification
+    defers exactly as it did before the release pipeline emitted real
+    bundles (#292).
     """
     candidates = [
         Path(sys.prefix) / "share" / "bicameral-mcp" / "hooks-manifest.json",
         Path(__file__).parent.parent / "share" / "bicameral-mcp" / "hooks-manifest.json",
     ]
     for c in candidates:
-        sig = Path(str(c) + ".sig")
-        crt = Path(str(c) + ".crt")
-        if c.exists() and sig.exists() and crt.exists():
-            return c, sig, crt
+        bundle = Path(str(c) + ".sigstore")
+        if c.exists() and bundle.exists() and bundle.stat().st_size > 0:
+            return c, bundle
     return None
 
 
@@ -63,29 +61,28 @@ def _verify_intended_writes(*event_types: str) -> None:
     manifest_verify.verify_hooks_or_bypass(*paths, expected)
 
 
-def _bundled_skills_manifest_paths() -> tuple[Path, Path, Path] | None:
-    """Locate bundled ``skills-manifest.toml`` + ``.sig`` + ``.crt`` (#218 LLM-06).
+def _bundled_skills_manifest_paths() -> tuple[Path, Path] | None:
+    """Locate bundled ``skills-manifest.toml`` + its ``.sigstore`` bundle (#218 LLM-06).
 
     Returns ``None`` when no artifacts are bundled (dev install from
     source checkout — no production wheel context, so the LLM-06
-    design-constraint gate is N/A). Returns the triple only when ALL
-    THREE artifacts are found alongside the installed package via
+    design-constraint gate is N/A). Returns the ``(manifest, bundle)``
+    pair only when BOTH are found alongside the installed package via
     hatch ``shared-data``.
 
     Mirrors ``_bundled_manifest_paths`` for the skills-content surface,
-    including the all-or-nothing guard against the interim packaging
-    state where the wheel ships the manifest but no sigstore signature
-    yet.
+    including the zero-byte-bundle-as-absent guard against the local-dev
+    packaging state where the build hook writes an empty placeholder
+    ``.sigstore`` (#292).
     """
     candidates = [
         Path(sys.prefix) / "share" / "bicameral-mcp" / "skills-manifest.toml",
         Path(__file__).parent.parent / "share" / "bicameral-mcp" / "skills-manifest.toml",
     ]
     for c in candidates:
-        sig = Path(str(c) + ".sig")
-        crt = Path(str(c) + ".crt")
-        if c.exists() and sig.exists() and crt.exists():
-            return c, sig, crt
+        bundle = Path(str(c) + ".sigstore")
+        if c.exists() and bundle.exists() and bundle.stat().st_size > 0:
+            return c, bundle
     return None
 
 

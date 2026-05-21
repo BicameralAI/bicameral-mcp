@@ -69,3 +69,49 @@ def test_wheel_skill_md_is_non_empty(built_wheel: Path):
             content = f.read().decode("utf-8")
     assert "name:" in content, f"{sample} has no `name:` frontmatter; possible truncation"
     assert len(content) > 100, f"{sample} suspiciously small ({len(content)} bytes)"
+
+
+# --- #292: sigstore-bundle packaging contract ------------------------------
+
+
+def _shared_data_members(wheel: Path) -> set[str]:
+    """Return wheel members under the hatch `shared-data` install prefix
+    (`<dist>.data/data/share/bicameral-mcp/...`)."""
+    with zipfile.ZipFile(wheel) as zf:
+        names = zf.namelist()
+    return {n for n in names if "share/bicameral-mcp/" in n}
+
+
+def test_wheel_bundles_manifests_and_sigstore_bundles(built_wheel: Path):
+    """#292: the wheel must ship BOTH manifests AND their `.sigstore`
+    bundles via hatch `shared-data` (4 files total) so install-time
+    verification can re-engage. A local-dev build emits zero-byte
+    placeholder bundles — they are still present as wheel members.
+    """
+    members = _shared_data_members(built_wheel)
+    required_suffixes = [
+        "share/bicameral-mcp/hooks-manifest.json",
+        "share/bicameral-mcp/hooks-manifest.json.sigstore",
+        "share/bicameral-mcp/skills-manifest.toml",
+        "share/bicameral-mcp/skills-manifest.toml.sigstore",
+    ]
+    for suffix in required_suffixes:
+        assert any(m.endswith(suffix) for m in members), (
+            f"wheel missing shared-data member ending in {suffix!r}; "
+            f"present share/ members: {sorted(members)}"
+        )
+
+
+def test_wheel_manifests_are_non_empty(built_wheel: Path):
+    """The manifests themselves must carry content (the build hook ran).
+    The `.sigstore` bundles MAY be zero-byte placeholders on a local-dev
+    build, so only the manifests are size-checked here."""
+    members = _shared_data_members(built_wheel)
+    with zipfile.ZipFile(built_wheel) as zf:
+        for suffix in (
+            "share/bicameral-mcp/hooks-manifest.json",
+            "share/bicameral-mcp/skills-manifest.toml",
+        ):
+            member = next(m for m in members if m.endswith(suffix))
+            data = zf.read(member)
+            assert len(data) > 0, f"{member} is empty; build hook did not generate the manifest"

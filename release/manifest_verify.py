@@ -1,9 +1,9 @@
-"""Install-time verifier for ``hooks-manifest.json`` (#218 Phase 2).
+"""Install-time verifier for ``hooks-manifest.json`` (#218 Phase 2, #292).
 
 Loads the bundled manifest, verifies its keyless cosign signature via
-``_VERIFIER_HOOK`` (default: ``sigstore-python``), then cross-checks the
-SHA-256 of every command the installer is about to write against the
-verified manifest. Mismatch → ``SignatureError``.
+``_VERIFIER_HOOK`` (default: real ``sigstore-python`` verification),
+then cross-checks the SHA-256 of every command the installer is about
+to write against the verified manifest. Mismatch → ``SignatureError``.
 
 Bypass posture: ``BICAMERAL_HOOKS_VERIFY_DISABLE=1`` swallows the
 ``SignatureError`` after writing a severity-3 ``verification_bypassed``
@@ -11,8 +11,15 @@ ledger event via ``EventFileWriter``. Without the env var, the error
 propagates to the caller (fail-closed).
 
 The ``_VERIFIER_HOOK`` is a module-level function pointer to enable
-swapping in an offline-keypair verifier in a future #218 sub-task
-without touching this module's call sites.
+swapping the verifier in tests without touching this module's call
+sites.
+
+#292: the publish workflow signs the manifest with ``cosign sign-blob
+--new-bundle-format --bundle`` and ships the single-file ``.sigstore``
+bundle inside the wheel via hatch ``shared-data``. The verifier loads
+that bundle with ``sigstore.models.Bundle.from_json`` and verifies it
+with ``sigstore.verify.Verifier.production().verify_artifact()`` under
+a composite GitHub-workflow identity policy.
 """
 
 from __future__ import annotations
@@ -24,7 +31,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
-_VERIFIER_FN = Callable[[Path, Path, Path], None]
+_VERIFIER_FN = Callable[[Path, Path], None]  # (manifest_path, bundle_path)
 
 
 class SignatureError(Exception):
@@ -32,40 +39,55 @@ class SignatureError(Exception):
     SHA-256 mismatch, malformed manifest)."""
 
 
-def _sigstore_verify(manifest_path: Path, sig_path: Path, cert_path: Path) -> None:
-    """Default verifier: sigstore-python keyless verification.
+def _sigstore_verify(manifest_path: Path, bundle_path: Path) -> None:
+    """Default verifier: real sigstore-python keyless verification (#292).
 
-    v1 stub: sigstore-python integration is a deferred follow-up.
-    The publish workflow emits cosign-signed artifacts to the GitHub
-    Release, but v1 does NOT ship them bundled in the wheel — the
-    hatch shared-data wiring carries only the unsigned manifest. As a
-    result, ``setup_wizard._bundled_manifest_paths()`` returns None for
-    all current production installs and this verifier is never invoked
-    on the production install path.
+    Loads the single-file Sigstore ``.sigstore`` bundle produced by the
+    publish workflow's ``cosign sign-blob --new-bundle-format --bundle``
+    step and verifies the manifest against it via
+    ``Verifier.production().verify_artifact()``.
 
-    When wheel-bundling of `.sig` and `.crt` lands in a follow-up #218
-    sub-task, this stub gets replaced with a real ``Verifier.production()``
-    call against ``sigstore.models.Bundle``. Until then, raising
-    ``SignatureError`` is the honest fail-closed posture: if a bundled
-    manifest IS detected (someone manually placed artifacts under
-    ``<sys.prefix>/share/bicameral-mcp/``), refuse the install with a
-    clear "sigstore integration pending" message rather than
-    silently passing.
+    The identity policy is composite — it binds the signing certificate
+    to the ``Publish to PyPI`` workflow in ``BicameralAI/bicameral-mcp``,
+    independent of the triggering release tag (``policy.Identity`` is
+    exact-match, so a ``...@refs/tags/v*`` glob is not usable).
 
-    Tests monkeypatch ``_VERIFIER_HOOK`` to bypass this stub entirely;
-    see ``tests/test_setup_wizard_hook_verify.py``.
+    Fail-closed: missing manifest, missing bundle, malformed bundle,
+    tampered manifest bytes, or an identity mismatch all raise
+    ``SignatureError``. Tests substitute ``_VERIFIER_HOOK`` to drive the
+    wiring without an OIDC-signed bundle; see
+    ``tests/test_manifest_verify_sigstore.py``.
     """
     if not manifest_path.exists():
         raise SignatureError(f"manifest not found: {manifest_path}")
-    if not sig_path.exists():
-        raise SignatureError(f"signature not found: {sig_path}")
-    if not cert_path.exists():
-        raise SignatureError(f"certificate not found: {cert_path}")
-    raise SignatureError(
-        "sigstore-python keyless verification is a deferred #218 follow-up. "
-        "Set BICAMERAL_HOOKS_VERIFY_DISABLE=1 to bypass (writes severity-3 "
-        "verification_bypassed ledger event)."
-    )
+    if not bundle_path.exists():
+        raise SignatureError(f"sigstore bundle not found: {bundle_path}")
+    try:
+        from sigstore.models import Bundle
+        from sigstore.verify import Verifier, policy
+    except ImportError as exc:
+        raise SignatureError(
+            f"sigstore-python not installed: {exc}. Install it (it is a "
+            "first-class dependency) or set BICAMERAL_HOOKS_VERIFY_DISABLE=1 "
+            "to bypass (writes a severity-3 verification_bypassed ledger event)."
+        ) from exc
+    try:
+        verifier = Verifier.production()
+        bundle = Bundle.from_json(bundle_path.read_bytes())
+        verifier.verify_artifact(
+            input_=manifest_path.read_bytes(),
+            bundle=bundle,
+            policy=policy.AllOf(
+                [
+                    policy.GitHubWorkflowRepository("BicameralAI/bicameral-mcp"),
+                    policy.GitHubWorkflowName("Publish to PyPI"),
+                ]
+            ),
+        )
+    except SignatureError:
+        raise
+    except Exception as exc:
+        raise SignatureError(f"sigstore verification failed: {exc}") from exc
 
 
 _VERIFIER_HOOK: _VERIFIER_FN = _sigstore_verify
@@ -73,20 +95,20 @@ _VERIFIER_HOOK: _VERIFIER_FN = _sigstore_verify
 
 def verify_hooks_manifest(
     manifest_path: Path,
-    sig_path: Path,
-    cert_path: Path,
+    bundle_path: Path,
     expected_hooks: dict[str, str],
 ) -> None:
     """Verify the manifest signature and cross-check SHA-256 entries.
 
-    ``expected_hooks`` maps ``event_type`` → ``sha256(command_bytes)`` for
-    every hook the caller intends to write. Every entry must appear in
-    the verified manifest with matching SHA-256; any miss raises
-    ``SignatureError``.
+    ``bundle_path`` is the single-file Sigstore ``.sigstore`` bundle that
+    ships alongside the manifest in the wheel. ``expected_hooks`` maps
+    ``event_type`` → ``sha256(command_bytes)`` for every hook the caller
+    intends to write. Every entry must appear in the verified manifest
+    with matching SHA-256; any miss raises ``SignatureError``.
     """
     if not manifest_path.exists():
         raise SignatureError(f"manifest not found: {manifest_path}")
-    _VERIFIER_HOOK(manifest_path, sig_path, cert_path)
+    _VERIFIER_HOOK(manifest_path, bundle_path)
 
     parsed = json.loads(manifest_path.read_text(encoding="utf-8"))
     by_event = {h["event_type"]: h["sha256"] for h in parsed.get("hooks", [])}
@@ -118,8 +140,7 @@ def _get_event_writer():
 
 def verify_hooks_or_bypass(
     manifest_path: Path,
-    sig_path: Path,
-    cert_path: Path,
+    bundle_path: Path,
     expected_hooks: dict[str, str],
 ) -> None:
     """Verify the manifest; on failure, honor the bypass env var.
@@ -130,7 +151,7 @@ def verify_hooks_or_bypass(
     re-raises (fail-closed).
     """
     try:
-        verify_hooks_manifest(manifest_path, sig_path, cert_path, expected_hooks)
+        verify_hooks_manifest(manifest_path, bundle_path, expected_hooks)
     except SignatureError:
         if os.environ.get("BICAMERAL_HOOKS_VERIFY_DISABLE") != "1":
             raise

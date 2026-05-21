@@ -31,12 +31,15 @@ gh release create v<VERSION> --generate-notes
 
 The publish workflow (`.github/workflows/publish.yml`) automatically:
 
-- Builds the wheel (with the bundled `share/bicameral-mcp/hooks-manifest.json` from the hatch build hook)
-- Cosign keyless-signs `hooks-manifest.json` (LLM-11 / #218)
+- Generates `hooks-manifest.json` + `skills-manifest.toml` into `share/bicameral-mcp/`
+- Cosign keyless-signs both manifests with `cosign sign-blob --new-bundle-format --bundle`, emitting single-file `.sigstore` bundles (LLM-11, LLM-06 / #218; bundle format / #292)
+- Builds the wheel — the manifest build hook detects the pre-signed `.sigstore` bundles and skips regeneration, and hatch `shared-data` bundles each manifest + its `.sigstore` into the wheel (#292)
 - Generates the CycloneDX 1.5 SBOM and Rekor attestation (OWASP-01 / #218)
 - Cosign keyless-signs the release tag's commit SHA (SOC2-03 / #218 — this document's surface)
 - Attaches all signed artifacts to the GitHub Release
 - Publishes the wheel + sdist to PyPI
+
+> **#292 ordering invariant**: manifest generation + `cosign sign-blob` run **before** `python -m build`. The build hook is idempotent — a pre-signed `.sigstore` makes it skip regeneration so the signed bytes survive into the wheel. `tests/test_publish_workflow_lint.py` enforces this ordering.
 
 ## Post-release verification
 
@@ -45,7 +48,8 @@ After the publish workflow completes:
 - [ ] Confirm the workflow succeeded in GitHub Actions
 - [ ] Confirm the GitHub Release page lists all expected signed artifacts:
   - `bicameral_mcp-<version>-py3-none-any.whl` (the wheel)
-  - `hooks-manifest.json` + `hooks-manifest.json.sig` + `hooks-manifest.json.crt`
+  - `hooks-manifest.json` + `hooks-manifest.json.sigstore`
+  - `skills-manifest.toml` + `skills-manifest.toml.sigstore`
   - `bicameral-mcp.sbom.json` + `bicameral-mcp.sbom.intoto.jsonl`
   - `release-tag-commit.txt` + `release-tag-commit.txt.sig` + `release-tag-commit.txt.crt`
 - [ ] Confirm the wheel + sdist are visible on https://pypi.org/project/bicameral-mcp/
@@ -112,14 +116,20 @@ The `release-tag-commit.txt` file contains the commit SHA the release tag pointe
 
 ### Verify the hooks-manifest signature
 
+The manifests are signed as single-file Sigstore `.sigstore` bundles
+(#292). Verify with the `--bundle` form:
+
 ```bash
 cosign verify-blob \
+  --new-bundle-format \
   --certificate-identity-regexp "^https://github.com/BicameralAI/bicameral-mcp/" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  --signature hooks-manifest.json.sig \
-  --certificate hooks-manifest.json.crt \
+  --bundle hooks-manifest.json.sigstore \
   hooks-manifest.json
 ```
+
+The same command verifies `skills-manifest.toml` against
+`skills-manifest.toml.sigstore`.
 
 ### Verify the SBOM Rekor attestation
 
@@ -132,6 +142,78 @@ cosign verify-attestation \
 ```
 
 The `bicameral-mcp.sbom.json` is the SBOM document; the `.intoto.jsonl` is the Rekor in-toto attestation that binds the SBOM to the wheel.
+
+## Verify install-time signature (#292)
+
+Since #292, the wheel ships each manifest **and** its `.sigstore` bundle
+(`hooks-manifest.json.sigstore`, `skills-manifest.toml.sigstore`) via
+hatch `shared-data`. At install time `bicameral-mcp setup` re-engages
+signature verification end-to-end.
+
+### What `bicameral-mcp setup` does at the signature layer
+
+Before writing any host hook config or copying any skill file, the wizard:
+
+1. Calls `setup_wizard._bundled_manifest_paths()` /
+   `_bundled_skills_manifest_paths()`, which locate the manifest + its
+   `.sigstore` bundle under `<sys.prefix>/share/bicameral-mcp/`. A
+   **zero-byte** `.sigstore` (the local-dev placeholder a non-release
+   build emits) is treated as absent → the helper returns `None` and
+   verification defers.
+2. When a real (non-empty) bundle is present, `release.manifest_verify` /
+   `release.skills_verify` load it with `sigstore.models.Bundle.from_json`
+   and verify the manifest via
+   `sigstore.verify.Verifier.production().verify_artifact()` under a
+   composite identity policy
+   (`GitHubWorkflowRepository("BicameralAI/bicameral-mcp")` **and**
+   `GitHubWorkflowName("Publish to PyPI")`).
+3. The verified manifest's per-entry SHA-256 values are cross-checked
+   against the exact bytes the installer is about to write/copy. Any
+   mismatch → `SignatureError` and the install aborts (fail-closed).
+
+### Confirm the verifier actually ran (no bypass)
+
+A clean install emits **no** `verification_bypassed` event. To confirm:
+
+```bash
+# After `bicameral-mcp setup`, inspect the ledger event stream for the repo.
+# A severity-3 verification_bypassed event means the signature check was
+# skipped via the emergency bypass env var — investigate before trusting
+# the install.
+grep -r '"event_type": "verification_bypassed"' ~/.bicameral/ 2>/dev/null || \
+  echo "no verification_bypassed events — verifier ran clean"
+```
+
+### Emergency bypass
+
+If verification fails on a known-good release (e.g. a transient Sigstore
+outage) the install can be forced through with:
+
+- `BICAMERAL_HOOKS_VERIFY_DISABLE=1` — bypass the hooks-manifest verifier
+- `BICAMERAL_SKILLS_VERIFY_DISABLE=1` — bypass the skills-manifest verifier
+
+Each bypass swallows the `SignatureError` **and writes a severity-3
+`verification_bypassed` ledger event** (with `manifest_kind: "skills"`
+for the skills surface) so the bypass is auditable. Use only when the
+failure is understood; the bypass is fail-open by design.
+
+### Manually verify the wheel's bundled `.sigstore`
+
+To verify a wheel's bundled bundle directly, extract it from the wheel
+(`shared-data` lands under `<dist>.data/data/share/bicameral-mcp/`) and
+run `cosign verify-blob --new-bundle-format --bundle ...` as shown in the
+"Verify the hooks-manifest signature" section above.
+
+### Release-time acceptance step (v0.14.5+)
+
+Because keyless cosign signing requires a GitHub Actions OIDC token, the
+end-to-end install-time path cannot be exercised before a real signed
+release exists. For the first release that ships #292, record this
+manual acceptance step in the release evidence:
+
+- [ ] A fresh `pipx install bicameral-mcp==<version>` followed by
+  `bicameral-mcp setup` completes **without** a `SignatureError` and
+  **without** a `verification_bypassed` event.
 
 ## Cross-references
 

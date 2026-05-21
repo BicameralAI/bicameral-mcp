@@ -25,13 +25,16 @@ import pytest
 from release import manifest_verify
 
 
-def _signed_manifest(tmp_path: Path, hooks: list[dict[str, str]]) -> tuple[Path, Path, Path]:
-    """Write a fake signed manifest + sig + cert to tmp_path."""
+def _signed_manifest(tmp_path: Path, hooks: list[dict[str, str]]) -> tuple[Path, Path]:
+    """Write a fake manifest + its `.sigstore` bundle to tmp_path (#292).
+
+    Returns the `(manifest, bundle)` pair. Real sigstore verification is
+    monkeypatched via `_VERIFIER_HOOK`, so the bundle bytes are a
+    placeholder."""
     import json
 
     manifest_path = tmp_path / "hooks-manifest.json"
-    sig_path = tmp_path / "hooks-manifest.json.sig"
-    cert_path = tmp_path / "hooks-manifest.json.crt"
+    bundle_path = tmp_path / "hooks-manifest.json.sigstore"
     entries = []
     for h in hooks:
         entries.append(
@@ -42,9 +45,8 @@ def _signed_manifest(tmp_path: Path, hooks: list[dict[str, str]]) -> tuple[Path,
             }
         )
     manifest_path.write_text(json.dumps({"manifest_version": 1, "hooks": entries}))
-    sig_path.write_bytes(b"FAKE-SIG")
-    cert_path.write_bytes(b"FAKE-CERT")
-    return manifest_path, sig_path, cert_path
+    bundle_path.write_bytes(b"FAKE-SIGSTORE-BUNDLE")
+    return manifest_path, bundle_path
 
 
 def _expected_hooks(hooks: list[dict[str, str]]) -> dict[str, str]:
@@ -61,10 +63,10 @@ def test_verify_hooks_manifest_returns_none_for_valid_signed_manifest(
         {"event_type": "claude:PostToolUse:Bash", "command": "echo a"},
         {"event_type": "git:post-commit", "command": "git log -1"},
     ]
-    m, s, c = _signed_manifest(tmp_path, hooks)
+    m, b = _signed_manifest(tmp_path, hooks)
     monkeypatch.setattr(manifest_verify, "_VERIFIER_HOOK", lambda *_: None)
     # No exception raised → contract satisfied (returns None).
-    result = manifest_verify.verify_hooks_manifest(m, s, c, _expected_hooks(hooks))
+    result = manifest_verify.verify_hooks_manifest(m, b, _expected_hooks(hooks))
     assert result is None
 
 
@@ -72,26 +74,26 @@ def test_verify_hooks_manifest_raises_signature_error_when_sig_invalid(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hooks = [{"event_type": "git:post-commit", "command": "git log -1"}]
-    m, s, c = _signed_manifest(tmp_path, hooks)
+    m, b = _signed_manifest(tmp_path, hooks)
 
     def bad_verifier(*_args):
         raise manifest_verify.SignatureError("sigstore: invalid signature")
 
     monkeypatch.setattr(manifest_verify, "_VERIFIER_HOOK", bad_verifier)
     with pytest.raises(manifest_verify.SignatureError):
-        manifest_verify.verify_hooks_manifest(m, s, c, _expected_hooks(hooks))
+        manifest_verify.verify_hooks_manifest(m, b, _expected_hooks(hooks))
 
 
 def test_verify_hooks_manifest_raises_when_command_sha256_mismatches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hooks = [{"event_type": "git:post-commit", "command": "git log -1"}]
-    m, s, c = _signed_manifest(tmp_path, hooks)
+    m, b = _signed_manifest(tmp_path, hooks)
     monkeypatch.setattr(manifest_verify, "_VERIFIER_HOOK", lambda *_: None)
     # Caller claims to want a DIFFERENT command than what the manifest carries.
     wrong = {"git:post-commit": hashlib.sha256(b"git log -2").hexdigest()}
     with pytest.raises(manifest_verify.SignatureError):
-        manifest_verify.verify_hooks_manifest(m, s, c, wrong)
+        manifest_verify.verify_hooks_manifest(m, b, wrong)
 
 
 def test_verify_hooks_manifest_raises_when_manifest_file_missing(
@@ -99,20 +101,19 @@ def test_verify_hooks_manifest_raises_when_manifest_file_missing(
 ) -> None:
     monkeypatch.setattr(manifest_verify, "_VERIFIER_HOOK", lambda *_: None)
     nope = tmp_path / "absent.json"
-    sig = tmp_path / "absent.json.sig"
-    crt = tmp_path / "absent.json.crt"
+    bundle = tmp_path / "absent.json.sigstore"
     with pytest.raises(manifest_verify.SignatureError):
-        manifest_verify.verify_hooks_manifest(nope, sig, crt, {})
+        manifest_verify.verify_hooks_manifest(nope, bundle, {})
 
 
 def test_verifier_hook_is_swappable_at_module_level(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     hooks = [{"event_type": "git:post-commit", "command": "git log -1"}]
-    m, s, c = _signed_manifest(tmp_path, hooks)
+    m, b = _signed_manifest(tmp_path, hooks)
     sentinel = MagicMock(return_value=None)
     monkeypatch.setattr(manifest_verify, "_VERIFIER_HOOK", sentinel)
-    manifest_verify.verify_hooks_manifest(m, s, c, _expected_hooks(hooks))
+    manifest_verify.verify_hooks_manifest(m, b, _expected_hooks(hooks))
     # Function-pointer extension surface contract: the module-level pointer
     # is the verifier called by `verify_hooks_manifest`.
     sentinel.assert_called_once()
@@ -125,7 +126,7 @@ def test_install_claude_hooks_proceeds_with_bypass_event_when_env_var_set(
     swallowed, severity-3 ``verification_bypassed`` event written, install
     proceeds. Captures the event-write call."""
     hooks = [{"event_type": "git:post-commit", "command": "git log -1"}]
-    m, s, c = _signed_manifest(tmp_path, hooks)
+    m, b = _signed_manifest(tmp_path, hooks)
 
     captured_events: list[tuple[str, dict]] = []
 
@@ -142,7 +143,7 @@ def test_install_claude_hooks_proceeds_with_bypass_event_when_env_var_set(
     monkeypatch.setattr(manifest_verify, "_get_event_writer", lambda: StubWriter())
 
     # The helper raises only when bypass is OFF; with bypass ON it returns None.
-    result = manifest_verify.verify_hooks_or_bypass(m, s, c, _expected_hooks(hooks))
+    result = manifest_verify.verify_hooks_or_bypass(m, b, _expected_hooks(hooks))
     assert result is None
     assert len(captured_events) == 1
     event_type, payload = captured_events[0]
@@ -157,7 +158,7 @@ def test_install_claude_hooks_raises_signature_error_when_env_var_unset(
 ) -> None:
     """Bypass OFF: SignatureError propagates to caller (fail-closed)."""
     hooks = [{"event_type": "git:post-commit", "command": "git log -1"}]
-    m, s, c = _signed_manifest(tmp_path, hooks)
+    m, b = _signed_manifest(tmp_path, hooks)
 
     def bad_verifier(*_args):
         raise manifest_verify.SignatureError("intentional test failure")
@@ -166,4 +167,4 @@ def test_install_claude_hooks_raises_signature_error_when_env_var_unset(
     monkeypatch.delenv("BICAMERAL_HOOKS_VERIFY_DISABLE", raising=False)
 
     with pytest.raises(manifest_verify.SignatureError):
-        manifest_verify.verify_hooks_or_bypass(m, s, c, _expected_hooks(hooks))
+        manifest_verify.verify_hooks_or_bypass(m, b, _expected_hooks(hooks))
