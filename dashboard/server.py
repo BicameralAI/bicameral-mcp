@@ -4,7 +4,8 @@ Binds to a free local port in the existing event loop, serves the compiled
 dashboard HTML, and streams live HistoryResponse updates via SSE.
 
 Endpoints:
-  GET /           → dashboard.html (self-contained HTML/JS bundle)
+  GET /           → dashboard.html (the Dashboard v2 self-contained bundle)
+  GET /legacy     → dashboard-legacy.html (pre-v2 dashboard; LedgerView iframe target)
   GET /events     → SSE stream; each event is a full HistoryResponse JSON blob
   GET /history    → one-shot JSON dump (initial load fallback)
   GET /pulse      → one-shot ProjectPulseSummary JSON (#437 Phase 3)
@@ -130,6 +131,8 @@ class DashboardServer:
 
             if method == "GET" and path == "/":
                 await self._serve_html(writer)
+            elif method == "GET" and path == "/legacy":
+                await self._serve_legacy(writer)
             elif method == "GET" and path == "/history":
                 await self._serve_history(writer)
             elif method == "GET" and path == "/pulse":
@@ -162,6 +165,21 @@ class DashboardServer:
             body = html_path.read_bytes()
         except FileNotFoundError:
             body = b"<html><body><h1>Dashboard not built yet.</h1><p>Run: make dashboard</p></body></html>"
+        writer.write(_send_body(_HTTP_200_HTML, body))
+        await writer.drain()
+
+    async def _serve_legacy(self, writer: asyncio.StreamWriter) -> None:
+        """Serve the pre-v2 dashboard — the Dashboard v2 LedgerView iframe target.
+
+        Until the native Ledger component port lands, v2's LedgerView embeds
+        this page via ``<iframe src="/legacy">``. Mirrors ``_serve_html``'s
+        fail-soft posture: a missing file degrades to a friendly body, not a 500.
+        """
+        legacy_path = _ASSETS_DIR / "dashboard-legacy.html"
+        try:
+            body = legacy_path.read_bytes()
+        except FileNotFoundError:
+            body = b"<html><body><h1>Legacy dashboard not found.</h1></body></html>"
         writer.write(_send_body(_HTTP_200_HTML, body))
         await writer.drain()
 

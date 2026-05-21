@@ -1,6 +1,8 @@
 """HTML-pattern tests for #278 Phase 1 — dashboard source view + side-by-side.
 
-The dashboard render path lives in `assets/dashboard.html` as inline JS, so
+The dashboard render path lives in `assets/dashboard-legacy.html` as inline JS
+(Dashboard v2 M1 moved this hand-written view there; it is still shipped via
+the dashboard server's `/legacy` route), so
 these tests assert that the source-of-truth template carries the markup,
 classes, and JS branches the runtime relies on. No DOM/Playwright runtime is
 booted — the tests are pure string-pattern assertions against the HTML file,
@@ -23,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard.html"
+DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard-legacy.html"
 
 
 @pytest.fixture(scope="module")
@@ -267,7 +269,7 @@ def _extract_function_body(html: str, fn_name: str) -> str:
     """
     match = re.search(rf"function\s+{re.escape(fn_name)}\s*\([^)]*\)\s*\{{", html)
     if not match:
-        raise AssertionError(f"function {fn_name} not found in dashboard.html")
+        raise AssertionError(f"function {fn_name} not found in dashboard-legacy.html")
     start = match.end() - 1  # position of the opening brace
     depth = 0
     for i in range(start, len(html)):

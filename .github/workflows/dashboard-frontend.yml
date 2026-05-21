@@ -1,0 +1,51 @@
+name: Dashboard Frontend
+
+# Dashboard v2 frontend (ADR-0005): builds the Vite + TypeScript + Preact
+# bundle and runs the Vitest component suite. Path-filtered so it only runs
+# when the frontend source or its built artifact changes.
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - 'dashboard/frontend/**'
+      - 'assets/dashboard.html'
+      - 'assets/dashboard-legacy.html'
+      - '.github/workflows/dashboard-frontend.yml'
+
+jobs:
+  frontend:
+    name: Dashboard v2 frontend build + tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: dashboard/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned Node 20 — the major used to generate the committed artifact.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install (npm ci — uses the committed lockfile)
+        run: npm ci
+
+      - name: Build the single-file bundle
+        run: npm run build
+
+      # Advisory, not a hard gate: the committed artifact is built on a
+      # contributor machine and rebuilt here on Ubuntu — minifier/OS drift
+      # can perturb bytes. A stale artifact surfaces as a warning annotation
+      # (repo doctrine: gating is observability, not obstruction) rather than
+      # a false PR failure. Regenerate with:
+      #   cd dashboard/frontend && npm ci && npm run build
+      - name: Artifact freshness (advisory)
+        run: |
+          if ! git diff --exit-code ../../assets/dashboard.html; then
+            echo "::warning::assets/dashboard.html differs from a fresh build — regenerate with 'cd dashboard/frontend && npm ci && npm run build' and commit."
+          fi
+
+      - name: Vitest component suite
+        run: npm test

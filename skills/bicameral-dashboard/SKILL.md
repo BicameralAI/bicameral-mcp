@@ -1,6 +1,6 @@
 # bicameral-dashboard
 
-Launch the live decision dashboard — a local browser tab that opens to a Project Pulse landing view (health, what needs attention, recently learned, suggested next move) above every tracked decision grouped by feature area, and pushes real-time updates whenever `bicameral.ingest` or `bicameral.link_commit` writes new data.
+Launch the live decision dashboard — a local browser tab. The Dashboard v2 shell opens to a Project Pulse landing view (health, what needs attention, recently learned, suggested next move) and carries a sidebar to the Ledger — the canonical decision record, every tracked decision grouped by feature area — which pushes real-time updates whenever `bicameral.ingest` or `bicameral.link_commit` writes new data. Further surfaces (Ratification, Drift, Sources, Audit, Integrations, Settings) are being built out across the Dashboard v2 milestones.
 
 ## Triggers
 
@@ -38,5 +38,6 @@ Do NOT fire on preflight, ingest, drift, or search prompts — those have dedica
 - The server runs as a background task inside the MCP process and persists for the session.
 - Port is saved to `~/.bicameral/dashboard.port` for reference.
 - The HTML page auto-reconnects if the SSE stream is interrupted (e.g., sleep/wake).
-- To replace the placeholder UI with the full Svelte bundle, run `make dashboard` from the repo root after `pilot/demo2` is built.
+- The dashboard UI is built with Vite + TypeScript + Preact (ADR-0005); source lives in `dashboard/frontend/` and the build emits the single-file bundle `assets/dashboard.html`. Regenerate with `cd dashboard/frontend && npm ci && npm run build`.
+- The pre-v2 dashboard is preserved at `assets/dashboard-legacy.html`, served at the `/legacy` route; the v2 Ledger view embeds it until the native Ledger component port lands.
 - Decision rows with `status === 'pending'` carry a tooltip nudging the user to run `/bicameral-sync` in their Claude Code session. The dashboard does not trigger compliance resolution itself — it surfaces the pending state and points at the skill that resolves it.

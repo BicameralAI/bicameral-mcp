@@ -1,6 +1,8 @@
 """HTML-pattern tests for the dashboard's decision_level surfacing (#76 part 1).
 
-The dashboard render path lives in `assets/dashboard.html` as inline JS, so
+The dashboard render path lives in `assets/dashboard-legacy.html` as inline JS
+(Dashboard v2 M1 moved this hand-written view there; it is still shipped via
+the dashboard server's `/legacy` route), so
 these tests assert that the source-of-truth template carries the markup,
 classes, and JS branches the runtime relies on. No DOM/Playwright runtime is
 booted — the tests are pure string-pattern assertions against the HTML file.
@@ -13,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard.html"
+DASHBOARD_HTML = Path(__file__).resolve().parent.parent / "assets" / "dashboard-legacy.html"
 
 
 @pytest.fixture(scope="module")
