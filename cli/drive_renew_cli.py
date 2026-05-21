@@ -40,7 +40,8 @@ expiring within the threshold (default: 43200s = 12h), it issues a
 successor:
 
 1. Call ``files.watch`` with a new UUID channel_id, the same
-   callback_url, a fresh token, and a fresh 24h expiration.
+   callback_url, a fresh or preserved token (see ``--token-rotation``
+   below), and a fresh 24h expiration.
 2. Persist the new ``ChannelRecord``.
 3. Call ``channels.stop`` on the old channel.
 4. Delete the old registry entry.
@@ -58,10 +59,34 @@ Usage::
     bicameral-mcp drive-renew                      # default: renew <12h
     bicameral-mcp drive-renew --threshold-seconds 28800  # renew <8h
     bicameral-mcp drive-renew --dry-run            # report what would happen
+    bicameral-mcp drive-renew --token-rotation preserve  # keep the token
 
-Token rotation: every renewal issues a fresh token via
-``secrets.token_urlsafe(32)``. Cycle-8 review F2 lesson applied —
-limiting the operational window of any one token to ~24h.
+## Token rotation (cycle-9c review MED-3)
+
+``--token-rotation`` controls the successor channel's token:
+
+- ``always`` (default) — mint a fresh ``secrets.token_urlsafe(32)``
+  per renewal. Cycle-8 review F2 lesson: this bounds the operational
+  window of any one token to ~24h. This is the secure default.
+- ``preserve`` — the successor reuses the existing channel's token.
+  Intended for operators whose external tooling pins the channel
+  token. **Security tradeoff**: a leaked token then stays valid
+  across every renewal indefinitely, instead of being bounded to a
+  single renewal period. The operator owns this tradeoff knowingly.
+
+``preserve`` only changes the rotation cadence — token *validation*
+(the constant-time compare in ``webhooks.google_drive``) is
+unchanged either way.
+
+## Why the ``HttpError`` import is function-scoped (cycle-9c LOW-1)
+
+The ``from googleapiclient.errors import HttpError`` inside
+``_renew_one`` is intentionally NOT hoisted to module level. It sits
+in a ``try/except`` that returns a graceful per-channel failure
+string if ``googleapiclient`` is unavailable. Hoisting it would turn
+that graceful degradation into a whole-CLI ``ImportError`` at import
+time. The function-scoped import is load-bearing; cycle-9c review
+LOW-1 ("hoist it") is evaluated and deliberately not actioned.
 """
 
 from __future__ import annotations
@@ -104,6 +129,19 @@ def _build_argparser(subparser: argparse.ArgumentParser) -> None:
         "--dry-run",
         action="store_true",
         help="Report what would be renewed without making any API calls.",
+    )
+    subparser.add_argument(
+        "--token-rotation",
+        choices=["always", "preserve"],
+        default="always",
+        help=(
+            "Successor-channel token policy. 'always' (default) mints a "
+            "fresh token per renewal, bounding any one token's lifetime "
+            "to ~24h. 'preserve' reuses the existing channel token across "
+            "renewals — for operators whose external tooling pins the "
+            "token. SECURITY TRADEOFF: with 'preserve' a leaked token "
+            "stays valid indefinitely instead of for one renewal period."
+        ),
     )
 
 
@@ -299,10 +337,22 @@ def _run_pass(args, records, registry) -> int:
         )
         return 3
 
+    token_rotation = args.token_rotation
+    if token_rotation == "preserve":
+        # One posture notice per pass (not per channel) so an operator
+        # who set this in a cron job sees the security tradeoff in the
+        # logs.
+        print(
+            "[drive-renew] --token-rotation=preserve: successor channels "
+            "reuse the existing token; a leaked token is not bounded to a "
+            "single renewal period.",
+            file=sys.stderr,
+        )
+
     succeeded: list[str] = []
     failed: list[tuple[str, str]] = []
     for record in due_renewable:
-        result = _renew_one(record, service, registry)
+        result = _renew_one(record, service, registry, token_rotation=token_rotation)
         if result is None:
             succeeded.append(record.channel_id)
         else:
@@ -318,10 +368,13 @@ def _run_pass(args, records, registry) -> int:
     return 0 if not failed else 2
 
 
-def _renew_one(record, service, registry) -> str | None:
+def _renew_one(record, service, registry, *, token_rotation: str = "always") -> str | None:
     """Issue a successor channel for ``record``, persist, stop old,
     delete old registry entry. Returns ``None`` on full success or a
     short failure reason string.
+
+    ``token_rotation`` is ``"always"`` (mint a fresh token) or
+    ``"preserve"`` (reuse ``record.token``); see the module docstring.
 
     Failure modes are local to this function and reported via the
     return value so the outer loop continues with the next record.
@@ -338,7 +391,22 @@ def _renew_one(record, service, registry) -> str | None:
         return f"googleapiclient import failed: {exc}"
 
     new_channel_id = str(uuid.uuid4())
-    new_token = secrets.token_urlsafe(_TOKEN_BYTES)
+    if token_rotation == "preserve" and record.token:
+        new_token = record.token
+    else:
+        if token_rotation == "preserve":
+            # `preserve` requested but the stored token is empty
+            # (registry corruption / pre-9c row). Minting a fresh
+            # token is the strictly-secure fallback — persisting a
+            # tokenless successor would produce a channel that
+            # `verify_notification` rejects on every delivery.
+            print(
+                f"[drive-renew] --token-rotation=preserve requested for "
+                f"channel {record.channel_id!r} but its stored token is "
+                f"empty; minting a fresh token for the successor.",
+                file=sys.stderr,
+            )
+        new_token = secrets.token_urlsafe(_TOKEN_BYTES)
     new_expiration_ms = int((time.time() + _MAX_TTL_SECONDS) * 1000)
 
     # ── Step 1: files.watch on the same file_id with the successor
@@ -371,17 +439,23 @@ def _renew_one(record, service, registry) -> str | None:
 
     new_resource_id = response.get("resourceId") or ""
     if not new_resource_id:
-        # Successor channel was created on Drive's side but we can't
-        # validate or stop it. Best-effort cleanup so we don't leak.
+        # LOW-2 (cycle-9c review): the successor channel WAS created on
+        # Drive's side (files.watch succeeded) but the response carries
+        # no resourceId. channels.stop REQUIRES a resourceId — there is
+        # no API call that can stop this channel. The prior code called
+        # stop() with an empty resourceId (a doomed request) and
+        # swallowed the failure: cleanup theater. Emit an honest
+        # MANUAL ACTION line instead. The channel self-expires within
+        # Drive's max TTL (~24h).
         print(
-            f"[drive-renew] successor channel for {record.channel_id!r} "
-            "has no resourceId in the response; attempting cleanup",
+            f"[drive-renew] MANUAL ACTION: a successor channel "
+            f"id={new_channel_id!r} was created for {record.channel_id!r} "
+            f"but its resourceId is absent from the files.watch response, "
+            f"so it cannot be stopped via the API. It will expire on its "
+            f"own within {_MAX_TTL_SECONDS}s (~24h). To stop it sooner, "
+            f"locate it via the Drive API and stop it manually.",
             file=sys.stderr,
         )
-        try:
-            service.channels().stop(body={"id": new_channel_id, "resourceId": ""}).execute()
-        except Exception:  # noqa: BLE001
-            pass
         return "successor response missing resourceId"
 
     # ── Step 2: persist new ChannelRecord.
