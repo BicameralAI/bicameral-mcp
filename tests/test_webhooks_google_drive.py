@@ -1137,3 +1137,143 @@ def test_handle_sync_message_dedup(reg: ChannelRegistry):
     assert "sync acknowledged" in msg1
     assert status2 == 200
     assert msg2 == "duplicate"
+
+
+# ── cycle 9d review LOW-2: mark-after-ack ───────────────────────────────────
+
+
+def test_handle_5xx_does_not_mark_dedup(reg: ChannelRegistry, monkeypatch):
+    """Mark-after-ack: a transient fetch failure returns 500 and must
+    NOT mark the delivery seen — Drive's retry of the same
+    (channel_id, message_number) must re-dispatch, not be dedup'd.
+    fetch_active is called on BOTH invocations."""
+    reg.register(_record())
+    fetch_count: list[int] = []
+
+    from unittest.mock import MagicMock
+
+    from googleapiclient.errors import HttpError
+
+    def _fetch_503(self, url):
+        fetch_count.append(1)
+        resp = MagicMock(status=503, reason="Service Unavailable")
+        cause = HttpError(resp=resp, content=b"")
+        raise RuntimeError("Google Docs API call failed: 503") from cause
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fetch_503)
+
+    for _ in range(2):
+        status, _ = handle(
+            body=b"",
+            channel_id="ch-1",
+            channel_token="tok-1",
+            resource_id="res-1",
+            resource_state="update",
+            message_number="42",
+            registry=reg,
+        )
+        assert status == 500
+    assert len(fetch_count) == 2, (
+        f"fetch_active called {len(fetch_count)} times; 500 wrongly marked the delivery"
+    )
+
+
+def test_handle_deterministic_4xx_ack_marks_dedup(reg: ChannelRegistry, monkeypatch):
+    """Mark-after-ack: a deterministic 4xx fetch failure returns 200
+    (Drive will not retry) and therefore DOES mark the delivery — a
+    replay of the same delivery is dedup-suppressed. Proves a
+    200-that-is-not-a-success-ingest still marks."""
+    reg.register(_record())
+    fetch_count: list[int] = []
+
+    from unittest.mock import MagicMock
+
+    from googleapiclient.errors import HttpError
+
+    def _fetch_404(self, url):
+        fetch_count.append(1)
+        resp = MagicMock(status=404, reason="Not Found")
+        cause = HttpError(resp=resp, content=b"not found")
+        raise RuntimeError("Google Docs API call failed: 404") from cause
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _fetch_404)
+
+    status1, _ = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    status2, msg2 = handle(
+        body=b"",
+        channel_id="ch-1",
+        channel_token="tok-1",
+        resource_id="res-1",
+        resource_state="update",
+        message_number="42",
+        registry=reg,
+    )
+    assert status1 == 200
+    assert status2 == 200
+    assert msg2 == "duplicate"
+    assert len(fetch_count) == 1, (
+        f"fetch_active called {len(fetch_count)} times; deterministic 200 failed to mark"
+    )
+
+
+def test_handle_dedup_partition_isolates_by_channel(reg: ChannelRegistry, monkeypatch):
+    """LOW-1 end-to-end: the handler passes partition=channel_id, so a
+    flood on one channel cannot evict another channel's replay
+    protection. Drive the dedup cache to a tiny per-bucket capacity
+    and confirm a marked delivery on ch-quiet survives a flood on
+    ch-noisy."""
+    reg.register(_record(channel_id="ch-quiet", resource_id="res-q", token="tok-q"))
+    reg.register(_record(channel_id="ch-noisy", resource_id="res-n", token="tok-n"))
+
+    import webhooks.dedup as dedup_mod
+    from webhooks.dedup import DeliveryDedupCache, _reset_for_tests
+
+    _reset_for_tests()
+    # Install a cache with a per-bucket cap of 2 so a 3-delivery flood
+    # on ch-noisy would evict its own oldest — but must not touch
+    # ch-quiet's bucket.
+    dedup_mod._singleton = DeliveryDedupCache(max_entries=2, ttl_seconds=60)
+
+    def _ok_fetch(self, url):
+        return {
+            "query": "t",
+            "source": "google_drive",
+            "title": "t",
+            "date": "",
+            "participants": [],
+            "decisions": [{"description": "d", "title": "t"}],
+        }
+
+    monkeypatch.setattr("sources.google_drive.adapter.GoogleDriveAdapter.fetch_active", _ok_fetch)
+
+    def _deliver(channel_id, resource_id, token, message_number):
+        return handle(
+            body=b"",
+            channel_id=channel_id,
+            channel_token=token,
+            resource_id=resource_id,
+            resource_state="update",
+            message_number=message_number,
+            registry=reg,
+        )
+
+    # One delivery on the quiet channel.
+    _deliver("ch-quiet", "res-q", "tok-q", "1")
+    # Flood the noisy channel past its per-bucket cap of 2.
+    for mn in ["1", "2", "3"]:
+        _deliver("ch-noisy", "res-n", "tok-n", mn)
+    # The quiet channel's delivery is still deduped — its bucket was
+    # untouched by the noisy flood.
+    status, msg = _deliver("ch-quiet", "res-q", "tok-q", "1")
+    assert status == 200
+    assert msg == "duplicate", "ch-noisy flood evicted ch-quiet's replay protection"
+
+    _reset_for_tests()
