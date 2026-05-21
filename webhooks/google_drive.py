@@ -203,15 +203,19 @@ def handle(
 
     delivery_id = f"{channel_id}:{message_number}" if message_number else ""
     cache = get_dedup_cache()
-    if cache.is_duplicate("google_drive", delivery_id):
+    # `partition=channel_id` (LOW-1): a noisy channel evicts only its
+    # own bucket's oldest entries, never another channel's replay
+    # protection.
+    if cache.is_duplicate("google_drive", delivery_id, partition=channel_id):
         print(
             f"[drive-webhook] duplicate delivery {channel_id!r}:{message_number!r} ignored",
             file=sys.stderr,
         )
         return 200, "duplicate"
-    cache.mark_seen("google_drive", delivery_id)
 
     state = (resource_state or "").strip().lower()
+
+    result: tuple[int, str]
 
     # Sync message: Drive sends one of these immediately after
     # channels.watch to confirm the URL is reachable. Per Drive's
@@ -232,35 +236,46 @@ def handle(
             f"[drive-webhook] sync ack for channel {channel_id!r}",
             file=sys.stderr,
         )
-        return 200, f"sync acknowledged for channel {channel_id!r}"
-
+        result = (200, f"sync acknowledged for channel {channel_id!r}")
     # Non-sync state: look up the file_id in the registry, fetch via
     # the active adapter, pipe through handle_ingest.
     # ``trash``/``remove`` are append-only-contract acks: we do NOT
     # propagate deletes to the ledger (operator uses #221 / GDPR path
     # for erasure, not this).
-    if state in {"add", "update", "change", "untrash"}:
+    elif state in {"add", "update", "change", "untrash"}:
         # verify_notification rejected missing channel_id above, so by
         # this point channel_id is guaranteed non-empty. Assert it for
         # the type-checker (mypy can't propagate the implicit narrow).
         assert channel_id is not None
-        return _ingest_change(channel_id, state, registry=registry)
-    if state in {"remove", "trash"}:
+        result = _ingest_change(channel_id, state, registry=registry)
+    elif state in {"remove", "trash"}:
         print(
             f"[drive-webhook] channel {channel_id!r} state={state!r} "
             f"acknowledged (append-only contract; no ingest)",
             file=sys.stderr,
         )
-        return 200, f"channel {channel_id!r} state={state!r} acknowledged (no ingest)"
+        result = (200, f"channel {channel_id!r} state={state!r} acknowledged (no ingest)")
+    else:
+        # Unknown / future state — still 200 (Drive's retry posture
+        # would retry on 5xx, and we don't want to retry on a state we
+        # simply haven't taught the handler about yet).
+        print(
+            f"[drive-webhook] channel {channel_id!r} unknown state {state!r}; acking",
+            file=sys.stderr,
+        )
+        result = (200, f"channel {channel_id!r} state={state!r} acknowledged (unknown)")
 
-    # Unknown / future state — still 200 (Drive's retry posture
-    # would retry on 5xx, and we don't want to retry on a state we
-    # simply haven't taught the handler about yet).
-    print(
-        f"[drive-webhook] channel {channel_id!r} unknown state {state!r}; acking",
-        file=sys.stderr,
-    )
-    return 200, f"channel {channel_id!r} state={state!r} acknowledged (unknown)"
+    # Cycle 9d review LOW-2: mark-after-ack. Drive uniquely reuses
+    # (channel_id, message_number) on its 5xx automatic retry, so
+    # marking before dispatch would let a process kill mid-ingest
+    # silently swallow Drive's retry. Mark only once the handler has
+    # decided a 200 (success, sync ack, delete-state ack,
+    # deterministic-failure ack) — Drive will not retry a 200, so the
+    # mark suppresses a genuine provider replay. A 500 path is left
+    # unmarked so Drive's retry re-dispatches.
+    if result[0] == 200 and delivery_id:
+        cache.mark_seen("google_drive", delivery_id, partition=channel_id)
+    return result
 
 
 def _ingest_change(channel_id: str, state: str, *, registry=None) -> tuple[int, str]:

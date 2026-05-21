@@ -65,3 +65,68 @@ def test_get_dedup_cache_returns_singleton():
     b = get_dedup_cache()
     assert a is b
     _reset_for_tests()
+
+
+# ── partitioned buckets ─────────────────────────────────────────────────────
+
+
+def test_partition_isolates_eviction():
+    """The LOW-1 property: a flood into one partition evicts only that
+    partition's oldest entries — another partition's entries survive."""
+    cache = DeliveryDedupCache(max_entries=2, ttl_seconds=60)
+    # Partition B records one entry.
+    cache.mark_seen("google_drive", "b-keep", partition="ch-B")
+    # Partition A is flooded past its per-bucket cap of 2.
+    cache.mark_seen("google_drive", "a1", partition="ch-A")
+    cache.mark_seen("google_drive", "a2", partition="ch-A")
+    cache.mark_seen("google_drive", "a3", partition="ch-A")  # evicts a1 within ch-A
+    assert cache.is_duplicate("google_drive", "a1", partition="ch-A") is False
+    assert cache.is_duplicate("google_drive", "a2", partition="ch-A") is True
+    assert cache.is_duplicate("google_drive", "a3", partition="ch-A") is True
+    # ch-B's entry is untouched by ch-A's flood.
+    assert cache.is_duplicate("google_drive", "b-keep", partition="ch-B") is True
+
+
+def test_partition_none_is_its_own_bucket():
+    """An entry marked under a named partition is not a duplicate when
+    queried with the default partition=None."""
+    cache = DeliveryDedupCache()
+    cache.mark_seen("google_drive", "x", partition="ch-1")
+    assert cache.is_duplicate("google_drive", "x", partition=None) is False
+    assert cache.is_duplicate("google_drive", "x", partition="ch-1") is True
+
+
+def test_partition_distinct_channels_independent():
+    """Same delivery_id under two channel partitions are independent."""
+    cache = DeliveryDedupCache()
+    cache.mark_seen("google_drive", "msg-7", partition="ch-A")
+    assert cache.is_duplicate("google_drive", "msg-7", partition="ch-A") is True
+    assert cache.is_duplicate("google_drive", "msg-7", partition="ch-B") is False
+
+
+def test_max_partitions_evicts_lru_bucket():
+    """Bucket COUNT is bounded: creating a 3rd bucket past max_partitions=2
+    evicts the least-recently-written bucket wholesale."""
+    cache = DeliveryDedupCache(max_entries=10, max_partitions=2, ttl_seconds=60)
+    cache.mark_seen("google_drive", "d", partition="ch-A")
+    cache.mark_seen("google_drive", "d", partition="ch-B")
+    assert cache._partition_count() == 2
+    cache.mark_seen("google_drive", "d", partition="ch-C")  # evicts ch-A (LRU bucket)
+    assert cache._partition_count() == 2
+    assert cache.is_duplicate("google_drive", "d", partition="ch-A") is False
+    assert cache.is_duplicate("google_drive", "d", partition="ch-B") is True
+    assert cache.is_duplicate("google_drive", "d", partition="ch-C") is True
+
+
+def test_mark_seen_bumps_bucket_recency():
+    """A write to an existing bucket refreshes its LRU position, so an
+    actively-written bucket is not the one evicted under partition pressure."""
+    cache = DeliveryDedupCache(max_entries=10, max_partitions=2, ttl_seconds=60)
+    cache.mark_seen("google_drive", "d", partition="ch-A")
+    cache.mark_seen("google_drive", "d", partition="ch-B")
+    # Re-write ch-A — it becomes most-recently-written.
+    cache.mark_seen("google_drive", "d2", partition="ch-A")
+    cache.mark_seen("google_drive", "d", partition="ch-C")  # evicts ch-B, not ch-A
+    assert cache.is_duplicate("google_drive", "d", partition="ch-A") is True
+    assert cache.is_duplicate("google_drive", "d", partition="ch-B") is False
+    assert cache.is_duplicate("google_drive", "d", partition="ch-C") is True
