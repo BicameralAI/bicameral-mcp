@@ -198,6 +198,8 @@ All data stays local. The embedded SurrealDB runs in-process — no separate ser
 
 We take privacy seriously. Bicameral runs entirely on your laptop — code, decisions, and transcripts never leave the machine unless you explicitly opt into team mode (which only shares an append-only event file via your existing git remote). Telemetry is anonymous integers + tool names only — opt out with `BICAMERAL_TELEMETRY=0`. The full posture (host-trust model, acceptable use, install-trust model, audit log, diagnose output, ledger export, availability stance) is in [`docs/policies/`](docs/policies/); reporting + supply-chain attestation in [`SECURITY.md`](SECURITY.md).
 
+**Trust boundary**: bicameral-mcp is a local-install developer tool — the trust boundary is the OS user account, and multi-user, hosted, or shared-machine deployments are out of scope. The canonical scope statement (which deployment shapes are in or out of scope for the unauthenticated MCP stdio transport) is [`docs/policies/threat-model-and-trust-boundary.md`](docs/policies/threat-model-and-trust-boundary.md).
+
 ---
 
 ## License
