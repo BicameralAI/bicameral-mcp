@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import itertools
 import json
+from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from ledger.adapter import SurrealDBLedgerAdapter
 from ledger.client import LedgerClient
 from ledger.schema import init_schema, migrate
-from pulse import ProjectPulseSummary, build_project_pulse
-from pulse.summary import _ALL_CLEAR_MESSAGE
+from pulse import ProjectPulseSummary, SinceParseError, build_project_pulse
+from pulse.summary import _ALL_CLEAR_MESSAGE, _parse_since
 
 
 async def _fresh_adapter(suffix: str) -> tuple[SurrealDBLedgerAdapter, LedgerClient]:
@@ -44,20 +47,27 @@ async def _seed_decision(
     source_type: str = "manual",
     source_ref: str = "",
     signoff: dict | None = None,
+    feature_hint: str = "",
+    created_at: str | None = None,
 ) -> str:
     """Create one decision row with the production schema; return its id string."""
-    rows = await client.query(
-        "CREATE decision SET description = $d, status = $s, "
-        "source_type = $st, source_ref = $sr, signoff = $sig, canonical_id = $cid",
-        {
-            "d": description,
-            "s": status,
-            "st": source_type,
-            "sr": source_ref,
-            "sig": signoff,
-            "cid": f"pulse-test-{next(_canonical_counter)}",
-        },
+    set_clause = (
+        "description = $d, status = $s, source_type = $st, source_ref = $sr, "
+        "feature_hint = $fh, signoff = $sig, canonical_id = $cid"
     )
+    vars_: dict = {
+        "d": description,
+        "s": status,
+        "st": source_type,
+        "sr": source_ref,
+        "fh": feature_hint,
+        "sig": signoff,
+        "cid": f"pulse-test-{next(_canonical_counter)}",
+    }
+    if created_at is not None:
+        set_clause += ", created_at = <datetime>$ca"
+        vars_["ca"] = created_at
+    rows = await client.query(f"CREATE decision SET {set_clause}", vars_)
     return str(rows[0]["id"])
 
 
@@ -293,3 +303,143 @@ async def test_build_does_not_crash_when_a_section_errors() -> None:
     assert summary.health.decisions_reflected == 1
     # to_dict still works on the degraded-but-built summary.
     assert json.dumps(summary.to_dict())
+
+
+# ── 9. _parse_since grammar (#437 Phase 2) ────────────────────────────────
+
+
+def test_parse_since_accepts_iso_date() -> None:
+    """An ISO date parses to a UTC-aware midnight cutoff."""
+    cutoff = _parse_since("2026-05-20")
+    assert cutoff.year == 2026
+    assert cutoff.month == 5
+    assert cutoff.day == 20
+    assert cutoff.tzinfo is not None
+
+
+def test_parse_since_accepts_today_and_yesterday() -> None:
+    """``today`` / ``yesterday`` resolve relative to the injected ``now``."""
+    now = datetime(2026, 5, 21, 15, 30, tzinfo=UTC)
+    today = _parse_since("today", now=now)
+    yesterday = _parse_since("yesterday", now=now)
+    assert today == datetime(2026, 5, 21, tzinfo=UTC)
+    assert yesterday == datetime(2026, 5, 20, tzinfo=UTC)
+
+
+def test_parse_since_accepts_n_days() -> None:
+    """``Nd`` resolves to N days before midnight of the injected ``now``."""
+    now = datetime(2026, 5, 21, 9, 0, tzinfo=UTC)
+    assert _parse_since("7d", now=now) == datetime(2026, 5, 14, tzinfo=UTC)
+
+
+def test_parse_since_rejects_garbage() -> None:
+    """An unparseable token raises ``SinceParseError``."""
+    with pytest.raises(SinceParseError):
+        _parse_since("next-tuesday-ish")
+    with pytest.raises(SinceParseError):
+        _parse_since("")
+
+
+# ── 10. since filter on build_project_pulse (#437 Phase 2) ────────────────
+
+
+async def test_since_filters_recently_learned_by_recency() -> None:
+    """``since`` drops decisions dated before the cutoff from recently-learned."""
+    adapter, client = await _fresh_adapter("since_filter")
+    old = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    recent = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    await _seed_decision(client, description="ancient", status="reflected", created_at=old)
+    await _seed_decision(client, description="fresh", status="reflected", created_at=recent)
+
+    summary = await build_project_pulse(adapter, since="3d")
+
+    learned = {item.summary for item in summary.recently_learned}
+    assert "fresh" in learned
+    assert "ancient" not in learned
+
+
+async def test_since_filters_needs_attention_by_recency() -> None:
+    """``since`` also bounds the needs-attention section."""
+    adapter, client = await _fresh_adapter("since_attention")
+    old = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    recent = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    await _seed_decision(
+        client,
+        description="old pending",
+        signoff={"state": "proposed", "signer": "jin"},
+        created_at=old,
+    )
+    await _seed_decision(
+        client,
+        description="recent pending",
+        signoff={"state": "proposed", "signer": "silong"},
+        created_at=recent,
+    )
+
+    summary = await build_project_pulse(adapter, since="3d")
+
+    attention = {item.summary for item in summary.needs_attention}
+    assert "recent pending" in attention
+    assert "old pending" not in attention
+
+
+async def test_bad_since_raises_before_any_query() -> None:
+    """A bad ``since`` token raises ``SinceParseError`` from build_project_pulse."""
+    adapter, _client = await _fresh_adapter("since_bad")
+    with pytest.raises(SinceParseError):
+        await build_project_pulse(adapter, since="garbage")
+
+
+# ── 11. feature filter on build_project_pulse (#437 Phase 2) ──────────────
+
+
+async def test_feature_filters_by_feature_hint() -> None:
+    """``feature`` keeps only decisions whose ``feature_hint`` matches."""
+    adapter, client = await _fresh_adapter("feature_filter")
+    await _seed_decision(
+        client,
+        description="checkout pending",
+        signoff={"state": "proposed", "signer": "jin"},
+        feature_hint="checkout",
+    )
+    await _seed_decision(
+        client,
+        description="search pending",
+        signoff={"state": "proposed", "signer": "silong"},
+        feature_hint="search",
+    )
+
+    summary = await build_project_pulse(adapter, feature="checkout")
+
+    attention = {item.summary for item in summary.needs_attention}
+    assert "checkout pending" in attention
+    assert "search pending" not in attention
+    learned = {item.summary for item in summary.recently_learned}
+    assert "checkout pending" in learned
+    assert "search pending" not in learned
+
+
+# ── 12. defaults preserve Phase 1 behavior (#437 Phase 2) ─────────────────
+
+
+async def test_since_and_feature_default_none_preserves_phase1_behavior() -> None:
+    """``since=None`` + ``feature=None`` (the defaults) filter nothing."""
+    adapter, client = await _fresh_adapter("defaults")
+    await _seed_decision(
+        client,
+        description="pending one",
+        signoff={"state": "proposed", "signer": "jin"},
+        feature_hint="checkout",
+    )
+    await _seed_decision(
+        client,
+        description="pending two",
+        signoff={"state": "proposed", "signer": "silong"},
+        feature_hint="",
+    )
+
+    summary = await build_project_pulse(adapter)
+
+    # Both decisions surface — no filter applied.
+    assert len(summary.needs_attention) == 2
+    assert len(summary.recently_learned) == 2

@@ -1508,6 +1508,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.sync_and_brief_cli import _build_argparser as _sb_build
 
     _sb_build(sync_and_brief)
+    brief = subparsers.add_parser(
+        "brief",
+        help="print a concise Project Pulse summary of project memory (#437)",
+    )
+    from cli.brief_cli import _build_argparser as _brief_build
+
+    _brief_build(brief)
     source_auth = subparsers.add_parser(
         "source-auth",
         help="run the OAuth handshake for an ingest source and persist the token (#337 Phase 5b)",
@@ -1638,6 +1645,10 @@ def _dispatch(args: Any) -> int:
         from cli.sync_and_brief_cli import main as sync_and_brief_main
 
         return sync_and_brief_main(args)
+    if args.command == "brief":
+        from cli.brief_cli import main as brief_main
+
+        return brief_main(args)
     if args.command == "source-auth":
         from cli.source_auth_cli import main as source_auth_main
 

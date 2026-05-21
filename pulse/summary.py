@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ class LearnedItem:
 
     Carries only opaque, ledger-exposed fields — ``decision_id``, ``summary``
     (the decision ``description``), ``source_type``, ``source_ref`` and a
-    ``date`` — the same data ``brief_renderer.py`` already renders. No raw
+    ``date``. ``pulse/render.py`` renders these as plain text. No raw
     transcript text or signer emails are added.
     """
 
@@ -160,6 +161,111 @@ def _decision_sort_key(decision: dict[str, Any]) -> str:
     return str(decision.get("ingested_at") or decision.get("meeting_date") or "")
 
 
+class SinceParseError(ValueError):
+    """Raised when ``--since`` cannot be parsed into a cutoff date.
+
+    Carries a human-readable message; the CLI surfaces it and exits 2.
+    """
+
+
+def _parse_since(value: str, *, now: datetime | None = None) -> datetime:
+    """Parse a ``--since`` token into an inclusive UTC cutoff ``datetime``.
+
+    Accepted grammar (minimal by design — fancier natural-language date
+    parsing is a deferred nicety):
+
+    * an ISO date — ``2026-05-20``;
+    * the relative keyword ``today`` — midnight UTC today;
+    * the relative keyword ``yesterday`` — midnight UTC yesterday;
+    * ``Nd`` — N days ago (e.g. ``7d``).
+
+    Args:
+        value: The raw ``--since`` token.
+        now: Injectable "current time" for deterministic tests. Defaults to
+            ``datetime.now(UTC)``.
+
+    Returns:
+        A timezone-aware UTC ``datetime`` — the inclusive lower bound; a
+        decision is kept iff its date is ``>=`` this cutoff.
+
+    Raises:
+        SinceParseError: ``value`` does not match the accepted grammar.
+    """
+    raw = (value or "").strip().lower()
+    if not raw:
+        raise SinceParseError("--since value is empty")
+    reference = now or datetime.now(UTC)
+    midnight = reference.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if raw == "today":
+        return midnight
+    if raw == "yesterday":
+        return midnight - timedelta(days=1)
+    if raw.endswith("d") and raw[:-1].isdigit():
+        return midnight - timedelta(days=int(raw[:-1]))
+
+    try:
+        parsed = datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise SinceParseError(
+            f"unrecognized --since value {value!r}; "
+            "use an ISO date (2026-05-20), 'today', 'yesterday', or 'Nd' (e.g. 7d)"
+        ) from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _decision_date(decision: dict[str, Any]) -> datetime | None:
+    """Best-effort parse of a decision's recency date into a UTC ``datetime``.
+
+    Uses the same ``ingested_at`` / ``meeting_date`` precedence as
+    ``_decision_sort_key``. Returns ``None`` when neither field carries a
+    parseable ISO timestamp — an undated decision is then conservatively
+    excluded by the ``since`` filter.
+    """
+    raw = _decision_sort_key(decision)
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+def _filter_decisions(
+    decisions: list[dict[str, Any]],
+    *,
+    since: datetime | None,
+    feature: str | None,
+) -> list[dict[str, Any]]:
+    """Apply the ``since`` / ``feature`` filters to raw decision rows.
+
+    Both filters run on the raw ``get_all_decisions`` rows — before the
+    ``LearnedItem`` / ``NeedsAttentionItem`` objects are assembled — so the
+    filters apply uniformly and no Phase-1 object-shape change is needed.
+
+    * ``since``: keeps decisions whose date is ``>= since`` (an undated
+      decision is excluded).
+    * ``feature``: keeps decisions whose ``feature_hint`` equals ``feature``.
+    """
+    if since is None and feature is None:
+        return decisions
+    out: list[dict[str, Any]] = []
+    for decision in decisions:
+        if since is not None:
+            decision_date = _decision_date(decision)
+            if decision_date is None or decision_date < since:
+                continue
+        if feature is not None and str(decision.get("feature_hint") or "") != feature:
+            continue
+        out.append(decision)
+    return out
+
+
 def _is_awaiting_ratification(decision: dict[str, Any]) -> bool:
     """True iff the decision is awaiting ratification.
 
@@ -208,13 +314,19 @@ async def _build_health(
     return health
 
 
-async def _build_needs_attention(ledger: Any) -> list[NeedsAttentionItem]:
+async def _build_needs_attention(
+    ledger: Any,
+    *,
+    since: datetime | None = None,
+    feature: str | None = None,
+) -> list[NeedsAttentionItem]:
     """Compute the ``needs_attention`` section — fail-soft.
 
     From ``get_all_decisions(filter="all")``, keeps decisions awaiting
     ratification (``signoff.state == "proposed"``) and builds one
-    ``NeedsAttentionItem`` each. A ledger failure degrades the section to an
-    empty list.
+    ``NeedsAttentionItem`` each. The ``since`` / ``feature`` filters are
+    applied to the raw rows before assembly. A ledger failure degrades the
+    section to an empty list.
     """
     try:
         decisions = await ledger.get_all_decisions(filter="all")
@@ -222,8 +334,9 @@ async def _build_needs_attention(ledger: Any) -> list[NeedsAttentionItem]:
         logger.warning("[project-pulse] needs_attention fetch failed: %s", exc)
         return []
 
+    filtered = _filter_decisions(list(decisions or []), since=since, feature=feature)
     items: list[NeedsAttentionItem] = []
-    for decision in decisions or []:
+    for decision in filtered:
         if not _is_awaiting_ratification(decision):
             continue
         signoff = decision.get("signoff") or {}
@@ -239,11 +352,19 @@ async def _build_needs_attention(ledger: Any) -> list[NeedsAttentionItem]:
     return items
 
 
-async def _build_recently_learned(ledger: Any, *, recent_limit: int) -> list[LearnedItem]:
+async def _build_recently_learned(
+    ledger: Any,
+    *,
+    recent_limit: int,
+    since: datetime | None = None,
+    feature: str | None = None,
+) -> list[LearnedItem]:
     """Compute the ``recently_learned`` section — fail-soft.
 
     Returns the most-recent ``recent_limit`` decisions (newest first) as
-    ``LearnedItem``s. A ledger failure degrades the section to an empty list.
+    ``LearnedItem``s. The ``since`` / ``feature`` filters are applied to the
+    raw rows before the recency sort + cap. A ledger failure degrades the
+    section to an empty list.
     """
     try:
         decisions = await ledger.get_all_decisions(filter="all")
@@ -251,7 +372,8 @@ async def _build_recently_learned(ledger: Any, *, recent_limit: int) -> list[Lea
         logger.warning("[project-pulse] recently_learned fetch failed: %s", exc)
         return []
 
-    ordered = sorted(decisions or [], key=_decision_sort_key, reverse=True)
+    filtered = _filter_decisions(list(decisions or []), since=since, feature=feature)
+    ordered = sorted(filtered, key=_decision_sort_key, reverse=True)
     items: list[LearnedItem] = []
     for decision in ordered[: max(recent_limit, 0)]:
         items.append(
@@ -291,6 +413,8 @@ async def build_project_pulse(
     recent_limit: int = 8,
     drift_findings: list[dict[str, Any]] | None = None,
     last_sync: str | None = None,
+    since: str | None = None,
+    feature: str | None = None,
 ) -> ProjectPulseSummary:
     """Build the shared ``ProjectPulseSummary`` from the ledger — read-only.
 
@@ -302,23 +426,37 @@ async def build_project_pulse(
     Args:
         ledger: A ledger adapter exposing ``get_decisions_by_status`` and
             ``get_all_decisions`` (e.g. ``SurrealDBLedgerAdapter``).
-        recent_limit: Cap for ``recently_learned`` — the configuration seam
-            Phase 2's ``--since`` flag will parameterize. Defaults to 8.
+        recent_limit: Cap for ``recently_learned``. Defaults to 8.
         drift_findings: Best-effort drift findings supplied by the caller.
             Drift computation is not done here. Defaults to ``None``.
         last_sync: Injected ISO timestamp of the last sync, or ``None`` when no
             canonical watermark is available. Defaults to ``None``.
+        since: Optional ``--since`` token (ISO date / ``today`` / ``yesterday``
+            / ``Nd``). When given, ``needs_attention`` and ``recently_learned``
+            are filtered to decisions dated ``>=`` the resolved cutoff.
+            Defaults to ``None`` (no recency filter — Phase 1 behavior).
+        feature: Optional feature filter. When given, ``needs_attention`` and
+            ``recently_learned`` are filtered to decisions whose
+            ``feature_hint`` equals this value. Defaults to ``None``.
 
     Returns:
         A fully-assembled ``ProjectPulseSummary``.
+
+    Raises:
+        SinceParseError: ``since`` is non-empty and does not match the
+            accepted grammar. Raised before any ledger query.
     """
+    since_dt = _parse_since(since) if since else None
+
     health = await _build_health(
         ledger,
         drift_findings=drift_findings,
         last_sync=last_sync,
     )
-    needs_attention = await _build_needs_attention(ledger)
-    recently_learned = await _build_recently_learned(ledger, recent_limit=recent_limit)
+    needs_attention = await _build_needs_attention(ledger, since=since_dt, feature=feature)
+    recently_learned = await _build_recently_learned(
+        ledger, recent_limit=recent_limit, since=since_dt, feature=feature
+    )
 
     suggested_next_move = _suggest_next_move(
         drifted_regions=health.drifted_regions,

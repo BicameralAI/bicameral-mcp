@@ -232,9 +232,16 @@ async def _synthesize_brief(
     max_decisions: int,
     team_sync: dict | None = None,
 ) -> str:
-    """Compute drift findings, fetch recent decisions, render the brief."""
-    from cli.brief_renderer import render_brief
+    """Compute drift findings, build the Project Pulse summary, render it.
+
+    #437 Phase 2: the session-start brief is rendered through the shared
+    ``build_project_pulse`` + ``render_pulse_text`` pair — the same backend
+    object and renderer the ``bicameral-mcp brief`` CLI uses — instead of a
+    duplicated summary path. ``max_decisions`` maps to ``recent_limit``;
+    ``team_sync`` is threaded into ``render_pulse_text``'s footer.
+    """
     from handlers.preflight import handle_preflight
+    from pulse import build_project_pulse, render_pulse_text
 
     drift_findings: list[dict] = []
     try:
@@ -250,28 +257,26 @@ async def _synthesize_brief(
     except Exception as exc:  # noqa: BLE001 — drift is best-effort
         logger.warning("[sync-and-brief] preflight failed: %s", exc)
 
-    decisions: list = []
-    try:
-        ledger = ctx.ledger
-        if hasattr(ledger, "connect"):
+    ledger = ctx.ledger
+    if hasattr(ledger, "connect"):
+        try:
             await ledger.connect()
-        all_decisions = await ledger.get_all_decisions(filter="all")
-        # Sort newest-first then cap.
-        decisions = sorted(
-            all_decisions,
-            key=lambda d: _get_decision_sort_key(d),
-            reverse=True,
-        )[:max_decisions]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("[sync-and-brief] decision fetch failed: %s", exc)
+        except Exception as exc:  # noqa: BLE001 — fail-soft; build_project_pulse degrades
+            logger.warning("[sync-and-brief] ledger connect failed: %s", exc)
+
+    # `build_project_pulse` is fail-soft per section — a ledger failure
+    # degrades the affected section rather than crashing the brief.
+    summary = await build_project_pulse(
+        ledger,
+        recent_limit=max(max_decisions, 0),
+        drift_findings=drift_findings,
+    )
 
     signer_mode = _resolve_signer_fallback_mode(ctx)
-    return render_brief(
-        decisions,
-        drift_findings,
-        max_decisions=max_decisions,
-        signer_fallback_mode=signer_mode,
+    return render_pulse_text(
+        summary,
         team_sync=team_sync,
+        signer_fallback_mode=signer_mode,
     )
 
 
@@ -305,12 +310,6 @@ def _finding_to_dict(f: Any) -> dict:
     if hasattr(f, "model_dump"):
         return f.model_dump()
     return {"value": str(f)}
-
-
-def _get_decision_sort_key(d: Any) -> str:
-    if isinstance(d, dict):
-        return str(d.get("created_at") or "")
-    return str(getattr(d, "created_at", "") or "")
 
 
 def _log_to_errors_file(exc: BaseException) -> None:

@@ -188,10 +188,9 @@ def test_run_source_warns_on_unknown_source_type(tmp_path: Path, capsys) -> None
 def test_synthesize_brief_calls_preflight_and_renders_brief(
     tmp_path: Path,
 ) -> None:
-    """_synthesize_brief calls handle_preflight + ledger.get_all_decisions
-    and returns rendered markdown."""
+    """_synthesize_brief calls handle_preflight + build_project_pulse and
+    returns the rendered Project Pulse brief (#437 Phase 2 rewire)."""
     ctx = _make_ctx(tmp_path)
-    ctx.ledger.get_all_decisions = AsyncMock(return_value=[])
     fake_preflight = AsyncMock(return_value=SimpleNamespace(findings=[]))
 
     import asyncio
@@ -199,9 +198,12 @@ def test_synthesize_brief_calls_preflight_and_renders_brief(
     with patch("handlers.preflight.handle_preflight", new=fake_preflight):
         result = asyncio.run(sb._synthesize_brief(ctx, max_decisions=20))
 
-    assert "# Session Brief" in result
+    # #437 Phase 2: the brief is now the shared Project Pulse render.
+    assert "Bicameral Brief" in result
+    assert "read-only data" in result  # prompt-injection data-framing line
     fake_preflight.assert_awaited_once()
-    ctx.ledger.get_all_decisions.assert_awaited_once()
+    # build_project_pulse reads decisions from the ledger.
+    ctx.ledger.get_all_decisions.assert_awaited()
 
 
 def test_synthesize_brief_continues_when_preflight_fails(
@@ -209,7 +211,6 @@ def test_synthesize_brief_continues_when_preflight_fails(
 ) -> None:
     """Drift is best-effort; preflight failure does NOT crash the brief."""
     ctx = _make_ctx(tmp_path)
-    ctx.ledger.get_all_decisions = AsyncMock(return_value=[])
     fake_preflight = AsyncMock(side_effect=RuntimeError("preflight wedged"))
 
     import asyncio
@@ -217,9 +218,8 @@ def test_synthesize_brief_continues_when_preflight_fails(
     with patch("handlers.preflight.handle_preflight", new=fake_preflight):
         result = asyncio.run(sb._synthesize_brief(ctx, max_decisions=20))
 
-    assert "# Session Brief" in result
-    # Drift section still rendered (with empty findings)
-    assert "## Drift candidates" in result
+    # The brief still renders — drift simply contributes zero findings.
+    assert "Bicameral Brief" in result
 
 
 # ── quiet flag ───────────────────────────────────────────────────────────
