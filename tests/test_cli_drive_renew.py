@@ -12,7 +12,9 @@ Coverage:
 - Happy path renews 1 channel: persists new record, stops old,
   deletes old entry
 - callback_url empty (pre-9c row) → skipped with reason; not a hard fail
-- successor response missing resourceId → cleanup + per-channel fail
+- successor response missing resourceId → honest MANUAL ACTION log,
+  no doomed channels.stop() call, per-channel fail (LOW-2)
+- --token-rotation always/preserve, empty-token fallback, bad value (MED-3)
 - persist failure → cleanup attempted + per-channel fail
 - old channels.stop 404 → tolerated (continue)
 - old registry.delete failure → tolerated + warning (don't fail the renewal)
@@ -45,8 +47,16 @@ def _reset_channels(tmp_path: Path):
     _channels_reset()
 
 
-def _args(threshold_seconds: int = 12 * 60 * 60, dry_run: bool = False) -> argparse.Namespace:
-    return argparse.Namespace(threshold_seconds=threshold_seconds, dry_run=dry_run)
+def _args(
+    threshold_seconds: int = 12 * 60 * 60,
+    dry_run: bool = False,
+    token_rotation: str = "always",
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        threshold_seconds=threshold_seconds,
+        dry_run=dry_run,
+        token_rotation=token_rotation,
+    )
 
 
 def _record(
@@ -249,9 +259,14 @@ def test_pre_9c_rows_partition_does_not_mask_renewable_failures(
     assert "failed: 1" in captured.out  # only ch-403 counted
 
 
-def test_renew_missing_resource_id_on_successor_cleans_up(
+def test_renew_missing_resource_id_emits_manual_action(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ):
+    """LOW-2 (cycle-9c review): when the successor files.watch response
+    lacks resourceId, the channel cannot be stopped via the API
+    (channels.stop requires a resourceId). The handler must emit an
+    honest MANUAL ACTION log and must NOT make a doomed channels.stop()
+    call with an empty resourceId."""
     from cli.drive_renew_cli import main
     from sources.google_drive.channels import get_registry
 
@@ -266,9 +281,109 @@ def test_renew_missing_resource_id_on_successor_cleans_up(
     rc = main(_args())
     assert rc == 2
     captured = capsys.readouterr()
+    # Per-channel failure surfaced in the stdout summary.
     assert "resourceId" in captured.out
+    # Honest MANUAL ACTION log on stderr — no cleanup theater.
+    assert "MANUAL ACTION" in captured.err
+    # The doomed channels.stop() call must NOT have been made for the
+    # no-resourceId path (the old code called it with resourceId="").
+    assert fake_service.channels().stop.call_count == 0
     # Old entry still present — renewal didn't complete.
     assert get_registry().get("ch-noresid") is not None
+
+
+# ── MED-3: --token-rotation policy ──────────────────────────────────────────
+
+
+def _successor_record(registry, old_channel_id: str):
+    """After a successful renewal the registry holds exactly the
+    successor (old entry deleted). Return it."""
+    rows = [r for r in registry.list_all() if r.channel_id != old_channel_id]
+    assert len(rows) == 1, f"expected exactly one successor, got {len(rows)}"
+    return rows[0]
+
+
+def test_token_rotation_always_mints_fresh_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    """Default policy: the successor channel gets a freshly minted
+    token, distinct from the old channel's token."""
+    from cli.drive_renew_cli import main
+    from sources.google_drive.channels import get_registry
+
+    get_registry().register(_record(channel_id="ch-rot", token="tok-old"))
+
+    monkeypatch.setattr("sources.google_drive.auth.load_credentials", lambda: object())
+    fake_service = MagicMock()
+    fake_service.files().watch().execute.return_value = _watch_response()
+    monkeypatch.setattr("googleapiclient.discovery.build", lambda *a, **kw: fake_service)
+
+    rc = main(_args(token_rotation="always"))
+    assert rc == 0
+    successor = _successor_record(get_registry(), "ch-rot")
+    assert successor.token != "tok-old"
+    assert len(successor.token) > 0
+
+
+def test_token_rotation_preserve_reuses_token(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    """--token-rotation preserve: the successor channel reuses the old
+    channel's token verbatim."""
+    from cli.drive_renew_cli import main
+    from sources.google_drive.channels import get_registry
+
+    get_registry().register(_record(channel_id="ch-keep", token="tok-old"))
+
+    monkeypatch.setattr("sources.google_drive.auth.load_credentials", lambda: object())
+    fake_service = MagicMock()
+    fake_service.files().watch().execute.return_value = _watch_response()
+    monkeypatch.setattr("googleapiclient.discovery.build", lambda *a, **kw: fake_service)
+
+    rc = main(_args(token_rotation="preserve"))
+    assert rc == 0
+    successor = _successor_record(get_registry(), "ch-keep")
+    assert successor.token == "tok-old"
+    # Per-pass posture notice surfaced on stderr.
+    assert "preserve" in capsys.readouterr().err
+
+
+def test_token_rotation_preserve_empty_token_falls_back(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    """--token-rotation preserve on a row whose stored token is empty
+    (registry corruption / pre-9c) must fall back to minting a fresh
+    non-empty token — persisting a tokenless successor would produce a
+    channel that verify_notification rejects on every delivery."""
+    from cli.drive_renew_cli import main
+    from sources.google_drive.channels import get_registry
+
+    get_registry().register(_record(channel_id="ch-notoken", token=""))
+
+    monkeypatch.setattr("sources.google_drive.auth.load_credentials", lambda: object())
+    fake_service = MagicMock()
+    fake_service.files().watch().execute.return_value = _watch_response()
+    monkeypatch.setattr("googleapiclient.discovery.build", lambda *a, **kw: fake_service)
+
+    rc = main(_args(token_rotation="preserve"))
+    assert rc == 0
+    successor = _successor_record(get_registry(), "ch-notoken")
+    assert len(successor.token) > 0, "successor must not be tokenless"
+    # The fallback is logged so the operator sees it.
+    assert "empty" in capsys.readouterr().err
+
+
+def test_token_rotation_rejects_unknown_value():
+    """argparse choices reject an invalid --token-rotation value at
+    parse time."""
+    from cli.drive_renew_cli import _build_argparser
+
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers()
+    renew = sub.add_parser("drive-renew")
+    _build_argparser(renew)
+    with pytest.raises(SystemExit):
+        parser.parse_args(["drive-renew", "--token-rotation", "bogus"])
 
 
 def test_renew_files_watch_http_error_per_channel(
