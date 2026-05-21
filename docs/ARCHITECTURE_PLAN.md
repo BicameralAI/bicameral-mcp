@@ -49,7 +49,7 @@ bicameral-mcp/                  (repo root, flat layout — no `bicameral/` pack
 │   ├── retrieval/              bm25s_client, sqlite_vec_client
 │   ├── fusion/                 RRF
 │   └── tools/                  validate_symbols, search_code, get_neighbors
-├── dashboard/                  optional web UI for ledger viewing
+├── dashboard/                  web UI — Dashboard v2 surface (on-demand; CLI output is primary)
 ├── skills/                     Claude skill definitions (.md)
 ├── docs/                       this directory; project DNA + design docs
 ├── tests/                      pytest suite (markers: phase1/phase2/phase3/alpha_flow/bench)
