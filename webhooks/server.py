@@ -15,6 +15,7 @@ Routes:
 - ``POST /webhooks/linear``         → ``webhooks.linear.handle``
 - ``POST /webhooks/google-drive``   → ``webhooks.google_drive.handle``
 - ``POST /webhooks/notion``         → ``webhooks.notion.handle``
+- ``POST /webhooks/jira``           → ``webhooks.jira.handle``
 - ``GET /health``                   → 200 ack (for load-balancer health checks)
 
 ## Hardening (post code-review)
@@ -233,6 +234,13 @@ async def _process_request(reader: asyncio.StreamReader, writer: asyncio.StreamW
         await _respond(writer, status, message)
         return
 
+    if path == "/webhooks/jira":
+        status, message = await asyncio.to_thread(
+            _dispatch_jira, body, MappingProxyType(dict(headers))
+        )
+        await _respond(writer, status, message)
+        return
+
     await _respond(writer, 404, "not found")
 
 
@@ -289,6 +297,22 @@ def _dispatch_google_drive(body: bytes, headers) -> tuple[int, str]:
         resource_id=headers.get("x-goog-resource-id"),
         resource_state=headers.get("x-goog-resource-state"),
         message_number=headers.get("x-goog-message-number"),
+    )
+
+
+def _dispatch_jira(body: bytes, headers) -> tuple[int, str]:
+    """Sync entrypoint into the Jira handler (called via to_thread).
+
+    Pulls the HMAC signature (``X-Hub-Signature`` — note: not GitHub's
+    ``X-Hub-Signature-256``) and the per-tenant delivery identifier
+    (``X-Atlassian-Webhook-Identifier``) used for dedup.
+    """
+    from webhooks.jira import handle
+
+    return handle(
+        body=body,
+        signature_header=headers.get("x-hub-signature"),
+        delivery_identifier=headers.get("x-atlassian-webhook-identifier"),
     )
 
 
