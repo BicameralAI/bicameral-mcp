@@ -52,6 +52,10 @@ Settings are not a later polish pass. Incoming integrations make settings, scope
 
 WCAG accessibility must be designed into the first version of Dashboard v2. It cannot be bolted on later without turning the UI into a haunted checkbox museum.
 
+### 2.7 CLI-first delivery, on-demand UI
+
+The web dashboard is a significant product surface, but it is not the primary delivery channel and it is not required to run continuously. Direct agent and CLI output — MCP tool responses, the `brief` command, and the session-start brief — remain the prioritized path for delivering project memory to the user. The dashboard is a rich, on-demand view opened when the user wants depth; Bicameral must remain fully usable with the dashboard closed.
+
 ## 3. Primary Navigation Model
 
 Dashboard v2 should use this core navigation structure.
