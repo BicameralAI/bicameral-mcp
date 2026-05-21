@@ -1,6 +1,6 @@
 # bicameral-dashboard
 
-Launch the live decision dashboard — a local browser tab that shows every tracked decision grouped by feature area and pushes real-time updates whenever `bicameral.ingest` or `bicameral.link_commit` writes new data.
+Launch the live decision dashboard — a local browser tab that opens to a Project Pulse landing view (health, what needs attention, recently learned, suggested next move) above every tracked decision grouped by feature area, and pushes real-time updates whenever `bicameral.ingest` or `bicameral.link_commit` writes new data.
 
 ## Triggers
 
