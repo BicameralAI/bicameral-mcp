@@ -7,6 +7,7 @@ Endpoints:
   GET /           → dashboard.html (self-contained HTML/JS bundle)
   GET /events     → SSE stream; each event is a full HistoryResponse JSON blob
   GET /history    → one-shot JSON dump (initial load fallback)
+  GET /pulse      → one-shot ProjectPulseSummary JSON (#437 Phase 3)
 
 The server is a module-level singleton started once when serve_stdio() runs.
 Write handlers (ingest, link_commit) call notify(ctx) to push updates.
@@ -131,6 +132,8 @@ class DashboardServer:
                 await self._serve_html(writer)
             elif method == "GET" and path == "/history":
                 await self._serve_history(writer)
+            elif method == "GET" and path == "/pulse":
+                await self._serve_pulse(writer)
             elif method == "GET" and path == "/events":
                 await self._serve_sse(writer)
             elif method == "POST" and path == "/admin/query":
@@ -169,6 +172,26 @@ class DashboardServer:
 
             response = await handle_history(ctx)
             body = json.dumps(response.model_dump(), default=str).encode()
+        except Exception as exc:
+            body = json.dumps({"error": str(exc)}).encode()
+        writer.write(_send_body(_HTTP_200_JSON, body))
+        await writer.drain()
+
+    async def _serve_pulse(self, writer: asyncio.StreamWriter) -> None:
+        """Serve a one-shot Project Pulse summary as JSON (#437 Phase 3).
+
+        Read-only — mirrors ``_serve_history``: builds a ``ProjectPulseSummary``
+        from the ledger via ``build_project_pulse`` and returns its
+        ``to_dict()`` shape. ``build_project_pulse`` is fail-soft per section;
+        a hard failure here surfaces an ``{"error": ...}`` body so the Pulse
+        section can show an error without crashing the dashboard server.
+        """
+        try:
+            ctx = self._ctx_factory()
+            from pulse.summary import build_project_pulse
+
+            summary = await build_project_pulse(ctx.ledger)
+            body = json.dumps(summary.to_dict(), default=str).encode()
         except Exception as exc:
             body = json.dumps({"error": str(exc)}).encode()
         writer.write(_send_body(_HTTP_200_JSON, body))

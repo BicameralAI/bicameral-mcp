@@ -81,6 +81,101 @@ body {
 /* ── MAIN ────────────────────────────────────────────────── */
 .main { max-width: 1000px; margin: 0 auto; padding: 24px 28px 80px; }
 
+/* ── PROJECT PULSE LANDING VIEW (#437 Phase 3) ─────────────── */
+.pulse { max-width: 1000px; margin: 0 auto; padding: 24px 28px 8px; }
+.pulse-loading, .pulse-error {
+  padding: 28px 0; text-align: center;
+  color: var(--text-dim); font-size: 12px;
+}
+.pulse-error { color: var(--amber); }
+.pulse-card {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 18px 20px;
+}
+.pulse-title {
+  font-family: var(--serif);
+  font-size: 15px; font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 0.02em;
+  margin-bottom: 4px;
+}
+.pulse-allclear {
+  font-size: 12px; color: var(--green);
+  background: var(--green-soft);
+  border: 1px solid var(--green);
+  border-radius: 3px;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  line-height: 1.7;
+}
+.pulse-section { margin-top: 16px; }
+.pulse-section:first-of-type { margin-top: 10px; }
+.pulse-section-name {
+  font-size: 10.5px; font-weight: 500;
+  color: var(--text-dim);
+  letter-spacing: 0.1em; text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px; margin-bottom: 8px;
+}
+.pulse-health {
+  display: flex; flex-wrap: wrap; gap: 8px 18px;
+}
+.pulse-stat { display: flex; align-items: baseline; gap: 6px; }
+.pulse-stat-num {
+  font-size: 16px; font-weight: 500;
+  color: var(--accent);
+}
+.pulse-stat-num.drift { color: var(--amber); }
+.pulse-stat-label { font-size: 11px; color: var(--text-dim); }
+.pulse-sync {
+  font-size: 11px; color: var(--text-light);
+  margin-top: 8px;
+}
+.pulse-row {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border);
+  cursor: pointer;
+}
+.pulse-row:last-child { border-bottom: none; }
+.pulse-row:hover .pulse-row-summary { color: var(--accent); }
+.pulse-row-kind {
+  font-size: 9.5px; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border: 1px solid var(--amber);
+  border-radius: 2px;
+  padding: 1px 6px; flex-shrink: 0;
+}
+.pulse-row-src {
+  font-size: 9.5px; letter-spacing: 0.04em;
+  color: var(--text-dim);
+  background: var(--accent-soft);
+  border-radius: 2px;
+  padding: 1px 6px; flex-shrink: 0;
+}
+.pulse-row-summary {
+  font-size: 12px; color: var(--text);
+  flex: 1; min-width: 0;
+}
+.pulse-row-meta {
+  font-size: 10.5px; color: var(--text-light);
+  flex-shrink: 0;
+}
+.pulse-empty {
+  font-size: 11px; color: var(--text-light);
+  font-style: italic; padding: 4px 0;
+}
+.pulse-next {
+  font-size: 12px; color: var(--text);
+  background: var(--accent-soft);
+  border-left: 2px solid var(--accent);
+  padding: 8px 12px;
+}
+
 .empty {
   padding: 72px 0; text-align: center;
   color: var(--text-dim); font-size: 12px; line-height: 2;
@@ -604,6 +699,16 @@ body {
   </label>
   <span id="tref" class="topbar-ref"></span>
 </header>
+
+<!-- ── PROJECT PULSE LANDING VIEW (#437 Phase 3) ──────────────── -->
+<!-- Populated by renderPulse() from GET /pulse. Every user-sourced
+     string (decision summary, source ref, signer, decision id) is
+     inserted via esc() — never raw innerHTML interpolation. The /pulse
+     fetch is independent of /history: a Pulse failure shows an inline
+     error here and the ledger table below still loads. -->
+<section id="pulse" class="pulse">
+  <div class="pulse-loading">Loading project pulse…</div>
+</section>
 
 <main class="main" id="root">
   <div class="empty">Loading decision ledger…</div>
@@ -1411,6 +1516,124 @@ function jumpToDecision(id) {
   row.scrollIntoView({behavior: 'smooth', block: 'center'});
 }
 
+// ── Project Pulse landing view (#437 Phase 3) ──────────────────
+// renderPulse builds the four ProjectPulseSummary sections into #pulse.
+// XSS discipline (load-bearing): EVERY user-sourced value — decision
+// summaries, source refs/types, signers, decision ids, last_sync — is
+// inserted via esc() (or fmtDate, which derives a fixed-shape string).
+// No raw user string is ever concatenated into innerHTML unescaped, and
+// every data-decision-id attribute is esc()'d.
+function pulseSignerLabel(signer) {
+  // The CLI renderer shows only the local-part of a signer email; mirror
+  // that here so the dashboard never prints a full address.
+  if (!signer) return '';
+  const s = String(signer);
+  const at = s.indexOf('@');
+  return at > 0 ? s.slice(0, at) : s;
+}
+
+function renderPulseHealth(health) {
+  const h = health || {};
+  const stat = (num, label, drift) =>
+    `<div class="pulse-stat">
+       <span class="pulse-stat-num${drift ? ' drift' : ''}">${esc(num ?? 0)}</span>
+       <span class="pulse-stat-label">${esc(label)}</span>
+     </div>`;
+  const sync = h.last_sync
+    ? `<div class="pulse-sync">Last sync: ${esc(fmtDate(h.last_sync))}</div>`
+    : `<div class="pulse-sync">Last sync: never</div>`;
+  return `
+<div class="pulse-section">
+  <div class="pulse-section-name">Health</div>
+  <div class="pulse-health">
+    ${stat(h.decisions_reflected, 'reflected')}
+    ${stat(h.decisions_drifted, 'drifted', (h.decisions_drifted || 0) > 0)}
+    ${stat(h.decisions_pending, 'pending')}
+    ${stat(h.decisions_ungrounded, 'ungrounded')}
+    ${stat(h.drifted_regions, 'drifted regions', (h.drifted_regions || 0) > 0)}
+  </div>
+  ${sync}
+</div>`;
+}
+
+function renderPulseNeedsAttention(items) {
+  const list = items || [];
+  let inner;
+  if (!list.length) {
+    inner = `<div class="pulse-empty">Nothing awaiting attention.</div>`;
+  } else {
+    inner = list.map(it => {
+      const kind = String(it.kind || '').replace(/_/g, ' ');
+      const signer = pulseSignerLabel(it.signer);
+      const meta = signer ? `<span class="pulse-row-meta">${esc(signer)}</span>` : '';
+      return `
+<div class="pulse-row" data-decision-id="${esc(it.decision_id)}">
+  <span class="pulse-row-kind">${esc(kind)}</span>
+  <span class="pulse-row-summary">${esc(it.summary)}</span>
+  ${meta}
+</div>`;
+    }).join('');
+  }
+  return `
+<div class="pulse-section">
+  <div class="pulse-section-name">Needs Attention</div>
+  ${inner}
+</div>`;
+}
+
+function renderPulseRecentlyLearned(items) {
+  const list = items || [];
+  let inner;
+  if (!list.length) {
+    inner = `<div class="pulse-empty">No decisions recorded yet.</div>`;
+  } else {
+    inner = list.map(it => {
+      const srcBits = [it.source_type, it.source_ref].filter(Boolean).join(' · ');
+      const src = srcBits
+        ? `<span class="pulse-row-src">${esc(srcBits)}</span>` : '';
+      const date = it.date
+        ? `<span class="pulse-row-meta">${esc(fmtDate(it.date))}</span>` : '';
+      return `
+<div class="pulse-row" data-decision-id="${esc(it.decision_id)}">
+  ${src}
+  <span class="pulse-row-summary">${esc(it.summary)}</span>
+  ${date}
+</div>`;
+    }).join('');
+  }
+  return `
+<div class="pulse-section">
+  <div class="pulse-section-name">Recently Learned</div>
+  ${inner}
+</div>`;
+}
+
+function renderPulse(summary) {
+  const el = document.getElementById('pulse');
+  if (!el) return;
+  if (!summary || summary.error) {
+    el.innerHTML =
+      `<div class="pulse-error">Project Pulse unavailable: ${esc((summary && summary.error) || 'no data')}</div>`;
+    return;
+  }
+  const allClear = summary.is_all_clear
+    ? `<div class="pulse-allclear">Bicameral checked project memory.<br>
+       No drift, no pending signoffs — memory is current.</div>`
+    : '';
+  el.innerHTML = `
+<div class="pulse-card">
+  <div class="pulse-title">Project Pulse</div>
+  ${allClear}
+  ${renderPulseHealth(summary.health)}
+  ${renderPulseNeedsAttention(summary.needs_attention)}
+  ${renderPulseRecentlyLearned(summary.recently_learned)}
+  <div class="pulse-section">
+    <div class="pulse-section-name">Suggested Next Move</div>
+    <div class="pulse-next">${esc(summary.suggested_next_move)}</div>
+  </div>
+</div>`;
+}
+
 // ── render ────────────────────────────────────────────────────
 let _lastFeaturesJson = null;
 
@@ -1531,7 +1754,24 @@ document.addEventListener('click', (ev) => {
   jumpToDecision(link.dataset.decisionId);
 });
 
+// #437 Phase 3 — delegated click for Project Pulse rows. Same discipline:
+// decision ids are carried in a data- attribute (esc()'d — `"` is escaped),
+// never interpolated into an inline onclick JS string (esc() does not escape
+// `'`, so an inline-onclick id would be a breakout vector).
+document.addEventListener('click', (ev) => {
+  const row = ev.target.closest('.pulse-row[data-decision-id]');
+  if (!row) return;
+  jumpToDecision(row.dataset.decisionId);
+});
+
 fetch('/history').then(r => r.json()).then(render).catch(() => {});
+// #437 Phase 3 — the Pulse fetch is independent of /history: a /pulse
+// failure shows an inline Pulse-section error and must NOT block the
+// ledger table above.
+fetch('/pulse').then(r => r.json()).then(renderPulse).catch(() => {
+  const el = document.getElementById('pulse');
+  if (el) el.innerHTML = '<div class="pulse-error">Project Pulse unavailable.</div>';
+});
 connect();
 </script>
 </body>
