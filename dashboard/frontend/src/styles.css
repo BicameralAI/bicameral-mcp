@@ -194,7 +194,131 @@ body {
 }
 .pulse-sync { margin-top: 8px; font-size: 11px; color: var(--text-light); }
 
+.pulse-footnote {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-light);
+  font-style: italic;
+}
+
 .pulse-empty { color: var(--text-light); font-style: italic; }
+
+/* ── Two-Chamber Overview ──────────────────────────────────────── */
+.chamber-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+@media (max-width: 620px) {
+  .chamber-grid { grid-template-columns: 1fr; }
+}
+.chamber {
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 12px 14px;
+}
+.chamber-intent { border-top: 2px solid var(--accent); }
+.chamber-execution { border-top: 2px solid var(--green); }
+.chamber-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.chamber-title {
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+.chamber-sub {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-light);
+}
+.chamber-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.chamber-stat { display: flex; flex-direction: column; }
+.chamber-stat-num {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+.chamber-stat-num.alert { color: var(--drift); }
+.chamber-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-light);
+}
+
+/* ── Team Memory State sync line ───────────────────────────────── */
+.pulse-sync-line {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.pulse-sync-line strong { color: var(--text); }
+
+/* ── Activity feed (Recently Learned) ──────────────────────────── */
+.pulse-feed { display: flex; flex-direction: column; }
+.pulse-feed-item {
+  display: flex;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.pulse-feed-date {
+  flex: 0 0 84px;
+  font-size: 11px;
+  color: var(--text-light);
+  padding-top: 1px;
+}
+.pulse-feed-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Not-yet-available placeholder card ────────────────────────── */
+.pulse-na {
+  background: var(--raised);
+  border: 1px dashed var(--border-dark);
+  border-radius: 4px;
+  padding: 12px 14px;
+}
+.pulse-na-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.pulse-na-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.pulse-na-tag {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-light);
+  border: 1px solid var(--border-dark);
+  border-radius: 3px;
+  padding: 2px 7px;
+}
+.pulse-na-detail {
+  font-size: 11px;
+  color: var(--text-light);
+  line-height: 1.5;
+}
 
 .pulse-row {
   display: flex;
