@@ -1,8 +1,12 @@
-# ADR-0004: Dashboard v2 Frontend Build Architecture
+# ADR-0005: Dashboard v2 Frontend Build Architecture
 
 **Status:** Accepted for planning
 **Date:** 2026-05-21
 **Related:** `docs/design/dashboard-v2-comprehensive-design.md`, `docs/architecture/adr-0001-dashboard-v2-information-architecture.md`
+
+> Renumbered from ADR-0004 → ADR-0005 to resolve a numbering collision with
+> `adr-0004-three-layer-pm-em-dev-conceptual-model.md` (the design author's
+> deliberately-numbered conceptual-model ADR, pulled from the design fork).
 
 ## Context
 
