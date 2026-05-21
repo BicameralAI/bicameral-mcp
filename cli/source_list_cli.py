@@ -1,10 +1,9 @@
 """CLI: ``bicameral-mcp source-list <source>`` — enumerate available resources.
 
 Foundations cycle 1 (#337). Once a source is authenticated, this command
-tells the operator what resources the integration can see — channels for
-Slack, teams for Linear, databases for Notion, repos for GitHub, folders
-for Google Drive. The output is the operator's pick-list for the
-``sources:`` config block.
+tells the operator what resources the integration can see — repos for
+GitHub, folders for Google Drive. The output is the operator's pick-list
+for the ``sources:`` config block.
 
 Output formats:
   --format=table (default) — operator-readable two-column table
@@ -23,7 +22,7 @@ import argparse
 import json
 import sys
 
-_DISCOVERABLE_SOURCES = ("slack", "linear", "notion", "github", "google_drive")
+_DISCOVERABLE_SOURCES = ("github", "google_drive")
 
 
 def _build_argparser(subparser: argparse.ArgumentParser) -> None:
@@ -48,9 +47,6 @@ def _build_argparser(subparser: argparse.ArgumentParser) -> None:
 def main(args: argparse.Namespace) -> int:
     """Entry point invoked from ``server.py::_dispatch``."""
     dispatch = {
-        "slack": _list_slack,
-        "linear": _list_linear,
-        "notion": _list_notion,
         "github": _list_github,
         "google_drive": _list_google_drive,
     }
@@ -79,63 +75,6 @@ class _AuthMissing(RuntimeError):
 
 class _APIError(RuntimeError):
     """Discovery API call failed."""
-
-
-def _list_slack() -> tuple[list[dict], list[str]]:
-    from secrets_store import get_secret
-
-    token = get_secret(source_id="slack", key="api_key")
-    if not token:
-        raise _AuthMissing(
-            "Slack bot token not configured. Store it via put_secret "
-            "(source_id='slack', key='api_key'). See "
-            "docs/integrations-settings-inventory.md § Slack."
-        )
-    from sources.slack.client import SlackAPIError, list_channels
-
-    try:
-        channels = list_channels(token=token, include_private=True)
-    except SlackAPIError as exc:
-        raise _APIError(str(exc)) from exc
-    return channels, ["id", "name", "is_private", "is_member", "num_members"]
-
-
-def _list_linear() -> tuple[list[dict], list[str]]:
-    from secrets_store import get_secret
-
-    key = get_secret(source_id="linear", key="api_key")
-    if not key:
-        raise _AuthMissing(
-            "Linear API key not configured. Store it via put_secret "
-            "(source_id='linear', key='api_key')."
-        )
-    from sources.linear.client import LinearAPIError, list_teams
-
-    try:
-        teams = list_teams(api_key=key)
-    except LinearAPIError as exc:
-        raise _APIError(str(exc)) from exc
-    return teams, ["key", "name", "id"]
-
-
-def _list_notion() -> tuple[list[dict], list[str]]:
-    from secrets_store import get_secret
-
-    key = get_secret(source_id="notion", key="api_key")
-    if not key:
-        raise _AuthMissing(
-            "Notion integration token not configured. Store via put_secret "
-            "(source_id='notion', key='api_key'). The integration must "
-            "additionally be shared with each database via Notion's UI "
-            "(Share → Connections)."
-        )
-    from sources.notion.client import NotionAPIError, list_databases
-
-    try:
-        dbs = list_databases(api_key=key)
-    except NotionAPIError as exc:
-        raise _APIError(str(exc)) from exc
-    return dbs, ["title", "id"]
 
 
 def _list_github() -> tuple[list[dict], list[str]]:

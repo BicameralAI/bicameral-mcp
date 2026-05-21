@@ -43,7 +43,7 @@ consumes this inventory as its spec.
 | Per-source max payload bytes | **SHIPPED** | `max_payload_bytes` config key overrides global `ingest_max_bytes`, cycle 4 (#445). Oversized items skipped with stderr warn; watermark still advances. |
 | Content-evaluation hook | **SHIPPED** | `eval_hook: "module.path:fn"` dotted import path, cycle 3 (#444). Runs AFTER universal primitives. Every failure mode (import error, exception, non-bool return) → reject + stderr warn + cache. |
 | Universal filter primitives | **SHIPPED** | `FilterSpec` (cycle 2 #443): keyword_include/exclude, author_include/exclude, time_window_after/before. Per-resource overrides via `merge_specs` distinguish "explicitly set to empty" from "inherit" via pydantic `model_fields_set`. |
-| Discovery primitive | **SHIPPED** | `bicameral-mcp source-list <source>` CLI lands in #441 / foundations cycle 1. Covers slack, linear, notion, github, google_drive (granola + local_directory are N/A). |
+| Discovery primitive | **SHIPPED** | `bicameral-mcp source-list <source>` CLI lands in #441 / foundations cycle 1. Covers github, google_drive (granola + local_directory are N/A). |
 | Active-vs-passive per resource | **TBD** | Currently source-level only (the *type* is the toggle). Per-resource toggle (e.g. "channel X active-only, channel Y polling") not designed yet. |
 | Webhook receivers | **TBD** | Push model alternative to polling. Needs public HTTP surface. Tracker design pending. |
 
@@ -92,41 +92,7 @@ consumes this inventory as its spec.
 | Rate / quota | **PARTIAL** | Pagination capped at 2000 docs/cycle. No operator override |
 | Sub-folder recursion | **TBD** (deliberately) | Phase 5c documented as non-recursive |
 
-### 4. `linear` — issue ingest (Phases 1a / 1b)
-
-| Field | State | Detail |
-|---|---|---|
-| Auth | **SHIPPED** | Personal API key (`lin_...`) or OAuth token via `secrets_store` |
-| Discovery — teams | **SHIPPED** | `bicameral-mcp source-list linear` (#441). |
-| Discovery — projects | **TBD** | — |
-| Selection — active | URL paste | Operator pastes Linear issue URL |
-| Selection — passive | **PARTIAL** | `team_keys: [...]` filter optional. No project-level filter. No "watch all teams" explicit setting (omitting filter implies it) |
-| Filtering — state | **SHIPPED** | Hard-coded to `completedAt` > watermark (state="Done" or workflow-state-completed) |
-| Filtering — labels | **TBD** | No label-include / label-exclude |
-| Filtering — assignees | **TBD** | — |
-| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
-| Active/passive toggle | Both | URL active + polling passive |
-| Webhook receiver | **TBD** | Phase 1c |
-| Rate / quota | **PARTIAL** | Pagination capped at 500 issues/cycle |
-
-### 5. `notion` — page ingest (Phases 2a / 2b)
-
-| Field | State | Detail |
-|---|---|---|
-| Auth | **SHIPPED** | Internal-integration token via `secrets_store` |
-| Discovery — databases | **SHIPPED** | `bicameral-mcp source-list notion` via Notion `search` filtered to databases (#441). |
-| Discovery — pages | **TBD** | Page-level enumeration would be `databases/{id}/query` — adapter does this at runtime, no operator-facing enumerator |
-| Selection — active | URL paste | Operator pastes Notion page URL |
-| Selection — passive | **SHIPPED** | `database_id:` config entry, one database per source-config entry |
-| Filtering — page properties | **TBD** | No tag/property-value filter (e.g. only pages with `decision-source` tag) |
-| Filtering — last_edited_by | **TBD** | — |
-| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
-| Active/passive toggle | Both | URL active + database polling passive |
-| Webhook receiver | **N/A** | Notion has no webhook product. Polling is the only option. |
-| Sub-page recursion | **TBD** | Currently single page (active) or top-level pages in database (passive) |
-| Rate / quota | **PARTIAL** | Pagination capped at 2000 pages/cycle |
-
-### 6. `github` — PR / issue / commit ingest (Phases 3 / 3b)
+### 4. `github` — PR / issue / commit ingest (Phases 3 / 3b)
 
 | Field | State | Detail |
 |---|---|---|
@@ -142,26 +108,6 @@ consumes this inventory as its spec.
 | Webhook receiver | **TBD** | Phase 3c. GitHub has a mature webhook product (Events API) — strong candidate for first webhook implementation. |
 | Active/passive toggle | Both | URL active + repos polling passive |
 | Rate / quota | **PARTIAL** | Pagination capped at 1000 records/cycle. Per-source rate-limit window **TBD** |
-
-### 7. `slack` — channel / thread ingest (Phases 4a / 4b)
-
-| Field | State | Detail |
-|---|---|---|
-| Auth | **SHIPPED** | Bot token (`xoxb-...`) via `secrets_store`. Required scopes: `channels:history`, `groups:history`, `users:read` (latter implicit for `users.info`) |
-| Discovery — channels | **SHIPPED** | `bicameral-mcp source-list slack` via `conversations.list` (#441). Public + private (latter needs `groups:read` scope). |
-| Discovery — users | **PARTIAL** | `users.info` called at runtime for participant resolution; no explicit operator-facing user enumeration |
-| Selection — active | URL paste | Operator pastes thread URL |
-| Selection — passive | **PARTIAL** | `channels: [...]` config entry with hand-typed channel IDs. No UI for select-from-discovered-list |
-| Filtering — keywords | **TBD** | No "only ingest messages containing X" filter |
-| Filtering — reactions | **TBD** | Originally proposed (`:decision:` emoji as opt-in marker per #337 v1 sketch). Not implemented |
-| Filtering — user include/exclude | **TBD** | — |
-| Filtering — message subtypes | **SHIPPED** | Hard-coded exclusion list (bot_message, channel_topic/join/leave, etc.) |
-| Filtering — reply skipping | **SHIPPED** (passive only) | Polling skips replies; active fetches full thread |
-| Content eval hook | **SHIPPED** | `eval_hook` dotted-import-path (#444). |
-| Active/passive toggle | Both | URL active + channel polling passive |
-| Webhook receiver | **TBD** | Phase 4c. Slack Events API. Bigger commit (public HTTP surface) |
-| DM policy | **SHIPPED** | Channel-only enforced at URL parser (active) + ID-prefix filter (passive) |
-| Rate / quota | **PARTIAL** | Pagination capped at 2000 messages/cycle |
 
 ---
 
