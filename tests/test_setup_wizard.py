@@ -224,38 +224,48 @@ def test_detect_runner_does_not_return_broken_module_fallback():
 
 
 def _write_manifest_only(share_dir: Path, manifest_filename: str) -> Path:
-    """Write a fake manifest with NO sig/crt companions — simulates the
-    interim packaging state where the wheel ships the manifest but the
-    release-side sigstore signing step has not yet been wired up."""
+    """Write a fake manifest with NO `.sigstore` bundle companion —
+    simulates the packaging state where the wheel ships the manifest but
+    the release-side sigstore signing step did not run (#292)."""
     share_dir.mkdir(parents=True, exist_ok=True)
     manifest = share_dir / manifest_filename
     manifest.write_text("manifest_version = 1\n", encoding="utf-8")
-    assert not (share_dir / f"{manifest_filename}.sig").exists()
-    assert not (share_dir / f"{manifest_filename}.crt").exists()
+    assert not (share_dir / f"{manifest_filename}.sigstore").exists()
     return manifest
 
 
-def _write_full_triple(share_dir: Path, manifest_filename: str) -> tuple[Path, Path, Path]:
-    """Write all three artifacts (manifest + .sig + .crt) — simulates the
-    fully-signed wheel produced once the release pipeline emits sigstore
-    artifacts. Should cause the helpers to return the triple."""
+def _write_manifest_with_placeholder_bundle(
+    share_dir: Path, manifest_filename: str
+) -> tuple[Path, Path]:
+    """Write a manifest + a ZERO-BYTE `.sigstore` placeholder — simulates
+    the local-dev build where the manifest build hook writes an empty
+    placeholder so hatch `shared-data` resolves (#292). The helpers must
+    treat the empty bundle as absent."""
     share_dir.mkdir(parents=True, exist_ok=True)
     manifest = share_dir / manifest_filename
     manifest.write_text("manifest_version = 1\n", encoding="utf-8")
-    sig = share_dir / f"{manifest_filename}.sig"
-    sig.write_bytes(b"FAKE-SIG")
-    crt = share_dir / f"{manifest_filename}.crt"
-    crt.write_bytes(b"FAKE-CERT")
-    return manifest, sig, crt
+    bundle = share_dir / f"{manifest_filename}.sigstore"
+    bundle.write_bytes(b"")
+    return manifest, bundle
 
 
-def test_bundled_hooks_manifest_paths_returns_none_when_sig_missing(tmp_path, monkeypatch):
-    """Hotfix v0.14.4 regression guard: the helper must return None when
-    the wheel ships the .json manifest without the .sig/.crt companions.
-    Otherwise the install-time verifier hits a missing-signature path
-    and aborts setup. Restoring sigstore wiring (release-side) makes
-    this test naturally pass via the all-three-present branch — see
-    test_bundled_hooks_manifest_paths_returns_triple_when_all_present."""
+def _write_full_pair(share_dir: Path, manifest_filename: str) -> tuple[Path, Path]:
+    """Write both artifacts (manifest + non-empty `.sigstore` bundle) —
+    simulates the fully-signed wheel produced once the release pipeline
+    emits a sigstore bundle. Should cause the helpers to return the
+    `(manifest, bundle)` pair (#292)."""
+    share_dir.mkdir(parents=True, exist_ok=True)
+    manifest = share_dir / manifest_filename
+    manifest.write_text("manifest_version = 1\n", encoding="utf-8")
+    bundle = share_dir / f"{manifest_filename}.sigstore"
+    bundle.write_bytes(b'{"mediaType": "application/vnd.dev.sigstore.bundle+json"}')
+    return manifest, bundle
+
+
+def test_bundled_hooks_manifest_paths_returns_none_when_bundle_missing(tmp_path, monkeypatch):
+    """The helper must return None when the wheel ships the .json
+    manifest without the `.sigstore` bundle companion — verification
+    defers rather than aborting setup on a missing-bundle path (#292)."""
     fake_prefix = tmp_path / "venv"
     share_dir = fake_prefix / "share" / "bicameral-mcp"
     _write_manifest_only(share_dir, "hooks-manifest.json")
@@ -267,8 +277,8 @@ def test_bundled_hooks_manifest_paths_returns_none_when_sig_missing(tmp_path, mo
     assert setup_wizard._bundled_manifest_paths() is None
 
 
-def test_bundled_skills_manifest_paths_returns_none_when_sig_missing(tmp_path, monkeypatch):
-    """Hotfix v0.14.4 regression guard (skills surface mirror)."""
+def test_bundled_skills_manifest_paths_returns_none_when_bundle_missing(tmp_path, monkeypatch):
+    """Skills-surface mirror of the missing-`.sigstore` case (#292)."""
     fake_prefix = tmp_path / "venv"
     share_dir = fake_prefix / "share" / "bicameral-mcp"
     _write_manifest_only(share_dir, "skills-manifest.toml")
@@ -280,31 +290,59 @@ def test_bundled_skills_manifest_paths_returns_none_when_sig_missing(tmp_path, m
     assert setup_wizard._bundled_skills_manifest_paths() is None
 
 
-def test_bundled_hooks_manifest_paths_returns_triple_when_all_present(tmp_path, monkeypatch):
-    """Once the release pipeline emits .sig/.crt alongside the manifest,
-    the helper resumes returning the triple — verifier re-engages with
-    no code change at install time."""
+def test_bundled_hooks_manifest_paths_returns_none_when_bundle_zero_byte(tmp_path, monkeypatch):
+    """A zero-byte `.sigstore` is the local-dev placeholder the build hook
+    writes so hatch `shared-data` resolves; it is never signed and never
+    verifies, so the helper treats it as absent → None (#292)."""
     fake_prefix = tmp_path / "venv"
     share_dir = fake_prefix / "share" / "bicameral-mcp"
-    manifest, sig, crt = _write_full_triple(share_dir, "hooks-manifest.json")
+    _write_manifest_with_placeholder_bundle(share_dir, "hooks-manifest.json")
+
+    monkeypatch.setattr(setup_wizard.sys, "prefix", str(fake_prefix))
+    fake_init = tmp_path / "fake-pkg" / "setup_wizard.py"
+    monkeypatch.setattr(setup_wizard, "__file__", str(fake_init))
+
+    assert setup_wizard._bundled_manifest_paths() is None
+
+
+def test_bundled_skills_manifest_paths_returns_none_when_bundle_zero_byte(tmp_path, monkeypatch):
+    """Skills-surface mirror of the zero-byte-placeholder case (#292)."""
+    fake_prefix = tmp_path / "venv"
+    share_dir = fake_prefix / "share" / "bicameral-mcp"
+    _write_manifest_with_placeholder_bundle(share_dir, "skills-manifest.toml")
+
+    monkeypatch.setattr(setup_wizard.sys, "prefix", str(fake_prefix))
+    fake_init = tmp_path / "fake-pkg" / "setup_wizard.py"
+    monkeypatch.setattr(setup_wizard, "__file__", str(fake_init))
+
+    assert setup_wizard._bundled_skills_manifest_paths() is None
+
+
+def test_bundled_hooks_manifest_paths_returns_pair_when_all_present(tmp_path, monkeypatch):
+    """Once the release pipeline emits a non-empty `.sigstore` bundle
+    alongside the manifest, the helper returns the `(manifest, bundle)`
+    pair — verifier re-engages with no code change at install time."""
+    fake_prefix = tmp_path / "venv"
+    share_dir = fake_prefix / "share" / "bicameral-mcp"
+    manifest, bundle = _write_full_pair(share_dir, "hooks-manifest.json")
 
     monkeypatch.setattr(setup_wizard.sys, "prefix", str(fake_prefix))
     fake_init = tmp_path / "fake-pkg" / "setup_wizard.py"
     monkeypatch.setattr(setup_wizard, "__file__", str(fake_init))
 
     result = setup_wizard._bundled_manifest_paths()
-    assert result == (manifest, sig, crt)
+    assert result == (manifest, bundle)
 
 
-def test_bundled_skills_manifest_paths_returns_triple_when_all_present(tmp_path, monkeypatch):
-    """Skills-surface mirror of the all-three-present case."""
+def test_bundled_skills_manifest_paths_returns_pair_when_all_present(tmp_path, monkeypatch):
+    """Skills-surface mirror of the manifest+bundle-present case (#292)."""
     fake_prefix = tmp_path / "venv"
     share_dir = fake_prefix / "share" / "bicameral-mcp"
-    manifest, sig, crt = _write_full_triple(share_dir, "skills-manifest.toml")
+    manifest, bundle = _write_full_pair(share_dir, "skills-manifest.toml")
 
     monkeypatch.setattr(setup_wizard.sys, "prefix", str(fake_prefix))
     fake_init = tmp_path / "fake-pkg" / "setup_wizard.py"
     monkeypatch.setattr(setup_wizard, "__file__", str(fake_init))
 
     result = setup_wizard._bundled_skills_manifest_paths()
-    assert result == (manifest, sig, crt)
+    assert result == (manifest, bundle)

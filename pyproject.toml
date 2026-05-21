@@ -54,7 +54,12 @@ dependencies = [
   # sentinel (#252 Layer 2) and operator-driven export/import (Layer 4).
   "surrealdb==2.0.0",
   "questionary>=2.0.0",
-  "sigstore>=3.0",
+  # Upper bound (#292): sigstore-python 4.x could break the Bundle /
+  # Verifier API the install-time verifiers pin (Bundle.from_json,
+  # Verifier.production().verify_artifact, policy.AllOf). Bump the
+  # ceiling deliberately after re-validating release/manifest_verify.py
+  # and release/skills_verify.py against the new major.
+  "sigstore>=3.0,<4.0",
   # Google Drive backend for team-mode replication (#277).
   "google-auth-oauthlib>=1.2",
   "google-api-python-client>=2.100",
@@ -118,6 +123,14 @@ path = "scripts/hooks_manifest_build_hook.py"
 [tool.hatch.build.targets.wheel.shared-data]
 "share/bicameral-mcp/hooks-manifest.json" = "share/bicameral-mcp/hooks-manifest.json"
 "share/bicameral-mcp/skills-manifest.toml" = "share/bicameral-mcp/skills-manifest.toml"
+# #292: ship the single-file Sigstore bundles alongside the manifests so
+# install-time verification re-engages. In a release build the publish
+# workflow signs the manifests before `python -m build` and these point
+# at real `.sigstore` bundles; in a local-dev build the build hook writes
+# empty placeholder bundles so this table resolves (a zero-byte bundle is
+# treated as absent by setup_wizard._bundled_*_manifest_paths).
+"share/bicameral-mcp/hooks-manifest.json.sigstore" = "share/bicameral-mcp/hooks-manifest.json.sigstore"
+"share/bicameral-mcp/skills-manifest.toml.sigstore" = "share/bicameral-mcp/skills-manifest.toml.sigstore"
 
 [tool.ruff]
 line-length = 100
