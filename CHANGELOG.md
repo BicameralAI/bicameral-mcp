@@ -3,6 +3,78 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.16.2 — Hotfix: tighten `requires-python` to `>=3.11`
+
+P1 hotfix. v0.16.0 and v0.16.1 declared `requires-python = ">=3.10"` but the code uses `datetime.UTC` (added in Python 3.11) at `preflight_telemetry.py:47`. Every install on Python 3.10 passed pip's metadata check and then crashed at server import:
+
+```
+ImportError: cannot import name 'UTC' from 'datetime'
+```
+
+uv tool installations were the most common path to this state — uv reuses whatever Python is already on PATH (or in an existing tool venv), so users with a 3.10 default got a broken bicameral-mcp 0.16.x install. The bug was masked by the install-success line; only first MCP startup surfaced it.
+
+### Fixed
+
+- **`requires-python` corrected** to match actual runtime requirements (#490 follow-up). 3.10 installs now fail with a clear PEP 517 error at install time instead of a runtime `ImportError`. Users affected get an actionable message ("requires Python >= 3.11") instead of the cryptic traceback.
+
+### Affected users
+
+Anyone whose `bicameral-mcp` was installed against Python 3.10. With uv:
+
+```
+uv tool list  # check the active Python; if 3.10 → reinstall
+```
+
+### Upgrade
+
+```
+uv tool uninstall bicameral-mcp
+uv tool install --python python3.13 bicameral-mcp
+```
+
+(or any Python 3.11+; recommended 3.13.)
+
+### Prevention (deferred to a follow-up PR)
+
+This bug-class (metadata claims a Python floor lower than what the code actually needs) is structurally preventable via:
+
+- **CI matrix on minimum-claimed Python** — when `requires-python = ">=3.11"`, CI runs a 3.11 job that does a real `pip install` + import smoke test
+- **`ruff --target-version=py311`** — catches `datetime.UTC` and similar 3.11-only APIs at lint time
+
+Filed for a follow-up dev-branch PR; not bundled in this hotfix to keep the diff focused.
+
+---
+
+## v0.16.1 — Hotfix: v20→v21 migration uses valid enum values
+
+P0 hotfix for v0.16.0 (and earlier). The v20→v21 migration backfills synthetic `compliance_check` rows for pre-verdict-era reflected decisions; the original implementation used sentinel values (`confidence='migrated'`, `phase='migration'`) that are rejected by their schema ASSERTs at runtime. The migration raises a SurrealDB schema-violation error on the first `CREATE compliance_check` statement, blocking **any** `bicameral.ingest` call against an affected ledger.
+
+### Fixed
+
+- **v20→v21 migration enum-value mismatch** (#488) — Map sentinel values to existing enum members: `confidence='migrated'` → `'low'` (synthetic backfill, lowest confidence is honest), `phase='migration'` → `'regrounding'` (closest semantic match — the migration re-establishes the verdict for an already-grounded decision). Provenance preserved in the `explanation` field, which still reads `"backfilled by v20→v21 migration: pre-verdict-era reflected decision"`. No schema change.
+
+### Affected users
+
+Any user whose local ledger crosses the v20→v21 schema boundary with at least one decision in `status='reflected'` that has a `binds_to` relation to a `code_region` row. That includes most active users with non-trivial decision-ratification history. The bug manifests as a `SurrealDB rejected statement: Found 'migrated' for field 'confidence'` error on the first ingest attempt after upgrade.
+
+### Upgrade
+
+```
+pip install --upgrade bicameral-mcp
+```
+
+No state migration required beyond what's already shipped. The migration now applies cleanly on the next ledger open after upgrade.
+
+### Tests
+
+`tests/test_v21_compliance_check_backfill.py` adds 5 sociable regression tests against real SurrealDB over `memory://` — bug repro, enum-mapping verification, idempotency, skip-on-existing-row, empty-state noop.
+
+### Sync-back
+
+PR #489 synced the fix from main back to dev per DEV_CYCLE §10.
+
+---
+
 ## v0.16.0 — Ledger Locator (out-of-tree state) + `partial` verdict + recovery-path hardening
 
 Triage release draining the dev → main backlog. Lands the **#368 Ledger Locator** (relocates project-scoped state out of the working tree and gives worktrees / submodules a clean contract), introduces the **`partial` verdict** for in-progress work (#405), wires the missing **`bicameral_reset` CLI + `bicameral_diagnose` recovery path** (#410), and flips the **`M_skill_preflight` CI gates from warn → hard** (#398).
