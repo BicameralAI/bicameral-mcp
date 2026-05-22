@@ -1290,9 +1290,24 @@ async def _migrate_v20_to_v21(client: LedgerClient) -> None:
     This migration creates a synthetic compliance_check(verdict='compliant')
     for each (decision, region) pair where the decision is 'reflected' but
     no compliance_check exists.  The synthetic row uses the region's current
-    content_hash and is marked phase='migration' for traceability.
+    content_hash.  The ``explanation`` field carries the provenance string
+    so the row is recognizable as a migration backfill.
 
     Idempotent: skips decisions that already have compliance_check rows.
+
+    NOTE on enum values: ``confidence`` is constrained by the schema to
+    ['high', 'medium', 'low'] and ``phase`` to ['ingest', 'drift',
+    'regrounding', 'supersession', 'divergence']. The migration uses
+    ``confidence='low'`` (synthetic backfill, lowest confidence is honest)
+    and ``phase='regrounding'`` (closest semantic match — the migration
+    re-establishes the verdict for an already-grounded decision).
+    Provenance lives in the ``explanation`` field.
+
+    Hotfix history: the original migration used sentinel values
+    ``confidence='migrated'`` and ``phase='migration'`` which were rejected
+    by their respective ASSERTs at runtime, blocking ingest for any user
+    whose ledger crossed the v20→v21 boundary with non-empty reflected
+    decisions. Fixed by mapping to existing enum values.
     """
     reflected_rows = await client.query(
         "SELECT type::string(id) AS did FROM decision WHERE status = 'reflected'"
@@ -1324,9 +1339,9 @@ async def _migrate_v20_to_v21(client: LedgerClient) -> None:
             await client.execute(
                 "CREATE compliance_check SET "
                 "decision_id = $d, region_id = $r, content_hash = $h, "
-                "verdict = 'compliant', confidence = 'migrated', "
+                "verdict = 'compliant', confidence = 'low', "
                 "explanation = 'backfilled by v20→v21 migration: pre-verdict-era reflected decision', "
-                "phase = 'migration', pruned = false, ephemeral = false",
+                "phase = 'regrounding', pruned = false, ephemeral = false",
                 {"d": did, "r": rid, "h": ch},
             )
             backfilled += 1
