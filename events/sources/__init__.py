@@ -24,6 +24,7 @@ from .github import GitHubPollingAdapter
 from .google_drive import GoogleDriveFolderAdapter
 from .granola import GranolaAdapter, MissingApiKeyError
 from .local_directory import LocalDirectoryAdapter
+from .notion import NotionPollingAdapter
 
 
 @runtime_checkable
@@ -47,6 +48,7 @@ ADAPTERS: dict[str, type] = {
     "granola": GranolaAdapter,
     "local_directory": LocalDirectoryAdapter,
     "google_drive": GoogleDriveFolderAdapter,
+    "notion": NotionPollingAdapter,
     "github": GitHubPollingAdapter,
 }
 
@@ -58,5 +60,6 @@ __all__ = [
     "GranolaAdapter",
     "LocalDirectoryAdapter",
     "MissingApiKeyError",
+    "NotionPollingAdapter",
     "SourceAdapter",
 ]

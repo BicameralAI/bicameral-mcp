@@ -93,6 +93,36 @@ def test_payload_within_cap_handles_malformed():
 # ── per-adapter wiring ──────────────────────────────────────────────────────
 
 
+def test_notion_caps_to_max_items(tmp_path):
+    from events.sources.notion import NotionPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="notion", key="api_key", value="secret_t")
+
+    fake_pages = [
+        {
+            "id": f"p{i}",
+            "url": f"https://notion.so/p{i}",
+            "last_edited_time": f"2026-05-{i:02d}T00:00:00Z",
+        }
+        for i in range(1, 6)
+    ]
+    payload = {"query": "x", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.notion.poller.list_recently_edited_pages", return_value=fake_pages),
+        patch("sources.notion.adapter.NotionAdapter.fetch_active", return_value=payload),
+    ):
+        adapter = NotionPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"database_id": "db1", "max_items_per_pull": 2},
+        )
+
+    assert len(result) == 2
+    assert adapter._pending_watermark == "2026-05-02T00:00:00Z"
+
+
 def test_github_caps_across_repos(tmp_path):
     """Cap is global across repos — once reached, no further repos are pulled."""
     from events.sources.github import GitHubPollingAdapter

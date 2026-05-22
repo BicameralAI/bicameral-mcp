@@ -33,6 +33,37 @@ def _disable_keyring(monkeypatch):
 # ── Slack: keyword_include + per-resource override ──────────────────────────
 
 
+def test_notion_time_window_filter(tmp_path):
+    from events.sources.notion import NotionPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="notion", key="api_key", value="secret_t")
+
+    fake_pages = [
+        {"id": "p1", "url": "https://notion.so/p1", "last_edited_time": "2026-04-01T00:00:00Z"},
+        {"id": "p2", "url": "https://notion.so/p2", "last_edited_time": "2026-06-01T00:00:00Z"},
+    ]
+    fake_payload = {"query": "x", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.notion.poller.list_recently_edited_pages", return_value=fake_pages),
+        patch("sources.notion.adapter.NotionAdapter.fetch_active", return_value=fake_payload),
+    ):
+        adapter = NotionPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={
+                "database_id": "db1",
+                "filters": {"time_window_after": "2026-05-01T00:00:00Z"},
+            },
+        )
+
+    assert len(result) == 1
+
+
+# ── GitHub: per-repo override ───────────────────────────────────────────────
+
+
 def test_github_per_repo_filter_override(tmp_path):
     from events.sources.github import GitHubPollingAdapter
     from secrets_store import put_secret

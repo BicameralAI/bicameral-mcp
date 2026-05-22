@@ -22,7 +22,7 @@ import argparse
 import json
 import sys
 
-_DISCOVERABLE_SOURCES = ("github", "google_drive")
+_DISCOVERABLE_SOURCES = ("notion", "github", "google_drive")
 
 
 def _build_argparser(subparser: argparse.ArgumentParser) -> None:
@@ -47,6 +47,7 @@ def _build_argparser(subparser: argparse.ArgumentParser) -> None:
 def main(args: argparse.Namespace) -> int:
     """Entry point invoked from ``server.py::_dispatch``."""
     dispatch = {
+        "notion": _list_notion,
         "github": _list_github,
         "google_drive": _list_google_drive,
     }
@@ -75,6 +76,26 @@ class _AuthMissing(RuntimeError):
 
 class _APIError(RuntimeError):
     """Discovery API call failed."""
+
+
+def _list_notion() -> tuple[list[dict], list[str]]:
+    from secrets_store import get_secret
+
+    key = get_secret(source_id="notion", key="api_key")
+    if not key:
+        raise _AuthMissing(
+            "Notion integration token not configured. Store via put_secret "
+            "(source_id='notion', key='api_key'). The integration must "
+            "additionally be shared with each database via Notion's UI "
+            "(Share → Connections)."
+        )
+    from sources.notion.client import NotionAPIError, list_databases
+
+    try:
+        dbs = list_databases(api_key=key)
+    except NotionAPIError as exc:
+        raise _APIError(str(exc)) from exc
+    return dbs, ["title", "id"]
 
 
 def _list_github() -> tuple[list[dict], list[str]]:

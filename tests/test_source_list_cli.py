@@ -55,6 +55,32 @@ def _mock_resp(body):
 # ── Slack: list_channels ────────────────────────────────────────────────────
 
 
+def test_notion_list_databases():
+    from sources.notion.client import list_databases
+
+    body = {
+        "results": [
+            {
+                "id": "db-1",
+                "title": [{"plain_text": "Decision Log"}],
+            },
+            {
+                "id": "db-2",
+                "title": [{"plain_text": "Meeting "}, {"plain_text": "Notes"}],
+            },
+            # Untitled database — should fall back to "(untitled)".
+            {"id": "db-3", "title": []},
+        ],
+        "has_more": False,
+    }
+    with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
+        result = list_databases(api_key="secret_x")
+    assert [d["title"] for d in result] == ["Decision Log", "Meeting Notes", "(untitled)"]
+
+
+# ── GitHub: list_repos ──────────────────────────────────────────────────────
+
+
 def test_github_list_repos_pat_returns_array():
     from sources.github.client import list_repos
 

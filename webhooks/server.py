@@ -11,6 +11,7 @@ NOT terminate TLS ourselves.
 
 Routes:
 - ``POST /webhooks/github``         → ``webhooks.github.handle``
+- ``POST /webhooks/notion``         → ``webhooks.notion.handle``
 - ``POST /webhooks/google-drive``   → ``webhooks.google_drive.handle``
 - ``GET /health``                   → 200 ack (for load-balancer health checks)
 
@@ -206,6 +207,13 @@ async def _process_request(reader: asyncio.StreamReader, writer: asyncio.StreamW
         await _respond(writer, status, message)
         return
 
+    if path == "/webhooks/notion":
+        status, message = await asyncio.to_thread(
+            _dispatch_notion, body, MappingProxyType(dict(headers))
+        )
+        await _respond(writer, status, message)
+        return
+
     await _respond(writer, 404, "not found")
 
 
@@ -240,6 +248,16 @@ def _dispatch_google_drive(body: bytes, headers) -> tuple[int, str]:
         resource_id=headers.get("x-goog-resource-id"),
         resource_state=headers.get("x-goog-resource-state"),
         message_number=headers.get("x-goog-message-number"),
+    )
+
+
+def _dispatch_notion(body: bytes, headers) -> tuple[int, str]:
+    """Sync entrypoint into the Notion handler (called via to_thread)."""
+    from webhooks.notion import handle
+
+    return handle(
+        body=body,
+        signature_header=headers.get("x-notion-signature"),
     )
 
 
