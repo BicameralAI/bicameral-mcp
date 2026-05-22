@@ -1536,16 +1536,6 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     from cli.webhook_server_cli import _build_argparser as _ws_build
 
     _ws_build(webhook_server)
-    notion_pending = subparsers.add_parser(
-        "notion-pending",
-        help=(
-            "retrieve pending Notion verification_token by fingerprint, or list "
-            "all pending entries (#337 cycle 8b)"
-        ),
-    )
-    from cli.notion_pending_cli import _build_argparser as _np_build
-
-    _np_build(notion_pending)
     drive_watch = subparsers.add_parser(
         "drive-watch",
         help="start a Google Drive Push Notification channel for a file (#337 cycle 9b)",
@@ -1661,10 +1651,6 @@ def _dispatch(args: Any) -> int:
         from cli.webhook_server_cli import main as webhook_server_main
 
         return webhook_server_main(args)
-    if args.command == "notion-pending":
-        from cli.notion_pending_cli import main as notion_pending_main
-
-        return notion_pending_main(args)
     if args.command == "drive-watch":
         from cli.drive_watch_cli import main as drive_watch_main
 

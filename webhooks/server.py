@@ -11,11 +11,7 @@ NOT terminate TLS ourselves.
 
 Routes:
 - ``POST /webhooks/github``         → ``webhooks.github.handle``
-- ``POST /webhooks/slack``          → ``webhooks.slack.handle``
-- ``POST /webhooks/linear``         → ``webhooks.linear.handle``
 - ``POST /webhooks/google-drive``   → ``webhooks.google_drive.handle``
-- ``POST /webhooks/notion``         → ``webhooks.notion.handle``
-- ``POST /webhooks/jira``           → ``webhooks.jira.handle``
 - ``GET /health``                   → 200 ack (for load-balancer health checks)
 
 ## Hardening (post code-review)
@@ -203,40 +199,9 @@ async def _process_request(reader: asyncio.StreamReader, writer: asyncio.StreamW
         await _respond(writer, status, message)
         return
 
-    if path == "/webhooks/slack":
-        # Slack handler returns (status, body, content_type) — H1 review
-        # finding: server passes content type through verbatim instead of
-        # guessing by inspecting the body.
-        status, message, content_type = await asyncio.to_thread(
-            _dispatch_slack, body, MappingProxyType(dict(headers))
-        )
-        await _respond(writer, status, message, content_type=content_type)
-        return
-
-    if path == "/webhooks/linear":
-        status, message = await asyncio.to_thread(
-            _dispatch_linear, body, MappingProxyType(dict(headers))
-        )
-        await _respond(writer, status, message)
-        return
-
-    if path == "/webhooks/notion":
-        status, message = await asyncio.to_thread(
-            _dispatch_notion, body, MappingProxyType(dict(headers))
-        )
-        await _respond(writer, status, message)
-        return
-
     if path == "/webhooks/google-drive":
         status, message = await asyncio.to_thread(
             _dispatch_google_drive, body, MappingProxyType(dict(headers))
-        )
-        await _respond(writer, status, message)
-        return
-
-    if path == "/webhooks/jira":
-        status, message = await asyncio.to_thread(
-            _dispatch_jira, body, MappingProxyType(dict(headers))
         )
         await _respond(writer, status, message)
         return
@@ -259,28 +224,6 @@ def _dispatch_github(body: bytes, headers) -> tuple[int, str]:
     )
 
 
-def _dispatch_linear(body: bytes, headers) -> tuple[int, str]:
-    """Sync entrypoint into the Linear handler (called via to_thread)."""
-    from webhooks.linear import handle
-
-    return handle(
-        body=body,
-        event_header=headers.get("linear-event"),
-        delivery_header=headers.get("linear-delivery"),
-        signature_header=headers.get("linear-signature"),
-    )
-
-
-def _dispatch_notion(body: bytes, headers) -> tuple[int, str]:
-    """Sync entrypoint into the Notion handler (called via to_thread)."""
-    from webhooks.notion import handle
-
-    return handle(
-        body=body,
-        signature_header=headers.get("x-notion-signature"),
-    )
-
-
 def _dispatch_google_drive(body: bytes, headers) -> tuple[int, str]:
     """Sync entrypoint into the Drive handler (called via to_thread).
 
@@ -297,39 +240,6 @@ def _dispatch_google_drive(body: bytes, headers) -> tuple[int, str]:
         resource_id=headers.get("x-goog-resource-id"),
         resource_state=headers.get("x-goog-resource-state"),
         message_number=headers.get("x-goog-message-number"),
-    )
-
-
-def _dispatch_jira(body: bytes, headers) -> tuple[int, str]:
-    """Sync entrypoint into the Jira handler (called via to_thread).
-
-    Pulls the HMAC signature (``X-Hub-Signature`` — note: not GitHub's
-    ``X-Hub-Signature-256``) and the per-tenant delivery identifier
-    (``X-Atlassian-Webhook-Identifier``) used for dedup.
-    """
-    from webhooks.jira import handle
-
-    return handle(
-        body=body,
-        signature_header=headers.get("x-hub-signature"),
-        delivery_identifier=headers.get("x-atlassian-webhook-identifier"),
-    )
-
-
-def _dispatch_slack(body: bytes, headers) -> tuple[int, str, str]:
-    """Sync entrypoint into the Slack handler (called via to_thread).
-
-    Returns ``(status, body, content_type)`` — content type is explicit
-    rather than guessed from body shape (H1 review finding).
-    """
-    from webhooks.slack import handle
-
-    timestamp = headers.get("x-slack-request-timestamp")
-    signature = headers.get("x-slack-signature")
-    return handle(
-        body=body,
-        timestamp_header=timestamp,
-        signature_header=signature,
     )
 
 
