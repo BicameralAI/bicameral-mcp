@@ -892,31 +892,6 @@ class RemoveSourceResponse(BaseModel):
     event_logged: bool
 
 
-# #278 Phase 3 — raw SurrealQL admin panel
-class AdminQueryRequest(BaseModel):
-    """Request envelope for the dashboard /admin/query endpoint.
-
-    The admin panel is off-by-default; reachability requires
-    BICAMERAL_ENABLE_ADMIN_PANEL=1 at MCP server start. Write mode requires
-    BICAMERAL_ENABLE_ADMIN_PANEL_WRITES=1 AND an in-UI typed confirmation.
-    """
-
-    sql: str
-    mode: Literal["read", "write"] = "read"
-    signer: str = ""  # Required for write mode (handler rejects empty)
-
-
-class AdminQueryResponse(BaseModel):
-    """Response envelope for the /admin/query endpoint."""
-
-    mode: Literal["read-only", "write"]
-    rows: list[dict]
-    elapsed_ms: float
-    error: str | None = None
-    # #65 — preflight telemetry plumb-through.
-    preflight_id: str | None = None
-
-
 # ── Tool: bicameral.resolve_collision ────────────────────────────────────────
 
 
@@ -1005,17 +980,6 @@ class HistoryResponse(BaseModel):
     total_features: int = 0
     as_of: str = ""  # git ref evaluated against
     sync_metrics: SyncMetrics | None = None  # V1 A3 — catch-up wall times
-
-
-# ── Tool 13: bicameral.dashboard ─────────────────────────────────────
-
-
-class DashboardResponse(BaseModel):
-    """Response from bicameral.dashboard."""
-
-    url: str  # http://localhost:{port}
-    status: Literal["started", "already_running"]
-    port: int
 
 
 # ── Tool: bicameral.bind ─────────────────────────────────────────────

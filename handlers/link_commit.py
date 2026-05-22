@@ -600,11 +600,4 @@ async def handle_link_commit(
             file_paths=None,
         )
 
-    try:
-        from dashboard.server import notify_dashboard
-
-        await notify_dashboard(ctx)
-    except Exception:
-        pass
-
     return response

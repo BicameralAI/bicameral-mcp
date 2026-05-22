@@ -25,7 +25,7 @@ The suggestive instruction can still exist — it's useful agent-side guidance f
 
 ### ✅ Good: env-flag gate
 
-`dashboard/admin.py::admin_route_enabled()` reads `BICAMERAL_ENABLE_ADMIN_PANEL` from the environment. Without the flag set, the route returns 404 — regardless of what skill text says or what the agent attempts. The skill at `skills/admin-surrealql/SKILL.md` describes the flag, but the gate is the env check on the server.
+`release/manifest_verify.py` verifies the bundled `hooks-manifest.json` signature (keyless cosign / sigstore) and cross-checks the SHA-256 of every hook command before the installer writes it. It is **fail-closed**: a `SignatureError` aborts the install regardless of what skill text says or what the agent attempts. The one bypass — `BICAMERAL_HOOKS_VERIFY_DISABLE=1` — is an env-var decision read server-side, and even that is audited (it writes a severity-3 `verification_bypassed` ledger event). The gate is the env check on the server, not agent instruction.
 
 ### ✅ Good: API-key indirection in config
 

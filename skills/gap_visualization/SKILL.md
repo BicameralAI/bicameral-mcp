@@ -213,7 +213,7 @@ If multiple decisions drifted, list them in a tight block:
 ⚠ N drifted decision(s):
   · "<decision A>" — <file>:<line>  (<source_ref>)
   · "<decision B>" — <file>:<line>  (<source_ref>)
-  Open bicameral.dashboard to inspect and resolve.
+  Run bicameral.history to inspect and resolve.
 ```
 
 ---

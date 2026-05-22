@@ -817,11 +817,4 @@ async def handle_ingest(
         sync_status=sync_status,
     )
 
-    try:
-        from dashboard.server import notify_dashboard
-
-        await notify_dashboard(ctx)
-    except Exception:
-        pass
-
     return ingest_response

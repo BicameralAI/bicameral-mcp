@@ -1,6 +1,6 @@
 """Bicameral MCP Server — Bicameral decision ledger + code locator tools.
 
-12 tools:
+11 tools:
   bicameral.link_commit       — heartbeat: sync a commit into the decision ledger
   bicameral.ingest            — ingest normalized decision/code evidence and advance source cursors
   bicameral.update            — check for or apply a recommended bicameral-mcp update
@@ -10,7 +10,6 @@
   bicameral.resolve_compliance — caller-LLM compliance verdict write-back (v0.5.0 three-way)
   bicameral.ratify            — product sign-off on a decision (double-entry ledger)
   bicameral.history           — read-only ledger dump grouped by feature area
-  bicameral.dashboard         — launch live decision dashboard with SSE push updates
   validate_symbols            — fuzzy-match candidate symbol names against the code index
   get_neighbors               — 1-hop structural graph traversal around a symbol
 
@@ -36,7 +35,6 @@ from mcp.server.models import InitializationOptions
 from mcp.types import TextContent, Tool
 
 from context import BicameralContext
-from dashboard.server import get_dashboard_server
 from handlers.bind import handle_bind
 from handlers.diagnose import handle_diagnose
 from handlers.gap_judge import handle_judge_gaps
@@ -149,7 +147,6 @@ EXPECTED_TOOL_NAMES = [
     "bicameral.remove_source",
     "bicameral.resolve_collision",
     "bicameral.history",
-    "bicameral.dashboard",
     "bicameral.skill_begin",
     "bicameral.skill_end",
     "bicameral.feedback",
@@ -741,30 +738,6 @@ async def list_tools() -> list[Tool]:
                 },
             },
         ),
-        Tool(
-            name="bicameral.dashboard",
-            description=(
-                "Launch (or return the URL of) the live decision dashboard. "
-                "Spins up a local HTTP server inside the MCP process, serves an "
-                "interactive single-page view of the full decision ledger, and "
-                "pushes live updates via SSE whenever bicameral.ingest or "
-                "bicameral.link_commit writes new data. "
-                "Subsequent calls return the existing URL immediately — the server "
-                "is a singleton and stays running for the session. "
-                "Fires on: 'open dashboard', 'show live history', 'launch dashboard'. "
-                "Slash alias: /bicameral-dashboard"
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "open_browser": {
-                        "type": "boolean",
-                        "default": True,
-                        "description": "When true, instruct the caller to open the URL in a browser",
-                    },
-                },
-            },
-        ),
         # ── Skill telemetry bookends ──────────────────────────────────
         Tool(
             name="bicameral.skill_begin",
@@ -1230,25 +1203,6 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 if update_notice:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
-        elif name in ("bicameral.dashboard", "dashboard"):
-            from contracts import DashboardResponse
-
-            srv = get_dashboard_server()
-            if not srv.running:
-                await srv.start(ctx_factory=BicameralContext.from_env)
-                status = "started"
-            else:
-                status = "already_running"
-            result = DashboardResponse(
-                url=srv.url,
-                status=status,
-                port=srv.port,
-            )
-            payload = result.model_dump()
-            update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
-            if update_notice:
-                payload["_update"] = update_notice
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
         # ── Code locator tools ────────────────────────────────────────
         elif name == "validate_symbols":
             data = await asyncio.to_thread(ctx.code_graph.validate_symbols, arguments["candidates"])
@@ -1382,11 +1336,6 @@ async def serve_stdio() -> None:
 
     audit_emit(AuditEventType.SERVER_START, version=SERVER_VERSION)
     try:
-        # Start the live dashboard HTTP sidecar in the background.
-        # It binds to a free port and stays running for the session.
-        dashboard_srv = get_dashboard_server()
-        await dashboard_srv.start(ctx_factory=BicameralContext.from_env)
-
         # #380 — symbol-index init runs in the background so the JSON-RPC
         # ``initialize`` reply lands inside Claude Code's 30s MCP startup
         # timeout. Pre-#380 this was an inline ``await initialize()`` per

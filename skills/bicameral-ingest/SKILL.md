@@ -737,8 +737,8 @@ more precisely by the gap-judge rubric in step 6.
    decisions on the same symbol is the highest-stakes signal — stop and
    resolve before continuing.
 2. **`drift_candidates`** — render as the `⚠ DRIFTED` callout (template #5).
-   No diagram — just name each drifted decision, cite file:line, and point
-   to `bicameral.dashboard` for details. Skip any already in divergences.
+   No diagram — just name each drifted decision and cite file:line.
+   Skip any already in divergences.
 
 **Action hints** — surface `action_hints` from the brief verbatim after
 the boxes. Two intensities, controlled by `guided: bool`:

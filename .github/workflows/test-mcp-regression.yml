@@ -153,11 +153,6 @@ jobs:
           tests/test_extract_go_substrate.py
           tests/test_m_shadow_divergence_log.py
           tests/test_shadow_dispatch.py
-          tests/test_dashboard_pulse.py
-          tests/test_dashboard_unclassified_rendering.py
-          tests/test_dashboard_source_view.py
-          tests/test_dashboard_admin_panel.py
-          tests/test_dashboard_remove_flows.py
           -v --tb=short
           --junitxml=test-results/results.xml
           --html=test-results/report.html --self-contained-html

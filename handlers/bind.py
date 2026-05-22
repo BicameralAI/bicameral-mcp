@@ -376,11 +376,4 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
             handler_rejected=False,
         )
 
-    try:
-        from dashboard.server import notify_dashboard
-
-        await notify_dashboard(ctx)
-    except Exception:
-        pass
-
     return BindResponse(bindings=results, bind_effective_ref=effective_ref)
