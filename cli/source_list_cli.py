@@ -22,7 +22,7 @@ import argparse
 import json
 import sys
 
-_DISCOVERABLE_SOURCES = ("github", "google_drive")
+_DISCOVERABLE_SOURCES = ("slack", "github", "google_drive")
 
 
 def _build_argparser(subparser: argparse.ArgumentParser) -> None:
@@ -47,6 +47,7 @@ def _build_argparser(subparser: argparse.ArgumentParser) -> None:
 def main(args: argparse.Namespace) -> int:
     """Entry point invoked from ``server.py::_dispatch``."""
     dispatch = {
+        "slack": _list_slack,
         "github": _list_github,
         "google_drive": _list_google_drive,
     }
@@ -75,6 +76,25 @@ class _AuthMissing(RuntimeError):
 
 class _APIError(RuntimeError):
     """Discovery API call failed."""
+
+
+def _list_slack() -> tuple[list[dict], list[str]]:
+    from secrets_store import get_secret
+
+    token = get_secret(source_id="slack", key="api_key")
+    if not token:
+        raise _AuthMissing(
+            "Slack bot token not configured. Store it via put_secret "
+            "(source_id='slack', key='api_key'). See "
+            "docs/integrations-settings-inventory.md § Slack."
+        )
+    from sources.slack.client import SlackAPIError, list_channels
+
+    try:
+        channels = list_channels(token=token, include_private=True)
+    except SlackAPIError as exc:
+        raise _APIError(str(exc)) from exc
+    return channels, ["id", "name", "is_private", "is_member", "num_members"]
 
 
 def _list_github() -> tuple[list[dict], list[str]]:

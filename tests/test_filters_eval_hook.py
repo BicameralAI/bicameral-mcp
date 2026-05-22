@@ -175,3 +175,35 @@ def test_evaluate_filters_both_pass(fake_hooks_module):
 
 
 # ── Per-adapter wiring ──────────────────────────────────────────────────────
+
+
+def test_slack_adapter_uses_eval_hook(tmp_path, monkeypatch, fake_hooks_module):
+    from unittest.mock import patch
+
+    from events.sources.slack import SlackPollingAdapter
+    from secrets_store import put_secret
+    from secrets_store.store import _reset_for_tests
+
+    monkeypatch.setenv("BICAMERAL_KEYRING_DISABLE", "1")
+    _reset_for_tests()
+
+    put_secret(source_id="slack", key="api_key", value="xoxb-t")
+    fake_msgs = [
+        {"ts": "1700000001.000000", "user": "U1", "text": "urgent: ship it"},
+        {"ts": "1700000002.000000", "user": "U2", "text": "lunch?"},
+    ]
+    with (
+        patch("sources.slack.poller.list_new_messages", return_value=fake_msgs),
+        patch("sources.slack.client.get_user_info", return_value={}),
+    ):
+        adapter = SlackPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={
+                "channels": ["C01A"],
+                "filters": {"eval_hook": "fake_eval_hooks:contains_urgent"},
+            },
+        )
+
+    assert len(result) == 1
+    assert "urgent" in result[0].get("decisions", [{}])[0].get("description", "").lower()

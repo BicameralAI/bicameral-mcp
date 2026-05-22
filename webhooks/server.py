@@ -11,6 +11,7 @@ NOT terminate TLS ourselves.
 
 Routes:
 - ``POST /webhooks/github``         → ``webhooks.github.handle``
+- ``POST /webhooks/slack``          → ``webhooks.slack.handle``
 - ``POST /webhooks/google-drive``   → ``webhooks.google_drive.handle``
 - ``GET /health``                   → 200 ack (for load-balancer health checks)
 
@@ -206,6 +207,16 @@ async def _process_request(reader: asyncio.StreamReader, writer: asyncio.StreamW
         await _respond(writer, status, message)
         return
 
+    if path == "/webhooks/slack":
+        # Slack handler returns (status, body, content_type) — H1 review
+        # finding: server passes content type through verbatim instead of
+        # guessing by inspecting the body.
+        status, message, content_type = await asyncio.to_thread(
+            _dispatch_slack, body, MappingProxyType(dict(headers))
+        )
+        await _respond(writer, status, message, content_type=content_type)
+        return
+
     await _respond(writer, 404, "not found")
 
 
@@ -240,6 +251,23 @@ def _dispatch_google_drive(body: bytes, headers) -> tuple[int, str]:
         resource_id=headers.get("x-goog-resource-id"),
         resource_state=headers.get("x-goog-resource-state"),
         message_number=headers.get("x-goog-message-number"),
+    )
+
+
+def _dispatch_slack(body: bytes, headers) -> tuple[int, str, str]:
+    """Sync entrypoint into the Slack handler (called via to_thread).
+
+    Returns ``(status, body, content_type)`` — content type is explicit
+    rather than guessed from body shape (H1 review finding).
+    """
+    from webhooks.slack import handle
+
+    timestamp = headers.get("x-slack-request-timestamp")
+    signature = headers.get("x-slack-signature")
+    return handle(
+        body=body,
+        timestamp_header=timestamp,
+        signature_header=signature,
     )
 
 

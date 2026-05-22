@@ -33,6 +33,98 @@ def _disable_keyring(monkeypatch):
 # ── Slack: keyword_include + per-resource override ──────────────────────────
 
 
+def test_slack_source_level_keyword_filter_drops_unmatched(tmp_path):
+    from events.sources.slack import SlackPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="slack", key="api_key", value="xoxb-t")
+
+    fake_msgs = [
+        {"ts": "1700000001.000000", "user": "U1", "text": "decided to ship"},
+        {"ts": "1700000002.000000", "user": "U2", "text": "lunch?"},
+    ]
+    with (
+        patch("sources.slack.poller.list_new_messages", return_value=fake_msgs),
+        patch("sources.slack.client.get_user_info", return_value={}),
+    ):
+        adapter = SlackPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={
+                "channels": ["C01A"],
+                "filters": {"keyword_include": ["decided"]},
+            },
+        )
+
+    assert len(result) == 1
+    # Watermark advances past the filtered-out message anyway.
+    assert adapter._pending_watermarks["C01A"] == "1700000002.000000"
+
+
+def test_slack_per_channel_override_takes_precedence(tmp_path):
+    from events.sources.slack import SlackPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="slack", key="api_key", value="xoxb-t")
+
+    # Same messages would be filtered by source-level filter, but
+    # the per-channel override clears it for C01B by widening
+    # the keyword_include list.
+    msgs_a = [{"ts": "1700000001.000000", "user": "U1", "text": "lunch?"}]
+    msgs_b = [{"ts": "1700000002.000000", "user": "U2", "text": "lunch?"}]
+
+    call_count = {"n": 0}
+
+    def _list(*, token, channel, oldest=None):
+        call_count["n"] += 1
+        return {"C01A": msgs_a, "C01B": msgs_b}[channel]
+
+    with (
+        patch("sources.slack.poller.list_new_messages", side_effect=_list),
+        patch("sources.slack.client.get_user_info", return_value={}),
+    ):
+        adapter = SlackPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={
+                "channels": [
+                    "C01A",  # inherits source-level filter — "lunch?" rejected
+                    {"id": "C01B", "filters": {"keyword_include": ["lunch"]}},
+                ],
+                "filters": {"keyword_include": ["decided"]},
+            },
+        )
+
+    # Only C01B's message survives.
+    assert len(result) == 1
+
+
+def test_slack_malformed_filter_falls_through(tmp_path, capsys):
+    from events.sources.slack import SlackPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="slack", key="api_key", value="xoxb-t")
+    fake_msgs = [{"ts": "1700000001.000000", "user": "U1", "text": "decided"}]
+    with (
+        patch("sources.slack.poller.list_new_messages", return_value=fake_msgs),
+        patch("sources.slack.client.get_user_info", return_value={}),
+    ):
+        adapter = SlackPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            # Typo'd field — pydantic rejects → no-filter fallback.
+            config={"channels": ["C01A"], "filters": {"keywords_include": ["x"]}},
+        )
+
+    err = capsys.readouterr().err
+    assert "malformed filter block" in err
+    # Items still flow through (no-filter fallback).
+    assert len(result) == 1
+
+
+# ── Linear: source-level keyword filter ─────────────────────────────────────
+
+
 def test_github_per_repo_filter_override(tmp_path):
     from events.sources.github import GitHubPollingAdapter
     from secrets_store import put_secret

@@ -143,6 +143,37 @@ def test_github_caps_across_repos(tmp_path):
     assert "foo/baz" not in adapter._pending_watermarks
 
 
+def test_slack_caps_across_channels(tmp_path):
+    from events.sources.slack import SlackPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="slack", key="api_key", value="xoxb-t")
+
+    msgs_a = [{"ts": f"170000000{i}.000000", "user": "U1", "text": f"msg {i}"} for i in range(1, 4)]
+    msgs_b = [{"ts": "1700000099.000000", "user": "U2", "text": "later channel"}]
+
+    def _list(*, token, channel, oldest=None):
+        return {"C01A": msgs_a, "C01B": msgs_b}[channel]
+
+    with (
+        patch("sources.slack.poller.list_new_messages", side_effect=_list),
+        patch("sources.slack.client.get_user_info", return_value={}),
+    ):
+        adapter = SlackPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={
+                "channels": ["C01A", "C01B"],
+                "max_items_per_pull": 2,
+            },
+        )
+
+    assert len(result) == 2
+    # C01A's watermark advanced to second-msg ts; C01B never touched.
+    assert "C01A" in adapter._pending_watermarks
+    assert "C01B" not in adapter._pending_watermarks
+
+
 def test_google_drive_caps(tmp_path):
     from events.sources.google_drive import GoogleDriveFolderAdapter
 
