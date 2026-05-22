@@ -33,6 +33,48 @@ def _disable_keyring(monkeypatch):
 # ── Slack: keyword_include + per-resource override ──────────────────────────
 
 
+def test_linear_keyword_include_filters_issues(tmp_path):
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    fake_issues = [
+        {
+            "identifier": "BIC-1",
+            "url": "https://linear.app/x/issue/BIC-1",
+            "completedAt": "2026-05-01T00:00:00Z",
+        },
+        {
+            "identifier": "BIC-2",
+            "url": "https://linear.app/x/issue/BIC-2",
+            "completedAt": "2026-05-02T00:00:00Z",
+        },
+    ]
+
+    def _fetch(self, url):
+        if "BIC-1" in url:
+            return {"query": "Decided to refactor", "decisions": [], "participants": []}
+        return {"query": "Random chatter", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch("sources.linear.adapter.LinearAdapter.fetch_active", new=_fetch),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"filters": {"keyword_include": ["decided"]}},
+        )
+
+    assert len(result) == 1
+    # Watermark advances past the filtered issue.
+    assert adapter._pending_watermark == "2026-05-02T00:00:00Z"
+
+
+# ── Notion: source-level time_window_after ──────────────────────────────────
+
+
 def test_github_per_repo_filter_override(tmp_path):
     from events.sources.github import GitHubPollingAdapter
     from secrets_store import put_secret

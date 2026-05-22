@@ -93,6 +93,82 @@ def test_payload_within_cap_handles_malformed():
 # ── per-adapter wiring ──────────────────────────────────────────────────────
 
 
+def test_linear_caps_to_max_items(tmp_path):
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    fake_issues = [
+        {
+            "identifier": f"BIC-{i}",
+            "url": f"https://linear.app/x/issue/BIC-{i}",
+            "completedAt": f"2026-05-{i:02d}T00:00:00Z",
+        }
+        for i in range(1, 11)
+    ]
+
+    def _fetch(self, url):
+        return {"query": "x", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch("sources.linear.adapter.LinearAdapter.fetch_active", new=_fetch),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"max_items_per_pull": 3},
+        )
+
+    assert len(result) == 3
+    # Watermark advances ONLY to the last processed item, not beyond.
+    # First 3 issues processed → BIC-3's completedAt.
+    assert adapter._pending_watermark == "2026-05-03T00:00:00Z"
+
+
+def test_linear_rejects_oversized_payload(tmp_path, capsys):
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    big = "x" * 5000
+    fake_issues = [
+        {
+            "identifier": "BIC-1",
+            "url": "https://linear.app/x/issue/BIC-1",
+            "completedAt": "2026-05-01T00:00:00Z",
+        },
+        {
+            "identifier": "BIC-2",
+            "url": "https://linear.app/x/issue/BIC-2",
+            "completedAt": "2026-05-02T00:00:00Z",
+        },
+    ]
+
+    def _fetch(self, url):
+        if "BIC-1" in url:
+            return {"query": big, "decisions": [], "participants": []}  # oversized
+        return {"query": "x", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch("sources.linear.adapter.LinearAdapter.fetch_active", new=_fetch),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"max_payload_bytes": 1000},
+        )
+
+    assert len(result) == 1
+    err = capsys.readouterr().err
+    assert "exceeds max_payload_bytes" in err
+    # Watermark advances past the oversized item (we observed it).
+    assert adapter._pending_watermark == "2026-05-02T00:00:00Z"
+
+
 def test_github_caps_across_repos(tmp_path):
     """Cap is global across repos — once reached, no further repos are pulled."""
     from events.sources.github import GitHubPollingAdapter
@@ -167,3 +243,32 @@ def test_google_drive_caps(tmp_path):
 
     assert len(result) == 2
     assert adapter._pending_watermark == "2026-05-02T00:00:00Z"
+
+
+def test_cap_of_zero_means_no_cap(tmp_path):
+    """Default behavior preserved when no quota config."""
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    fake_issues = [
+        {
+            "identifier": f"BIC-{i}",
+            "url": f"https://linear.app/x/issue/BIC-{i}",
+            "completedAt": f"2026-05-{i:02d}T00:00:00Z",
+        }
+        for i in range(1, 6)
+    ]
+
+    def _fetch(self, url):
+        return {"query": "x", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch("sources.linear.adapter.LinearAdapter.fetch_active", new=_fetch),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(watermark_dir=tmp_path, config={})  # no cap
+
+    assert len(result) == 5

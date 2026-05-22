@@ -23,6 +23,7 @@ from typing import Protocol, runtime_checkable
 from .github import GitHubPollingAdapter
 from .google_drive import GoogleDriveFolderAdapter
 from .granola import GranolaAdapter, MissingApiKeyError
+from .linear import LinearPollingAdapter
 from .local_directory import LocalDirectoryAdapter
 
 
@@ -47,6 +48,7 @@ ADAPTERS: dict[str, type] = {
     "granola": GranolaAdapter,
     "local_directory": LocalDirectoryAdapter,
     "google_drive": GoogleDriveFolderAdapter,
+    "linear": LinearPollingAdapter,
     "github": GitHubPollingAdapter,
 }
 
@@ -56,6 +58,7 @@ __all__ = [
     "GitHubPollingAdapter",
     "GoogleDriveFolderAdapter",
     "GranolaAdapter",
+    "LinearPollingAdapter",
     "LocalDirectoryAdapter",
     "MissingApiKeyError",
     "SourceAdapter",

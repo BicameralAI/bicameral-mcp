@@ -55,6 +55,27 @@ def _mock_resp(body):
 # ── Slack: list_channels ────────────────────────────────────────────────────
 
 
+def test_linear_list_teams():
+    from sources.linear.client import list_teams
+
+    body = {
+        "data": {
+            "teams": {
+                "nodes": [
+                    {"id": "team-1", "key": "BIC", "name": "Bicameral"},
+                    {"id": "team-2", "key": "ENG", "name": "Engineering"},
+                ]
+            }
+        }
+    }
+    with patch("urllib.request.urlopen", return_value=_mock_resp(body)):
+        result = list_teams(api_key="lin_x")
+    assert [t["key"] for t in result] == ["BIC", "ENG"]
+
+
+# ── Notion: list_databases ──────────────────────────────────────────────────
+
+
 def test_github_list_repos_pat_returns_array():
     from sources.github.client import list_repos
 

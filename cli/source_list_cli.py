@@ -22,7 +22,7 @@ import argparse
 import json
 import sys
 
-_DISCOVERABLE_SOURCES = ("github", "google_drive")
+_DISCOVERABLE_SOURCES = ("linear", "github", "google_drive")
 
 
 def _build_argparser(subparser: argparse.ArgumentParser) -> None:
@@ -47,6 +47,7 @@ def _build_argparser(subparser: argparse.ArgumentParser) -> None:
 def main(args: argparse.Namespace) -> int:
     """Entry point invoked from ``server.py::_dispatch``."""
     dispatch = {
+        "linear": _list_linear,
         "github": _list_github,
         "google_drive": _list_google_drive,
     }
@@ -75,6 +76,24 @@ class _AuthMissing(RuntimeError):
 
 class _APIError(RuntimeError):
     """Discovery API call failed."""
+
+
+def _list_linear() -> tuple[list[dict], list[str]]:
+    from secrets_store import get_secret
+
+    key = get_secret(source_id="linear", key="api_key")
+    if not key:
+        raise _AuthMissing(
+            "Linear API key not configured. Store it via put_secret "
+            "(source_id='linear', key='api_key')."
+        )
+    from sources.linear.client import LinearAPIError, list_teams
+
+    try:
+        teams = list_teams(api_key=key)
+    except LinearAPIError as exc:
+        raise _APIError(str(exc)) from exc
+    return teams, ["key", "name", "id"]
 
 
 def _list_github() -> tuple[list[dict], list[str]]:

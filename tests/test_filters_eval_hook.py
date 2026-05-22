@@ -175,3 +175,126 @@ def test_evaluate_filters_both_pass(fake_hooks_module):
 
 
 # ── Per-adapter wiring ──────────────────────────────────────────────────────
+
+
+def test_linear_adapter_uses_eval_hook(tmp_path, monkeypatch, fake_hooks_module):
+    from unittest.mock import patch
+
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+    from secrets_store.store import _reset_for_tests
+
+    monkeypatch.setenv("BICAMERAL_KEYRING_DISABLE", "1")
+    _reset_for_tests()
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    fake_issues = [
+        {
+            "identifier": "BIC-1",
+            "url": "https://linear.app/x/issue/BIC-1",
+            "completedAt": "2026-05-01T00:00:00Z",
+        },
+        {
+            "identifier": "BIC-2",
+            "url": "https://linear.app/x/issue/BIC-2",
+            "completedAt": "2026-05-02T00:00:00Z",
+        },
+    ]
+
+    def _fetch(self, url):
+        if "BIC-1" in url:
+            return {"query": "urgent fix", "decisions": [], "participants": []}
+        return {"query": "regular work", "decisions": [], "participants": []}
+
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch("sources.linear.adapter.LinearAdapter.fetch_active", new=_fetch),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"filters": {"eval_hook": "fake_eval_hooks:contains_urgent"}},
+        )
+
+    assert len(result) == 1
+    assert adapter._pending_watermark == "2026-05-02T00:00:00Z"
+
+
+def test_adapter_continues_when_hook_raises(tmp_path, monkeypatch, fake_hooks_module, capsys):
+    """Hook crashing must not crash the poll loop — that item is
+    rejected, others (or none) still pass."""
+    from unittest.mock import patch
+
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+    from secrets_store.store import _reset_for_tests
+
+    monkeypatch.setenv("BICAMERAL_KEYRING_DISABLE", "1")
+    _reset_for_tests()
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    fake_issues = [
+        {
+            "identifier": "BIC-1",
+            "url": "https://linear.app/x/issue/BIC-1",
+            "completedAt": "2026-05-01T00:00:00Z",
+        },
+    ]
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch(
+            "sources.linear.adapter.LinearAdapter.fetch_active",
+            return_value={"query": "x", "decisions": [], "participants": []},
+        ),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"filters": {"eval_hook": "fake_eval_hooks:raises"}},
+        )
+
+    assert result == []
+    # Watermark still advances past the rejected item.
+    assert adapter._pending_watermark == "2026-05-01T00:00:00Z"
+    # Operator gets a stderr warning.
+    assert "raised" in capsys.readouterr().err
+
+
+def test_adapter_continues_when_hook_path_invalid(tmp_path, monkeypatch, capsys):
+    """Bad import path is loud but non-fatal — poller continues."""
+    from unittest.mock import patch
+
+    from events.sources.linear import LinearPollingAdapter
+    from secrets_store import put_secret
+    from secrets_store.store import _reset_for_tests
+
+    monkeypatch.setenv("BICAMERAL_KEYRING_DISABLE", "1")
+    _reset_for_tests()
+
+    put_secret(source_id="linear", key="api_key", value="lin_t")
+
+    fake_issues = [
+        {
+            "identifier": "BIC-1",
+            "url": "https://linear.app/x/issue/BIC-1",
+            "completedAt": "2026-05-01T00:00:00Z",
+        },
+    ]
+    with (
+        patch("sources.linear.poller.list_completed_issues", return_value=fake_issues),
+        patch(
+            "sources.linear.adapter.LinearAdapter.fetch_active",
+            return_value={"query": "x", "decisions": [], "participants": []},
+        ),
+    ):
+        adapter = LinearPollingAdapter()
+        result = adapter.pull(
+            watermark_dir=tmp_path,
+            config={"filters": {"eval_hook": "totally_made_up_module_xyz:fn"}},
+        )
+
+    # Item rejected (hook resolution failed), but poller didn't crash.
+    assert result == []
+    assert "import failed" in capsys.readouterr().err
