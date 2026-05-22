@@ -9,13 +9,17 @@ daemon + adapter release. Every grounding-related request carries
 
 from __future__ import annotations
 
-from typing import Literal, Protocol, runtime_checkable
+from dataclasses import dataclass, field
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
 PROTOCOL_VERSION = "0.1.0"
 
 BATCH_REGION_LIMIT = 1000
+
+# Default tenant identifier when no explicit one is supplied (local deploy).
+LOCAL_TENANT_ID = "local"
 
 
 class ProtocolError(Exception):
@@ -24,6 +28,44 @@ class ProtocolError(Exception):
 
 class ProtocolVersionError(ProtocolError):
     """Raised when client and server disagree on major version."""
+
+
+class NotAttachedError(ProtocolError):
+    """Raised when a tenant-scoped RPC is issued before ``system.attach``."""
+
+
+# ── Session attach ─────────────────────────────────────────────────────
+
+
+class AttachRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tenant_id: str
+    user_id: str | None = None  # within-tenant actor identity (e.g., signer email)
+
+
+class AttachResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    tenant_id: str
+    protocol_version: str = PROTOCOL_VERSION
+
+
+@dataclass
+class ConnectionContext:
+    """Per-connection state set by ``system.attach`` and threaded into
+    every adapter call. Adapters use ``tenant_id`` for scoping; ``user_id``
+    captures the within-tenant actor for ratification provenance.
+
+    Defined here (not in server.py) so adapter Protocols can reference it
+    without importing the server module.
+    """
+
+    tenant_id: str | None = None
+    user_id: str | None = None
+    state: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def attached(self) -> bool:
+        return self.tenant_id is not None
 
 
 # ── Ingest ──────────────────────────────────────────────────────────────
@@ -155,13 +197,19 @@ class BatchAnalyzeRequest(BaseModel):
 
 @runtime_checkable
 class IngestAdapter(Protocol):
-    """Pulls intent + artifact events into the ledger."""
+    """Pulls intent + artifact events into the ledger.
+
+    Adapters receive a ``ConnectionContext`` so they can scope writes by
+    tenant + attribute the actor for ratification provenance.
+    """
 
     name: str
 
-    async def ingest(self, req: IngestRequest) -> IngestResult: ...
+    async def ingest(self, req: IngestRequest, ctx: ConnectionContext) -> IngestResult: ...
 
-    async def link_commit(self, req: LinkCommitRequest) -> LinkCommitResult: ...
+    async def link_commit(
+        self, req: LinkCommitRequest, ctx: ConnectionContext
+    ) -> LinkCommitResult: ...
 
 
 @runtime_checkable
@@ -170,29 +218,34 @@ class EgressAdapter(Protocol):
 
     name: str
 
-    async def deliver(self, event: NotificationEvent) -> DeliveryResult: ...
+    async def deliver(
+        self, event: NotificationEvent, ctx: ConnectionContext
+    ) -> DeliveryResult: ...
 
 
 @runtime_checkable
 class GroundingPort(Protocol):
-    """Resolves symbols + analyzes drift against a `(repo_id, ref)` pair."""
+    """Resolves symbols + analyzes drift against a ``(tenant_id, repo_id, ref)``
+    tuple. ``tenant_id`` comes from the ConnectionContext; the request itself
+    carries ``repo_id`` and ``ref``.
+    """
 
     async def validate_symbols(
-        self, req: ValidateSymbolsRequest
+        self, req: ValidateSymbolsRequest, ctx: ConnectionContext
     ) -> list[Symbol]: ...
 
     async def extract_symbols(
-        self, req: ExtractSymbolsRequest
+        self, req: ExtractSymbolsRequest, ctx: ConnectionContext
     ) -> list[Symbol]: ...
 
     async def get_neighbors(
-        self, req: GetNeighborsRequest
+        self, req: GetNeighborsRequest, ctx: ConnectionContext
     ) -> list[Neighbor]: ...
 
     async def analyze_region(
-        self, req: AnalyzeRegionRequest
+        self, req: AnalyzeRegionRequest, ctx: ConnectionContext
     ) -> DriftResult: ...
 
     async def batch_analyze_regions(
-        self, req: BatchAnalyzeRequest
+        self, req: BatchAnalyzeRequest, ctx: ConnectionContext
     ) -> list[DriftResult]: ...

@@ -18,8 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from .contracts import (
+    LOCAL_TENANT_ID,
     PROTOCOL_VERSION,
     AnalyzeRegionRequest,
+    AttachRequest,
     BatchAnalyzeRequest,
     DriftResult,
     ExtractSymbolsRequest,
@@ -58,14 +60,25 @@ class ProtocolClient:
         await client.close()
     """
 
-    def __init__(self, socket_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        socket_path: Path | None = None,
+        tenant_id: str = LOCAL_TENANT_ID,
+        user_id: str | None = None,
+    ) -> None:
         self._socket_path = socket_path or self._read_daemon_socket()
+        self._tenant_id = tenant_id
+        self._user_id = user_id
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._id_iter = itertools.count(1)
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._reader_task: asyncio.Task[None] | None = None
         self._closed = False
+
+    @property
+    def tenant_id(self) -> str:
+        return self._tenant_id
 
     @staticmethod
     def _read_daemon_socket() -> Path:
@@ -81,6 +94,7 @@ class ProtocolClient:
         )
         self._reader_task = asyncio.create_task(self._read_loop())
         await self._verify_version()
+        await self._attach()
 
     async def _verify_version(self) -> None:
         server_version = await self._call("system.version", {})
@@ -90,6 +104,10 @@ class ProtocolClient:
             raise ProtocolVersionError(
                 f"client {PROTOCOL_VERSION} incompatible with server {server_version}"
             )
+
+    async def _attach(self) -> None:
+        req = AttachRequest(tenant_id=self._tenant_id, user_id=self._user_id)
+        await self._call("system.attach", req.model_dump())
 
     async def _read_loop(self) -> None:
         assert self._reader is not None

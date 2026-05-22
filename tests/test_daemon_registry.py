@@ -6,6 +6,7 @@ import pytest
 
 from daemon.registry import AdapterRegistry, AdapterRegistryError
 from protocol.contracts import (
+    ConnectionContext,
     DeliveryResult,
     IngestRequest,
     IngestResult,
@@ -19,10 +20,14 @@ class _FakeIngest:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    async def ingest(self, _req: IngestRequest) -> IngestResult:
+    async def ingest(
+        self, _req: IngestRequest, _ctx: ConnectionContext
+    ) -> IngestResult:
         return IngestResult(status="accepted")
 
-    async def link_commit(self, _req: LinkCommitRequest) -> LinkCommitResult:
+    async def link_commit(
+        self, _req: LinkCommitRequest, _ctx: ConnectionContext
+    ) -> LinkCommitResult:
         return LinkCommitResult(status="linked")
 
 
@@ -30,7 +35,9 @@ class _FakeEgress:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    async def deliver(self, _event: NotificationEvent) -> DeliveryResult:
+    async def deliver(
+        self, _event: NotificationEvent, _ctx: ConnectionContext
+    ) -> DeliveryResult:
         return DeliveryResult(status="delivered")
 
 

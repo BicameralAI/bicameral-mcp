@@ -4,8 +4,10 @@ The runtime is the *thing inside* the daemon process. It registers all
 default RPC methods (`ingest.*`, `egress.*`, `grounding.*`, `system.*`)
 against the registry, then runs the server until ``stop()`` is called.
 
-In Phase 2c the runtime also spawns + supervises the surreal child
-process; today it only hosts the protocol surface.
+Phase 2b: adapters now receive a ConnectionContext alongside their request
+so they can scope per tenant. Phase 2c will spawn + supervise the surreal
+child process and wire concrete handlers; today the runtime hosts the
+protocol surface and dispatches to registered adapter shells.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from protocol.contracts import (
+    ConnectionContext,
     IngestRequest,
     LinkCommitRequest,
     NotificationEvent,
@@ -42,16 +45,20 @@ class Runtime:
         self._server.register("ingest.link_commit", self._handle_link_commit)
         self._server.register("egress.deliver", self._handle_deliver)
         # grounding.* methods land in Phase 2c when the code-locator + drift
-        # analyzer move into daemon/grounding/. system.version is already
-        # registered by ProtocolServer itself.
+        # analyzer move into daemon/grounding/. system.version + system.attach
+        # are registered by ProtocolServer itself.
 
-    async def _handle_ingest(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_ingest(
+        self, params: dict[str, Any], ctx: ConnectionContext
+    ) -> dict[str, Any]:
         req = IngestRequest.model_validate(params)
         adapter = self._registry.lookup_ingest(req.adapter_name)
-        result = await adapter.ingest(req)
+        result = await adapter.ingest(req, ctx)
         return result.model_dump()
 
-    async def _handle_link_commit(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_link_commit(
+        self, params: dict[str, Any], ctx: ConnectionContext
+    ) -> dict[str, Any]:
         req = LinkCommitRequest.model_validate(params)
         # link_commit dispatches to ANY ingest adapter that opted into commit
         # binding — for v0.1 we route by repo_id convention; the active MCP
@@ -60,17 +67,19 @@ class Runtime:
         if not ingest_names:
             raise RuntimeError("no ingest adapters registered for link_commit")
         adapter = self._registry.lookup_ingest(ingest_names[0])
-        result = await adapter.link_commit(req)
+        result = await adapter.link_commit(req, ctx)
         return result.model_dump()
 
-    async def _handle_deliver(self, params: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_deliver(
+        self, params: dict[str, Any], ctx: ConnectionContext
+    ) -> dict[str, Any]:
         # The egress channel is selected by the embedded channel name.
         channel = params.pop("channel", None)
         if not isinstance(channel, str):
             raise ValueError("egress.deliver requires a 'channel' string")
         event = NotificationEvent.model_validate(params)
         adapter = self._registry.lookup_egress(channel)
-        result = await adapter.deliver(event)
+        result = await adapter.deliver(event, ctx)
         return result.model_dump()
 
     async def start(self) -> None:
