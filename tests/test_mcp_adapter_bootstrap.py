@@ -74,7 +74,8 @@ async def test_client_ingest_through_mcp_adapter_returns_stub_decision_id(
             )
         )
         assert result.status == "accepted"
-        assert result.decision_ids == ["stub-fathom-123"]
+        # Stub now includes tenant_id from the connection — default 'local'.
+        assert result.decision_ids == ["stub-local-fathom-123"]
 
         link_result = await client.link_commit(
             LinkCommitRequest(
@@ -110,4 +111,4 @@ async def test_client_egress_through_mcp_adapter_returns_delivered(
         await client.close()
         await supervisor.stop()
     captured = capsys.readouterr()
-    assert "[bicameral.egress] drift_detected" in captured.err
+    assert "[bicameral.egress tenant=local] drift_detected" in captured.err

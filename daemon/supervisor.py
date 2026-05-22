@@ -67,6 +67,8 @@ class Supervisor:
         self._descriptor_path = descriptor_path or default_descriptor_path()
         self._runtime: Runtime | None = None
         self._status: SupervisorStatus = SupervisorStatus.STOPPED
+        # Phase 2b: captured by bootstrap; Phase 2c uses for storage path layout.
+        self.default_tenant_id: str | None = None
 
     @property
     def registry(self) -> AdapterRegistry:

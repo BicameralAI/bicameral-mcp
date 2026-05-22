@@ -13,8 +13,11 @@ from __future__ import annotations
 
 from .client import ProtocolClient
 from .contracts import (
+    LOCAL_TENANT_ID,
     PROTOCOL_VERSION,
     AnalyzeRegionRequest,
+    AttachRequest,
+    AttachResult,
     BatchAnalyzeRequest,
     CodeRegion,
     DeliveryResult,
@@ -29,19 +32,24 @@ from .contracts import (
     LinkCommitRequest,
     LinkCommitResult,
     Neighbor,
+    NotAttachedError,
     NotificationEvent,
     ProtocolError,
     ProtocolVersionError,
     Symbol,
     ValidateSymbolsRequest,
 )
-from .server import ProtocolServer
+from .server import ConnectionContext, ProtocolServer
 
 __all__ = [
+    "LOCAL_TENANT_ID",
     "PROTOCOL_VERSION",
     "AnalyzeRegionRequest",
+    "AttachRequest",
+    "AttachResult",
     "BatchAnalyzeRequest",
     "CodeRegion",
+    "ConnectionContext",
     "DeliveryResult",
     "DriftResult",
     "EgressAdapter",
@@ -54,6 +62,7 @@ __all__ = [
     "LinkCommitRequest",
     "LinkCommitResult",
     "Neighbor",
+    "NotAttachedError",
     "NotificationEvent",
     "ProtocolClient",
     "ProtocolError",

@@ -12,6 +12,7 @@ from daemon.registry import AdapterRegistry, AdapterRegistryError
 from daemon.runtime import Runtime
 from protocol.client import ProtocolClient
 from protocol.contracts import (
+    ConnectionContext,
     DeliveryResult,
     IngestRequest,
     IngestResult,
@@ -33,23 +34,27 @@ def short_socket_dir():
 class _RecordingIngest:
     def __init__(self, name: str) -> None:
         self.name = name
-        self.calls: list[IngestRequest] = []
+        self.calls: list[tuple[IngestRequest, ConnectionContext]] = []
 
-    async def ingest(self, req: IngestRequest) -> IngestResult:
-        self.calls.append(req)
+    async def ingest(self, req: IngestRequest, ctx: ConnectionContext) -> IngestResult:
+        self.calls.append((req, ctx))
         return IngestResult(status="accepted", decision_ids=["d1"])
 
-    async def link_commit(self, _req: LinkCommitRequest) -> LinkCommitResult:
+    async def link_commit(
+        self, _req: LinkCommitRequest, _ctx: ConnectionContext
+    ) -> LinkCommitResult:
         return LinkCommitResult(status="linked", regions_updated=3)
 
 
 class _RecordingEgress:
     def __init__(self, name: str) -> None:
         self.name = name
-        self.calls: list[NotificationEvent] = []
+        self.calls: list[tuple[NotificationEvent, ConnectionContext]] = []
 
-    async def deliver(self, event: NotificationEvent) -> DeliveryResult:
-        self.calls.append(event)
+    async def deliver(
+        self, event: NotificationEvent, ctx: ConnectionContext
+    ) -> DeliveryResult:
+        self.calls.append((event, ctx))
         return DeliveryResult(status="delivered")
 
 
@@ -77,7 +82,9 @@ async def test_runtime_routes_ingest_to_registered_adapter(short_socket_dir: Pat
     assert result.status == "accepted"
     assert result.decision_ids == ["d1"]
     assert len(adapter.calls) == 1
-    assert adapter.calls[0].payload == "we decided X"
+    captured_req, captured_ctx = adapter.calls[0]
+    assert captured_req.payload == "we decided X"
+    assert captured_ctx.tenant_id == "local"  # default from ProtocolClient
 
 
 async def test_runtime_routes_egress_to_channel_named_in_params(
