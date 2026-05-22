@@ -109,6 +109,21 @@ consumes this inventory as its spec.
 | Active/passive toggle | Both | URL active + repos polling passive |
 | Rate / quota | **PARTIAL** | Pagination capped at 1000 records/cycle. Per-source rate-limit window **TBD** |
 
+### 5. `jira` — issue / comment / status-transition ingest (Phases A / B / C)
+
+| Field | State | Detail |
+|---|---|---|
+| Auth | **SHIPPED** | HTTP Basic (API token + account email) for active ingest; HMAC shared secret for the webhook. Three `secrets_store` keys under `source_id="jira"`: `api_email`, `api_token`, `webhook_secret`. Jira **Cloud** only. |
+| Discovery | **TBD** | No `source-list jira` enumerator; the operator names projects directly (the webhook JQL filter and `jira.status_transitions`) |
+| Selection — active | URL paste | Operator pastes a `…atlassian.net/browse/<KEY>-<N>` issue URL |
+| Selection — passive | **SHIPPED** | Admin-UI webhook (Phase B). The operator's Jira-side **JQL filter** scopes which issues fire it |
+| Filtering | **SHIPPED** (Jira-side) | The webhook's JQL filter is the passive selection criteria. The universal `FilterSpec` / `eval_hook` are a `sync-and-brief` pull-adapter mechanism — **N/A** on Jira's webhook path |
+| Status-transition heuristic | **SHIPPED** | Phase C — `.bicameral/config.yaml` `jira.status_transitions`: per-project terminal-status map (map keys = project allowlist; case-insensitive; fail-closed). A transition into a configured terminal status ingests as a decision |
+| Content eval hook | **N/A** | `eval_hook` is a pull-adapter primitive; Jira passive ingest is webhook-based |
+| Active/passive toggle | Both | Active = issue-URL paste; passive = admin-UI webhook |
+| Webhook receiver | **SHIPPED** | `webhooks/jira.py` (Phase B) — HMAC-SHA256 `X-Hub-Signature` verify, `X-Atlassian-Webhook-Identifier` dedup. Operator setup: `docs/jira-integration-setup.md` |
+| Rate / quota | **PARTIAL** | Inherits the global `handle_ingest` ingest gates; no per-source override |
+
 ---
 
 ## Patterns + gaps
