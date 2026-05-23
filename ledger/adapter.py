@@ -205,6 +205,43 @@ class EventReplaySchemaViolation(RuntimeError):
 _STATUS_PRIORITY = {"drifted": 3, "reflected": 2, "pending": 1, "ungrounded": 0}
 
 
+_SDK_GUARD_BYPASS_ENV = "BICAMERAL_SKIP_SDK_GUARD"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+class SurrealClientVersionMismatchError(RuntimeError):
+    """The running ``surrealdb`` SDK doesn't match the version that last
+    wrote the ledger. Raised at ``adapter.connect()`` BEFORE any RPC can
+    fire, so the failure mode is a loud actionable startup error instead
+    of an opaque mid-RPC ``Invalid revision N for type Value`` crash on
+    the first UPDATE.
+
+    The bypass env var (``BICAMERAL_SKIP_SDK_GUARD=1``) is documented as
+    last-resort — bypassing does not fix the underlying on-disk
+    incompatibility; it only lets the server attempt to run and accept
+    the deserialization failures as they happen.
+    """
+
+    def __init__(self, *, recorded: str | None, running: str | None, url: str) -> None:
+        self.recorded = recorded
+        self.running = running
+        self.url = url
+        super().__init__(
+            f"surrealdb SDK version mismatch on ledger {url}: "
+            f"last write recorded by surrealdb {recorded!r}, currently running surrealdb {running!r}. "
+            f"On-disk row format is likely incompatible — proceeding will crash mid-RPC with "
+            f"'Invalid revision N for type Value' on the first UPDATE. "
+            f"Recover with: `bicameral-mcp reset --confirm --wipe-mode=ledger --replay-from-events`, "
+            f"or downgrade bicameral-mcp to a version that pins surrealdb {recorded!r}. "
+            f"To bypass this guard (NOT RECOMMENDED — risks silent data loss), "
+            f"set {_SDK_GUARD_BYPASS_ENV}=1."
+        )
+
+
+def _sdk_guard_bypassed() -> bool:
+    return os.getenv(_SDK_GUARD_BYPASS_ENV, "").strip().lower() in _TRUTHY
+
+
 def _aggregate_decision_status(region_statuses: list[str]) -> str:
     """Collapse per-region statuses to a single decision status.
 
@@ -268,16 +305,76 @@ class SurrealDBLedgerAdapter:
             # and provide isolation for the two-layer try/except.
             await self._emit_wire_format_sentinel()
 
+    async def _sdk_version_pre_check(self) -> tuple[str | None, str, str]:
+        """Read the recorded vs. running surrealdb SDK version WITHOUT
+        updating ``bicameral_meta``. The matching writer
+        (``_write_wire_format_sentinel``) updates ``last_write`` on every
+        connect — including drift — which means a single mismatched boot
+        silently disarms detection on the next one. Pre-checking against
+        the un-updated row preserves the signal across boots until the
+        operator explicitly recovers or bypasses.
+
+        Returns ``(recorded, running, status)`` where ``status`` is
+        ``"match"``, ``"drift"``, or ``"first-write"`` (no recorded
+        version yet). Treats any read failure as ``"first-write"`` — the
+        ``bicameral_meta`` row is freshly initialized by ``init_schema``
+        on every connect, so a missing row is the legitimate first-boot
+        case rather than an indicator of corruption.
+        """
+        import importlib.metadata
+
+        try:
+            running = importlib.metadata.version("surrealdb")
+        except importlib.metadata.PackageNotFoundError:
+            return None, "unknown", "first-write"
+
+        try:
+            rows = await self._client.query("SELECT * FROM bicameral_meta LIMIT 1")
+        except Exception:  # noqa: BLE001 — pre-check MUST NOT raise on read failure
+            return None, running, "first-write"
+
+        if not rows:
+            return None, running, "first-write"
+
+        recorded = rows[0].get("surrealdb_client_version_at_last_write")
+        if recorded is None:
+            return None, running, "first-write"
+        if recorded == running:
+            return recorded, running, "match"
+        return recorded, running, "drift"
+
     async def _emit_wire_format_sentinel(self) -> None:
         """#252 Layer 2: write the bicameral_meta sentinel row + emit audit-log.
+
+        SDK version guard runs BEFORE the writer: if the recorded SDK
+        version doesn't match the running one, raise
+        ``SurrealClientVersionMismatchError`` so startup fails loudly
+        instead of crashing mid-RPC on the first UPDATE. Bypass with
+        ``BICAMERAL_SKIP_SDK_GUARD=1``.
 
         Two-layer try/except: the outer wrap catches any
         ``_write_wire_format_sentinel`` raise (so a sentinel-helper failure
         doesn't break connect); the inner wrap catches any ``audit_log.emit``
         raise (so a stubbed-out emit raise — common in tests — doesn't
         propagate either). Both layers are required by the existing audit_log
-        discipline ("audit log MUST NOT break callers").
+        discipline ("audit log MUST NOT break callers"). The SDK guard
+        SITS OUTSIDE both wraps — it's a deliberate startup-blocker.
         """
+        pre_recorded, pre_running, pre_status = await self._sdk_version_pre_check()
+        if pre_status == "drift":
+            if _sdk_guard_bypassed():
+                logger.warning(
+                    "[ledger] surrealdb SDK version drift: recorded=%r running=%r — "
+                    "guard bypassed via %s; on-disk format may be incompatible",
+                    pre_recorded,
+                    pre_running,
+                    _SDK_GUARD_BYPASS_ENV,
+                )
+            else:
+                raise SurrealClientVersionMismatchError(
+                    recorded=pre_recorded, running=pre_running, url=self._url
+                )
+
         try:
             recorded, running, status = await _write_wire_format_sentinel(self._client)
         except Exception:  # noqa: BLE001 — observability MUST NOT break connect

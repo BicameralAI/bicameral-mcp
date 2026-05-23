@@ -13,7 +13,7 @@ bm25s>=0.3.8
 pydantic>=2.0.0
 pyyaml>=6.0
 python-dotenv
-surrealdb>=1.0.0
+surrealdb==2.0.0  # MUST match pyproject.toml — on-disk row format ties to the SDK; mismatch causes "Invalid revision N for type Value" crashes mid-RPC
 cocoindex>=0.3.36,<1.0.0  # v1.0 alpha breaks flow API (op, flow_def, sources)
 sqlite-vec>=0.1.9
 sentence-transformers>=2.6.0

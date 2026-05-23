@@ -3,7 +3,7 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## v0.16.3 — Triage: locator-migration `.mcp.json` fix + v0.16.2 prevention gate
+## v0.16.4 — Triage: locator-migration `.mcp.json` fix + v0.16.2 prevention gate
 
 Triage release. Two cherry-picks from `dev`:
 
@@ -24,6 +24,56 @@ Triage release. Two cherry-picks from `dev`:
 
 - Closes #494 (the migration gap on existing `.mcp.json` files).
 - Follow-up to #491 (`requires-python >= 3.11` hotfix) — the prevention work that #491's body filed as deliberately deferred.
+
+---
+
+## v0.16.3 — Hotfix: refuse to boot on surrealdb SDK version drift
+
+P1 hotfix. When bicameral-mcp's `surrealdb==X.Y.Z` pin changes between releases (or when a user has two installs on the same machine with different pins — pipx + uv tool, or two venvs), the previously-written ledger rows become unreadable by the newly-installed SDK. The deserialization fails mid-RPC with:
+
+```
+SurrealDB row deserialization failed: Invalid revision `N` for type `Value`
+SQL: UPDATE decision:... SET status = $s, updated_at = time::now()
+```
+
+The infrastructure to detect this was already in place — `bicameral_meta` tracks `surrealdb_client_version_at_last_write`, and `_write_wire_format_sentinel` emits a `LEDGER_VERSION_DRIFT` audit event when running and recorded versions disagree — but the event was observability-only. Boot continued, and the next write crashed.
+
+This release converts the silent crash into a loud, actionable startup error.
+
+### Fixed
+
+- **SDK-version startup guard** (`ledger/adapter.py`). `adapter.connect()` now runs a pre-check that reads `bicameral_meta` *without updating it*, and raises `SurrealClientVersionMismatchError` when the recorded SDK version doesn't match `importlib.metadata.version("surrealdb")`. The MCP tool boundary surfaces this as a structured error with `action`: `bicameral-mcp reset --confirm --wipe-mode=ledger --replay-from-events`, so the operator gets a clear path instead of a runtime traceback.
+- **Pin tightened in `requirements.txt`**: `surrealdb>=1.0.0` → `surrealdb==2.0.0`, matching `pyproject.toml`. Closes the `pip install -r requirements.txt` resolution gap that let developers end up with arbitrary SDK wheels.
+
+### Bypass
+
+For emergencies (operator knows the on-disk format is actually compatible, e.g. cosmetic SDK metadata version bump with no format change):
+
+```
+BICAMERAL_SKIP_SDK_GUARD=1 bicameral-mcp
+```
+
+The bypass logs a WARN every connect — running in best-effort mode is opt-in and visible in logs. Bypass is NOT recommended; data loss is possible if the underlying surrealkv format genuinely changed.
+
+### Scope
+
+The guard catches **`surrealdb` Python package version drift** — the dominant cause. It does NOT catch surrealkv-internal format changes within a single `surrealdb` version (the bundled rust binary versions independently). That deeper case is tracked separately and belongs alongside the daemon work (#372), which isolates the SDK behind a stable `ws://` wire protocol.
+
+### Affected users
+
+- Anyone in-place upgrading bicameral-mcp across a release that bumped the `surrealdb` pin.
+- Anyone with multiple bicameral-mcp installations on the same machine (different package managers, different venvs).
+- Fresh installs and users on a pin-stable release path: not affected.
+
+### Upgrade
+
+```
+uv tool upgrade bicameral-mcp
+# or
+pipx upgrade bicameral-mcp
+```
+
+If upgrade is from a release that pinned a different `surrealdb` version, the first MCP startup will refuse to connect and print the recovery command verbatim. Run that command and re-start.
 
 ---
 

@@ -50,6 +50,7 @@ from handlers.reset import handle_reset
 from handlers.resolve_collision import handle_resolve_collision
 from handlers.resolve_compliance import handle_resolve_compliance
 from handlers.update import get_update_notice, handle_update
+from ledger.adapter import SurrealClientVersionMismatchError
 from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
@@ -1321,12 +1322,20 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                 ),
             )
         ]
-    except (DestructiveMigrationRequired, SchemaVersionTooNew) as exc:
-        action = (
-            "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
-            if isinstance(exc, DestructiveMigrationRequired)
-            else "upgrade your binary: pipx upgrade bicameral-mcp"
-        )
+    except (
+        DestructiveMigrationRequired,
+        SchemaVersionTooNew,
+        SurrealClientVersionMismatchError,
+    ) as exc:
+        if isinstance(exc, DestructiveMigrationRequired):
+            action = "run bicameral_reset(confirm=True) to apply the breaking migration and clear legacy data"
+        elif isinstance(exc, SchemaVersionTooNew):
+            action = "upgrade your binary: pipx upgrade bicameral-mcp"
+        else:
+            action = (
+                "run `bicameral-mcp reset --confirm --wipe-mode=ledger --replay-from-events` "
+                "to rebuild the ledger under the running surrealdb SDK"
+            )
         return [
             TextContent(
                 type="text",
