@@ -51,6 +51,8 @@ from pathlib import Path
 
 from packaging.version import InvalidVersion, Version
 
+from protocol.categorization import system_tool
+
 logger = logging.getLogger(__name__)
 
 _NIGHTLY_RECOMMENDED_VERSION_URL = (
@@ -361,6 +363,7 @@ def _reinstall_skills(repo_path: str) -> int:
         return 0
 
 
+@system_tool("system.update")
 async def handle_update(
     action: str,
     current_version: str,

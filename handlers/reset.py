@@ -35,10 +35,12 @@ import logging
 from pathlib import Path
 
 from contracts import ResetReplayEntry, ResetResponse
+from protocol.categorization import system_tool
 
 logger = logging.getLogger(__name__)
 
 
+@system_tool("system.reset")
 async def handle_reset(
     ctx,
     replay: bool = True,

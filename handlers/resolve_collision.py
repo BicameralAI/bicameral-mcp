@@ -30,10 +30,12 @@ from ledger.queries import (
     relate_context_for,
     update_decision_status,
 )
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
 
+@write_tool("write.resolve_collision")
 async def handle_resolve_collision(
     ctx,
     # Collision mode params

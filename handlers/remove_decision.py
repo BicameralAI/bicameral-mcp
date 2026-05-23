@@ -37,10 +37,12 @@ from datetime import UTC, datetime
 
 from contracts import RemoveDecisionResponse
 from ledger.queries import decision_exists
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
 
+@write_tool("write.remove_decision")
 async def handle_remove_decision(
     ctx,
     decision_id: str,

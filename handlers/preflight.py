@@ -48,6 +48,7 @@ from preflight_telemetry import (
     write_dedup_event,
     write_preflight_event,
 )
+from protocol.categorization import grounding_analyze
 
 logger = logging.getLogger(__name__)
 
@@ -542,6 +543,7 @@ async def _region_anchored_preflight(
     return matches, surfaced_via_expansion, fallback_reason
 
 
+@grounding_analyze("grounding.analyze.preflight")
 async def handle_preflight(
     ctx,
     topic: str,

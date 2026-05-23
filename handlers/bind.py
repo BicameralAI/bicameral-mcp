@@ -8,6 +8,7 @@ from contracts import BindResponse, BindResult, PendingComplianceCheck, SyncMetr
 from handlers.link_commit import _is_ephemeral_commit
 from handlers.sync_middleware import repo_write_barrier
 from preflight_telemetry import telemetry_enabled, write_engagement
+from protocol.categorization import grounding_lookup
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ def _emit_m2_attempt(
         logger.debug("[bind] m2 telemetry emit failed (non-fatal): %s", exc)
 
 
+@grounding_lookup("grounding.lookup.bind")
 async def handle_bind(
     ctx,
     bindings: list[dict],

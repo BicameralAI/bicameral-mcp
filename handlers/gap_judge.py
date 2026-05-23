@@ -40,6 +40,7 @@ from contracts import (
 )
 from handlers.analysis import _extract_gaps
 from handlers.search_decisions import handle_search_decisions
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +262,7 @@ def _build_context_decisions(
 # ── Public handler ───────────────────────────────────────────────────
 
 
+@write_tool("write.judge_gaps")
 async def handle_judge_gaps(
     ctx,
     topic: str,
