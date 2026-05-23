@@ -41,12 +41,18 @@ class Runtime:
         return self._registry
 
     def _register_default_methods(self) -> None:
-        self._server.register("ingest.ingest", self._handle_ingest)
-        self._server.register("ingest.link_commit", self._handle_link_commit)
+        # Phase 2c-2c — registrations align with the categorized protocol
+        # namespace (write.* / grounding.lookup.* / grounding.analyze.* /
+        # system.* established in Phase 2c-1). ``egress.deliver`` stays under
+        # ``egress.*`` pending an explicit decision on whether to add
+        # ``EGRESS_PREFIX`` to the categorization surface.
+        self._server.register("write.ingest", self._handle_ingest)
+        self._server.register("write.link_commit", self._handle_link_commit)
         self._server.register("egress.deliver", self._handle_deliver)
-        # grounding.* methods land in Phase 2c when the code-locator + drift
-        # analyzer move into daemon/grounding/. system.version + system.attach
-        # are registered by ProtocolServer itself.
+        # grounding.lookup.* / grounding.analyze.* methods land in later
+        # phases when the code-locator + drift analyzer move into
+        # daemon/grounding/. system.version + system.attach are registered
+        # by ProtocolServer itself.
 
     async def _handle_ingest(
         self, params: dict[str, Any], ctx: ConnectionContext

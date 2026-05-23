@@ -164,33 +164,40 @@ class ProtocolClient:
     # ── Typed adapter facade ─────────────────────────────────────────
 
     async def ingest(self, req: IngestRequest) -> IngestResult:
-        result = await self._call("ingest.ingest", req.model_dump())
+        result = await self._call("write.ingest", req.model_dump())
         return IngestResult.model_validate(result)
 
     async def link_commit(self, req: LinkCommitRequest) -> LinkCommitResult:
-        result = await self._call("ingest.link_commit", req.model_dump())
+        result = await self._call("write.link_commit", req.model_dump())
         return LinkCommitResult.model_validate(result)
 
     async def deliver(self, event: NotificationEvent) -> DeliveryResult:
+        # ``egress.deliver`` stays under the ``egress.*`` namespace pending an
+        # explicit decision on adding ``EGRESS_PREFIX`` to the categorization
+        # surface. The current categorization (read/write/grounding/system)
+        # has no slot for outbound notifications; treating egress as a write
+        # would conflate ledger mutation with delivery semantics. Tracked in
+        # the 2c-2c PR description; revisit before Phase 2c-3 ships the
+        # daemon supervisor.
         result = await self._call("egress.deliver", event.model_dump())
         return DeliveryResult.model_validate(result)
 
     async def validate_symbols(self, req: ValidateSymbolsRequest) -> list[Symbol]:
-        result = await self._call("grounding.validate_symbols", req.model_dump())
+        result = await self._call("grounding.lookup.validate_symbols", req.model_dump())
         return [Symbol.model_validate(item) for item in result]
 
     async def extract_symbols(self, req: ExtractSymbolsRequest) -> list[Symbol]:
-        result = await self._call("grounding.extract_symbols", req.model_dump())
+        result = await self._call("grounding.lookup.extract_symbols", req.model_dump())
         return [Symbol.model_validate(item) for item in result]
 
     async def get_neighbors(self, req: GetNeighborsRequest) -> list[Neighbor]:
-        result = await self._call("grounding.get_neighbors", req.model_dump())
+        result = await self._call("grounding.lookup.get_neighbors", req.model_dump())
         return [Neighbor.model_validate(item) for item in result]
 
     async def analyze_region(self, req: AnalyzeRegionRequest) -> DriftResult:
-        result = await self._call("grounding.analyze_region", req.model_dump())
+        result = await self._call("grounding.analyze.region", req.model_dump())
         return DriftResult.model_validate(result)
 
     async def batch_analyze_regions(self, req: BatchAnalyzeRequest) -> list[DriftResult]:
-        result = await self._call("grounding.batch_analyze_regions", req.model_dump())
+        result = await self._call("grounding.analyze.batch", req.model_dump())
         return [DriftResult.model_validate(item) for item in result]
