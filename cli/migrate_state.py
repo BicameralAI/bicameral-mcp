@@ -14,6 +14,7 @@ config.yaml with a warning logged — forward-compat for future versions.
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -206,6 +207,98 @@ def _partition_config_yaml(
     return did_something, warnings
 
 
+_LEGACY_SURREAL_SCHEME = "surrealkv://"
+
+
+def _is_repo_local_path(path_str: str, repo: Path) -> bool:
+    """Return True when ``path_str`` resolves inside ``<repo>/.bicameral/``.
+
+    Used to identify legacy in-repo overrides written by setup_wizard
+    before #368 shipped. Resolves both sides so symlinked repos and
+    relative paths behave the same way. Unresolvable paths (e.g.,
+    malformed) return False — preserve, don't clobber.
+    """
+    if not path_str:
+        return False
+    try:
+        candidate = Path(path_str).expanduser().resolve(strict=False)
+        legacy_root = (repo / ".bicameral").resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    try:
+        candidate.relative_to(legacy_root)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_legacy_repo_local_surreal_url(url: str, repo: Path) -> bool:
+    """Return True iff ``url`` is a ``surrealkv://`` URL pointing into
+    ``<repo>/.bicameral/``. ``memory://`` and any URL pointing outside
+    the repo are legitimate operator overrides — preserve them.
+    """
+    if not url.startswith(_LEGACY_SURREAL_SCHEME):
+        return False
+    path_part = url[len(_LEGACY_SURREAL_SCHEME) :]
+    return _is_repo_local_path(path_part, repo)
+
+
+def _rewrite_mcp_json(repo: Path, *, dry_run: bool) -> tuple[bool, list[str]]:
+    """Drop legacy in-repo ``SURREAL_URL`` / ``CODE_LOCATOR_SQLITE_DB``
+    overrides from ``<repo>/.mcp.json`` so the locator can resolve the
+    canonical paths at next startup (#494).
+
+    Only the ``mcpServers.bicameral.env`` block is touched, and only
+    when the value resolves into ``<repo>/.bicameral/``. Anything else
+    (other servers, other env keys, ``memory://``, paths outside the
+    repo) is preserved untouched.
+
+    Returns ``(did_rewrite, warnings)``. No-op when the file is absent,
+    unparseable, or already clean.
+    """
+    config_path = repo / ".mcp.json"
+    if not config_path.is_file():
+        return False, []
+
+    raw = config_path.read_text(encoding="utf-8")
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return False, [f".mcp.json unparseable ({exc}) — leaving untouched"]
+    if not isinstance(loaded, dict):
+        return False, [".mcp.json top-level is not an object — leaving untouched"]
+
+    servers = loaded.get("mcpServers")
+    if not isinstance(servers, dict):
+        return False, []
+    bicameral = servers.get("bicameral")
+    if not isinstance(bicameral, dict):
+        return False, []
+    env = bicameral.get("env")
+    if not isinstance(env, dict):
+        return False, []
+
+    removed_keys: list[str] = []
+
+    surreal_url = env.get("SURREAL_URL")
+    if isinstance(surreal_url, str) and _is_legacy_repo_local_surreal_url(surreal_url, repo):
+        del env["SURREAL_URL"]
+        removed_keys.append("SURREAL_URL")
+
+    code_locator_db = env.get("CODE_LOCATOR_SQLITE_DB")
+    if isinstance(code_locator_db, str) and _is_repo_local_path(code_locator_db, repo):
+        del env["CODE_LOCATOR_SQLITE_DB"]
+        removed_keys.append("CODE_LOCATOR_SQLITE_DB")
+
+    if not removed_keys:
+        return False, []
+
+    if not dry_run:
+        config_path.write_text(json.dumps(loaded, indent=2) + "\n", encoding="utf-8")
+
+    return True, [f"dropped legacy env keys from .mcp.json: {', '.join(removed_keys)}"]
+
+
 def _execute_plan(
     plan: list[tuple[Path, Path]],
     archive_dir: Path,
@@ -255,10 +348,19 @@ def _print_summary(
     empty_dirs_removed: list[Path],
     config_did_split: bool,
     config_warnings: list[str],
+    mcp_json_did_rewrite: bool,
+    mcp_json_warnings: list[str],
     *,
     dry_run: bool,
 ) -> None:
-    if not log and not empty_dirs_removed and not config_did_split:
+    if (
+        not log
+        and not empty_dirs_removed
+        and not config_did_split
+        and not mcp_json_did_rewrite
+        and not mcp_json_warnings
+        and not config_warnings
+    ):
         print("  Nothing to migrate.")
         return
     prefix = "[dry-run] " if dry_run else ""
@@ -276,6 +378,10 @@ def _print_summary(
         print(f"  {prefix}split config.yaml → team-identity + operator.yaml")
     for w in config_warnings:
         print(f"  WARN: {w}")
+    for w in mcp_json_warnings:
+        # Both informational ("dropped …") and failure ("unparseable") flow through
+        # the same channel — the message itself carries enough context.
+        print(f"  {prefix}{w}" if w.startswith("dropped") else f"  WARN: {w}")
     # R4 deferred-ephemeral notice (decision:e3xz4c4ji4x7lm3lvq4k).
     print(
         "  Note: ~/.bicameral/projects/ persists per home directory. If you run "
@@ -356,6 +462,7 @@ def main(argv: list[str] | None = None) -> int:
     config_did_split, config_warnings = _partition_config_yaml(
         repo, project_dir, dry_run=args.dry_run
     )
+    mcp_json_did_rewrite, mcp_json_warnings = _rewrite_mcp_json(repo, dry_run=args.dry_run)
     empty_dirs_removed = _cleanup_empty_source_dirs(repo, dry_run=args.dry_run)
 
     _print_summary(
@@ -363,6 +470,8 @@ def main(argv: list[str] | None = None) -> int:
         empty_dirs_removed,
         config_did_split,
         config_warnings,
+        mcp_json_did_rewrite,
+        mcp_json_warnings,
         dry_run=args.dry_run,
     )
     return 0

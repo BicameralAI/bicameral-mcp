@@ -308,3 +308,198 @@ def test_partitions_config_yaml_keys(git_repo: Path) -> None:
     assert op["telemetry"] is False
     assert op["channel"] == "stable"
     assert op["team"] == {"role": "member"}
+
+
+# ── #494: .mcp.json env-block rewrites ─────────────────────────────────
+
+
+def _write_mcp_json(repo: Path, env: dict[str, str], *, extra_servers: dict | None = None) -> Path:
+    """Write a `.mcp.json` with a `bicameral` server entry whose env is
+    ``env``. Optional ``extra_servers`` are written alongside untouched."""
+    import json as _json
+
+    servers: dict = {
+        "bicameral": {
+            "command": "bicameral-mcp",
+            "args": [],
+            "env": env,
+        }
+    }
+    if extra_servers:
+        servers.update(extra_servers)
+    payload = {"mcpServers": servers}
+    path = repo / ".mcp.json"
+    path.write_text(_json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _read_bicameral_env(repo: Path) -> dict:
+    import json as _json
+
+    data = _json.loads((repo / ".mcp.json").read_text(encoding="utf-8"))
+    return data["mcpServers"]["bicameral"]["env"]
+
+
+def test_mcp_json_drops_legacy_surreal_url(git_repo: Path) -> None:
+    legacy_db = git_repo / ".bicameral" / "local" / "ledger.db"
+    legacy_db.parent.mkdir(parents=True, exist_ok=True)
+    _write_mcp_json(
+        git_repo,
+        {
+            "REPO_PATH": str(git_repo),
+            "SURREAL_URL": f"surrealkv://{legacy_db}",
+        },
+    )
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+
+    env = _read_bicameral_env(git_repo)
+    assert "SURREAL_URL" not in env
+    # Unrelated env keys preserved.
+    assert env["REPO_PATH"] == str(git_repo)
+
+
+def test_mcp_json_drops_legacy_code_locator_sqlite_db(git_repo: Path) -> None:
+    legacy_db = git_repo / ".bicameral" / "local" / "code-graph.db"
+    legacy_db.parent.mkdir(parents=True, exist_ok=True)
+    _write_mcp_json(
+        git_repo,
+        {
+            "REPO_PATH": str(git_repo),
+            "CODE_LOCATOR_SQLITE_DB": str(legacy_db),
+        },
+    )
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+
+    env = _read_bicameral_env(git_repo)
+    assert "CODE_LOCATOR_SQLITE_DB" not in env
+    assert env["REPO_PATH"] == str(git_repo)
+
+
+def test_mcp_json_preserves_memory_surreal_url(git_repo: Path) -> None:
+    """`memory://` is a legitimate operator override (tests, ephemeral
+    contexts) — must not be touched."""
+    _write_mcp_json(
+        git_repo,
+        {"REPO_PATH": str(git_repo), "SURREAL_URL": "memory://"},
+    )
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+
+    assert _read_bicameral_env(git_repo)["SURREAL_URL"] == "memory://"
+
+
+def test_mcp_json_preserves_non_repo_surreal_url(tmp_path: Path, git_repo: Path) -> None:
+    """A `surrealkv://` URL pointing outside `<repo>/.bicameral/` is a
+    legitimate user customization (private ledger location, alternate
+    home, etc.) — must not be touched."""
+    custom_db = tmp_path / "elsewhere" / "ledger.db"
+    custom_db.parent.mkdir(parents=True, exist_ok=True)
+    custom_url = f"surrealkv://{custom_db}"
+    _write_mcp_json(
+        git_repo,
+        {"REPO_PATH": str(git_repo), "SURREAL_URL": custom_url},
+    )
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+
+    assert _read_bicameral_env(git_repo)["SURREAL_URL"] == custom_url
+
+
+def test_mcp_json_preserves_non_repo_code_locator_sqlite_db(tmp_path: Path, git_repo: Path) -> None:
+    custom_db = tmp_path / "elsewhere" / "code-graph.db"
+    custom_db.parent.mkdir(parents=True, exist_ok=True)
+    _write_mcp_json(
+        git_repo,
+        {"REPO_PATH": str(git_repo), "CODE_LOCATOR_SQLITE_DB": str(custom_db)},
+    )
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+
+    assert _read_bicameral_env(git_repo)["CODE_LOCATOR_SQLITE_DB"] == str(custom_db)
+
+
+def test_mcp_json_idempotent_second_run_is_noop(git_repo: Path, capsys) -> None:
+    legacy_db = git_repo / ".bicameral" / "local" / "ledger.db"
+    legacy_db.parent.mkdir(parents=True, exist_ok=True)
+    _write_mcp_json(
+        git_repo,
+        {"REPO_PATH": str(git_repo), "SURREAL_URL": f"surrealkv://{legacy_db}"},
+    )
+
+    assert migrate_state.main(["--repo", str(git_repo), "--auto"]) == 0
+    capsys.readouterr()  # discard first-pass output
+
+    assert migrate_state.main(["--repo", str(git_repo), "--auto"]) == 0
+    out = capsys.readouterr().out
+    assert "Nothing to migrate." in out
+    assert "dropped legacy env keys" not in out
+
+
+def test_mcp_json_absent_is_noop(git_repo: Path) -> None:
+    assert not (git_repo / ".mcp.json").exists()
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+    assert not (git_repo / ".mcp.json").exists()
+
+
+def test_mcp_json_unparseable_warns_and_preserves(git_repo: Path, capsys) -> None:
+    (git_repo / ".mcp.json").write_text("{ not json", encoding="utf-8")
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "WARN" in out and "unparseable" in out
+    # File untouched.
+    assert (git_repo / ".mcp.json").read_text(encoding="utf-8") == "{ not json"
+
+
+def test_mcp_json_dry_run_does_not_write(git_repo: Path) -> None:
+    legacy_db = git_repo / ".bicameral" / "local" / "ledger.db"
+    legacy_db.parent.mkdir(parents=True, exist_ok=True)
+    surreal_url = f"surrealkv://{legacy_db}"
+    _write_mcp_json(
+        git_repo,
+        {"REPO_PATH": str(git_repo), "SURREAL_URL": surreal_url},
+    )
+    before = (git_repo / ".mcp.json").read_text(encoding="utf-8")
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto", "--dry-run"])
+    assert rc == 0
+    assert (git_repo / ".mcp.json").read_text(encoding="utf-8") == before
+
+
+def test_mcp_json_preserves_other_servers(git_repo: Path) -> None:
+    """A non-bicameral server entry in the same `.mcp.json` (e.g., user's
+    other MCP servers) must remain untouched even when its env happens
+    to contain a key name we recognize."""
+    legacy_db = git_repo / ".bicameral" / "local" / "ledger.db"
+    legacy_db.parent.mkdir(parents=True, exist_ok=True)
+    other_env = {"SURREAL_URL": f"surrealkv://{legacy_db}"}  # decoy
+    _write_mcp_json(
+        git_repo,
+        env={"REPO_PATH": str(git_repo), "SURREAL_URL": f"surrealkv://{legacy_db}"},
+        extra_servers={
+            "other-tool": {
+                "command": "other-mcp",
+                "args": [],
+                "env": other_env,
+            }
+        },
+    )
+
+    rc = migrate_state.main(["--repo", str(git_repo), "--auto"])
+    assert rc == 0
+
+    import json as _json
+
+    data = _json.loads((git_repo / ".mcp.json").read_text(encoding="utf-8"))
+    # bicameral env: rewritten.
+    assert "SURREAL_URL" not in data["mcpServers"]["bicameral"]["env"]
+    # other-tool env: preserved verbatim.
+    assert data["mcpServers"]["other-tool"]["env"] == other_env
