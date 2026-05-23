@@ -39,9 +39,11 @@ if TYPE_CHECKING:
 
 async def handle_write_feedback(params: dict[str, Any], _ctx: ConnectionContext) -> dict[str, Any]:
     req = FeedbackRequest.model_validate(params)
-    from handlers.feedback import handle_feedback
+    # Phase 2c-6a: call _handle_feedback_impl directly (not the facade) to
+    # avoid an infinite RPC loop: facade → daemon → this dispatcher → facade → …
+    from handlers.feedback import _handle_feedback_impl
 
-    raw = await handle_feedback(
+    raw = await _handle_feedback_impl(
         server_version=req.server_version,
         skill=req.skill,
         trying_to=req.trying_to,
@@ -55,9 +57,11 @@ async def handle_write_skill_begin(
     params: dict[str, Any], _ctx: ConnectionContext
 ) -> dict[str, Any]:
     req = SkillBeginRequest.model_validate(params)
-    from handlers.skill import handle_skill_begin
+    # Phase 2c-6a: call _handle_skill_begin_impl directly (not the facade) to
+    # avoid an infinite RPC loop: facade → daemon → this dispatcher → facade → …
+    from handlers.skill import _handle_skill_begin_impl
 
-    raw = await handle_skill_begin(
+    raw = await _handle_skill_begin_impl(
         session_id=req.session_id,
         skill_name=req.skill_name,
     )
@@ -66,9 +70,11 @@ async def handle_write_skill_begin(
 
 async def handle_write_skill_end(params: dict[str, Any], _ctx: ConnectionContext) -> dict[str, Any]:
     req = SkillEndRequest.model_validate(params)
-    from handlers.skill import handle_skill_end
+    # Phase 2c-6a: call _handle_skill_end_impl directly (not the facade) to
+    # avoid an infinite RPC loop: facade → daemon → this dispatcher → facade → …
+    from handlers.skill import _handle_skill_end_impl
 
-    raw = await handle_skill_end(
+    raw = await _handle_skill_end_impl(
         session_id=req.session_id,
         skill_name=req.skill_name,
         server_version=req.server_version,
@@ -76,7 +82,7 @@ async def handle_write_skill_end(params: dict[str, Any], _ctx: ConnectionContext
         error_class=req.error_class,
         diagnostic=req.diagnostic,
     )
-    # ``handle_skill_end`` returns a dict whose ``diagnostic_warning`` key is
+    # ``_handle_skill_end_impl`` returns a dict whose ``diagnostic_warning`` key is
     # only present on validation failure — Pydantic's ``extra="ignore"`` plus
     # ``Optional`` field handles both shapes.
     return SkillEndResult.model_validate(raw).model_dump()

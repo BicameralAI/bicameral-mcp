@@ -202,3 +202,74 @@ class DaemonProxy:
                 "as_of": as_of,
             },
         )
+
+    async def feedback(
+        self,
+        *,
+        server_version: str,
+        skill: str = "",
+        trying_to: str = "",
+        attempted: str = "",
+        stuck_on: str = "",
+    ) -> dict[str, Any]:
+        """Invoke ``write.feedback`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_feedback`` facade is responsible for wrapping
+        this dict back into a ``FeedbackResult`` model.
+        """
+        return await self._call_with_retry(
+            "write.feedback",
+            {
+                "server_version": server_version,
+                "skill": skill,
+                "trying_to": trying_to,
+                "attempted": attempted,
+                "stuck_on": stuck_on,
+            },
+        )
+
+    async def skill_begin(
+        self,
+        *,
+        session_id: str,
+        skill_name: str,
+    ) -> dict[str, Any]:
+        """Invoke ``write.skill_begin`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_skill_begin`` facade is responsible for wrapping
+        this dict back into a ``SkillBeginResult`` model.
+        """
+        return await self._call_with_retry(
+            "write.skill_begin",
+            {
+                "session_id": session_id,
+                "skill_name": skill_name,
+            },
+        )
+
+    async def skill_end(
+        self,
+        *,
+        session_id: str,
+        skill_name: str,
+        server_version: str,
+        errored: bool = False,
+        error_class: str | None = None,
+        diagnostic: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Invoke ``write.skill_end`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_skill_end`` facade is responsible for wrapping
+        this dict back into a ``SkillEndResult`` model.
+        """
+        return await self._call_with_retry(
+            "write.skill_end",
+            {
+                "session_id": session_id,
+                "skill_name": skill_name,
+                "server_version": server_version,
+                "errored": errored,
+                "error_class": error_class,
+                "diagnostic": diagnostic,
+            },
+        )
