@@ -55,9 +55,7 @@ async def _seed_reflected_decision_with_binding(
     )
     drow = drows[0]
     rid = drow.get("id")
-    decision_id = (
-        f"decision:{rid.get('id', rid)}" if isinstance(rid, dict) else str(rid)
-    )
+    decision_id = f"decision:{rid.get('id', rid)}" if isinstance(rid, dict) else str(rid)
 
     rrows = await c.query(
         "CREATE code_region SET file_path = $f, start_line = 1, end_line = 5, "
@@ -66,13 +64,10 @@ async def _seed_reflected_decision_with_binding(
     )
     rrow = rrows[0]
     rrid = rrow.get("id")
-    region_id = (
-        f"code_region:{rrid.get('id', rrid)}" if isinstance(rrid, dict) else str(rrid)
-    )
+    region_id = f"code_region:{rrid.get('id', rrid)}" if isinstance(rrid, dict) else str(rrid)
 
     await c.query(
-        f"RELATE {decision_id}->binds_to->{region_id} "
-        "SET content_hash = $h, confidence = 1.0",
+        f"RELATE {decision_id}->binds_to->{region_id} SET content_hash = $h, confidence = 1.0",
         {"h": "abc123hashvalue"},
     )
     return decision_id, region_id
