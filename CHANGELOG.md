@@ -3,6 +3,30 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.16.3 — Triage: locator-migration `.mcp.json` fix + v0.16.2 prevention gate
+
+Triage release. Two cherry-picks from `dev`:
+
+### Fixed
+
+- **`migrate-state` rewrites legacy `.mcp.json` env block** (#494). After #368 (Ledger Locator) moved per-project state to `~/.bicameral/projects/<id>/`, `migrate-state` moved files on disk but did not touch the `SURREAL_URL` / `CODE_LOCATOR_SQLITE_DB` env overrides in `<repo>/.mcp.json` that older setup_wizard versions wrote. `resolve_ledger_url()` honors `SURREAL_URL` unconditionally, so existing pilots were silently pinned to the pre-locator layout — exactly the cross-worktree determinism the locator was supposed to deliver. `migrate-state` now drops these env entries when they resolve into `<repo>/.bicameral/` and preserves them otherwise (`memory://`, custom paths outside the repo, other env keys, other MCP servers untouched).
+
+### Added (prevention)
+
+- **Python floor smoke test CI gate** (#493 follow-up to #491). One Ubuntu job per PR installs the package against the declared `requires-python` floor (3.11) via `pip install .` and runs `bicameral-mcp --version` end-to-end. Catches the recurrence of the v0.16.2 bug class (`requires-python` floor drifting from code that actually uses a newer-version-only API). Pairs with the `ruff --target-version=py311` lint gate already in `pyproject.toml`.
+
+### Affected users
+
+- **`.mcp.json` rewrite**: any pilot who installed bicameral-mcp before v0.16.0 and ran `migrate-state` since. Symptom: `bicameral.diagnose` reports `ledger_url: surrealkv://<repo>/.bicameral/local/ledger.db` instead of `surrealkv://~/.bicameral/projects/<id>/ledger.db`. Re-run `bicameral-mcp migrate-state --auto` after upgrade; the env block rewrites idempotently and the locator picks up the canonical path on next start.
+- **CI gate**: contributor-facing; no user-visible runtime change.
+
+### Linked
+
+- Closes #494 (the migration gap on existing `.mcp.json` files).
+- Follow-up to #491 (`requires-python >= 3.11` hotfix) — the prevention work that #491's body filed as deliberately deferred.
+
+---
+
 ## v0.16.2 — Hotfix: tighten `requires-python` to `>=3.11`
 
 P1 hotfix. v0.16.0 and v0.16.1 declared `requires-python = ">=3.10"` but the code uses `datetime.UTC` (added in Python 3.11) at `preflight_telemetry.py:47`. Every install on Python 3.10 passed pip's metadata check and then crashed at server import:
