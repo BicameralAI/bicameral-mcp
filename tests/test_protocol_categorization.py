@@ -150,7 +150,9 @@ def test_internal_allowlist_handlers_are_actually_undecorated() -> None:
     for qualname, fn in _iter_handler_functions():
         if qualname in INTERNAL_HANDLER_ALLOWLIST and is_categorized(fn):
             contradictions.append(f"{qualname} is on the internal allowlist but is decorated")
-    assert not contradictions, "Allowlist/decorator contradiction:\n  " + "\n  ".join(contradictions)
+    assert not contradictions, "Allowlist/decorator contradiction:\n  " + "\n  ".join(
+        contradictions
+    )
 
 
 def test_decorator_mismatch_raises() -> None:
