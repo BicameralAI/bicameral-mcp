@@ -1438,6 +1438,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
         "diagnose",
         help="emit a privacy-preserving operator bug-report (#252 Layer 3)",
     )
+    daemon = subparsers.add_parser(
+        "daemon",
+        help="manage the bicameral daemon process — start | stop | restart | status (Phase 2c-3)",
+    )
+    from cli.daemon_cli import _build_argparser as _daemon_build
+
+    _daemon_build(daemon)
     sync_and_brief = subparsers.add_parser(
         "sync-and-brief",
         help="pull from configured sources, ingest new transcripts, scan drift, print brief (#279)",
@@ -1568,6 +1575,10 @@ def _dispatch(args: Any) -> int:
         from cli.diagnose import main as diagnose_main
 
         return diagnose_main()
+    if args.command == "daemon":
+        from cli.daemon_cli import main as daemon_main
+
+        return daemon_main(args)
     if args.command == "sync-and-brief":
         from cli.sync_and_brief_cli import main as sync_and_brief_main
 
