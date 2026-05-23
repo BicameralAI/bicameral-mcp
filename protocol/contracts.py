@@ -192,6 +192,57 @@ class BatchAnalyzeRequest(BaseModel):
     regions: list[CodeRegion] = Field(max_length=BATCH_REGION_LIMIT)
 
 
+# ── Reads ───────────────────────────────────────────────────────────────
+
+
+class HistoryRequest(BaseModel):
+    """Wire payload for ``read.history``.
+
+    The daemon owns the enriched SurrealQL traversal + PII archive
+    resolution + feature-area grouping. MCP only sends the filters.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str
+    ref: str = "HEAD"
+    feature_filter: str | None = None
+    include_superseded: bool = True
+    include_pruned: bool = False
+    as_of: str | None = None
+
+
+class UsageSummaryRequest(BaseModel):
+    """Wire payload for ``read.usage_summary``."""
+
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str
+    days: int = Field(default=7, ge=0, le=365)
+
+
+class UsageSummaryResult(BaseModel):
+    """Aggregate usage stats. Flat by design — no nested envelope."""
+
+    model_config = ConfigDict(extra="ignore")
+    period_days: int
+    ingest_calls: int
+    bind_calls_total: int
+    decisions_ingested: int
+    decisions_ungrounded: int
+    decisions_pending: int
+    decisions_reflected: int
+    decisions_drifted: int
+    reflected_pct: float
+    drift_pct: float
+    cosmetic_drift_pct: float
+    error_rate: float
+
+
+# ``HistoryResponse`` (the wire shape for ``read.history`` results) is owned by
+# ``contracts.HistoryResponse`` — MCP and the daemon share the exact same model,
+# so we don't redefine it here. The protocol method returns it verbatim per
+# the "flat envelopes" constraint.
+
+
 # ── Adapter Protocols ──────────────────────────────────────────────────
 
 
