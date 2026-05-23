@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from .registry import AdapterRegistry
@@ -27,7 +27,7 @@ class SupervisorError(Exception):
     """Raised on lifecycle violations (e.g., stop before start)."""
 
 
-class SupervisorStatus(str, Enum):
+class SupervisorStatus(StrEnum):
     STOPPED = "stopped"
     RUNNING = "running"
 
