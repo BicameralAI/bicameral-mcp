@@ -51,9 +51,12 @@ def _resolve_context(_ctx: ConnectionContext, _repo_id: str) -> BicameralContext
 async def handle_read_history(params: dict[str, Any], ctx: ConnectionContext) -> dict[str, Any]:
     req = HistoryRequest.model_validate(params)
     bctx = _resolve_context(ctx, req.repo_id)
-    from handlers.history import handle_history
+    # Phase 2c-4: call the core impl, NOT the facade. The facade routes
+    # through ``ctx.daemon.history(...)``; invoking it from inside the
+    # daemon's own protocol handler would create an infinite RPC loop.
+    from handlers.history import _handle_history_impl
 
-    result = await handle_history(
+    result = await _handle_history_impl(
         bctx,
         feature_filter=req.feature_filter,
         include_superseded=req.include_superseded,

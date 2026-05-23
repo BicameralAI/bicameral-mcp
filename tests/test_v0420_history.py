@@ -22,7 +22,14 @@ import pytest
 
 from adapters.ledger import get_ledger, reset_ledger_singleton
 from context import BicameralContext
-from handlers.history import handle_history
+
+# Phase 2c-4: existing history tests exercise the core read logic against
+# a real ``memory://`` ledger — that's sociable handler-level testing and
+# should NOT require a running daemon. Alias the impl so the test bodies
+# stay identical; new boundary tests live in
+# ``tests/test_history_via_daemon.py`` and go through the facade + a
+# per-test daemon fixture.
+from handlers.history import _handle_history_impl as handle_history
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 

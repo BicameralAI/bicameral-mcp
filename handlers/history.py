@@ -316,7 +316,65 @@ async def handle_history(
     include_pruned: bool = False,
     as_of: str | None = None,
 ) -> HistoryResponse:
-    """Read-only dump of the full decision ledger grouped by feature area.
+    """MCP-side facade for ``read.history``.
+
+    Phase 2c-4 — first call-site migration. The body is now a thin
+    wrapper that delegates to the daemon via ``ctx.daemon.history``;
+    the real read logic lives in ``_handle_history_impl`` (which the
+    daemon's protocol handler invokes on its end).
+
+    Two concerns stay MCP-side because they predate the daemon
+    boundary and 2c-6 hasn't moved them yet:
+
+    1. ``ensure_ledger_synced`` — auto-syncs HEAD via ``link_commit``
+       before reading. Migrates to the daemon when write.* dispatchers
+       land (2c-6).
+    2. ``_guidance`` / ``_update`` envelope decoration — these are
+       MCP-side agent-facing affordances, not daemon concerns. They
+       continue to live in ``server.py::_call_tool_impl``.
+    """
+    from handlers.sync_middleware import ensure_ledger_synced
+
+    await ensure_ledger_synced(ctx)
+
+    daemon = getattr(ctx, "daemon", None)
+    if daemon is None:
+        # Test contexts that mock-construct BicameralContext without going
+        # through ``from_env`` won't have a daemon proxy. Fall through to
+        # the in-process implementation so handler-level tests stay
+        # sociable. Production paths always go through ``from_env`` →
+        # ``DaemonProxy``.
+        return await _handle_history_impl(
+            ctx,
+            feature_filter=feature_filter,
+            include_superseded=include_superseded,
+            include_pruned=include_pruned,
+            as_of=as_of,
+        )
+
+    raw = await daemon.history(
+        repo_id="local",  # multi-repo tenant scoping lands in 2c-5
+        ref=as_of or "HEAD",
+        feature_filter=feature_filter,
+        include_superseded=include_superseded,
+        include_pruned=include_pruned,
+        as_of=as_of,
+    )
+    return HistoryResponse.model_validate(raw)
+
+
+async def _handle_history_impl(
+    ctx,
+    feature_filter: str | None = None,
+    include_superseded: bool = True,
+    include_pruned: bool = False,
+    as_of: str | None = None,
+) -> HistoryResponse:
+    """Core history logic — pure ledger read + transformation.
+
+    Invoked by the daemon's ``read.history`` protocol handler. Does NOT
+    call ``ensure_ledger_synced`` — sync is the MCP-side facade's job
+    until write surface migration (2c-6).
 
     1. Fetch all decisions with enriched source span data.
     2. Group by feature_group → source_ref → "Uncategorized".
@@ -329,10 +387,8 @@ async def handle_history(
     import time as _time
 
     from contracts import SyncMetrics
-    from handlers.sync_middleware import ensure_ledger_synced
 
     _t0 = _time.perf_counter()
-    await ensure_ledger_synced(ctx)
     sync_metrics = SyncMetrics(sync_catchup_ms=round((_time.perf_counter() - _t0) * 1000, 3))
 
     ledger = ctx.ledger
