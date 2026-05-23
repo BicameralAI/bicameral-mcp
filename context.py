@@ -529,6 +529,13 @@ class BicameralContext:
     # same session). Read via `seen_ingest_warning` property; set via
     # `set_seen_ingest_warning(bool)`.
     _sync_state: dict = field(default_factory=dict)
+    # Phase 2c-4: mode-aware proxy to the bicameral daemon. Lazy-connect —
+    # constructing this is cheap (no I/O); the underlying ProtocolClient
+    # opens its UDS connection on first RPC call. Tests that don't go
+    # through the daemon path never trigger the connection. Handlers that
+    # migrate to daemon-routed dispatch (handle_history first, in 2c-4)
+    # invoke ``await ctx.daemon.history(...)`` etc.
+    daemon: object | None = None
 
     @property
     def seen_ingest_warning(self) -> bool:
@@ -568,6 +575,16 @@ class BicameralContext:
         # to _SESSION_ID UUID on git/salt failure.
         session_id = _resolve_agent_identity(repo_path)
 
+        # Phase 2c-4: lazy daemon proxy. Constructing it does no I/O —
+        # the underlying ProtocolClient connection opens on first RPC call.
+        # Tests that mock-construct BicameralContext directly (without
+        # going through from_env) leave ``daemon=None``; handlers that
+        # require it raise an honest AttributeError when invoked, which
+        # the test suite catches early.
+        from daemon.proxy import DaemonProxy
+
+        daemon_proxy = DaemonProxy(tenant_id=session_id or "local")
+
         instance = cls(
             repo_path=repo_path,
             head_sha=state.head_commit,
@@ -587,6 +604,7 @@ class BicameralContext:
             ingest_rate_limit_refill_per_sec=ingest_rate_limit_refill_per_sec,
             query_timeout_read_seconds=query_timeout_read_seconds,
             query_timeout_drift_seconds=query_timeout_drift_seconds,
+            daemon=daemon_proxy,
         )
         _emit_config_load_once(instance)
         return instance

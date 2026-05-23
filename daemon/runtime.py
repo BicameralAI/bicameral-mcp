@@ -43,12 +43,25 @@ class Runtime:
     def _register_default_methods(self) -> None:
         # Phase 2c-2c — registrations align with the categorized protocol
         # namespace (write.* / grounding.lookup.* / grounding.analyze.* /
-        # system.* established in Phase 2c-1). ``egress.deliver`` stays under
-        # ``egress.*`` pending an explicit decision on whether to add
-        # ``EGRESS_PREFIX`` to the categorization surface.
+        # system.* established in Phase 2c-1). 2c-2d added egress.* as
+        # the sixth category, so EgressAdapter is no longer an allowlist
+        # exception.
         self._server.register("write.ingest", self._handle_ingest)
         self._server.register("write.link_commit", self._handle_link_commit)
         self._server.register("egress.deliver", self._handle_deliver)
+
+        # Phase 2c-4: wire the read.* + telemetry write.* handlers that
+        # 2c-2 / 2c-2b registered. They were callable in tests via
+        # ``register_read_handlers(server)`` / ``register_write_handlers``
+        # but the daemon process itself never invoked those functions —
+        # so a spawned daemon would respond ``unknown method read.history``
+        # to any caller. Closing that gap here.
+        from protocol.handlers.reads import register_read_handlers
+        from protocol.handlers.writes import register_write_handlers
+
+        register_read_handlers(self._server)
+        register_write_handlers(self._server)
+
         # grounding.lookup.* / grounding.analyze.* methods land in later
         # phases when the code-locator + drift analyzer move into
         # daemon/grounding/. system.version + system.attach are registered
