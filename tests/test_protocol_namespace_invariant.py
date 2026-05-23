@@ -22,6 +22,7 @@ from pathlib import Path
 
 from protocol import client as client_module
 from protocol.categorization import (
+    EGRESS_PREFIX,
     GROUNDING_ANALYZE_PREFIX,
     GROUNDING_LOOKUP_PREFIX,
     READ_PREFIX,
@@ -29,16 +30,9 @@ from protocol.categorization import (
     WRITE_PREFIX,
 )
 
-# Method names that intentionally live outside the five categorized prefixes.
+# Method names that intentionally live outside the six categorized prefixes.
 # Each entry needs a one-line rationale; keep this list small.
-WIRE_METHOD_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        # Outbound delivery to humans-where-they-live. The categorization
-        # currently has no `egress.*` prefix; adding one is its own design
-        # decision (write conflates ledger mutation with delivery semantics).
-        "egress.deliver",
-    }
-)
+WIRE_METHOD_ALLOWLIST: frozenset[str] = frozenset()
 
 
 _CATEGORIZED_PREFIXES = (
@@ -47,6 +41,7 @@ _CATEGORIZED_PREFIXES = (
     GROUNDING_LOOKUP_PREFIX,
     GROUNDING_ANALYZE_PREFIX,
     SYSTEM_PREFIX,
+    EGRESS_PREFIX,
 )
 
 

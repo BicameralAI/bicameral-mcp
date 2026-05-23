@@ -12,17 +12,24 @@ runtime. Phase 2c-2 reads this metadata to register handlers against the
 daemon's JSON-RPC dispatcher and to route reads vs writes onto separate
 connection pools.
 
-Five categories partition the surface:
+Six categories partition the surface:
 
-============================  ============================================
+============================  ================================================
 Prefix                        Intent
-============================  ============================================
+============================  ================================================
 ``read.``                     Ledger reads (no state mutation, no I/O)
 ``write.``                    Ledger writes (decisions, sources, bindings)
 ``grounding.lookup.``         Deterministic code-locator primitives
 ``grounding.analyze.``        Drift / region analysis (L1-L3)
 ``system.``                   Daemon lifecycle + meta (attach, reset, …)
-============================  ============================================
+``egress.``                   Outbound delivery to humans (Slack/email/…)
+============================  ================================================
+
+``egress.*`` is structurally distinct from ``write.*`` — it pushes
+NotificationEvents to channel adapters, not rows to the ledger. Conflating
+them at the wire level would force adapter authors to reason about which
+``write.X`` mutates state vs which one fans out a notification. Added in
+Phase 2c-2d after the ``egress.deliver`` allowlist entry from 2c-2c.
 
 The mismatch between a decorator and its declared method name (e.g.
 ``@read_tool("write.foo")``) raises ``ProtocolMethodNameError`` at decoration
@@ -42,6 +49,7 @@ WRITE_PREFIX = "write."
 GROUNDING_LOOKUP_PREFIX = "grounding.lookup."
 GROUNDING_ANALYZE_PREFIX = "grounding.analyze."
 SYSTEM_PREFIX = "system."
+EGRESS_PREFIX = "egress."
 
 
 class Category(StrEnum):
@@ -50,6 +58,7 @@ class Category(StrEnum):
     GROUNDING_LOOKUP = "grounding.lookup"
     GROUNDING_ANALYZE = "grounding.analyze"
     SYSTEM = "system"
+    EGRESS = "egress"
 
 
 _PREFIX_BY_CATEGORY: dict[Category, str] = {
@@ -58,6 +67,7 @@ _PREFIX_BY_CATEGORY: dict[Category, str] = {
     Category.GROUNDING_LOOKUP: GROUNDING_LOOKUP_PREFIX,
     Category.GROUNDING_ANALYZE: GROUNDING_ANALYZE_PREFIX,
     Category.SYSTEM: SYSTEM_PREFIX,
+    Category.EGRESS: EGRESS_PREFIX,
 }
 
 
@@ -110,6 +120,10 @@ def system_tool(method: str) -> Callable[[F], F]:
     return _tag(Category.SYSTEM, method)
 
 
+def egress_tool(method: str) -> Callable[[F], F]:
+    return _tag(Category.EGRESS, method)
+
+
 def is_categorized(fn: object) -> bool:
     return hasattr(fn, METHOD_ATTR) and hasattr(fn, CATEGORY_ATTR)
 
@@ -126,6 +140,7 @@ def get_category(fn: object) -> Category | None:
 
 __all__ = [
     "CATEGORY_ATTR",
+    "EGRESS_PREFIX",
     "GROUNDING_ANALYZE_PREFIX",
     "GROUNDING_LOOKUP_PREFIX",
     "METHOD_ATTR",
@@ -134,6 +149,7 @@ __all__ = [
     "WRITE_PREFIX",
     "Category",
     "ProtocolMethodNameError",
+    "egress_tool",
     "get_category",
     "get_method",
     "grounding_analyze",
