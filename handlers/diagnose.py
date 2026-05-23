@@ -24,6 +24,7 @@ import os
 from typing import Literal
 
 from contracts import DiagnoseResponse
+from protocol.categorization import system_tool
 
 RecoveryPath = Literal["clean", "fixable", "reset_rebuild", "reset_destructive"]
 
@@ -50,6 +51,7 @@ def _resolve_ledger_url(ctx) -> str:
     return os.environ.get("SURREAL_URL", _default_db_url())
 
 
+@system_tool("system.diagnose")
 async def handle_diagnose(ctx) -> DiagnoseResponse:
     """Probe the ledger read-only and return a structural diagnosis.
 

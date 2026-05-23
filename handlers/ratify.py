@@ -19,10 +19,12 @@ from datetime import UTC, datetime
 from contracts import RatifyResponse
 from ledger.queries import decision_exists, project_decision_status
 from preflight_telemetry import telemetry_enabled, write_engagement
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
 
+@write_tool("write.ratify")
 async def handle_ratify(
     ctx,
     decision_id: str,

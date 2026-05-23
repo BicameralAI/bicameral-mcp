@@ -48,6 +48,7 @@ from ledger.queries import (
     update_region_hash,
     upsert_compliance_check,
 )
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ def _coerce_verdicts(raw: Iterable[dict | ComplianceVerdict]) -> list[Compliance
     return out
 
 
+@write_tool("write.resolve_compliance")
 async def handle_resolve_compliance(
     ctx,
     phase: str,

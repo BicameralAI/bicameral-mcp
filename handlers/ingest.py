@@ -46,6 +46,7 @@ from contracts import (
     IngestStats,
     SourceCursorSummary,
 )
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +500,7 @@ async def _find_context_for_candidates(
     return candidates
 
 
+@write_tool("write.ingest")
 async def handle_ingest(
     ctx,
     payload: dict,

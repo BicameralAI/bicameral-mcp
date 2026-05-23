@@ -14,10 +14,12 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from local_counters import read_counters
+from protocol.categorization import read_tool
 
 logger = logging.getLogger(__name__)
 
 
+@read_tool("read.usage_summary")
 async def handle_usage_summary(ctx, days: int = 7) -> dict:
     """Aggregate usage stats over the last `days` days.
 

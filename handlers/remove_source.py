@@ -40,10 +40,12 @@ from ledger.queries import (
     project_decision_status,
     update_decision_status,
 )
+from protocol.categorization import write_tool
 
 logger = logging.getLogger(__name__)
 
 
+@write_tool("write.remove_source")
 async def handle_remove_source(
     ctx,
     span_id: str,

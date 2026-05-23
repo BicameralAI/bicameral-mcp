@@ -54,10 +54,6 @@ from ledger.schema import DestructiveMigrationRequired, SchemaVersionTooNew
 
 SERVER_NAME = "bicameral-mcp"
 
-# In-process map of session_id → {t0} for skill timing.
-# Populated by bicameral.skill_begin, consumed by bicameral.skill_end.
-_skill_sessions: dict[str, dict] = {}
-
 # #216: operator-actionable guidance per ingest-refusal reason. Read by
 # the ``except _IngestRefused`` arm in ``call_tool`` to populate the
 # ``action`` field of the returned TextContent. Default falls back to a
@@ -991,101 +987,43 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
     import json
-    import time
 
     ctx = BicameralContext.from_env()
 
     # ── Skill telemetry bookends (no ledger, no sync) ─────────────────
     if name == "bicameral.skill_begin":
-        session_id = arguments["session_id"]
-        _skill_sessions[session_id] = {
-            "t0": time.monotonic(),
-        }
-        return [
-            TextContent(
-                type="text",
-                text=json.dumps(
-                    {
-                        "session_id": session_id,
-                        "skill": arguments["skill_name"],
-                        "status": "started",
-                    }
-                ),
-            )
-        ]
+        from handlers.skill import handle_skill_begin
+
+        data = await handle_skill_begin(
+            session_id=arguments["session_id"],
+            skill_name=arguments["skill_name"],
+        )
+        return [TextContent(type="text", text=json.dumps(data))]
 
     if name == "bicameral.skill_end":
-        from pydantic import ValidationError
+        from handlers.skill import handle_skill_end
 
-        from contracts import SKILL_DIAGNOSTIC_MODELS
-        from telemetry import record_skill_event
-
-        session_id = arguments["session_id"]
-        skill_name = arguments["skill_name"]
-        errored = arguments.get("errored", False)
-        error_class = arguments.get("error_class")
-        raw_diagnostic = arguments.get("diagnostic") or {}
-        session_data = _skill_sessions.pop(session_id, None)
-        t0 = session_data["t0"] if session_data else None
-        duration_ms = int((time.monotonic() - t0) * 1000) if t0 is not None else 0
-
-        # Validate diagnostic against the per-skill Pydantic model.
-        # On unknown fields: record the clean validated dict to PostHog and
-        # echo unknown field names back so the LLM can correct them.
-        diagnostic_model = SKILL_DIAGNOSTIC_MODELS.get(skill_name)
-        unknown_fields: list[str] = []
-        if diagnostic_model and raw_diagnostic:
-            try:
-                validated = diagnostic_model.model_validate(raw_diagnostic)
-                diagnostic = validated.model_dump()
-            except ValidationError as exc:
-                unknown_fields = [
-                    e["loc"][0] for e in exc.errors() if e["type"] == "extra_forbidden" and e["loc"]
-                ]
-                # Strip unknowns and validate the remaining known fields.
-                known_raw = {k: v for k, v in raw_diagnostic.items() if k not in unknown_fields}
-                try:
-                    validated = diagnostic_model.model_validate(known_raw)
-                    diagnostic = validated.model_dump()
-                except ValidationError:
-                    diagnostic = known_raw
-        else:
-            diagnostic = raw_diagnostic or None
-
-        record_skill_event(
-            skill_name,
-            session_id,
-            duration_ms,
-            errored,
-            SERVER_VERSION,
-            diagnostic=diagnostic,
-            error_class=error_class,
+        data = await handle_skill_end(
+            session_id=arguments["session_id"],
+            skill_name=arguments["skill_name"],
+            server_version=SERVER_VERSION,
+            errored=arguments.get("errored", False),
+            error_class=arguments.get("error_class"),
+            diagnostic=arguments.get("diagnostic") or {},
         )
-        response: dict = {
-            "session_id": session_id,
-            "skill": skill_name,
-            "duration_ms": duration_ms,
-            "status": "recorded",
-        }
-        if unknown_fields:
-            response["diagnostic_warning"] = (
-                f"Unknown diagnostic field(s) were dropped and not recorded: "
-                f"{unknown_fields}. Use the exact field names from the skill spec."
-            )
-        return [TextContent(type="text", text=json.dumps(response))]
+        return [TextContent(type="text", text=json.dumps(data))]
 
     if name == "bicameral.feedback":
-        from telemetry import send_event
+        from handlers.feedback import handle_feedback
 
-        send_event(
-            SERVER_VERSION,
-            event_type="agent_feedback",
+        data = await handle_feedback(
+            server_version=SERVER_VERSION,
             skill=arguments.get("skill", ""),
             trying_to=arguments.get("trying_to", ""),
             attempted=arguments.get("attempted", ""),
             stuck_on=arguments.get("stuck_on", ""),
         )
-        return [TextContent(type="text", text=json.dumps({"recorded": True}))]
+        return [TextContent(type="text", text=json.dumps(data))]
 
     if name == "bicameral.usage_summary":
         from handlers.usage_summary import handle_usage_summary
@@ -1231,19 +1169,9 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
                     payload["_update"] = update_notice
                 return [TextContent(type="text", text=json.dumps(payload, indent=2))]
         elif name in ("bicameral.dashboard", "dashboard"):
-            from contracts import DashboardResponse
+            from handlers.dashboard import handle_dashboard
 
-            srv = get_dashboard_server()
-            if not srv.running:
-                await srv.start(ctx_factory=BicameralContext.from_env)
-                status = "started"
-            else:
-                status = "already_running"
-            result = DashboardResponse(
-                url=srv.url,
-                status=status,
-                port=srv.port,
-            )
+            result = await handle_dashboard(BicameralContext.from_env)
             payload = result.model_dump()
             update_notice = get_update_notice(SERVER_VERSION, repo_path=str(ctx.repo_path))
             if update_notice:

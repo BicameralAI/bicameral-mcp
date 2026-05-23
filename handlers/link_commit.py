@@ -32,6 +32,7 @@ import uuid
 
 from contracts import LinkCommitResponse, PendingComplianceCheck
 from preflight_telemetry import telemetry_enabled, write_engagement
+from protocol.categorization import write_tool
 
 
 def _is_ephemeral_commit(commit_hash: str, repo_path: str, authoritative_ref: str = "") -> bool:
@@ -441,6 +442,7 @@ async def _run_continuity_pass(ctx, pending: list[PendingComplianceCheck]) -> li
     return resolutions
 
 
+@write_tool("write.link_commit")
 async def handle_link_commit(
     ctx,
     commit_hash: str = "HEAD",

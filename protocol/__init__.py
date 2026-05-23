@@ -11,6 +11,18 @@ publishes the socket path in `~/.bicameral/daemon.json` at startup.
 
 from __future__ import annotations
 
+from .categorization import (
+    Category,
+    ProtocolMethodNameError,
+    get_category,
+    get_method,
+    grounding_analyze,
+    grounding_lookup,
+    is_categorized,
+    read_tool,
+    system_tool,
+    write_tool,
+)
 from .client import ProtocolClient
 from .contracts import (
     LOCAL_TENANT_ID,
@@ -48,6 +60,7 @@ __all__ = [
     "AttachRequest",
     "AttachResult",
     "BatchAnalyzeRequest",
+    "Category",
     "CodeRegion",
     "ConnectionContext",
     "DeliveryResult",
@@ -66,8 +79,17 @@ __all__ = [
     "NotificationEvent",
     "ProtocolClient",
     "ProtocolError",
+    "ProtocolMethodNameError",
     "ProtocolServer",
     "ProtocolVersionError",
     "Symbol",
     "ValidateSymbolsRequest",
+    "get_category",
+    "get_method",
+    "grounding_analyze",
+    "grounding_lookup",
+    "is_categorized",
+    "read_tool",
+    "system_tool",
+    "write_tool",
 ]

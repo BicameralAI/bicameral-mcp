@@ -19,6 +19,7 @@ from contracts import (
     HistorySource,
 )
 from ledger.status import resolve_head
+from protocol.categorization import read_tool
 
 logger = logging.getLogger(__name__)
 
@@ -307,6 +308,7 @@ def _priority_for_feature(decisions: list[HistoryDecision]) -> int:
     return 2
 
 
+@read_tool("read.history")
 async def handle_history(
     ctx,
     feature_filter: str | None = None,
