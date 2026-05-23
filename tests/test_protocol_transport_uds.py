@@ -35,7 +35,7 @@ async def running_server(short_socket_dir: Path):
             {"name": name, "file": f"{name}.py", "start_line": 1, "end_line": 5} for name in names
         ]
 
-    server.register("grounding.validate_symbols", handle_validate)
+    server.register("grounding.lookup.validate_symbols", handle_validate)
     await server.start()
     try:
         yield server, short_socket_dir / "d.sock"

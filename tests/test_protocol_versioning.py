@@ -42,7 +42,7 @@ async def test_v0_1_client_ignores_unknown_field_from_v0_2_server(
             "future_telemetry": {"latency_ms": 42},  # v0.2 addition
         }
 
-    server.register("ingest.ingest", handle_ingest_with_extra_field)
+    server.register("write.ingest", handle_ingest_with_extra_field)
     await server.start()
 
     client = ProtocolClient(socket_path=short_socket_dir / "d.sock")
