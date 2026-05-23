@@ -156,6 +156,23 @@ def test_diagnose_output_policy_doc_documents_suggestion_heuristics() -> None:
         assert heuristic in content, f"heuristic {heuristic!r} missing from policy doc"
 
 
+def test_diagnose_output_doc_documents_layer5_remediation_recipe() -> None:
+    """#252 Layer 5: the policy doc must document the export → reset →
+    import remediation recipe AND cross-link to docs/policies/ledger-export.md.
+    Locks the wording the code emits (`_remediation_recipe()` helper)
+    against the operator-facing doc; prose drift between the two policy
+    docs trips at test time rather than at operator-confusion time."""
+    content = DIAGNOSE_OUTPUT_POLICY.read_text(encoding="utf-8")
+    for marker in (
+        "ledger-export",
+        "reset",
+        "ledger-import --from-file",
+        "docs/policies/ledger-export.md",
+        "predates Layer 2",
+    ):
+        assert marker in content, f"Layer 5 marker {marker!r} missing from policy doc"
+
+
 def test_ledger_export_policy_doc_lists_canonical_record_fields() -> None:
     """#252 Layer 4: every canonical record-shape field must appear in the policy doc.
     Locks doc/code drift between the export-record format and the operator-facing
