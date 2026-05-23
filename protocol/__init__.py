@@ -38,6 +38,7 @@ from .contracts import (
     ExtractSymbolsRequest,
     GetNeighborsRequest,
     GroundingPort,
+    HistoryRequest,
     IngestAdapter,
     IngestRequest,
     IngestResult,
@@ -49,6 +50,8 @@ from .contracts import (
     ProtocolError,
     ProtocolVersionError,
     Symbol,
+    UsageSummaryRequest,
+    UsageSummaryResult,
     ValidateSymbolsRequest,
 )
 from .server import ConnectionContext, ProtocolServer
@@ -69,6 +72,7 @@ __all__ = [
     "ExtractSymbolsRequest",
     "GetNeighborsRequest",
     "GroundingPort",
+    "HistoryRequest",
     "IngestAdapter",
     "IngestRequest",
     "IngestResult",
@@ -83,6 +87,8 @@ __all__ = [
     "ProtocolServer",
     "ProtocolVersionError",
     "Symbol",
+    "UsageSummaryRequest",
+    "UsageSummaryResult",
     "ValidateSymbolsRequest",
     "get_category",
     "get_method",
