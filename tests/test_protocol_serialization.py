@@ -33,9 +33,7 @@ def test_ingest_request_roundtrips_lossless() -> None:
 
 def test_batch_request_rejects_over_thousand_regions() -> None:
     """BATCH_REGION_LIMIT defends the daemon against flooded payloads."""
-    region = CodeRegion(
-        file="x.py", symbol="f", start_line=1, end_line=2, stored_hash="aaa"
-    )
+    region = CodeRegion(file="x.py", symbol="f", start_line=1, end_line=2, stored_hash="aaa")
     with pytest.raises(ValidationError):
         BatchAnalyzeRequest(
             repo_id="repo",

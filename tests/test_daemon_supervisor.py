@@ -46,9 +46,7 @@ async def test_start_writes_descriptor_with_socket_and_pid(
     sup = _make_supervisor(short_state_dir)
     try:
         await sup.start()
-        descriptor = json.loads(
-            (short_state_dir / "daemon.json").read_text(encoding="utf-8")
-        )
+        descriptor = json.loads((short_state_dir / "daemon.json").read_text(encoding="utf-8"))
         assert descriptor["socket_path"] == str(short_state_dir / "d.sock")
         assert descriptor["pid"] == os.getpid()
         assert sup.status == SupervisorStatus.RUNNING
@@ -90,9 +88,7 @@ async def test_protocol_client_connects_via_descriptor_socket_path(
     sup = _make_supervisor(short_state_dir)
     try:
         await sup.start()
-        descriptor = json.loads(
-            (short_state_dir / "daemon.json").read_text(encoding="utf-8")
-        )
+        descriptor = json.loads((short_state_dir / "daemon.json").read_text(encoding="utf-8"))
         client = ProtocolClient(socket_path=Path(descriptor["socket_path"]))
         try:
             await client.connect()  # verifies system.version handshake

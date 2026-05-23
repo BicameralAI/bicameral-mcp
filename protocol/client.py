@@ -89,9 +89,7 @@ class ProtocolClient:
         return Path(data["socket_path"])
 
     async def connect(self) -> None:
-        self._reader, self._writer = await asyncio.open_unix_connection(
-            str(self._socket_path)
-        )
+        self._reader, self._writer = await asyncio.open_unix_connection(str(self._socket_path))
         self._reader_task = asyncio.create_task(self._read_loop())
         await self._verify_version()
         await self._attach()
@@ -177,34 +175,22 @@ class ProtocolClient:
         result = await self._call("egress.deliver", event.model_dump())
         return DeliveryResult.model_validate(result)
 
-    async def validate_symbols(
-        self, req: ValidateSymbolsRequest
-    ) -> list[Symbol]:
+    async def validate_symbols(self, req: ValidateSymbolsRequest) -> list[Symbol]:
         result = await self._call("grounding.validate_symbols", req.model_dump())
         return [Symbol.model_validate(item) for item in result]
 
-    async def extract_symbols(
-        self, req: ExtractSymbolsRequest
-    ) -> list[Symbol]:
+    async def extract_symbols(self, req: ExtractSymbolsRequest) -> list[Symbol]:
         result = await self._call("grounding.extract_symbols", req.model_dump())
         return [Symbol.model_validate(item) for item in result]
 
-    async def get_neighbors(
-        self, req: GetNeighborsRequest
-    ) -> list[Neighbor]:
+    async def get_neighbors(self, req: GetNeighborsRequest) -> list[Neighbor]:
         result = await self._call("grounding.get_neighbors", req.model_dump())
         return [Neighbor.model_validate(item) for item in result]
 
-    async def analyze_region(
-        self, req: AnalyzeRegionRequest
-    ) -> DriftResult:
+    async def analyze_region(self, req: AnalyzeRegionRequest) -> DriftResult:
         result = await self._call("grounding.analyze_region", req.model_dump())
         return DriftResult.model_validate(result)
 
-    async def batch_analyze_regions(
-        self, req: BatchAnalyzeRequest
-    ) -> list[DriftResult]:
-        result = await self._call(
-            "grounding.batch_analyze_regions", req.model_dump()
-        )
+    async def batch_analyze_regions(self, req: BatchAnalyzeRequest) -> list[DriftResult]:
+        result = await self._call("grounding.batch_analyze_regions", req.model_dump())
         return [DriftResult.model_validate(item) for item in result]

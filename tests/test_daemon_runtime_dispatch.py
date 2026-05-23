@@ -51,9 +51,7 @@ class _RecordingEgress:
         self.name = name
         self.calls: list[tuple[NotificationEvent, ConnectionContext]] = []
 
-    async def deliver(
-        self, event: NotificationEvent, ctx: ConnectionContext
-    ) -> DeliveryResult:
+    async def deliver(self, event: NotificationEvent, ctx: ConnectionContext) -> DeliveryResult:
         self.calls.append((event, ctx))
         return DeliveryResult(status="delivered")
 

@@ -19,9 +19,7 @@ class MCPEgressAdapter:
 
     name = "mcp"
 
-    async def deliver(
-        self, event: NotificationEvent, ctx: ConnectionContext
-    ) -> DeliveryResult:
+    async def deliver(self, event: NotificationEvent, ctx: ConnectionContext) -> DeliveryResult:
         marker = f"[bicameral.egress tenant={ctx.tenant_id}] {event.event_type}: {event.summary}\n"
         sys.stderr.write(marker)
         sys.stderr.flush()

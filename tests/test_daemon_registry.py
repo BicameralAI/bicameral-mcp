@@ -20,9 +20,7 @@ class _FakeIngest:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    async def ingest(
-        self, _req: IngestRequest, _ctx: ConnectionContext
-    ) -> IngestResult:
+    async def ingest(self, _req: IngestRequest, _ctx: ConnectionContext) -> IngestResult:
         return IngestResult(status="accepted")
 
     async def link_commit(
@@ -35,9 +33,7 @@ class _FakeEgress:
     def __init__(self, name: str) -> None:
         self.name = name
 
-    async def deliver(
-        self, _event: NotificationEvent, _ctx: ConnectionContext
-    ) -> DeliveryResult:
+    async def deliver(self, _event: NotificationEvent, _ctx: ConnectionContext) -> DeliveryResult:
         return DeliveryResult(status="delivered")
 
 
