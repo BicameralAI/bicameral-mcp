@@ -1,0 +1,51 @@
+name: Python Floor Smoke Test
+
+# Prevention gate for the #491 bug class: `pyproject.toml`'s
+# `requires-python` floor drifting from code that actually uses a
+# newer-version-only API (e.g. `from datetime import UTC`, added in
+# 3.11). The lint gate (`ruff --target-version=py311`) catches most of
+# these statically; this runtime gate installs the package against the
+# declared floor and imports it end-to-end through the same path real
+# users hit (`bicameral-mcp --version`).
+#
+# Cheap by design: one Ubuntu job, single Python version, no test
+# suite. ~30 seconds on a warm runner.
+
+on:
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  install-and-import:
+    name: Install + import against declared Python floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # The declared floor in pyproject.toml is `requires-python = ">=3.11"`.
+      # If that floor moves, bump this version pin in the same PR — the
+      # contract is "CI runs against the lowest declared-supported Python."
+      - name: Set up Python 3.11 (declared floor)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install package (non-editable, from source tree)
+        # `pip install .` builds the wheel through hatch and installs it
+        # into the runner's site-packages — same code path a user gets
+        # from `pip install bicameral-mcp` against PyPI (modulo network).
+        run: |
+          python -m pip install --upgrade pip
+          pip install .
+
+      - name: Import smoke test (`bicameral-mcp --version`)
+        # The #491 repro: `from datetime import UTC` at
+        # preflight_telemetry.py:47 blows up at import time on 3.10.
+        # `--version` is the smallest invocation that exercises the
+        # full server.py top-level import chain (handlers.* →
+        # preflight_telemetry). Run from outside the source tree so the
+        # installed package is exercised, not the in-tree files.
+        run: |
+          cd /tmp
+          bicameral-mcp --version

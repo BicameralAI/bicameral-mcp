@@ -43,9 +43,7 @@ async def test_pre_attach_rpc_other_than_version_is_refused(
     import asyncio
     import json
 
-    reader, writer = await asyncio.open_unix_connection(
-        str(short_socket_dir / "d.sock")
-    )
+    reader, writer = await asyncio.open_unix_connection(str(short_socket_dir / "d.sock"))
     try:
         # custom.method with no prior system.attach: expect error response.
         req = {"jsonrpc": "2.0", "id": 1, "method": "custom.method", "params": {}}
@@ -104,12 +102,8 @@ async def test_each_connection_has_independent_tenant_binding(
     server.register("probe.whoami", handle_whoami)
     await server.start()
 
-    client_a = ProtocolClient(
-        socket_path=short_socket_dir / "d.sock", tenant_id="tenant-a"
-    )
-    client_b = ProtocolClient(
-        socket_path=short_socket_dir / "d.sock", tenant_id="tenant-b"
-    )
+    client_a = ProtocolClient(socket_path=short_socket_dir / "d.sock", tenant_id="tenant-a")
+    client_b = ProtocolClient(socket_path=short_socket_dir / "d.sock", tenant_id="tenant-b")
     try:
         await client_a.connect()
         await client_b.connect()

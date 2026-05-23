@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from .contracts import (
     PROTOCOL_VERSION,
@@ -58,9 +59,7 @@ class ProtocolServer:
         return PROTOCOL_VERSION
 
     @staticmethod
-    async def _handle_attach(
-        params: dict[str, Any], ctx: ConnectionContext
-    ) -> dict[str, Any]:
+    async def _handle_attach(params: dict[str, Any], ctx: ConnectionContext) -> dict[str, Any]:
         req = AttachRequest.model_validate(params)
         ctx.tenant_id = req.tenant_id
         ctx.user_id = req.user_id

@@ -32,8 +32,7 @@ async def running_server(short_socket_dir: Path):
     async def handle_validate(params: dict) -> list[dict]:
         names = params.get("candidates", [])
         return [
-            {"name": name, "file": f"{name}.py", "start_line": 1, "end_line": 5}
-            for name in names
+            {"name": name, "file": f"{name}.py", "start_line": 1, "end_line": 5} for name in names
         ]
 
     server.register("grounding.validate_symbols", handle_validate)
@@ -51,9 +50,7 @@ async def test_client_rpc_returns_server_payload(running_server) -> None:
     await client.connect()
     try:
         result = await client.validate_symbols(
-            ValidateSymbolsRequest(
-                repo_id="r", ref="HEAD", candidates=["foo", "bar"]
-            )
+            ValidateSymbolsRequest(repo_id="r", ref="HEAD", candidates=["foo", "bar"])
         )
     finally:
         await client.close()

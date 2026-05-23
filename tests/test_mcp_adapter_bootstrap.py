@@ -44,12 +44,8 @@ async def test_bootstrap_registers_mcp_adapter_under_name_mcp(
     try:
         assert "mcp" in supervisor.registry.ingest_names()
         assert "mcp" in supervisor.registry.egress_names()
-        assert isinstance(
-            supervisor.registry.lookup_ingest("mcp"), MCPIngestAdapter
-        )
-        assert isinstance(
-            supervisor.registry.lookup_egress("mcp"), MCPEgressAdapter
-        )
+        assert isinstance(supervisor.registry.lookup_ingest("mcp"), MCPIngestAdapter)
+        assert isinstance(supervisor.registry.lookup_egress("mcp"), MCPEgressAdapter)
     finally:
         await supervisor.stop()
 
@@ -78,9 +74,7 @@ async def test_client_ingest_through_mcp_adapter_returns_stub_decision_id(
         assert result.decision_ids == ["stub-local-fathom-123"]
 
         link_result = await client.link_commit(
-            LinkCommitRequest(
-                repo_id="bicameral-mcp", commit_sha="abc1234", ref="HEAD"
-            )
+            LinkCommitRequest(repo_id="bicameral-mcp", commit_sha="abc1234", ref="HEAD")
         )
         assert link_result.status == "no_change"
     finally:

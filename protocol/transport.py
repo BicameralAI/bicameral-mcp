@@ -38,9 +38,7 @@ async def read_message(reader: asyncio.StreamReader) -> dict[str, Any]:
     return obj
 
 
-async def write_message(
-    writer: asyncio.StreamWriter, payload: dict[str, Any]
-) -> None:
+async def write_message(writer: asyncio.StreamWriter, payload: dict[str, Any]) -> None:
     """Write one JSON object framed with a trailing newline."""
     encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     if len(encoded) > MAX_FRAME_BYTES:

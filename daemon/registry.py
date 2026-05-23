@@ -27,16 +27,12 @@ class AdapterRegistry:
 
     def register_ingest(self, adapter: IngestAdapter) -> None:
         if adapter.name in self._ingest:
-            raise AdapterRegistryError(
-                f"ingest adapter '{adapter.name}' already registered"
-            )
+            raise AdapterRegistryError(f"ingest adapter '{adapter.name}' already registered")
         self._ingest[adapter.name] = adapter
 
     def register_egress(self, adapter: EgressAdapter) -> None:
         if adapter.name in self._egress:
-            raise AdapterRegistryError(
-                f"egress adapter '{adapter.name}' already registered"
-            )
+            raise AdapterRegistryError(f"egress adapter '{adapter.name}' already registered")
         self._egress[adapter.name] = adapter
 
     def lookup_ingest(self, name: str) -> IngestAdapter:

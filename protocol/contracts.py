@@ -218,9 +218,7 @@ class EgressAdapter(Protocol):
 
     name: str
 
-    async def deliver(
-        self, event: NotificationEvent, ctx: ConnectionContext
-    ) -> DeliveryResult: ...
+    async def deliver(self, event: NotificationEvent, ctx: ConnectionContext) -> DeliveryResult: ...
 
 
 @runtime_checkable
