@@ -273,3 +273,23 @@ class DaemonProxy:
                 "diagnostic": diagnostic,
             },
         )
+
+    async def usage_summary(
+        self,
+        *,
+        repo_id: str,
+        days: int = 7,
+    ) -> dict[str, Any]:
+        """Invoke ``read.usage_summary`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_usage_summary`` facade is responsible for
+        round-tripping this dict through ``UsageSummaryResult.model_validate``
+        to enforce the wire shape before returning to the agent.
+        """
+        return await self._call_with_retry(
+            "read.usage_summary",
+            {
+                "repo_id": repo_id,
+                "days": days,
+            },
+        )

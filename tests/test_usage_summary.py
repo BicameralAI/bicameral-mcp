@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from handlers.usage_summary import handle_usage_summary
+# Phase 2c-5: existing usage_summary tests exercise the core read logic against
+# a mock ledger — that's sociable handler-level testing and should NOT require
+# a running daemon. Alias the impl so the test bodies stay identical; new
+# boundary tests live in ``tests/test_usage_summary_via_daemon.py`` and go
+# through the facade + a per-test daemon fixture.
+from handlers.usage_summary import _handle_usage_summary_impl as handle_usage_summary
 
 
 def _ctx_with_decisions(
