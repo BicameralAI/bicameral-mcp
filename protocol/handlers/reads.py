@@ -71,11 +71,14 @@ async def handle_read_usage_summary(
 ) -> dict[str, Any]:
     req = UsageSummaryRequest.model_validate(params)
     bctx = _resolve_context(ctx, req.repo_id)
-    from handlers.usage_summary import handle_usage_summary
+    # Phase 2c-5: call the core impl, NOT the facade. The facade routes
+    # through ``ctx.daemon.usage_summary(...)``; invoking it from inside the
+    # daemon's own protocol handler would create an infinite RPC loop.
+    from handlers.usage_summary import _handle_usage_summary_impl
 
-    raw = await handle_usage_summary(bctx, days=req.days)
-    # ``handle_usage_summary`` returns a plain dict; round-trip it through the
-    # typed result so the wire shape is enforced.
+    raw = await _handle_usage_summary_impl(bctx, days=req.days)
+    # ``_handle_usage_summary_impl`` returns a plain dict; round-trip it through
+    # the typed result so the wire shape is enforced.
     return UsageSummaryResult.model_validate(raw).model_dump()
 
 

@@ -21,7 +21,34 @@ logger = logging.getLogger(__name__)
 
 @read_tool("read.usage_summary")
 async def handle_usage_summary(ctx, days: int = 7) -> dict:
-    """Aggregate usage stats over the last `days` days.
+    """MCP-side facade for ``read.usage_summary``.
+
+    Phase 2c-5 — mirror of 2c-4's pattern for handle_history. The body is
+    now a thin wrapper that delegates to the daemon via
+    ``ctx.daemon.usage_summary``; the real read logic lives in
+    ``_handle_usage_summary_impl`` (which the daemon's protocol handler
+    invokes on its end).
+    """
+    daemon = getattr(ctx, "daemon", None)
+    if daemon is None:
+        # Test contexts that mock-construct BicameralContext without going
+        # through ``from_env`` won't have a daemon proxy. Fall through to
+        # the in-process implementation so handler-level tests stay
+        # sociable. Production paths always go through ``from_env`` →
+        # ``DaemonProxy``.
+        return await _handle_usage_summary_impl(ctx, days=days)
+
+    raw = await daemon.usage_summary(repo_id="local", days=days)
+    from protocol.contracts import UsageSummaryResult
+
+    return UsageSummaryResult.model_validate(raw).model_dump()
+
+
+async def _handle_usage_summary_impl(ctx, days: int = 7) -> dict:
+    """Core usage_summary logic — pure ledger read + transformation.
+
+    Invoked by the daemon's ``read.usage_summary`` protocol handler. Does
+    NOT route through the daemon — that would create an infinite RPC loop.
 
     Returns the schema specified in #42:
         period_days, ingest_calls, bind_calls_total, decisions_ingested,
