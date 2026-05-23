@@ -11,7 +11,7 @@ Extracted from server.py in Phase 2c-1 (#daemon-extraction parent plan
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from contracts import DashboardResponse
 from dashboard.server import get_dashboard_server
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 @system_tool("system.dashboard")
 async def handle_dashboard(ctx_factory: Callable[[], BicameralContext]) -> DashboardResponse:
     srv = get_dashboard_server()
+    status: Literal["started", "already_running"]
     if not srv.running:
         await srv.start(ctx_factory=ctx_factory)
         status = "started"

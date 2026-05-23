@@ -63,7 +63,9 @@ async def handle_skill_end(
             validated_diagnostic = validated.model_dump()
         except ValidationError as exc:
             unknown_fields = [
-                e["loc"][0] for e in exc.errors() if e["type"] == "extra_forbidden" and e["loc"]
+                str(e["loc"][0])
+                for e in exc.errors()
+                if e["type"] == "extra_forbidden" and e["loc"]
             ]
             known_raw = {k: v for k, v in raw_diagnostic.items() if k not in unknown_fields}
             try:
