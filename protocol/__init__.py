@@ -14,6 +14,7 @@ from __future__ import annotations
 from .categorization import (
     Category,
     ProtocolMethodNameError,
+    egress_tool,
     get_category,
     get_method,
     grounding_analyze,
@@ -102,6 +103,7 @@ __all__ = [
     "UsageSummaryRequest",
     "UsageSummaryResult",
     "ValidateSymbolsRequest",
+    "egress_tool",
     "get_category",
     "get_method",
     "grounding_analyze",

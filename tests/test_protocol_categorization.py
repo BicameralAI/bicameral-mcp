@@ -17,6 +17,7 @@ import pytest
 
 import handlers
 from protocol.categorization import (
+    EGRESS_PREFIX,
     GROUNDING_ANALYZE_PREFIX,
     GROUNDING_LOOKUP_PREFIX,
     READ_PREFIX,
@@ -24,6 +25,7 @@ from protocol.categorization import (
     WRITE_PREFIX,
     Category,
     ProtocolMethodNameError,
+    egress_tool,
     get_category,
     get_method,
     grounding_analyze,
@@ -79,6 +81,7 @@ _PREFIX_BY_CATEGORY: dict[Category, str] = {
     Category.GROUNDING_LOOKUP: GROUNDING_LOOKUP_PREFIX,
     Category.GROUNDING_ANALYZE: GROUNDING_ANALYZE_PREFIX,
     Category.SYSTEM: SYSTEM_PREFIX,
+    Category.EGRESS: EGRESS_PREFIX,
 }
 
 
@@ -172,7 +175,7 @@ def test_double_decoration_raises() -> None:
         async def _doubled() -> None: ...
 
 
-def test_all_five_categories_smoke() -> None:
+def test_all_six_categories_smoke() -> None:
     """Sanity: each decorator accepts its own prefix without raising."""
 
     @read_tool("read.x")
@@ -190,8 +193,20 @@ def test_all_five_categories_smoke() -> None:
     @system_tool("system.x")
     async def _s() -> None: ...
 
+    @egress_tool("egress.x")
+    async def _e() -> None: ...
+
     assert get_category(_r) == Category.READ
     assert get_category(_w) == Category.WRITE
     assert get_category(_gl) == Category.GROUNDING_LOOKUP
     assert get_category(_ga) == Category.GROUNDING_ANALYZE
     assert get_category(_s) == Category.SYSTEM
+    assert get_category(_e) == Category.EGRESS
+
+
+def test_egress_tool_rejects_mismatch() -> None:
+    """``@egress_tool`` must reject a non-``egress.*`` method name at decoration."""
+    with pytest.raises(ProtocolMethodNameError):
+
+        @egress_tool("write.deliver")  # type: ignore[arg-type]
+        async def _bad() -> None: ...
