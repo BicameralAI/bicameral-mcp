@@ -243,6 +243,71 @@ class UsageSummaryResult(BaseModel):
 # the "flat envelopes" constraint.
 
 
+# ── Writes: telemetry-only (no ledger mutation) ────────────────────────
+
+
+class FeedbackRequest(BaseModel):
+    """Wire payload for ``write.feedback`` — agent self-reported friction.
+
+    ``server_version`` is on the wire because the telemetry event represents
+    MCP's behavior, not the daemon's; MCP supplies its own version so events
+    are correctly attributed.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    server_version: str
+    skill: str = ""
+    trying_to: str = ""
+    attempted: str = ""
+    stuck_on: str = ""
+
+
+class FeedbackResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    recorded: bool
+
+
+class SkillBeginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    skill_name: str
+
+
+class SkillBeginResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    session_id: str
+    skill: str
+    status: Literal["started"]
+
+
+class SkillEndRequest(BaseModel):
+    """Wire payload for ``write.skill_end``.
+
+    ``diagnostic`` is intentionally typed as ``dict[str, Any] | None`` — the
+    per-skill Pydantic validation lives server-side in ``handle_skill_end``,
+    which looks up the schema in ``SKILL_DIAGNOSTIC_MODELS`` and tolerates
+    unknown fields (warns + strips). Re-modeling that validation here would
+    duplicate the contract.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    session_id: str
+    skill_name: str
+    server_version: str
+    errored: bool = False
+    error_class: str | None = None
+    diagnostic: dict[str, Any] | None = None
+
+
+class SkillEndResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    session_id: str
+    skill: str
+    duration_ms: int
+    status: Literal["recorded"]
+    diagnostic_warning: str | None = None
+
+
 # ── Adapter Protocols ──────────────────────────────────────────────────
 
 
