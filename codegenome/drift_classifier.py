@@ -22,6 +22,7 @@ from typing import Literal
 
 from code_locator.indexing.call_site_extractor import extract_call_sites
 
+from ._content_cache import content_cached
 from .continuity import _jaccard
 from .diff_categorizer import categorize_diff
 
@@ -186,6 +187,47 @@ def classify_drift(
 
     Unsupported languages return ``verdict='uncertain'`` so the caller
     LLM still sees the pending check (just without a meaningful hint).
+
+    Thin normalization wrapper: converts iterable neighbor inputs to
+    frozenset before delegating to the cached inner implementation. The
+    content cache (#136) requires allowlist-typed args; tuple/frozenset
+    is the canonical form. Order doesn't matter for the Jaccard signal,
+    so any iterable collapses safely to frozenset.
+    """
+    old_nbrs = frozenset(old_neighbors) if old_neighbors is not None else None
+    new_nbrs = frozenset(new_neighbors) if new_neighbors is not None else None
+    return _classify_drift_cached(
+        old_body,
+        new_body,
+        old_signature_hash=old_signature_hash,
+        new_signature_hash=new_signature_hash,
+        old_neighbors=old_nbrs,
+        new_neighbors=new_nbrs,
+        language=language,
+    )
+
+
+@content_cached(behavior_version=1)
+def _classify_drift_cached(
+    old_body: str,
+    new_body: str,
+    *,
+    old_signature_hash: str | None,
+    new_signature_hash: str | None,
+    old_neighbors: frozenset[str] | None,
+    new_neighbors: frozenset[str] | None,
+    language: str,
+) -> DriftClassification:
+    """Cached inner implementation of classify_drift.
+
+    Behavior IS classify_drift's prior body — same signals, same score
+    formula, same thresholds. The split exists only to give the content
+    cache typed (allowlist-compatible) args.
+
+    Bump ``behavior_version`` on any change to the signals dict, the
+    weights, the thresholds, or the verdict logic. Snapshot test in
+    ``tests/test_content_cache_fingerprint.py`` pins canonical input
+    fingerprints so accidental drift in serialization gets caught.
     """
     if language not in _SUPPORTED_LANGUAGES:
         return DriftClassification(

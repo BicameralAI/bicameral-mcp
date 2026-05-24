@@ -22,6 +22,7 @@ import difflib
 from dataclasses import dataclass
 
 from . import _diff_dispatch
+from ._content_cache import content_cached
 from ._line_categorizers import categorize as _categorize_line
 
 
@@ -100,6 +101,7 @@ def _bucket(
     return counts
 
 
+@content_cached(behavior_version=1)
 def categorize_diff(
     old_body: str,
     new_body: str,
@@ -112,6 +114,15 @@ def categorize_diff(
     (``codegenome.drift_classifier.classify_drift``) short-circuits
     unsupported languages to ``"uncertain"`` before this function is
     reached.
+
+    Content-cached (#136 Step 3) since difflib runs O(N²) on line count
+    — large bodies are real CPU. All three args are ``str``, so the
+    cache decorator wraps directly without an outer normalization layer.
+
+    Bump ``behavior_version`` on any change to: bucket categories,
+    cosmetic_ratio formula, the underlying ``_categorize_line`` /
+    ``_diff_dispatch.compute_slot_flags`` heuristics, or the returned
+    ``DiffStats`` shape.
     """
     removed, added = _changed_lines(old_body, new_body)
     old_flags = _diff_dispatch.compute_slot_flags(old_body, language)
