@@ -19,7 +19,6 @@ Limitations — aggregate-rate worst case (#230 Finding 2):
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import os
@@ -500,8 +499,7 @@ async def _find_context_for_candidates(
     return candidates
 
 
-@write_tool("write.ingest")
-async def handle_ingest(
+async def _handle_ingest_impl(
     ctx,
     payload: dict,
     source_scope: str = "",
@@ -509,110 +507,20 @@ async def handle_ingest(
     *,
     ingest_mode: Literal["active", "passive"] = "active",
 ) -> IngestResponse:
-    # #216: enforce entry-time guardrails BEFORE any ledger work, including
-    # the SurrealDB connection handshake. A refused payload should cost zero
-    # downstream resources. LLM-02 size check first (cheaper short-circuit
-    # on oversized payloads); LLM-08 rate check second. Both raise
-    # ``_IngestRefused`` with distinct ``reason`` strings; telemetry-emit
-    # on refusal then re-raise so the MCP boundary translates to a
-    # structured TextContent error.
-    #
-    # Per-session bucket scoping note: ``ctx.session_id`` is resolved by
-    # ``context._resolve_agent_identity`` (#231 v1) to a per-developer
-    # salted email-hash (16-char hex) when ``git config user.email`` is
-    # available — gives per-developer rate-limit bucket isolation in
-    # team-server installs. Falls back to the process-wide ``_SESSION_ID``
-    # UUID when git config is unreadable (test/CI runs, no email set);
-    # in that mode the rate gate is per-server-process and concurrent
-    # callers share a bucket — acceptable for the test shape, not for
-    # production. Option (β) per-MCP-session granularity is the v2 upgrade
-    # path gated on team-server protocol activation; documented in plan-231.
-    # Cheapest-first ordering: size (O(1) byte count) → rate (O(1) bucket
-    # take) → canary (O(n) regex) → sensitive (O(n) regex + Luhn).
-    # Canary first because injection is upstream of leakage — block the
-    # manipulation attempt before scanning for leaks. #212 LLM-01,
-    # #213 LLM-04 + HIPAA-01 + PCI-01 fold.
-    #
-    # #418 Phase 0a: ``ingest_mode`` splits soft-gate posture by transport.
-    # ``ingest_mode="active"`` (default, MCP tool surface) keeps fail-fast
-    # behavior — the caller-LLM sees the refusal, fixes the payload,
-    # retries. ``ingest_mode="passive"`` (pollers, webhook receivers, the
-    # sync-and-brief CLI) WARNs + DLQs + continues for soft gates so a
-    # single bad item can't halt the whole poller. Hard gates
-    # (``sensitive_data:*``, ``malformed_payload``) fail-fast in BOTH modes —
-    # the failure is not safely recoverable by skipping.
+    """Core ingest logic — ledger writes, symbol resolution, gap-judge chain.
+
+    Invoked by the daemon's ``write.ingest`` protocol handler (via
+    protocol/handlers/writes.py) and by the MCP-side facade when the daemon
+    is not reachable, or on any exception from the daemon path.
+
+    Boundary guards (``_check_payload_size``, ``_check_rate_limit``,
+    ``_check_canary``, ``_check_sensitive``) are kept at the MCP boundary in
+    ``handle_ingest`` — they short-circuit before any RPC and the daemon
+    trusts they have already run. The daemon dispatcher calls this impl
+    directly, skipping the guards (acceptable: the guard state lives in the
+    MCP process).
+    """
     dlqd_count: dict[str, int] = {}
-    try:
-        _check_payload_size(payload, ctx.ingest_max_bytes)
-        _check_rate_limit(
-            getattr(ctx, "session_id", ""),
-            ctx.ingest_rate_limit_burst,
-            ctx.ingest_rate_limit_refill_per_sec,
-        )
-        _check_canary(payload)
-        _check_sensitive(payload)
-    except _IngestRefused as exc:
-        session_id_for_emit = getattr(ctx, "session_id", "")
-        if ingest_mode == "passive" and not _is_hard_gate(exc.reason):
-            # Soft gate + passive caller: route to DLQ, emit refusal with
-            # warned_and_dlqd disposition, return an empty stats-only
-            # IngestResponse so the poller continues with the next item.
-            try:
-                from dlq.store import write_dlq_entry
-
-                try:
-                    serialized = json.dumps(payload, default=str).encode("utf-8")
-                except Exception:  # noqa: BLE001 — should be impossible (malformed is hard-gate)
-                    serialized = repr(payload).encode("utf-8", errors="replace")
-                content_hash = "sha256:" + hashlib.sha256(serialized).hexdigest()
-                derived_source_ref = _derive_last_source_ref(payload) or str(
-                    payload.get("title") or ""
-                )
-                write_dlq_entry(
-                    source_id=source_scope or "unknown",
-                    source_ref=derived_source_ref or "<unknown>",
-                    reason=exc.reason,
-                    byte_size=len(serialized),
-                    content_hash=content_hash,
-                    raw_content=serialized,
-                )
-            except Exception as dlq_exc:  # noqa: BLE001 — audit emit must still fire
-                logger.warning(
-                    "[ingest] DLQ write failed for reason=%s: %s",
-                    exc.reason,
-                    dlq_exc,
-                )
-            _emit_ingest_refusal_telemetry(
-                exc.reason,
-                session_id_for_emit,
-                disposition="warned_and_dlqd",
-            )
-            dlqd_count[exc.reason] = dlqd_count.get(exc.reason, 0) + 1
-            return IngestResponse(
-                ingested=False,
-                repo=str(payload.get("repo") or getattr(ctx, "repo_path", "")),
-                query=str(payload.get("query", "")),
-                source_refs=[],
-                stats=IngestStats(
-                    intents_created=0,
-                    symbols_mapped=0,
-                    regions_linked=0,
-                    ungrounded=0,
-                    grounded=0,
-                    grounded_pct=0.0,
-                    grounding_deferred=0,
-                    dlqd_count=dlqd_count,
-                ),
-                created_decisions=[],
-            )
-        # Hard gate OR active-mode soft gate: today's fail-fast path.
-        _emit_ingest_refusal_telemetry(
-            exc.reason,
-            session_id_for_emit,
-            disposition="rejected",
-        )
-        raise
-
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
@@ -827,3 +735,155 @@ async def handle_ingest(
         pass
 
     return ingest_response
+
+
+@write_tool("write.ingest")
+async def handle_ingest(
+    ctx,
+    payload: dict,
+    source_scope: str = "",
+    cursor: str = "",
+    *,
+    ingest_mode: Literal["active", "passive"] = "active",
+) -> IngestResponse:
+    """MCP-side facade for ``write.ingest``.
+
+    Phase 2c-6b — runs MCP-boundary guards (size, rate, canary, sensitive)
+    then, if a daemon proxy is reachable via ``ctx.daemon``, delegates the
+    ledger write to the daemon and returns a minimal ``IngestResponse``
+    built from the protocol-level ``IngestResult``. On any daemon exception
+    (or when ``ctx.daemon`` is None) falls through to ``_handle_ingest_impl``
+    so non-daemon installs and test environments keep working.
+
+    Guard placement: ``_check_payload_size`` and ``_check_rate_limit`` run
+    at this MCP boundary (cheap O(1) checks that short-circuit before any
+    RPC). The daemon-side dispatcher calls ``_handle_ingest_impl`` directly
+    and trusts that these guards have already run.
+    """
+    import json as _json
+
+    # Run boundary guards first — cheapest-first ordering, same as before
+    # the daemon split. If they raise, we never reach the daemon or impl.
+    dlqd_count: dict[str, int] = {}
+    try:
+        _check_payload_size(payload, ctx.ingest_max_bytes)
+        _check_rate_limit(
+            getattr(ctx, "session_id", ""),
+            ctx.ingest_rate_limit_burst,
+            ctx.ingest_rate_limit_refill_per_sec,
+        )
+        _check_canary(payload)
+        _check_sensitive(payload)
+    except _IngestRefused as exc:
+        session_id_for_emit = getattr(ctx, "session_id", "")
+        if ingest_mode == "passive" and not _is_hard_gate(exc.reason):
+            try:
+                from dlq.store import write_dlq_entry
+
+                try:
+                    serialized = _json.dumps(payload, default=str).encode("utf-8")
+                except Exception:  # noqa: BLE001
+                    serialized = repr(payload).encode("utf-8", errors="replace")
+                import hashlib as _hashlib
+
+                content_hash = "sha256:" + _hashlib.sha256(serialized).hexdigest()
+                derived_source_ref = _derive_last_source_ref(payload) or str(
+                    payload.get("title") or ""
+                )
+                write_dlq_entry(
+                    source_id=source_scope or "unknown",
+                    source_ref=derived_source_ref or "<unknown>",
+                    reason=exc.reason,
+                    byte_size=len(serialized),
+                    content_hash=content_hash,
+                    raw_content=serialized,
+                )
+            except Exception as dlq_exc:  # noqa: BLE001
+                logger.warning(
+                    "[ingest] DLQ write failed for reason=%s: %s",
+                    exc.reason,
+                    dlq_exc,
+                )
+            _emit_ingest_refusal_telemetry(
+                exc.reason,
+                session_id_for_emit,
+                disposition="warned_and_dlqd",
+            )
+            dlqd_count[exc.reason] = dlqd_count.get(exc.reason, 0) + 1
+            return IngestResponse(
+                ingested=False,
+                repo=str(payload.get("repo") or getattr(ctx, "repo_path", "")),
+                query=str(payload.get("query", "")),
+                source_refs=[],
+                stats=IngestStats(
+                    intents_created=0,
+                    symbols_mapped=0,
+                    regions_linked=0,
+                    ungrounded=0,
+                    grounded=0,
+                    grounded_pct=0.0,
+                    grounding_deferred=0,
+                    dlqd_count=dlqd_count,
+                ),
+                created_decisions=[],
+            )
+        _emit_ingest_refusal_telemetry(
+            exc.reason,
+            session_id_for_emit,
+            disposition="rejected",
+        )
+        raise
+
+    # Daemon routing — attempt only after guards pass.
+    daemon = getattr(ctx, "daemon", None)
+    if daemon is not None:
+        try:
+            from protocol.contracts import IngestResult
+
+            raw = await daemon.ingest(
+                adapter_name="mcp",
+                payload=_json.dumps(payload, default=str),
+                source_id=source_scope or "default",
+                source_ref=str(
+                    ((payload.get("mappings") or [{}])[0].get("span") or {}).get("source_ref", "")
+                ),
+                mode=ingest_mode,
+                repo_id=None,
+            )
+            result = IngestResult.model_validate(raw)
+            # Build a minimal IngestResponse from the protocol-level result so
+            # the MCP server sees a consistent return type. Full enrichment
+            # (gap-judge, cursor, context_for) is available in the non-daemon
+            # path; the daemon path carries the ledger-write outcome only.
+            decision_ids = result.decision_ids or []
+            return IngestResponse(
+                ingested=result.status == "accepted",
+                repo=str(payload.get("repo") or getattr(ctx, "repo_path", "")),
+                query=str(payload.get("query", "")),
+                source_refs=[],
+                stats=IngestStats(
+                    intents_created=len(decision_ids),
+                    symbols_mapped=0,
+                    regions_linked=0,
+                    ungrounded=0,
+                    grounded=0,
+                    grounded_pct=0.0,
+                    grounding_deferred=0,
+                ),
+                created_decisions=[
+                    CreatedDecision(decision_id=did, description="") for did in decision_ids
+                ],
+            )
+        except Exception:
+            logger.debug(
+                "[handle_ingest] daemon call failed, falling through to in-process impl",
+                exc_info=True,
+            )
+
+    return await _handle_ingest_impl(
+        ctx,
+        payload,
+        source_scope,
+        cursor,
+        ingest_mode=ingest_mode,
+    )

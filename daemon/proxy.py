@@ -407,3 +407,53 @@ class DaemonProxy:
                 "regions": regions,
             },
         )
+
+    async def ingest(
+        self,
+        *,
+        adapter_name: str,
+        payload: str,
+        source_id: str,
+        source_ref: str,
+        mode: str = "active",
+        repo_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke ``write.ingest`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_ingest`` facade is responsible for wrapping
+        this dict back into an ``IngestResult`` model (and for building the
+        ``IngestResponse`` returned to the agent).
+        """
+        return await self._call_with_retry(
+            "write.ingest",
+            {
+                "adapter_name": adapter_name,
+                "payload": payload,
+                "source_id": source_id,
+                "source_ref": source_ref,
+                "mode": mode,
+                "repo_id": repo_id,
+            },
+        )
+
+    async def link_commit(
+        self,
+        *,
+        repo_id: str,
+        commit_sha: str,
+        ref: str = "HEAD",
+    ) -> dict[str, Any]:
+        """Invoke ``write.link_commit`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_link_commit`` facade is responsible for wrapping
+        this dict back into a ``LinkCommitResult`` model (and for building the
+        ``LinkCommitResponse`` returned to the agent).
+        """
+        return await self._call_with_retry(
+            "write.link_commit",
+            {
+                "repo_id": repo_id,
+                "commit_sha": commit_sha,
+                "ref": ref,
+            },
+        )
