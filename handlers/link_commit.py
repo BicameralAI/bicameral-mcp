@@ -29,6 +29,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import uuid
+from typing import Literal
 
 from contracts import LinkCommitResponse, PendingComplianceCheck
 from preflight_telemetry import telemetry_enabled, write_engagement
@@ -647,10 +648,14 @@ async def handle_link_commit(
             # Synthesize a minimal LinkCommitResponse from the protocol-level
             # result. Fields not carried over the wire default to their zero
             # values; the full sweep data is available in the non-daemon path.
+            # Map protocol-level status to LinkCommitResponse.reason literals.
+            _lc_reason: Literal["new_commit", "already_synced", "no_changes"] = (
+                "new_commit" if result.status == "linked" else "no_changes"
+            )
             return LinkCommitResponse(
                 commit_hash=commit_hash,
                 synced=result.status == "linked",
-                reason=result.status,
+                reason=_lc_reason,
                 regions_updated=result.regions_updated,
             )
         except Exception:
