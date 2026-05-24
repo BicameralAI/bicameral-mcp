@@ -39,6 +39,16 @@
           }
         ]
       }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -d .bicameral ] && bicameral-mcp sync-and-brief 2>>\"${HOME}/.bicameral/hook-errors.log\" || true; exit 0"
+          }
+        ]
+      }
     ]
   }
 }
