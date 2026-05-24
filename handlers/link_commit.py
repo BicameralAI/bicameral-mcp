@@ -442,13 +442,19 @@ async def _run_continuity_pass(ctx, pending: list[PendingComplianceCheck]) -> li
     return resolutions
 
 
-@write_tool("write.link_commit")
-async def handle_link_commit(
+async def _handle_link_commit_impl(
     ctx,
     commit_hash: str = "HEAD",
     *,
     preflight_id: str | None = None,
 ) -> LinkCommitResponse:
+    """Core link_commit logic — ledger sync, drift sweep, compliance checks.
+
+    Invoked by the daemon's ``write.link_commit`` protocol handler (via
+    protocol/handlers/writes.py) and by the MCP-side facade when the daemon
+    is not reachable, or on any exception from the daemon path. The
+    decorator lives on the facade only.
+    """
     # v0.4.8: short-circuit if we've already synced this SHA within this
     # MCP call. Returns the FULL cached response from the first sync so
     # downstream consumers (search/drift's ``sync_status``) see real
@@ -610,3 +616,47 @@ async def handle_link_commit(
         pass
 
     return response
+
+
+@write_tool("write.link_commit")
+async def handle_link_commit(
+    ctx,
+    commit_hash: str = "HEAD",
+    *,
+    preflight_id: str | None = None,
+) -> LinkCommitResponse:
+    """MCP-side facade for ``write.link_commit``.
+
+    Phase 2c-6b — if a daemon proxy is available via ``ctx.daemon``,
+    delegates to it and returns a ``LinkCommitResponse`` built from the
+    protocol-level ``LinkCommitResult``. On any daemon exception (or when
+    ``ctx.daemon`` is None) falls through to ``_handle_link_commit_impl``
+    so non-daemon installs and test environments keep working.
+    """
+    daemon = getattr(ctx, "daemon", None)
+    if daemon is not None:
+        try:
+            from protocol.contracts import LinkCommitResult
+
+            raw = await daemon.link_commit(
+                repo_id="local",
+                commit_sha=commit_hash,
+                ref=commit_hash,
+            )
+            result = LinkCommitResult.model_validate(raw)
+            # Synthesize a minimal LinkCommitResponse from the protocol-level
+            # result. Fields not carried over the wire default to their zero
+            # values; the full sweep data is available in the non-daemon path.
+            return LinkCommitResponse(
+                commit_hash=commit_hash,
+                synced=result.status == "linked",
+                reason=result.status,
+                regions_updated=result.regions_updated,
+            )
+        except Exception:
+            logger.debug(
+                "[handle_link_commit] daemon call failed, falling through to in-process impl",
+                exc_info=True,
+            )
+
+    return await _handle_link_commit_impl(ctx, commit_hash, preflight_id=preflight_id)

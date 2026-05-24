@@ -1,4 +1,4 @@
-"""Server-side handlers for ``write.*`` protocol methods (Phase 2c-2b).
+"""Server-side handlers for ``write.*`` protocol methods (Phase 2c-2b / 2c-6a).
 
 This module wires the **telemetry-only** write surface — operations that
 record PostHog events but do not mutate the ledger:
@@ -7,12 +7,15 @@ record PostHog events but do not mutate the ledger:
 - ``write.skill_begin`` → ``handlers.skill.handle_skill_begin``
 - ``write.skill_end`` → ``handlers.skill.handle_skill_end``
 
+**Ledger writes (``write.ingest``, ``write.link_commit``) are NOT registered
+here.** Those are owned by the Runtime via the adapter-registry dispatch path:
+``Runtime._handle_ingest`` → ``MCPIngestAdapter.ingest`` →
+``_handle_ingest_impl`` (Phase 2c-6b). Registering them here would overwrite
+the adapter-routing handler and break the registry dispatch contract tested in
+``tests/test_daemon_runtime_dispatch.py``.
+
 Same pattern as ``protocol/handlers/reads.py``: validate payload, delegate
 to the existing in-tree handler, serialize the response.
-
-**No ledger mutation in this PR.** Ledger writes (``write.ingest``,
-``write.link_commit``, ``write.ratify``, etc.) land in sibling PRs that
-deal with the ``ingest.*`` → ``write.*`` namespace migration cleanly.
 
 Telemetry side-effects (``record_skill_event``, ``send_event``) are
 fire-and-forget in the underlying handlers — no special test handling
@@ -92,6 +95,12 @@ def register_write_handlers(server: ProtocolServer) -> None:
     """Register every ``write.*`` telemetry method on ``server``.
 
     Idempotent: re-registering overwrites the existing handler.
+
+    Note: ``write.ingest`` and ``write.link_commit`` are intentionally
+    absent here — they are registered by ``Runtime._register_default_methods``
+    via the adapter-registry dispatch (``Runtime._handle_ingest`` /
+    ``Runtime._handle_link_commit`` → ``MCPIngestAdapter``). Registering them
+    here would overwrite the adapter-routing handler.
     """
     server.register("write.feedback", handle_write_feedback)
     server.register("write.skill_begin", handle_write_skill_begin)
