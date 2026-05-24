@@ -13,7 +13,8 @@ ledger code. Only the deployment topology shifts.
 
 from __future__ import annotations
 
+from .grounding import register_grounding_handlers
 from .reads import register_read_handlers
 from .writes import register_write_handlers
 
-__all__ = ["register_read_handlers", "register_write_handlers"]
+__all__ = ["register_grounding_handlers", "register_read_handlers", "register_write_handlers"]

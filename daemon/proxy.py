@@ -293,3 +293,117 @@ class DaemonProxy:
                 "days": days,
             },
         )
+
+    # ── Grounding RPC methods (Phase 2c-7a) ────────────────────────────
+
+    async def validate_symbols(
+        self,
+        *,
+        repo_id: str,
+        ref: str = "HEAD",
+        candidates: list[str],
+    ) -> list[dict[str, Any]]:
+        """Invoke ``grounding.lookup.validate_symbols`` on the daemon.
+
+        Returns only the candidates that resolve to a known symbol in the
+        code-locator index. Each entry is a Symbol-shaped dict with keys
+        ``name``, ``file``, ``start_line``, ``end_line``.
+        """
+        return await self._call_with_retry(
+            "grounding.lookup.validate_symbols",
+            {
+                "repo_id": repo_id,
+                "ref": ref,
+                "candidates": candidates,
+            },
+        )
+
+    async def extract_symbols(
+        self,
+        *,
+        repo_id: str,
+        ref: str = "HEAD",
+        file_path: str,
+    ) -> list[dict[str, Any]]:
+        """Invoke ``grounding.lookup.extract_symbols`` on the daemon.
+
+        Returns all symbols extracted from ``file_path`` at the given ref
+        via tree-sitter. Each entry is a Symbol-shaped dict.
+        """
+        return await self._call_with_retry(
+            "grounding.lookup.extract_symbols",
+            {
+                "repo_id": repo_id,
+                "ref": ref,
+                "file_path": file_path,
+            },
+        )
+
+    async def get_neighbors(
+        self,
+        *,
+        repo_id: str,
+        ref: str = "HEAD",
+        symbol_id: int,
+    ) -> list[dict[str, Any]]:
+        """Invoke ``grounding.lookup.get_neighbors`` on the daemon.
+
+        Returns call/import graph neighbors of ``symbol_id``. Each entry
+        is a Neighbor-shaped dict with keys ``symbol_id``, ``name``, ``relation``.
+        """
+        return await self._call_with_retry(
+            "grounding.lookup.get_neighbors",
+            {
+                "repo_id": repo_id,
+                "ref": ref,
+                "symbol_id": symbol_id,
+            },
+        )
+
+    async def analyze_region(
+        self,
+        *,
+        repo_id: str,
+        ref: str = "HEAD",
+        region: dict[str, Any],
+        source_context: str = "",
+    ) -> dict[str, Any]:
+        """Invoke ``grounding.analyze.region`` on the daemon.
+
+        Analyzes a single code region for drift against the stored baseline.
+        ``region`` must be a CodeRegion-shaped dict with keys ``file``,
+        ``symbol``, ``start_line``, ``end_line``, and optionally
+        ``stored_hash``. Returns a DriftResult-shaped dict with keys
+        ``status``, ``content_hash``, ``confidence``, ``explanation``.
+        """
+        return await self._call_with_retry(
+            "grounding.analyze.region",
+            {
+                "repo_id": repo_id,
+                "ref": ref,
+                "region": region,
+                "source_context": source_context,
+            },
+        )
+
+    async def batch_analyze_regions(
+        self,
+        *,
+        repo_id: str,
+        ref: str = "HEAD",
+        regions: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Invoke ``grounding.analyze.batch`` on the daemon.
+
+        Batch analysis of multiple code regions. Each region must be a
+        CodeRegion-shaped dict. Results preserve input order. Each result is
+        a DriftResult-shaped dict.
+        """
+        return await self._call_with_retry(
+            "grounding.analyze.batch",
+            {
+                "repo_id": repo_id,
+                "ref": ref,
+                "regions": regions,
+            },
+        )
