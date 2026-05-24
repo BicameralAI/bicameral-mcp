@@ -9,12 +9,17 @@ that returns the existing signoff with was_new=False.
 
 No unratify. Rescinding ratification or rejection requires writing a new
 decision that supersedes the previous one — clean audit trail, no rollback.
+
+Phase 2c-6c: split into facade (handle_ratify) + pure impl (_handle_ratify_impl).
+The daemon's ``write.ratify`` dispatcher calls ``_handle_ratify_impl`` directly;
+the MCP-side facade routes through ``ctx.daemon.ratify`` when available.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from contracts import RatifyResponse
 from ledger.queries import decision_exists, project_decision_status
@@ -24,8 +29,7 @@ from protocol.categorization import write_tool
 logger = logging.getLogger(__name__)
 
 
-@write_tool("write.ratify")
-async def handle_ratify(
+async def _handle_ratify_impl(
     ctx,
     decision_id: str,
     signer: str,
@@ -33,16 +37,11 @@ async def handle_ratify(
     action: str = "ratify",
     *,
     preflight_id: str | None = None,
-) -> RatifyResponse:
-    """Set signoff on a decision.
+) -> dict[str, Any]:
+    """Core ratify logic — ledger mutation, telemetry emit.
 
-    action='ratify' (default): proposed → ratified. Drift tracking activates.
-    action='reject': records explicit rejection. The decision stays in the
-    ledger as a negative signal — agents consult it to avoid implementing
-    decisions the product team has explicitly rejected.
-
-    Idempotent: calling with the same action on an already-finalized decision
-    returns was_new=False and leaves the existing signoff untouched.
+    Invoked by the daemon's ``write.ratify`` protocol handler and by the
+    MCP-side facade when the daemon is not reachable.
     """
     if action not in ("ratify", "reject"):
         raise ValueError(f"Unknown action '{action}'; must be 'ratify' or 'reject'")
@@ -84,7 +83,7 @@ async def handle_ratify(
             signoff=existing_signoff,
             projected_status=projected,
             preflight_id=preflight_id,
-        )
+        ).model_dump()
 
     head_ref = getattr(ctx, "authoritative_sha", "") or ""
     session_id = getattr(ctx, "session_id", None) or ""
@@ -136,4 +135,67 @@ async def handle_ratify(
         signoff=signoff,
         projected_status=projected,
         preflight_id=preflight_id,
+    ).model_dump()
+
+
+@write_tool("write.ratify")
+async def handle_ratify(
+    ctx,
+    decision_id: str,
+    signer: str,
+    note: str = "",
+    action: str = "ratify",
+    *,
+    preflight_id: str | None = None,
+) -> RatifyResponse:
+    """Set signoff on a decision.
+
+    action='ratify' (default): proposed → ratified. Drift tracking activates.
+    action='reject': records explicit rejection. The decision stays in the
+    ledger as a negative signal — agents consult it to avoid implementing
+    decisions the product team has explicitly rejected.
+
+    Idempotent: calling with the same action on an already-finalized decision
+    returns was_new=False and leaves the existing signoff untouched.
+
+    Phase 2c-6c: if ``ctx.daemon`` is reachable, routes through the daemon's
+    single-writer queue. Falls through to ``_handle_ratify_impl`` otherwise.
+    """
+    daemon = getattr(ctx, "daemon", None)
+
+    if daemon is not None:
+        try:
+            from protocol.contracts import RatifyResult
+
+            repo_id = getattr(ctx, "repo_id", None) or "local"
+            raw = await daemon.ratify(
+                repo_id=repo_id,
+                decision_id=decision_id,
+                signer=signer,
+                note=note,
+                action=action,
+                preflight_id=preflight_id,
+            )
+            result = RatifyResult.model_validate(raw)
+            return RatifyResponse(
+                decision_id=result.decision_id,
+                was_new=result.was_new,
+                signoff=result.signoff,
+                projected_status=result.projected_status,  # type: ignore[arg-type]
+                preflight_id=None,
+            )
+        except Exception:
+            logger.debug(
+                "[handle_ratify] daemon call failed, falling through to in-process impl",
+                exc_info=True,
+            )
+
+    raw = await _handle_ratify_impl(
+        ctx=ctx,
+        decision_id=decision_id,
+        signer=signer,
+        note=note,
+        action=action,
+        preflight_id=preflight_id,
     )
+    return RatifyResponse.model_validate(raw)

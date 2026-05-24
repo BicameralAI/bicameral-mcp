@@ -1,5 +1,11 @@
 """Handler for /bicameral.resolve_compliance MCP tool — v0.5.0.
 
+Phase 2c-6c: split into facade (handle_resolve_compliance) + pure impl
+(_handle_resolve_compliance_impl). The daemon's ``write.resolve_compliance``
+dispatcher calls ``_handle_resolve_compliance_impl`` directly; the MCP-side
+facade routes through ``ctx.daemon.resolve_compliance`` when available.
+
+
 v0.5.0 changes from v0.4.x:
   - verdict field replaces compliant:bool with three-way enum
     ("compliant" | "drifted" | "not_relevant")
@@ -92,34 +98,39 @@ def _coerce_verdicts(raw: Iterable[dict | ComplianceVerdict]) -> list[Compliance
     return out
 
 
-@write_tool("write.resolve_compliance")
-async def handle_resolve_compliance(
+async def _handle_resolve_compliance_impl(
+    ctx,
+    phase: str,
+    verdicts: Iterable[dict | ComplianceVerdict],
+    commit_hash: str | None = None,
+    flow_id: str | None = None,
+) -> dict:
+    """Core resolve_compliance logic — ledger mutation.
+
+    Invoked by the daemon's ``write.resolve_compliance`` protocol handler and by
+    the MCP-side facade when the daemon is not reachable.
+    """
+    result = await _handle_resolve_compliance_core(
+        ctx=ctx,
+        phase=phase,
+        verdicts=verdicts,
+        commit_hash=commit_hash,
+        flow_id=flow_id,
+    )
+    return result.model_dump()
+
+
+async def _handle_resolve_compliance_core(
     ctx,
     phase: str,
     verdicts: Iterable[dict | ComplianceVerdict],
     commit_hash: str | None = None,
     flow_id: str | None = None,
 ) -> ResolveComplianceResponse:
-    """Persist a batch of caller-LLM compliance verdicts.
+    """Internal core — returns a ResolveComplianceResponse object.
 
-    Four-way verdict semantics (#405 added ``partial``):
-      "compliant"    — write compliance_check(verdict='compliant'), keep binds_to
-      "drifted"      — write compliance_check(verdict='drifted'), keep binds_to.
-                       REQUIRES a prior 'compliant' verdict for the same
-                       (decision_id, region_id) pair (reflected-before-drifted
-                       invariant). Otherwise the verdict is rejected with
-                       reason='state_transition_invalid' and the caller-LLM
-                       should downgrade to 'partial' and retry.
-      "partial"      — write compliance_check(verdict='partial'), keep binds_to.
-                       The correct verdict for binding-as-anchor-for-future-work
-                       and for any never-compliant region the caller would
-                       otherwise have called 'drifted'.
-      "not_relevant" — write compliance_check(verdict='not_relevant', pruned=True),
-                       DELETE the binds_to edge (retrieval mistake, not drift)
-
-    After the full batch is written, status for each affected decision is
-    re-projected holistically via project_decision_status (closes the
-    last-verdict-wins caveat from v0.4.x).
+    Both ``_handle_resolve_compliance_impl`` and ``handle_resolve_compliance``
+    delegate here to share the full body without duplication.
     """
     if phase not in _VALID_PHASES:
         raise ValueError(f"Unknown phase {phase!r} — must be one of {sorted(_VALID_PHASES)}")
@@ -329,4 +340,56 @@ async def handle_resolve_compliance(
         phase=phase,
         accepted=accepted,
         rejected=rejected,
+    )
+
+
+@write_tool("write.resolve_compliance")
+async def handle_resolve_compliance(
+    ctx,
+    phase: str,
+    verdicts: Iterable[dict | ComplianceVerdict],
+    commit_hash: str | None = None,
+    flow_id: str | None = None,
+) -> ResolveComplianceResponse:
+    """Persist a batch of caller-LLM compliance verdicts.
+
+    Phase 2c-6c: if ``ctx.daemon`` is reachable, routes through the daemon's
+    single-writer queue. Falls through to ``_handle_resolve_compliance_impl``
+    (via ``_handle_resolve_compliance_core``) otherwise.
+    """
+    daemon = getattr(ctx, "daemon", None)
+
+    if daemon is not None:
+        try:
+            from protocol.contracts import ResolveComplianceResult
+
+            repo_id = getattr(ctx, "repo_id", None) or "local"
+            verdicts_raw = [
+                v.model_dump() if isinstance(v, ComplianceVerdict) else v for v in verdicts
+            ]
+            raw = await daemon.resolve_compliance(
+                repo_id=repo_id,
+                phase=phase,
+                verdicts=verdicts_raw,
+                commit_hash=commit_hash,
+                flow_id=flow_id,
+            )
+            result = ResolveComplianceResult.model_validate(raw)
+            return ResolveComplianceResponse(
+                phase=result.phase,  # type: ignore[arg-type]
+                accepted=[ResolveComplianceAccepted.model_validate(a) for a in result.accepted],
+                rejected=[ResolveComplianceRejection.model_validate(r) for r in result.rejected],
+            )
+        except Exception:
+            logger.debug(
+                "[handle_resolve_compliance] daemon call failed, falling through to in-process impl",
+                exc_info=True,
+            )
+
+    return await _handle_resolve_compliance_core(
+        ctx=ctx,
+        phase=phase,
+        verdicts=verdicts,
+        commit_hash=commit_hash,
+        flow_id=flow_id,
     )

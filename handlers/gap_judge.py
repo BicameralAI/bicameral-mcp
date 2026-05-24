@@ -1,5 +1,11 @@
 """Handler for /bicameral_judge_gaps MCP tool (v0.4.19 — business-only rubric).
 
+Phase 2c-6c: split into facade (handle_judge_gaps) + pure impl
+(_handle_judge_gaps_impl). The daemon's ``write.judge_gaps`` dispatcher calls
+``_handle_judge_gaps_impl`` directly; the MCP-side facade routes through
+``ctx.daemon.judge_gaps`` when available.
+
+
 Caller-session LLM gap judge. The server builds a structured context
 pack — decisions with source excerpts, cross-symbol related decision
 ids, phrasing-based gaps, and a 5-category rubric scoped to **business
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from contracts import (
     DecisionMatch,
@@ -262,21 +269,34 @@ def _build_context_decisions(
 # ── Public handler ───────────────────────────────────────────────────
 
 
-@write_tool("write.judge_gaps")
-async def handle_judge_gaps(
+async def _handle_judge_gaps_impl(
+    ctx,
+    topic: str,
+    max_decisions: int = 10,
+) -> dict[str, Any]:
+    """Core judge_gaps logic — builds the gap judgment context pack.
+
+    Invoked by the daemon's ``write.judge_gaps`` protocol handler and by the
+    MCP-side facade when the daemon is not reachable.
+
+    Returns a dict with key ``payload`` (the serialized GapJudgmentPayload,
+    or None on the honest empty path).
+    """
+    result = await _handle_judge_gaps_core(ctx=ctx, topic=topic, max_decisions=max_decisions)
+    if result is None:
+        return {"payload": None}
+    return {"payload": result.model_dump()}
+
+
+async def _handle_judge_gaps_core(
     ctx,
     topic: str,
     max_decisions: int = 10,
 ) -> GapJudgmentPayload | None:
-    """Build the caller-session gap judgment pack for a topic.
+    """Internal core — returns a GapJudgmentPayload or None.
 
-    Returns ``None`` on the honest empty path — when no decisions
-    match the topic, there is nothing to judge. The caller should
-    skip rendering entirely rather than render an empty pack.
-
-    Never calls an LLM. The returned payload contains the rubric
-    and the judgment prompt; the caller's Claude session does the
-    reasoning in its own LLM context.
+    Both ``_handle_judge_gaps_impl`` and ``handle_judge_gaps`` delegate here
+    to share the full body without duplication.
     """
     search_result: SearchDecisionsResponse = await handle_search_decisions(
         ctx,
@@ -299,3 +319,47 @@ async def handle_judge_gaps(
         rubric=_build_rubric(),
         judgment_prompt=_JUDGMENT_PROMPT,
     )
+
+
+@write_tool("write.judge_gaps")
+async def handle_judge_gaps(
+    ctx,
+    topic: str,
+    max_decisions: int = 10,
+) -> GapJudgmentPayload | None:
+    """Build the caller-session gap judgment pack for a topic.
+
+    Returns ``None`` on the honest empty path — when no decisions
+    match the topic, there is nothing to judge. The caller should
+    skip rendering entirely rather than render an empty pack.
+
+    Never calls an LLM. The returned payload contains the rubric
+    and the judgment prompt; the caller's Claude session does the
+    reasoning in its own LLM context.
+
+    Phase 2c-6c: if ``ctx.daemon`` is reachable, routes through the daemon.
+    Falls through to ``_handle_judge_gaps_core`` otherwise.
+    """
+    daemon = getattr(ctx, "daemon", None)
+
+    if daemon is not None:
+        try:
+            from protocol.contracts import JudgeGapsResult
+
+            repo_id = getattr(ctx, "repo_id", None) or "local"
+            raw = await daemon.judge_gaps(
+                repo_id=repo_id,
+                topic=topic,
+                max_decisions=max_decisions,
+            )
+            result = JudgeGapsResult.model_validate(raw)
+            if result.payload is None:
+                return None
+            return GapJudgmentPayload.model_validate(result.payload)
+        except Exception:
+            logger.debug(
+                "[handle_judge_gaps] daemon call failed, falling through to in-process impl",
+                exc_info=True,
+            )
+
+    return await _handle_judge_gaps_core(ctx=ctx, topic=topic, max_decisions=max_decisions)

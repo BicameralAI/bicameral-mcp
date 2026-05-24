@@ -308,6 +308,113 @@ class SkillEndResult(BaseModel):
     diagnostic_warning: str | None = None
 
 
+# ── Writes: mutation (ledger-mutating handlers) ────────────────────────
+
+
+class RatifyRequest(BaseModel):
+    """Wire payload for ``write.ratify``.
+
+    Routes signoff writes (ratify / reject) through the daemon's single-writer
+    queue. ``signer`` is the within-tenant actor; ``action`` defaults to
+    ``'ratify'`` (proposed → ratified) or ``'reject'`` (explicit rejection).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str
+    decision_id: str
+    signer: str
+    note: str = ""
+    action: str = "ratify"
+    preflight_id: str | None = None
+
+
+class RatifyResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    decision_id: str
+    was_new: bool
+    signoff: dict[str, Any]
+    projected_status: str
+
+
+class ResolveComplianceRequest(BaseModel):
+    """Wire payload for ``write.resolve_compliance``.
+
+    ``verdicts`` is a list of raw dicts — coercion to ``ComplianceVerdict``
+    happens inside the handler impl so the daemon's single-writer queue
+    receives the same raw shape the MCP handler already handles.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str
+    phase: str
+    verdicts: list[dict[str, Any]]
+    commit_hash: str | None = None
+    flow_id: str | None = None
+
+
+class ResolveComplianceResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    phase: str
+    accepted: list[dict[str, Any]] = Field(default_factory=list)
+    rejected: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ResolveCollisionRequest(BaseModel):
+    """Wire payload for ``write.resolve_collision``.
+
+    Dual-mode: set ``action`` for collision mode (new_id + old_id + action),
+    or set ``confirmed`` for context-for mode (span_id + decision_id).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str
+    # Collision mode
+    new_id: str | None = None
+    old_id: str | None = None
+    action: str | None = None
+    # Context-for mode
+    span_id: str | None = None
+    decision_id: str | None = None
+    confirmed: bool | None = None
+
+
+class ResolveCollisionResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    mode: str
+    action_taken: str
+    new_decision_id: str = ""
+    old_decision_id: str = ""
+    span_id: str = ""
+    decision_id: str = ""
+    edge_written: bool = False
+    new_status: str = ""
+    old_status: str = ""
+
+
+class JudgeGapsRequest(BaseModel):
+    """Wire payload for ``write.judge_gaps``.
+
+    Builds the caller-session gap judgment context pack. Pure data-shape
+    builder — no LLM call on the daemon side.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    repo_id: str
+    topic: str
+    max_decisions: int = Field(default=10, ge=1, le=100)
+
+
+class JudgeGapsResult(BaseModel):
+    """Result for ``write.judge_gaps``.
+
+    ``payload`` is ``None`` on the honest empty path (no decisions matched).
+    Otherwise it is the serialized ``GapJudgmentPayload`` dict.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    payload: dict[str, Any] | None = None
+
+
 # ── Adapter Protocols ──────────────────────────────────────────────────
 
 

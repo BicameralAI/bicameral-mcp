@@ -457,3 +457,111 @@ class DaemonProxy:
                 "ref": ref,
             },
         )
+
+    # ── Mutation writes (Phase 2c-6c) ────────────────────────────────────
+
+    async def ratify(
+        self,
+        *,
+        repo_id: str,
+        decision_id: str,
+        signer: str,
+        note: str = "",
+        action: str = "ratify",
+        preflight_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke ``write.ratify`` on the daemon and return the raw payload.
+
+        Routes signoff writes through the daemon's single-writer queue so
+        concurrent ratify calls serialize correctly. The MCP-side
+        ``handle_ratify`` facade wraps this dict into a ``RatifyResponse``.
+        """
+        return await self._call_with_retry(
+            "write.ratify",
+            {
+                "repo_id": repo_id,
+                "decision_id": decision_id,
+                "signer": signer,
+                "note": note,
+                "action": action,
+                "preflight_id": preflight_id,
+            },
+        )
+
+    async def resolve_compliance(
+        self,
+        *,
+        repo_id: str,
+        phase: str,
+        verdicts: list[dict[str, Any]],
+        commit_hash: str | None = None,
+        flow_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Invoke ``write.resolve_compliance`` on the daemon and return the raw payload.
+
+        Compliance verdict writes go through the daemon's single-writer queue.
+        The MCP-side ``handle_resolve_compliance`` facade wraps this dict into
+        a ``ResolveComplianceResponse``.
+        """
+        return await self._call_with_retry(
+            "write.resolve_compliance",
+            {
+                "repo_id": repo_id,
+                "phase": phase,
+                "verdicts": verdicts,
+                "commit_hash": commit_hash,
+                "flow_id": flow_id,
+            },
+        )
+
+    async def resolve_collision(
+        self,
+        *,
+        repo_id: str,
+        new_id: str | None = None,
+        old_id: str | None = None,
+        action: str | None = None,
+        span_id: str | None = None,
+        decision_id: str | None = None,
+        confirmed: bool | None = None,
+    ) -> dict[str, Any]:
+        """Invoke ``write.resolve_collision`` on the daemon and return the raw payload.
+
+        Collision resolution writes go through the daemon's single-writer queue.
+        The MCP-side ``handle_resolve_collision`` facade wraps this dict into
+        a ``ResolveCollisionResponse``.
+        """
+        return await self._call_with_retry(
+            "write.resolve_collision",
+            {
+                "repo_id": repo_id,
+                "new_id": new_id,
+                "old_id": old_id,
+                "action": action,
+                "span_id": span_id,
+                "decision_id": decision_id,
+                "confirmed": confirmed,
+            },
+        )
+
+    async def judge_gaps(
+        self,
+        *,
+        repo_id: str,
+        topic: str,
+        max_decisions: int = 10,
+    ) -> dict[str, Any]:
+        """Invoke ``write.judge_gaps`` on the daemon and return the raw payload.
+
+        The MCP-side ``handle_judge_gaps`` facade wraps this dict through
+        ``JudgeGapsResult.model_validate`` and deserializes the nested
+        ``GapJudgmentPayload`` (or returns ``None`` on the empty path).
+        """
+        return await self._call_with_retry(
+            "write.judge_gaps",
+            {
+                "repo_id": repo_id,
+                "topic": topic,
+                "max_decisions": max_decisions,
+            },
+        )

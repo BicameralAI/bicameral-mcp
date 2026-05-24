@@ -16,12 +16,18 @@ Dual-mode HITL resolution tool:
 
 Decision.status is NEVER changed directly by this tool. It is recomputed via
 project_decision_status (the double-entry authority) after each action.
+
+Phase 2c-6c: split into facade (handle_resolve_collision) + pure impl
+(_handle_resolve_collision_impl). The daemon's ``write.resolve_collision``
+dispatcher calls ``_handle_resolve_collision_impl`` directly; the MCP-side
+facade routes through ``ctx.daemon.resolve_collision`` when available.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 from contracts import ResolveCollisionResponse
 from ledger.queries import (
@@ -35,8 +41,7 @@ from protocol.categorization import write_tool
 logger = logging.getLogger(__name__)
 
 
-@write_tool("write.resolve_collision")
-async def handle_resolve_collision(
+async def _handle_resolve_collision_impl(
     ctx,
     # Collision mode params
     new_id: str | None = None,
@@ -46,8 +51,38 @@ async def handle_resolve_collision(
     span_id: str | None = None,
     decision_id: str | None = None,
     confirmed: bool | None = None,
+) -> dict[str, Any]:
+    """Core resolve_collision logic — ledger mutation.
+
+    Invoked by the daemon's ``write.resolve_collision`` protocol handler and by
+    the MCP-side facade when the daemon is not reachable.
+    """
+    result = await _handle_resolve_collision_core(
+        ctx=ctx,
+        new_id=new_id,
+        old_id=old_id,
+        action=action,
+        span_id=span_id,
+        decision_id=decision_id,
+        confirmed=confirmed,
+    )
+    return result.model_dump()
+
+
+async def _handle_resolve_collision_core(
+    ctx,
+    new_id: str | None = None,
+    old_id: str | None = None,
+    action: str | None = None,
+    span_id: str | None = None,
+    decision_id: str | None = None,
+    confirmed: bool | None = None,
 ) -> ResolveCollisionResponse:
-    """Resolve a collision or context_for candidate surfaced during ingest."""
+    """Internal core — returns a ResolveCollisionResponse object.
+
+    Both ``_handle_resolve_collision_impl`` and ``handle_resolve_collision``
+    delegate here to share the full body without duplication.
+    """
     ledger = ctx.ledger
     if hasattr(ledger, "connect"):
         await ledger.connect()
@@ -177,4 +212,67 @@ async def handle_resolve_collision(
     raise ValueError(
         "resolve_collision requires either action= (collision mode) "
         "or confirmed= (context_for mode)"
+    )
+
+
+@write_tool("write.resolve_collision")
+async def handle_resolve_collision(
+    ctx,
+    # Collision mode params
+    new_id: str | None = None,
+    old_id: str | None = None,
+    action: str | None = None,  # 'supersede' | 'keep_both'
+    # Context-for mode params
+    span_id: str | None = None,
+    decision_id: str | None = None,
+    confirmed: bool | None = None,
+) -> ResolveCollisionResponse:
+    """Resolve a collision or context_for candidate surfaced during ingest.
+
+    Phase 2c-6c: if ``ctx.daemon`` is reachable, routes through the daemon's
+    single-writer queue. Falls through to ``_handle_resolve_collision_impl``
+    (via ``_handle_resolve_collision_core``) otherwise.
+    """
+    daemon = getattr(ctx, "daemon", None)
+
+    if daemon is not None:
+        try:
+            from protocol.contracts import ResolveCollisionResult
+
+            repo_id = getattr(ctx, "repo_id", None) or "local"
+            raw = await daemon.resolve_collision(
+                repo_id=repo_id,
+                new_id=new_id,
+                old_id=old_id,
+                action=action,
+                span_id=span_id,
+                decision_id=decision_id,
+                confirmed=confirmed,
+            )
+            result = ResolveCollisionResult.model_validate(raw)
+            return ResolveCollisionResponse(
+                mode=result.mode,  # type: ignore[arg-type]
+                action_taken=result.action_taken,
+                new_decision_id=result.new_decision_id,
+                old_decision_id=result.old_decision_id,
+                span_id=result.span_id,
+                decision_id=result.decision_id,
+                edge_written=result.edge_written,
+                new_status=result.new_status,
+                old_status=result.old_status,
+            )
+        except Exception:
+            logger.debug(
+                "[handle_resolve_collision] daemon call failed, falling through to in-process impl",
+                exc_info=True,
+            )
+
+    return await _handle_resolve_collision_core(
+        ctx=ctx,
+        new_id=new_id,
+        old_id=old_id,
+        action=action,
+        span_id=span_id,
+        decision_id=decision_id,
+        confirmed=confirmed,
     )
