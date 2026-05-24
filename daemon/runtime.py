@@ -62,10 +62,12 @@ class Runtime:
         register_read_handlers(self._server)
         register_write_handlers(self._server)
 
-        # grounding.lookup.* / grounding.analyze.* methods land in later
-        # phases when the code-locator + drift analyzer move into
-        # daemon/grounding/. system.version + system.attach are registered
-        # by ProtocolServer itself.
+        # Phase 2c-7a: wire grounding.lookup.* / grounding.analyze.* dispatchers
+        # so spawned daemons respond to DaemonProxy grounding RPC calls.
+        from protocol.handlers.grounding import register_grounding_handlers
+
+        register_grounding_handlers(self._server)
+        # system.version + system.attach are registered by ProtocolServer itself.
 
     async def _handle_ingest(
         self, params: dict[str, Any], ctx: ConnectionContext

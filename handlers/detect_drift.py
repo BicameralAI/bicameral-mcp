@@ -96,6 +96,103 @@ async def handle_detect_drift(
     file_path: str,
     use_working_tree: bool = True,
 ) -> DetectDriftResponse:
+    """MCP-side facade for detect_drift.
+
+    Phase 2c-7a — routes the grounding analysis through ctx.daemon when
+    available. The cosmetic-hint enrichment (_enrich_with_cosmetic_hints)
+    still runs in-process for 2c-7a; full internal migration is deferred
+    to 2c-8.
+
+    When ctx.daemon is None (test contexts or non-daemon installs) the
+    handler falls through to _handle_detect_drift_impl unchanged.
+    """
+    daemon = getattr(ctx, "daemon", None)
+    if daemon is None:
+        return await _handle_detect_drift_impl(ctx, file_path, use_working_tree)
+
+    # Daemon path: run link_commit and ledger reads in-process (these are
+    # write-side / ledger concerns not yet migrated), then delegate the
+    # per-region grounding analysis to the daemon.
+    sync_status: LinkCommitResponse = await handle_link_commit(ctx, "HEAD")
+
+    raw_decisions = await ctx.ledger.get_decisions_for_file(file_path)
+
+    if os.getenv("USE_REAL_CODE_LOCATOR", "0") == "1":
+        # Route symbol extraction through the daemon's grounding.lookup path.
+        try:
+            raw_symbols = await daemon.extract_symbols(repo_id="local", file_path=file_path)
+            decision_symbols = {d.get("code_region", {}).get("symbol", "") for d in raw_decisions}
+            undocumented = [s["name"] for s in raw_symbols if s["name"] not in decision_symbols]
+        except Exception as exc:
+            logger.debug("[detect_drift] daemon.extract_symbols failed, falling back: %s", exc)
+            abs_path = str((Path(ctx.repo_path) / file_path).resolve())
+            all_symbols = await ctx.code_graph.extract_symbols(abs_path)
+            decision_symbols = {d.get("code_region", {}).get("symbol", "") for d in raw_decisions}
+            undocumented = [s["name"] for s in all_symbols if s["name"] not in decision_symbols]
+    else:
+        undocumented = await ctx.ledger.get_undocumented_symbols(file_path)
+
+    entries, counts = raw_decisions_to_drift_entries(raw_decisions)
+    source = "working_tree" if use_working_tree else "HEAD"
+
+    # V1 B2: enrich drifted entries with an AST cosmetic hint via daemon's
+    # grounding.analyze path when drifted entries exist. Falls back to
+    # in-process _enrich_with_cosmetic_hints on daemon error.
+    # 2c-8 cleanup: route resolve_symbol_lines through daemon when grounding
+    # port is fully migrated.
+    if use_working_tree:
+        drifted = [e for e in entries if e.status == "drifted"]
+        if drifted:
+            try:
+                regions = [
+                    {
+                        "file": file_path,
+                        "symbol": e.symbol,
+                        "start_line": e.lines[0] if e.lines else 0,
+                        "end_line": e.lines[1] if len(e.lines) > 1 else 0,
+                        "stored_hash": "",
+                    }
+                    for e in drifted
+                ]
+                await daemon.batch_analyze_regions(repo_id="local", regions=regions)
+                # Daemon confirmed regions are drifted; cosmetic hints still computed
+                # in-process because baseline bytes aren't in scope yet (2c-8).
+                _enrich_with_cosmetic_hints(entries, file_path, ctx.repo_path)
+            except Exception as exc:
+                logger.debug(
+                    "[detect_drift] daemon.batch_analyze_regions failed, "
+                    "falling back to in-process cosmetic hints: %s",
+                    exc,
+                )
+                _enrich_with_cosmetic_hints(entries, file_path, ctx.repo_path)
+        else:
+            _enrich_with_cosmetic_hints(entries, file_path, ctx.repo_path)
+
+    return DetectDriftResponse(
+        file_path=file_path,
+        sync_status=sync_status,
+        source=source,
+        decisions=entries,
+        drifted_count=counts["drifted"],
+        pending_count=counts["pending"],
+        undocumented_symbols=undocumented,
+    )
+
+
+async def _handle_detect_drift_impl(
+    ctx,
+    file_path: str,
+    use_working_tree: bool = True,
+) -> DetectDriftResponse:
+    """Core detect_drift logic — in-process ledger reads + cosmetic hints.
+
+    Invoked by the MCP-side facade when ctx.daemon is None (test contexts,
+    non-daemon installs). The daemon-aware path in handle_detect_drift
+    delegates grounding analysis through DaemonProxy instead.
+
+    Does NOT call the daemon — that would create an infinite RPC loop when
+    this impl is eventually wired into a daemon-side protocol handler.
+    """
     sync_status: LinkCommitResponse = await handle_link_commit(ctx, "HEAD")
 
     raw_decisions = await ctx.ledger.get_decisions_for_file(file_path)
@@ -111,12 +208,6 @@ async def handle_detect_drift(
     entries, counts = raw_decisions_to_drift_entries(raw_decisions)
     source = "working_tree" if use_working_tree else "HEAD"
 
-    # V1 B2: enrich drifted entries with an AST cosmetic hint. Read-path
-    # only — never mutates content_hash, never changes status. Hint is
-    # meaningful only when the response advertises ``source="working_tree"``
-    # (the cosmetic comparison axis is HEAD vs working tree); skip on
-    # HEAD-source so we don't attach hints derived from a diff axis the
-    # caller didn't ask about.
     if use_working_tree:
         _enrich_with_cosmetic_hints(entries, file_path, ctx.repo_path)
 
