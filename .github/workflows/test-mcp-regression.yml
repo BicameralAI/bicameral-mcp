@@ -188,6 +188,33 @@ jobs:
           --github-summary
           >> "$GITHUB_STEP_SUMMARY"
 
+      # ── M_surrealql_coverage — sociable-test coverage gate (#357.1) ─
+      # Runs coverage.py over the sociable test subset (files using
+      # memory:// / LedgerClient / SurrealDBLedgerAdapter) scoped to
+      # ledger/queries.py. Fails if any SurrealQL-bearing function has
+      # zero body-line hits.
+      #
+      # Filed because PR #309 shipped a 100%-bypass `get_ledger_revision`
+      # to dev — every Phase 4/5 unit test passed against AsyncMock'd
+      # ledger calls. The eval harness has since been fixed (Phase B),
+      # and a coverage-driven audit at this commit shows 58/58
+      # (100%) of SurrealQL-bearing functions ARE covered by sociable
+      # tests today. This gate prevents regression: any future PR that
+      # adds a new client.query/execute callsite without a matching
+      # real-ledger test exercise fails CI here.
+      #
+      # Ubuntu-only: matches the M_shadow_parity precedent. Runs the
+      # full sociable test subset under coverage.py, so this step takes
+      # ~3-5 minutes on average. The snapshot at
+      # docs/ledger-queries-coverage.md is regenerated on every run;
+      # reviewers see drift in PR diffs.
+      - name: M_surrealql_coverage (hard gate)
+        if: matrix.os == 'ubuntu-latest'
+        run: >
+          python tests/eval_357_surrealql_coverage.py
+          --gate-mode hard
+          -o test-results/m-surrealql-coverage.json
+
       # ── Diagnostic: report ANTHROPIC_API_KEY visibility ───────────
       # GitHub masks secret values in logs, but we can safely report
       # (a) whether the secret-expression evaluates to non-empty and
