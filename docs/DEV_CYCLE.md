@@ -584,10 +584,22 @@ pre-commit run --all-files
 ```
 
 **CI fallback.** If you push without `pre-commit install` and the CI
-lint step fails, the workflow now emits an explicit install hint to
+lint step fails, the workflow emits an explicit install hint to
 `$GITHUB_STEP_SUMMARY` and to the job log via `::error::`. That hint
 exists exclusively to break the "push → red CI → push `style:` fixup"
 loop — see PR #357 commit message for the failure history.
+
+**CI hard gate — no format-only commits in PR history.** Shipping the
+config alone wasn't enough: three `style: ruff format` commits landed
+*after* `553c15f` (the pre-commit infra commit), proving the hook was
+still being skipped in practice. The `lint-and-typecheck.yml`
+"No format-only commits in PR history" step now fails the PR if its
+commit graph contains a `style:` / `chore(format)` / `chore(lint)` /
+`ci(lint)` commit naming `ruff` / `format` / `lint`. Merge commits are
+excluded (a PR that merges from base doesn't get blamed for someone
+else's prior style: commit). To recover: rebase + squash the offending
+commits into their source commits before re-pushing — the failure
+output includes the exact `git rebase -i` recipe.
 
 ### 4.6 Review feedback discipline
 
