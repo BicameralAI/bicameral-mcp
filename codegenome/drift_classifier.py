@@ -188,12 +188,24 @@ def classify_drift(
     Unsupported languages return ``verdict='uncertain'`` so the caller
     LLM still sees the pending check (just without a meaningful hint).
 
+    The unsupported-language guard fires **before** the cache lookup
+    (per #515) — the sentinel return is deterministic and doesn't need
+    memoization, so it would otherwise pay ~0.6ms of SQLite roundtrip
+    on every drift evaluation against a clojure/ruby/kotlin/swift file.
+
     Thin normalization wrapper: converts iterable neighbor inputs to
     frozenset before delegating to the cached inner implementation. The
     content cache (#136) requires allowlist-typed args; tuple/frozenset
     is the canonical form. Order doesn't matter for the Jaccard signal,
     so any iterable collapses safely to frozenset.
     """
+    if language not in _SUPPORTED_LANGUAGES:
+        return DriftClassification(
+            verdict="uncertain",
+            confidence=0.0,
+            signals={},
+            evidence_refs=[f"language:unsupported:{language}"],
+        )
     old_nbrs = frozenset(old_neighbors) if old_neighbors is not None else None
     new_nbrs = frozenset(new_neighbors) if new_neighbors is not None else None
     return _classify_drift_cached(
@@ -228,6 +240,13 @@ def _classify_drift_cached(
     weights, the thresholds, or the verdict logic. Snapshot test in
     ``tests/test_content_cache_fingerprint.py`` pins canonical input
     fingerprints so accidental drift in serialization gets caught.
+
+    The unsupported-language guard is retained here as defense-in-depth
+    (per #515) — if a future caller bypasses ``classify_drift`` and
+    invokes this inner directly, it still returns the sentinel rather
+    than silently producing a bogus all-zeros signal score. The
+    duplicate check costs nothing on the hot path: callers come through
+    the public wrapper which short-circuits first.
     """
     if language not in _SUPPORTED_LANGUAGES:
         return DriftClassification(

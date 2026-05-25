@@ -135,6 +135,56 @@ def test_unsupported_language_short_circuits_equal_to_uncached():
     assert cached.verdict == "uncertain"
 
 
+def test_unsupported_language_does_not_touch_cache():
+    """Unsupported-language guard (#515) lives in the public wrapper —
+    classify_drift returns the sentinel WITHOUT a cache lookup. Pins
+    "no SQLite roundtrip on a deterministic short-circuit." Regression
+    test: if a future change moves the guard back inside the cached
+    inner, this fails and forces explicit acknowledgement."""
+    from codegenome._content_cache import default_cache
+
+    cache = default_cache()
+    entries_before = cache.stats()["entries"]
+
+    # Three calls against different unsupported languages; if any of
+    # them paid a cache lookup, the entry count would go up by 1 per
+    # unique (body, body, lang) tuple.
+    classify_drift(
+        "body_a",
+        "body_b",
+        old_signature_hash=None,
+        new_signature_hash=None,
+        old_neighbors=None,
+        new_neighbors=None,
+        language="clojure",
+    )
+    classify_drift(
+        "body_c",
+        "body_d",
+        old_signature_hash=None,
+        new_signature_hash=None,
+        old_neighbors=None,
+        new_neighbors=None,
+        language="ruby",
+    )
+    classify_drift(
+        "body_e",
+        "body_f",
+        old_signature_hash=None,
+        new_signature_hash=None,
+        old_neighbors=None,
+        new_neighbors=None,
+        language="kotlin",
+    )
+
+    entries_after = cache.stats()["entries"]
+    assert entries_after == entries_before, (
+        f"unsupported-language calls touched the cache: "
+        f"entries went from {entries_before} to {entries_after}. "
+        f"The #515 guard must short-circuit before the cache lookup."
+    )
+
+
 def test_none_signature_and_neighbors_equivalent():
     """None inputs (no signature captured, no neighbors available) must
     flow through the cache unchanged."""
