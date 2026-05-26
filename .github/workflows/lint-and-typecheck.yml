@@ -10,6 +10,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history needed for the "No format-only commits in PR
+          # history" step below (#357 sub-task 3 AC3). With the default
+          # depth=1, the PR side has no common ancestor with origin/dev,
+          # so the `origin/dev..HEAD` range falls back to listing every
+          # commit on dev — false positives across the whole repo history.
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -48,6 +55,74 @@ jobs:
           echo "git add -u && git commit --amend --no-edit  # or new commit" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           exit 1
+      - name: No format-only commits in PR history (#357 sub-task 3 AC3)
+        # Fails the PR if its commit history contains a follow-up
+        # ruff-format / lint-fix-only commit (style:, chore(format),
+        # chore(lint), ci(lint) prefixes). The presence of such a commit
+        # is proof that the contributor pushed without running the
+        # pre-commit hook locally — the failure mode #357 sub-task 3
+        # exists to prevent.
+        #
+        # Three style: format commits landed AFTER the pre-commit infra
+        # itself shipped (553c15f, 2026-05-15):
+        #   - 3624482 style: ruff format the #368 diff
+        #   - 2a9ae8a style: ruff format the v25 migration backfill test
+        #   - 8c4bd47 style: ruff format the schema fix files
+        # i.e., shipping pre-commit-config.yaml alone wasn't sufficient.
+        # This gate closes the loop: clean history is enforced at PR
+        # time, contributors discover pre-commit through the failure.
+        #
+        # Escape hatch: rebase and squash format commits into their
+        # source commits before re-pushing. The error message names the
+        # offending SHAs + the recovery command.
+        #
+        # --no-merges so a PR that merges from base (and inadvertently
+        # includes someone ELSE's prior style: commit) doesn't get
+        # blamed. Only commits unique to the PR side count.
+        #
+        # Two-dot range (`A..HEAD`) — commits reachable from HEAD but
+        # NOT from origin/<base>. The three-dot symmetric-difference
+        # form was wrong: with a shallow PR checkout it has no common
+        # ancestor and lists every commit on dev as an "offender."
+        # Requires `fetch-depth: 0` on actions/checkout above.
+        run: |
+          git fetch origin "${{ github.base_ref }}" --depth=200
+          OFFENDERS=$(git log --no-merges --format='%h %s' \
+            "origin/${{ github.base_ref }}..HEAD" |
+            grep -iE '^[a-f0-9]+ (style:|chore\(format\)|chore\(lint\)|ci\(lint\)).*(ruff|format|lint)' || true)
+          if [ -n "$OFFENDERS" ]; then
+            echo "::error::Format-only commits detected in PR history:"
+            echo "$OFFENDERS" | while IFS= read -r line; do
+              echo "::error::  $line"
+            done
+            echo "::error::"
+            echo "::error::These should have been caught by the pre-commit hook before push."
+            echo "::error::Install once per clone:"
+            echo "::error::  pip install pre-commit && pre-commit install"
+            echo "::error::Then squash the format commits into their source commits before re-pushing."
+            {
+              echo "## Format-only commits detected — pre-commit hook would have prevented this"
+              echo ""
+              echo "Offending commits:"
+              echo '```'
+              echo "$OFFENDERS"
+              echo '```'
+              echo ""
+              echo "Install pre-commit locally so this never happens again:"
+              echo '```bash'
+              echo "pip install pre-commit && pre-commit install"
+              echo '```'
+              echo ""
+              echo "Then rebase + squash the format commits into their source commits:"
+              echo '```bash'
+              echo "git rebase -i origin/${{ github.base_ref }}"
+              echo "# mark each style: / chore(format): commit as 'fixup' or 'squash'"
+              echo "git push --force-with-lease"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
       - name: Plan-grounding lint (#114 Check A)
         # Only lints plan-*.md files modified in this PR — historical
         # plans that referenced now-deleted files would otherwise block
