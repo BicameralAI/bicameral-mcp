@@ -59,7 +59,7 @@ dependencies = [
   # Verifier.production().verify_artifact, policy.AllOf). Bump the
   # ceiling deliberately after re-validating release/manifest_verify.py
   # and release/skills_verify.py against the new major.
-  "sigstore>=3.0,<4.0",
+  "sigstore>=3.0,<5.0",
   # Google Drive backend for team-mode replication (#277).
   "google-auth-oauthlib>=1.2",
   "google-api-python-client>=2.100",
