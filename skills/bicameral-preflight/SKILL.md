@@ -1,6 +1,6 @@
 ---
 name: bicameral-preflight
-description: Pre-flight context check BEFORE implementing code. AUTO-FIRES on ANY prompt that involves writing, changing, or touching source code — including: "add", "build", "create", "implement", "modify", "refactor", "update", "fix", "change", "write", "edit", "move", "rename", "remove", "delete", "extract", "convert", "integrate", "deploy", "ship", "configure", "connect", "extend", "migrate", "wire up", "hook up", "set up", "complete", "finish", "continue". Also fires when user asks HOW to implement something (they are about to implement it). Surfaces prior decisions, drifted regions, divergences, and open questions BEFORE Claude writes any code. SKIP ONLY FOR — purely read-only questions with zero code intent, documentation-only typo fixes, dependency version bumps with no semantic change.
+description: Pre-flight context check BEFORE implementing code. AUTO-FIRES on ANY prompt that involves writing, changing, or touching source code — including: "add", "build", "create", "implement", "modify", "refactor", "update", "fix", "change", "write", "edit", "move", "rename", "remove", "delete", "extract", "convert", "integrate", "deploy", "ship", "configure", "connect", "extend", "migrate", "wire up", "hook up", "set up", "complete", "finish", "continue". Also fires when user asks HOW to implement something (they are about to implement it). ALSO auto-fires when the user invokes any implementation-intent slash-command — /qor-plan, /qor-implement, /qor-refactor, /qor-debug, /qor-remediate, /qor-organize, /qor-auto-dev-1 (or its /qor-auto-dev alias) — regardless of whether the argument is a GitHub issue URL, plain English, or empty. Surfaces prior decisions, drifted regions, divergences, and open questions BEFORE Claude writes any code. SKIP ONLY FOR — purely read-only questions with zero code intent, documentation-only typo fixes, dependency version bumps with no semantic change, and read-only slash-commands like /qor-status, /qor-help, /qor-audit, /qor-validate.
 ---
 
 # Bicameral Preflight
@@ -43,6 +43,18 @@ redundant check. Examples:
 - *"rename the function to snake_case"*
 - *"remove the deprecated API call"*
 - *"set up the webhook integration"*
+- *"/qor-plan https://github.com/BicameralAI/bicameral-mcp/issues/1"* (#402 — slash-command with issue URL still counts as "about to implement")
+- *"/qor-implement add Stripe webhook handler"*
+- *"/qor-refactor the rate limiter"*
+- *"/qor-auto-dev-1"* (bare invocation — the whole automated dev cycle implies code work)
+
+The deterministic Tier-1 gate (`scripts/hooks/preflight_intent.py`)
+recognizes both free-text verbs and the implementation-intent slash-
+command set: `qor-plan`, `qor-implement`, `qor-refactor`, `qor-debug`,
+`qor-remediate`, `qor-organize`, `qor-auto-dev-1`, `qor-auto-dev`. Keep
+this list in lockstep with `IMPL_INTENT_SLASH_COMMANDS` in the Python
+module — both must be edited together until #402's future-
+configurability work deduplicates them.
 
 ## Tier-2 semantic relevance gate (#300)
 
