@@ -601,6 +601,97 @@ else's prior style: commit). To recover: rebase + squash the offending
 commits into their source commits before re-pushing — the failure
 output includes the exact `git rebase -i` recipe.
 
+#### 4.5.6 Workflow security hardening
+
+> **Why this section exists.** PR #121 (issue #114) authored a draft
+> GitHub Actions workflow that staged a PR body to disk via
+> `echo "$PR_BODY" > /tmp/pr-body.md`. The objective-observer audit
+> caught this as OWASP A03 (injection) before merge: the PR body is
+> contributor-editable, and Bash command-substitution (`$(...)`,
+> backticks) expands inside double quotes, so a crafted PR body becomes
+> arbitrary CI execution. The fix moved to a Python script that reads
+> `PR_BODY` via `os.environ`, with no shell interpreter in the path.
+> The audit explicitly recommended capturing the durable principles
+> here. The inline note at
+> [`.github/workflows/pr-body-refs-lint.yml`](../.github/workflows/pr-body-refs-lint.yml)
+> stays the canonical case-study reference.
+
+These principles apply to every workflow author. They are not
+exhaustive — when in doubt, prefer the more restrictive option and
+file an issue if the surrounding workflow forces you toward a looser
+one.
+
+**Workflow input handling.**
+
+- Contributor-editable fields are user input: PR title, PR body, issue
+  title, issue body, branch name, commit message, label text. Treat
+  them as untrusted shell input regardless of how innocuous they look.
+- Read via `os.environ` (or the workflow's `env:` block consumed by a
+  scripted process), never via `echo "$VAR"`. The latter triggers Bash
+  command-substitution expansion inside double quotes — `$(cmd)` and
+  backticks both run. Staging contributor text through `/tmp` files
+  has the same hazard.
+- When `os.environ` is genuinely not an option, single-quote the
+  interpolation: `echo '$VAR'` (literal) vs `echo "$VAR"` (interpolated).
+  This is a fallback, not a primary pattern — prefer a scripted reader.
+
+**Trigger choice.**
+
+- `pull_request` (default-safe) — runs in the PR branch's context, has
+  no access to repository secrets, fork-safe. Use this unless you have
+  a concrete reason not to.
+- `pull_request_target` (privileged) — runs in the base branch's
+  context, has access to repository secrets, **not fork-safe**. Use
+  only when secret access is essential AND the workflow does not
+  execute untrusted contributor code (e.g., a labeller that only reads
+  PR metadata to assign labels).
+- `workflow_dispatch:` — add it to any workflow that needs an escape
+  hatch for path-skipped PRs. See the deadlocks subsection below.
+
+**Permissions scoping.**
+
+- Default the workflow to least privilege:
+  ```yaml
+  permissions:
+    contents: read
+  ```
+  Widen per-job only when needed (e.g., `pull-requests: write` for a
+  workflow that comments on PRs, `issues: write` for one that labels
+  issues).
+- Token scoping is a hard contract — narrower tokens cannot be widened
+  by the workflow itself. If the rollup-permission check fails at run
+  time, the workflow exits. Catching this in branch protection or
+  required-check setup is preferable to discovering it on a real PR.
+
+**Required-check deadlocks.**
+
+- A workflow that has `paths:` filters AND is listed as a required
+  check in branch protection will deadlock PRs that don't touch a
+  watched path: the workflow never runs, so the required check is
+  never satisfied, and the PR sits in `mergeStateStatus: BLOCKED`
+  indefinitely. See bicameral-daemon#37 / #123 for the case history.
+- Mitigation: either remove the workflow from branch-protection
+  required checks (preferred when the workflow is genuinely advisory),
+  or add `workflow_dispatch:` so the workflow can be manually
+  triggered on path-skipped PRs to satisfy the check.
+
+**Anchor case studies (read before authoring a new workflow).**
+
+- [`.github/workflows/pr-body-refs-lint.yml`](../.github/workflows/pr-body-refs-lint.yml)
+  — the OWASP A03 fix (#114). Header comment captures the
+  command-substitution hazard verbatim.
+- [`.github/scripts/lint_pr_body_refs.py`](../.github/scripts/lint_pr_body_refs.py)
+  — the `--from-env` pattern that consumes env vars without ever
+  passing them through a shell interpreter.
+- bicameral-mcp#123 — the `workflow_dispatch:` retrofit on
+  `test-schema-persistence.yml`, the deadlock case study.
+- bicameral-mcp#115 — the labeller workflow permission bug, the
+  permissions-scoping case study.
+
+When extending or refactoring an existing workflow, also reread its
+inline security note (if present) — those are the per-workflow
+specifics this section abstracts.
+
 ### 4.6 Review feedback discipline
 
 CodeRabbit, Devin, and human reviewers all leave comments. The author's job:
