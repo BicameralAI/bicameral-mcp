@@ -35,6 +35,12 @@ bicameral-mcp setup
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
+> **Windows contributors developing on bicameral-mcp itself (required, not recommended):** before cloning the repo, set
+> ```powershell
+> git config --global core.symlinks true
+> ```
+> The repo tracks `.claude/skills/bicameral-*` as symlinks to canonical `skills/`. Windows defaults to `core.symlinks=false`, which silently materializes those entries as plain text files containing the target path string — slash-command resolution then breaks with no obvious failure. CI enforces this via `tests/test_skills_symlink_integrity.py` (#357 sub-task 4), so a clone without the setting will fail the regression suite. Cloning via WSL works around it. **This requirement does not apply** to users who only `pip install bicameral-mcp` — the published wheel bundles skills as real files, no symlink resolution needed.
+
 The setup wizard detects your repo, registers the MCP server with Claude Code, installs a git hook that auto-syncs the ledger after every commit, and adds a session-end hook that catches mid-session decisions you didn't explicitly ingest. Restart Claude Code and you're done.
 
 Verify:
