@@ -19,8 +19,11 @@ experiences it. The handler-replay sim at ``scripts/sim_issue_108_flows.py``
 remains useful for fast dev iteration on handler logic.
 
 Required env:
-  CLAUDE_CODE_OAUTH_TOKEN  Claude Code CLI auth (set by GitHub Actions
-                           ``production`` environment in CI).
+  ANTHROPIC_API_KEY        Claude Code CLI auth — `claude -p` honours this
+                           directly (set by GitHub Actions ``ci-test``
+                           environment in CI). Switched from
+                           CLAUDE_CODE_OAUTH_TOKEN in #528 after the org
+                           subscription was disabled (oauth_org_not_allowed).
   DESKTOP_REPO_PATH        Path to a local clone of github.com/desktop/desktop.
 
 CI: see .github/workflows/v0-user-flow-e2e.yml.
