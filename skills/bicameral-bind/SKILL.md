@@ -7,6 +7,8 @@ description: Pin a decision to a specific code region via the `bicameral_bind` t
 
 Pin a decision to a specific code region via the `bicameral_bind` tool.
 
+**HITL boundary:** binding is a second probabilistic claim, separate from extraction. A ratified decision with weak grounding must stay `ungrounded` or review-needed; do not create a `binds_to` edge just to make compliance evaluable. See `docs/adr/0001-hitl-extraction-grounding-compliance.md`.
+
 ## When to use
 
 - After ingest when a decision wasn't pinned at extraction time (e.g. ingested in
