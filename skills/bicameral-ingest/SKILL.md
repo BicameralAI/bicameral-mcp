@@ -180,8 +180,6 @@ The `signer_email_fallback` config field in `.bicameral/config.yaml` (default `l
 
 **Default to fewer, higher-quality decisions.** A ledger with 3 business-tied decisions that the team will actually act on is more valuable than 10 mixed-quality entries that erode trust. When the filter is ambiguous, park — don't include.
 
-**HITL boundary:** extraction is only the first probabilistic claim. Ingested items are proposals until product ratification; ambiguous items should route to `context_pending` instead of becoming authoritative ledger facts. Do not let a strong-sounding source excerpt compensate for weak business tie, weak fork evidence, or unclear product intent.
-
 Read the source. For each statement, decide whether it's a real implementation decision **tied to a business outcome** or whether it should be excluded. Apply the hard-exclude rules first, then the business-tie filter, then the include rules. **When in doubt, park (not exclude silently) — the circle-back mechanism surfaces it for resolution.**
 
 **HARD EXCLUDE — these patterns are NEVER decisions, even if they sound technical**:
