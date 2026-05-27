@@ -39,6 +39,13 @@ class ValidateSymbolsTool:
         self.config = config
         # Cache symbol list at init (not per-call)
         self._symbols: list[tuple[int, str, str]] = db.get_all_symbol_names()
+        # Cache index provenance at init — head_commit + repo_path are
+        # written by code_locator_runtime.record_index_state after every
+        # rebuild and don't change between rebuilds. Exposed on every
+        # ValidatedSymbol so callers can detect snapshot drift vs
+        # authoritative_sha before bind (#334).
+        self._indexed_at_sha: str = db.read_index_meta("head_commit")
+        self._indexed_at_path: str = db.read_index_meta("repo_path")
 
     def execute(self, args: dict) -> list[ValidatedSymbol]:
         candidates = args.get("candidates", [])
@@ -113,6 +120,8 @@ class ValidateSymbolsTool:
                 match_score=score,
                 symbol_id=sid,
                 bridge_method="rapidfuzz_validate",
+                indexed_at_sha=self._indexed_at_sha,
+                indexed_at_path=self._indexed_at_path,
             )
             for sid, name, qn, score in reranked[:max_matches]
         ]

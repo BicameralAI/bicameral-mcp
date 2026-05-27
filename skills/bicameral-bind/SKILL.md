@@ -40,7 +40,12 @@ The handler rejects unverified bindings (#280). To avoid the rejection path,
    actually implements the decision's intent.
 3. **Confirm the symbol via `validate_symbols`.** A grep match is not proof
    of existence in the symbol index; the index is the source of truth and is
-   what the handler queries to verify your binding.
+   what the handler queries to verify your binding. Each result now includes
+   `indexed_at_sha` — the git commit the symbol index was built against.
+   **Compare it against the `authoritative_sha` from your most recent
+   `link_commit` response.** If they differ, the index is ahead of (or behind)
+   the ref the bind handler will validate at, and bind may reject a symbol
+   that `validate_symbols` confirmed — see "Snapshot drift" below.
 4. **If the candidate is ambiguous (multiple symbols match the intent),
    `get_neighbors` to resolve scope** before binding. Surfaces callers and
    callees so you can tell whether the decision is local to one function or
@@ -49,6 +54,33 @@ The handler rejects unverified bindings (#280). To avoid the rejection path,
    class definition, or module-level statement that implements the decision,
    do NOT bind. Leave the decision ungrounded — a future ingest or
    `bicameral_bind` call can pin it later.
+
+## Snapshot drift (#334)
+
+`validate_symbols` reads from the local SQLite symbol index (built and stamped
+by `code_locator_runtime.record_index_state`). `bicameral_bind` resolves
+symbols via `git show {authoritative_sha}:{file_path}` + tree-sitter. These
+are two different data sources at two different refs — when they disagree, a
+caller can satisfy `validate_symbols` (score 100) and still hit a hard
+rejection from `bind`.
+
+Each `validate_symbols` result now carries `indexed_at_sha`. Use it:
+
+- **If `indexed_at_sha == authoritative_sha`:** safe to proceed — the index
+  was built against the same commit bind will validate at.
+- **If `indexed_at_sha` differs from `authoritative_sha`:** the index is
+  drift-prone for this binding. Proceed only when you have independent
+  evidence the symbol exists at `authoritative_sha` (Read the file at that
+  ref; check `git log` for the introducing commit). Prefer re-indexing
+  (`python -m code_locator index <repo_path>`) over guessing.
+- **If `indexed_at_sha == ""`:** the index pre-dates ref tracking (legacy
+  build, or a `record_index_state` call was skipped). Treat as snapshot-
+  unknown — same caution as the drift case.
+
+Skipping this check is what made the field bug in #334 (Jacob, 2026-05):
+`validate_symbols` returned `score=100` for a symbol introduced on a feature
+branch after the most recent `link_commit`. The caller bound and got
+`"not found at <authoritative_sha>"`.
 
 ## Anti-patterns — REJECT these
 

@@ -50,6 +50,18 @@ class ValidatedSymbol(BaseModel):
         default="rapidfuzz_validate",
         description="How this symbol was found: keyword_extract, llm_propose, etc.",
     )
+    indexed_at_sha: str = Field(
+        default="",
+        description=(
+            "Git HEAD commit the symbol index was built against. Empty when the "
+            "index pre-dates ref tracking. Compare against authoritative_sha "
+            "before bind to detect snapshot drift (#334)."
+        ),
+    )
+    indexed_at_path: str = Field(
+        default="",
+        description="Absolute repo path the index was built against. Empty when unknown.",
+    )
 
 
 # ── Retrieval ────────────────────────────────────────────────────────
