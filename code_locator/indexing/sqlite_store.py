@@ -226,6 +226,21 @@ class SymbolDB:
         ).fetchall()
         return [r[0] for r in rows]
 
+    def read_index_meta(self, key: str) -> str:
+        """Read a value from the index_meta table (written by code_locator_runtime.record_index_state).
+
+        Returns "" when the table doesn't exist (legacy index, or first-build
+        mid-test). The table is owned by code_locator_runtime, but lives in
+        the same SQLite file as the symbol tables, so SymbolDB readers can
+        consume it without round-tripping through the runtime module.
+        """
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT value FROM index_meta WHERE key = ?", (key,)).fetchone()
+        except sqlite3.OperationalError:
+            return ""
+        return row[0] if row else ""
+
     def get_top_symbols_by_connectivity(self, limit: int = 20) -> list[dict]:
         """Return symbols with the most edges (most connected = most important)."""
         conn = self._connect()

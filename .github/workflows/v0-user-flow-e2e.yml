@@ -43,9 +43,14 @@ jobs:
   assertions:
     name: e2e assertions (auto)
     runs-on: ubuntu-latest
-    # production env provides CLAUDE_CODE_OAUTH_TOKEN. No required reviewers
-    # on this env → PR triggers flow through automatically.
-    environment: production
+    # ci-test env provides ANTHROPIC_API_KEY. No required reviewers on this
+    # env → PR triggers flow through automatically. Switched from the
+    # `production` env's CLAUDE_CODE_OAUTH_TOKEN after #528: the org
+    # subscription was disabled (oauth_org_not_allowed 403), and `claude -p`
+    # honours ANTHROPIC_API_KEY directly — decoupling CI from subscription
+    # policy. Same env already used by test-mcp-regression.yml and
+    # preflight-eval.yml.
+    environment: ci-test
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -85,22 +90,26 @@ jobs:
           test -f docs/process/roadmap.md
           test -f app/src/lib/git/cherry-pick.ts
 
-      - name: Claude Code OAuth token visibility probe
+      # ANTHROPIC_API_KEY (NOT CLAUDE_CODE_OAUTH_TOKEN) — #528: the org
+      # subscription tied to the OAuth token was disabled, surfacing as
+      # oauth_org_not_allowed 403 on every flow before turn 1. `claude -p`
+      # honours ANTHROPIC_API_KEY natively, sidestepping subscription policy.
+      - name: Anthropic API key visibility probe
         run: |
           set +e
-          if [ -n "${CLAUDE_CODE_OAUTH_TOKEN}" ]; then
-            echo "CLAUDE_CODE_OAUTH_TOKEN: present (length=${#CLAUDE_CODE_OAUTH_TOKEN})"
+          if [ -n "${ANTHROPIC_API_KEY}" ]; then
+            echo "ANTHROPIC_API_KEY: present (length=${#ANTHROPIC_API_KEY})"
           else
-            echo "CLAUDE_CODE_OAUTH_TOKEN: EMPTY or UNSET"
-            echo "  secret expression non-empty: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}"
+            echo "ANTHROPIC_API_KEY: EMPTY or UNSET"
+            echo "  secret expression non-empty: ${{ secrets.ANTHROPIC_API_KEY != '' }}"
             exit 1
           fi
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Run v0 user flow e2e (assertion-only, blocking)
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python tests/e2e/run_e2e_flows.py
 
       - name: Upload e2e transcripts
