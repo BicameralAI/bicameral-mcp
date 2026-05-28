@@ -203,3 +203,10 @@ We take privacy seriously. Bicameral runs entirely on your laptop — code, deci
 ## License
 
 MIT
+
+## Repository boundary
+
+`bicameral-mcp` is the agent-facing tool surface. It exposes local Bicameral actions to coding agents: ingest, preflight, bind, review-command emission, and local run loops.
+
+It is not the source-specific integration repo, the local bot runtime, or the hosted code graph. See `docs/adr/0001-mcp-repository-boundary.md`.
+
