@@ -82,6 +82,40 @@ Skipping this check is what made the field bug in #334 (Jacob, 2026-05):
 branch after the most recent `link_commit`. The caller bound and got
 `"not found at <authoritative_sha>"`.
 
+### Server-enforced handshake (#334 Shape 2)
+
+Beyond the client-side comparison above, **thread `indexed_at_sha` into the
+bind call as `expected_indexed_at_sha`**. The handler then rejects the
+binding with `snapshot_mismatch` if it disagrees with the ref bind would
+resolve at. This upgrades the validate→bind handshake from "please check"
+to a hard contract — recommended for every bind call.
+
+```
+# Step 1
+validated = validate_symbols(["ProcessOrder"])
+# validated[0].indexed_at_sha == "abc123"
+
+# Step 2 — thread the SHA forward
+bicameral_bind(bindings=[{
+    "decision_id": "...",
+    "file_path": "...",
+    "symbol_name": "ProcessOrder",
+    "expected_indexed_at_sha": validated[0].indexed_at_sha,  # ← Shape 2
+}])
+```
+
+Behavior:
+
+- **SHA matches** bind's effective ref → bind proceeds as normal.
+- **SHA mismatches** → bind rejects with
+  `snapshot_mismatch: validate_symbols indexed at <X> but bind resolves at <Y>
+   — re-run validate_symbols against the current snapshot and retry`.
+- **Field omitted** (empty / missing) → bind falls back to pre-Shape-2
+  behavior (no enforcement). Backward-compatible.
+
+When in doubt: pass the field. The cost is one extra dict key; the benefit
+is the handler catches stale snapshots before any DB write.
+
 ## Anti-patterns — REJECT these
 
 | Anti-pattern | Why it fails |
@@ -98,12 +132,15 @@ branch after the most recent `link_commit`. The caller bound and got
 
 ```
 {
-  "decision_id": "...",          # required — must exist in the ledger
-  "file_path": "src/lib/...",    # required — must exist at HEAD (or ref)
-  "symbol_name": "ProcessOrder", # required — must resolve via validate_symbols
-  "start_line": 42,              # optional — if omitted, tree-sitter resolves
-  "end_line": 89,                #            from symbol_name
-  "purpose": "implements ..."    # optional — short rationale, indexed
+  "decision_id": "...",                 # required — must exist in the ledger
+  "file_path": "src/lib/...",           # required — must exist at HEAD (or ref)
+  "symbol_name": "ProcessOrder",        # required — must resolve via validate_symbols
+  "start_line": 42,                     # optional — if omitted, tree-sitter resolves
+  "end_line": 89,                       #            from symbol_name
+  "purpose": "implements ...",          # optional — short rationale, indexed
+  "expected_indexed_at_sha": "abc123",  # optional (#334 Shape 2) — pass the
+                                        # `indexed_at_sha` from validate_symbols
+                                        # for server-enforced snapshot handshake
 }
 ```
 
@@ -131,6 +168,7 @@ The handler rejects with a structured `error` (and `region_id=""`) when:
 | `file_path` doesn't exist at the SHA | `"does not exist at <sha> — only bind to existing code"` |
 | `symbol_name` doesn't resolve via tree-sitter | `"symbol '<name>' not found in <file> at <sha>"` |
 | Caller-supplied span doesn't overlap resolved span | `"span mismatch (#280)"` |
+| `expected_indexed_at_sha` disagrees with bind's effective ref (#334 Shape 2) | `"snapshot_mismatch: validate_symbols indexed at <X> but bind resolves at <Y>"` |
 
 Errors are returned per-binding (the handler keeps processing the rest of the
 list); a partial response is normal when one binding fails.

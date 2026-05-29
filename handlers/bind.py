@@ -62,13 +62,32 @@ async def handle_bind(
 ) -> BindResponse:
     """Create decision→code_region bindings from caller-LLM-supplied locations.
 
+    Each binding is a dict with these fields:
+
+      - ``decision_id`` (required) — target decision row.
+      - ``file_path`` (required) — repo-relative path.
+      - ``symbol_name`` (required) — symbol to bind to.
+      - ``start_line`` / ``end_line`` (optional) — span hint; tree-sitter
+        resolves on miss.
+      - ``purpose`` (optional) — human-readable label.
+      - ``expected_indexed_at_sha`` (optional, #334 Shape 2) — the SHA the
+        caller's ``validate_symbols`` was indexed at (returned as
+        ``indexed_at_sha`` on each ``ValidatedSymbol``). When supplied, the
+        handler rejects the binding with ``snapshot_mismatch`` if it differs
+        from the ref bind is about to resolve at. Threading this field
+        upgrades the validate→bind handshake from a doc-only convention to a
+        server-enforced contract. Omit to preserve pre-Shape-2 behavior.
+
     For each binding:
       1. Verify decision exists (return error if not).
-      2. Use start_line/end_line if supplied; else resolve via tree-sitter.
+      2. Snapshot handshake — if ``expected_indexed_at_sha`` is supplied and
+         disagrees with bind's effective ref, reject with
+         ``snapshot_mismatch`` (#334 Shape 2).
+      3. Use start_line/end_line if supplied; else resolve via tree-sitter.
          Error if symbol not found.
-      3. Compute content_hash against authoritative_sha.
-      4. Upsert code_region + binds_to edge, transition decision ungrounded→pending.
-      5. Return PendingComplianceCheck for immediate caller verification.
+      4. Compute content_hash against authoritative_sha.
+      5. Upsert code_region + binds_to edge, transition decision ungrounded→pending.
+      6. Return PendingComplianceCheck for immediate caller verification.
 
     V1 A2-light: the whole handler body runs under ``repo_write_barrier``
     so two concurrent bind calls against the same repo are serialized.
@@ -128,6 +147,7 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
         start_line = b.get("start_line")
         end_line = b.get("end_line")
         purpose = str(b.get("purpose") or "")
+        expected_indexed_at_sha = str(b.get("expected_indexed_at_sha") or "")
 
         if not decision_id or not file_path or not symbol_name:
             results.append(
@@ -136,6 +156,29 @@ async def _do_bind(ctx, bindings: list[dict]) -> BindResponse:
                     region_id="",
                     content_hash="",
                     error="decision_id, file_path, and symbol_name are required",
+                )
+            )
+            continue
+
+        # #334 Shape 2 — snapshot handshake. When the caller threads through
+        # the ``indexed_at_sha`` they got from ``validate_symbols``, refuse to
+        # write if it disagrees with the ref bind is about to resolve at.
+        # Empty / missing field falls back to the pre-Shape-2 behavior (no
+        # enforcement) so existing callers don't regress. Cheap rejection —
+        # placed before decision lookup so a stale snapshot doesn't burn DB
+        # round-trips.
+        if expected_indexed_at_sha and expected_indexed_at_sha != effective_ref:
+            results.append(
+                BindResult(
+                    decision_id=decision_id,
+                    region_id="",
+                    content_hash="",
+                    error=(
+                        f"snapshot_mismatch: validate_symbols indexed at "
+                        f"{expected_indexed_at_sha} but bind resolves at "
+                        f"{effective_ref} — re-run validate_symbols against "
+                        f"the current snapshot and retry"
+                    ),
                 )
             )
             continue
