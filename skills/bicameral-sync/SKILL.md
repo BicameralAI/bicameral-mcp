@@ -50,6 +50,22 @@ bicameral.link_commit(commit_hash="HEAD")
 auto-sync injection (the auto-sync already ran `link_commit` for you — use those
 checks directly).
 
+Auto-sync may scope and budget this field. Treat it as either:
+
+- a list of pending compliance checks; or
+- a truncation digest `{truncated: true, total, kept, omitted, checks, hint}`.
+  Resolve the attached `checks` first, then follow `hint` to enumerate omitted
+  checks after the current response is handled; or
+- a scoped-out digest `{scoped_out: true, total, kept: 0, omitted, checks: [],
+  file_paths, hint}`. This means the auto-sync found pending checks, but all of
+  them were outside the current tool call's file scope. Follow `hint` by running
+  `bicameral.link_commit(commit_hash="HEAD")` or continuing this skill after the
+  scoped response is handled.
+
+If `_pending_compliance_omitted` is present, the current response only attached
+in-scope checks. Resolve those first, then follow the omitted digest's `hint` so
+the out-of-scope checks from the same commit are not lost.
+
 ### 1.5. Auto-bind ungrounded decisions (#263)
 
 > A *symbol* is a named code identifier (function, class, method) that
@@ -87,7 +103,9 @@ rebind is a future `bicameral_rebind` tool, tracked separately.
 ### 2. Resolve every pending compliance check
 
 If `pending_compliance_checks` is non-empty (from the `link_commit` response or
-from `_pending_compliance_checks` in an auto-sync injection):
+from `_pending_compliance_checks` in an auto-sync injection; use
+`_pending_compliance_checks.checks` when the auto-sync field is a truncation or
+scoped-out digest):
 
 > **Phase 3+4 (#60+#61) — `enhance_drift` mode.** When the
 > `BICAMERAL_CODEGENOME_ENHANCE_DRIFT` flag is on, `link_commit` runs
@@ -178,7 +196,11 @@ If the file changed between the sync and your read, the server rejects the verdi
 and the region stays `pending` until the next sweep.
 
 **Skip step 2** when `pending_compliance_checks` is empty — nothing changed or
-all regions already had cached verdicts.
+all regions already had cached verdicts. When auto-sync returns a truncation
+digest, skip only if `checks` is empty; otherwise resolve the attached checks and
+then follow the digest `hint`. When auto-sync returns a scoped-out digest,
+`checks` is intentionally empty; follow `hint` to retrieve the omitted checks
+instead of treating the commit as fully resolved.
 
 ### 2.bis Uncertain-band sub-protocol (Phase 4 / #44)
 

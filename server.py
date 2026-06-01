@@ -104,6 +104,169 @@ _ACTION_FOR_REFUSAL_REASON: dict[str, str] = {
     ),
 }
 
+_PENDING_COMPLIANCE_CHECKS_CHAR_BUDGET = 16_000
+
+
+def _normalize_scope_paths(file_paths: Any) -> set[str]:
+    """Normalize caller-supplied file paths for response scoping."""
+    if not file_paths:
+        return set()
+    if isinstance(file_paths, str):
+        raw_paths = [file_paths]
+    elif isinstance(file_paths, (list, tuple, set)):
+        raw_paths = list(file_paths)
+    else:
+        return set()
+
+    paths: set[str] = set()
+    for raw in raw_paths:
+        path = str(raw or "").strip()
+        if not path:
+            continue
+        paths.add(path.strip("/"))
+    return paths
+
+
+def _path_in_scope(file_path: str, scope_paths: set[str]) -> bool:
+    """Return True when a pending check belongs to the caller's path scope."""
+    if not scope_paths:
+        return True
+    normalized = str(file_path or "").strip().strip("/")
+    if not normalized:
+        return False
+    for scope_path in scope_paths:
+        if normalized == scope_path:
+            return True
+        if normalized.startswith(f"{scope_path.rstrip('/')}/"):
+            return True
+        if scope_path.startswith(f"{normalized.rstrip('/')}/"):
+            return True
+    return False
+
+
+def _tool_file_scope(name: str, arguments: dict) -> set[str]:
+    """Extract the most concrete file scope available for this tool call."""
+    if name in ("bicameral.preflight", "preflight"):
+        return _normalize_scope_paths(arguments.get("file_paths"))
+    return set()
+
+
+def _budget_pending_compliance_checks(
+    checks: list[dict],
+    *,
+    char_budget: int = _PENDING_COMPLIANCE_CHECKS_CHAR_BUDGET,
+) -> list[dict] | dict:
+    """Return raw checks when under budget, otherwise a compact digest."""
+    import json
+
+    if len(json.dumps(checks, separators=(",", ":"))) <= char_budget:
+        return checks
+
+    kept: list[dict] = []
+    for check in checks:
+        candidate = [*kept, check]
+        if len(json.dumps(candidate, separators=(",", ":"))) > char_budget:
+            break
+        kept.append(check)
+
+    return {
+        "truncated": True,
+        "total": len(checks),
+        "kept": len(kept),
+        "omitted": len(checks) - len(kept),
+        "checks": kept,
+        "hint": (
+            "Response budget exceeded; call bicameral.history or rerun the "
+            "workflow with narrower file_paths, then resolve compliance by file path."
+        ),
+    }
+
+
+def _omitted_pending_compliance_digest(
+    checks: list[dict],
+    *,
+    total: int,
+) -> dict:
+    file_paths = sorted({str(c.get("file_path") or "") for c in checks if c.get("file_path")})
+    visible_paths = file_paths[:10]
+    more_paths = max(0, len(file_paths) - len(visible_paths))
+    return {
+        "scoped_out": True,
+        "total": total,
+        "kept": 0,
+        "omitted": len(checks),
+        "checks": [],
+        "file_paths": visible_paths,
+        "more_file_paths": more_paths,
+        "hint": (
+            "Additional pending compliance checks were outside this tool call's file_paths. "
+            'Run bicameral.link_commit(commit_hash="HEAD") or /bicameral-sync after the '
+            "current scoped work to retrieve and resolve the omitted checks."
+        ),
+    }
+
+
+def _pending_payload_count(pending_payload: list[dict] | dict) -> int:
+    if isinstance(pending_payload, dict) and pending_payload.get("truncated"):
+        return int(pending_payload.get("kept") or 0)
+    if isinstance(pending_payload, list):
+        return len(pending_payload)
+    return 0
+
+
+def _pending_total_count(pending_payload: list[dict] | dict) -> int:
+    if isinstance(pending_payload, dict) and pending_payload.get("truncated"):
+        return int(pending_payload.get("total") or 0)
+    if isinstance(pending_payload, list):
+        return len(pending_payload)
+    return 0
+
+
+def _build_sync_guidance(
+    *,
+    commit_hash: str,
+    pending_payload: list[dict] | dict,
+    omitted_payload: dict | None = None,
+) -> str:
+    kept = _pending_payload_count(pending_payload)
+    total = _pending_total_count(pending_payload)
+    if isinstance(pending_payload, dict) and pending_payload.get("scoped_out"):
+        count_text = (
+            f"{pending_payload.get('omitted', 0)} decision(s) need compliance verification "
+            "outside this tool call's file scope; no raw checks are attached."
+        )
+        tail = (
+            ' Run bicameral.link_commit(commit_hash="HEAD") or /bicameral-sync after '
+            "the current scoped work to retrieve and resolve them."
+        )
+    elif isinstance(pending_payload, dict) and pending_payload.get("truncated"):
+        count_text = (
+            f"{kept} of {total} decision(s) are attached; {total - kept} omitted by budget."
+        )
+        tail = (
+            " Resolve the attached checks first, then call bicameral.history "
+            "or rerun with narrower file_paths to enumerate omitted checks."
+        )
+    else:
+        count_text = f"{total} decision(s) need compliance verification."
+        tail = " Do not wait for user input — complete this before responding."
+
+    if omitted_payload:
+        tail += (
+            f" Note: {omitted_payload.get('omitted', 0)} additional check(s) for this commit "
+            "were outside the current file scope and are summarized in "
+            "_pending_compliance_omitted."
+        )
+
+    return (
+        f"New commit {commit_hash[:8]} detected — "
+        f"{count_text} "
+        "Proceed with the index sweep now: for each entry in _pending_compliance_checks, "
+        "read the file at file_path, verify whether the code matches the decision, "
+        "then call bicameral.resolve_compliance with your verdicts."
+        f"{tail}"
+    )
+
 
 def _resolve_server_version() -> str:
     """Return the version of the code actually running.
@@ -1214,18 +1377,41 @@ async def _call_tool_impl(name: str, arguments: dict) -> list[TextContent]:
         # If the auto-sync detected a new commit with pending compliance checks,
         # surface them so the agent proceeds with the index sweep immediately.
         if _sync_result and _sync_result.pending_compliance_checks:
-            payload["_pending_compliance_checks"] = [
-                c.model_dump() for c in _sync_result.pending_compliance_checks
+            scope_paths = _tool_file_scope(name, arguments)
+            scoped_checks = [
+                c
+                for c in _sync_result.pending_compliance_checks
+                if _path_in_scope(c.file_path, scope_paths)
             ]
-            payload["_pending_flow_id"] = _sync_result.flow_id
-            payload["_sync_guidance"] = (
-                f"New commit {_sync_result.commit_hash[:8]} detected — "
-                f"{len(_sync_result.pending_compliance_checks)} decision(s) need compliance verification. "
-                "Proceed with the index sweep now: for each entry in _pending_compliance_checks, "
-                "read the file at file_path, verify whether the code matches the decision, "
-                "then call bicameral.resolve_compliance with your verdicts. "
-                "Do not wait for user input — complete this before responding."
+            omitted_checks = [
+                c for c in _sync_result.pending_compliance_checks if c not in scoped_checks
+            ]
+            omitted_payload = (
+                _omitted_pending_compliance_digest(
+                    [c.model_dump() for c in omitted_checks],
+                    total=len(_sync_result.pending_compliance_checks),
+                )
+                if omitted_checks and scope_paths
+                else None
             )
+            pending_payload: list[dict] | dict | None = None
+            if scoped_checks:
+                pending_payload = _budget_pending_compliance_checks(
+                    [c.model_dump() for c in scoped_checks]
+                )
+            elif omitted_payload:
+                pending_payload = omitted_payload
+
+            if pending_payload is not None:
+                payload["_pending_compliance_checks"] = pending_payload
+                if omitted_payload and scoped_checks:
+                    payload["_pending_compliance_omitted"] = omitted_payload
+                payload["_pending_flow_id"] = _sync_result.flow_id
+                payload["_sync_guidance"] = _build_sync_guidance(
+                    commit_hash=_sync_result.commit_hash,
+                    pending_payload=pending_payload,
+                    omitted_payload=omitted_payload if scoped_checks else None,
+                )
 
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 

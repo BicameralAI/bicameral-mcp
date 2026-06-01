@@ -256,10 +256,27 @@ the preflight surface; direct-pin matches are unaffected.
 
 Before evaluating `response.fired`, check `response._pending_compliance_checks`.
 If non-empty, a new commit was detected — **resolve compliance before proceeding
-or status will be stale.** Use the `bicameral-sync` compliance resolution flow:
+or status will be stale.** The field is either:
 
-For each check: read `file_path` (use `code_body` if available; read directly if
-truncated), evaluate code against `decision_description`, then batch all verdicts:
+- a list of pending compliance checks; or
+- a truncation digest `{truncated: true, total, kept, omitted, checks, hint}` when
+  the server scoped the payload to the caller's `file_paths` but had to cap the
+  response size. In that case, resolve only `checks` now, then follow `hint`
+  after the current response is handled; or
+- a scoped-out digest `{scoped_out: true, total, kept: 0, omitted, checks: [],
+  file_paths, hint}` when all checks from the HEAD sync are outside this
+  preflight's `file_paths`. Do not inspect unrelated files during this preflight;
+  follow `hint` after the scoped work so the omitted checks are not lost.
+
+If `_pending_compliance_omitted` is present alongside a non-empty check list,
+resolve the attached in-scope checks first, then follow the omitted digest's
+`hint` after the scoped work.
+
+Use the `bicameral-sync` compliance resolution flow:
+
+For each check in the list (or in `checks` when the digest is truncated): read
+`file_path` (use `code_body` if available; read directly if truncated), evaluate
+code against `decision_description`, then batch all verdicts:
 
 ```
 bicameral.resolve_compliance(

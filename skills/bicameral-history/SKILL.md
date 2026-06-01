@@ -51,10 +51,16 @@ bicameral.history(
 
 Check `response._pending_compliance_checks`. If non-empty, a new commit was
 detected and compliance is unresolved — **status will be wrong until you resolve
-it.** Use the `bicameral-sync` compliance resolution flow:
+it.** The field is either a list of checks or a digest with `checks` and `hint`.
+When the digest has `scoped_out: true`, all checks were outside the current tool
+scope; follow `hint` to retrieve them instead of treating the commit as fully
+resolved. If `_pending_compliance_omitted` is present, resolve the attached
+in-scope checks first, then follow the omitted digest's `hint`.
 
-For each check: read `file_path`, evaluate code against `decision_description`,
-batch all verdicts into one call:
+Use the `bicameral-sync` compliance resolution flow:
+
+For each check in the list, or in digest `checks`: read `file_path`, evaluate
+code against `decision_description`, batch all verdicts into one call:
 
 ```
 bicameral.resolve_compliance(
