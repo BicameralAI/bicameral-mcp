@@ -2931,3 +2931,38 @@ SHA256(content_hash + previous_hash)
 **Infrastructure**: `qor/` Python package not installed in this worktree; gate artifact emission to `.qor/gates/<session_id>/research.json` skipped, brief stands on its content per the Entries #53-#54 precedent.
 
 **Required next action**: Governor authorizes cycle 8 implementation. When cycle 8 begins, the implementer must (a) link this brief in the PR description, (b) follow the Priority-1 / Priority-2 recommendations as the plan skeleton, (c) update the stale `sources/notion/poller.py` comment in the same PR, (d) gate on an adversarial `code-reviewer` pass.
+
+---
+
+### Entry #56: GOVERNED CYCLE — #404 Phase 1 (natural-format parent_decision_id threading)
+
+**Timestamp**: 2026-06-01T00:00:00Z
+**Phase**: substantiate (local governed cycle via `/qor-auto-dev-1`)
+**Author**: Orchestrator (plan→audit→implement→substantiate); independent architect-reviewer audit (SG-007 author-bias mitigation)
+**Risk Grade**: L2 — shared ingest contract (`IngestDecision`) + `_normalize_payload`; additive field, backward-compatible; no `ledger/schema.py` change → no §4.7 schema-codeowner gate.
+
+**Content Hash**:
+```
+SHA256(plan-404-phase1-natural-format-parent-id.md)
+= adc582d1a454e8cc0b6cfefada109cb4080b686d493fb165a59bef6e637211a4
+```
+
+**Previous Hash**: `144fcdccd63a7ca7e01712decc267bbe881dde4b19b2ac6ce5ae75b9c77fb7f6` (Entry #55)
+
+**Chain Hash**:
+```
+SHA256(content_hash + previous_hash)
+= 44251a5052ddad6fc03441fce05a6311e7cab206439ac289858a4137ea9b4125
+```
+
+**Scope**: #404 is a six-item, schema-migration-bearing P1; this cycle delivered **Phase 1 only** — the issue's self-described "smallest enabler" (items #4 + #5). Natural-format ingest now threads a caller-supplied `parent_decision_id` (previously honored only in the internal mapping format; silently dropped in natural format), and `_classify_decision_level`'s docstring documents the full classifier precedence (explicit `decision_level` wins → source-type heuristic → Phase-2 auto-derivation). Satisfies Acceptance criteria #1 and #5.
+
+**Files**: `contracts.py` (`IngestDecision.parent_decision_id`), `handlers/ingest.py` (`_normalize_payload` threading), `ledger/adapter.py` (`_classify_decision_level` docstring), `tests/test_404_natural_format_parent_id.py` (new sociable test, real adapter over `memory://`). Plan `plan-404-phase1-natural-format-parent-id.md` is gitignored per qor convention; locally hashable — content hash above.
+
+**Gate verdicts**: Audit **PASS** (independent architect-reviewer). The load-bearing daemon-serialization concern was verified safe: `handle_ingest` JSON-serializes the raw payload pre-transport (`handlers/ingest.py:845`), so `parent_decision_id` rides inside the opaque `payload` string and is normalized daemon-side via the shared `_handle_ingest_impl`. Substantiation: the new test is **load-bearing** — stashing the `_normalize_payload` threading makes the parent test FAIL (row persists `NONE`); restoring makes it PASS. `ruff check` + `ruff format --check` clean; `test_skill_governance_lint` green.
+
+**Decision**: Land Phase 1 at the single shared normalization point (`_normalize_payload` inside `_handle_ingest_impl`), which both the daemon `write.ingest` dispatcher and the MCP fallback execute — satisfying silongtan's #517 "land daemon-side" steer without a separate daemon edit. Deferred to later governed cycles: L1 auto-derivation + similarity-attach (Phase 2, daemon-side), rejected-alternatives-as-L3-negative-siblings (Phase 3), and the backfill migration (Phase 4 — carries the §4.7 `@jinhongkuan` schema-codeowner gate; the issue's proposed "v23→v24" must be renumbered because v24 is already taken by the input_span-dedup migration).
+
+**Infrastructure**: qor-logic upgraded 0.80.0 → 0.84.0 and redistributed to all three hosts this session (claude / codex / kilo-code, 63 files each). This entry's commit carries the canonical `Authored via [Qor-logic SDLC]` attribution trailer (the `qor` package is reachable via the CLI venv; the prior compact-trailer commits #393/#404-staged predate this fix).
+
+**Required next action**: User review + merge of the Phase-1 PR. Phase 2 (L1 auto-derivation) is the next governed cycle for #404.

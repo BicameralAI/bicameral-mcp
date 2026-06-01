@@ -347,6 +347,10 @@ def _normalize_payload(payload: dict) -> dict:
         # #340 — thread decision_level from IngestDecision to the mapping.
         if d.decision_level is not None:
             mapping["decision_level"] = d.decision_level
+        # #404 — thread parent_decision_id (natural format previously dropped it;
+        # the adapter already reads mapping["parent_decision_id"] at ingest).
+        if d.parent_decision_id is not None:
+            mapping["parent_decision_id"] = d.parent_decision_id
         # #109 — thread optional governance metadata from IngestDecision
         # to the per-mapping payload so the ledger write picks it up.
         if d.governance is not None:

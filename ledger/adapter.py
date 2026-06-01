@@ -91,7 +91,15 @@ _IMPL_SOURCE_TYPES = frozenset({"implementation_choice", "agent_session"})
 def _classify_decision_level(source_type: str, code_regions: list) -> str:
     """Deterministic heuristic for decision_level when the caller omits it.
 
-    Rules (applied in order):
+    Classifier precedence (#404 item 5) — overall order at the ingest call site:
+      1. Explicit ``decision_level`` in the payload WINS — honored upstream at
+         the processing loop (the ``mapping.get("decision_level")`` guard); this
+         heuristic runs ONLY when the caller omits the field.
+      2. This source-type heuristic (rules below).
+      3. (#404 Phase 2, future) L1 auto-derivation, so no L2 lands without a
+         parent.
+
+    Heuristic rules (case 2 only, applied in order):
     1. Code regions present → L2 (architecture, code-grounded).
     2. Source is a product conversation → L1 (product commitment).
     3. Source is an implementation choice → L3 (technical detail).

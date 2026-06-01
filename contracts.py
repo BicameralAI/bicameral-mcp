@@ -526,6 +526,9 @@ class IngestDecision(BaseModel):
     signoff: dict | None = None
     feature_group: str | None = None
     decision_level: str | None = None  # L1 | L2 | L3 — #340 auto-classified when omitted
+    # #404 — explicit hierarchy parent. Natural format previously dropped this
+    # (only the internal mapping format honored it); now threaded to the ledger.
+    parent_decision_id: str | None = None
     # #109 — optional governance metadata threaded to the ledger.
     governance: dict | None = None
 
