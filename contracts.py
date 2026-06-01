@@ -28,6 +28,7 @@ class IngestDiagnostic(BaseModel):
     decisions_ingested: int = 0
     g2_candidates_evaluated: int = 0
     g2_dropped_hard_exclude: int = 0
+    g2_dropped_dev_process: int = 0
     g2_dropped_l3: int = 0
     g2_dropped_gate1: int = 0
     g2_dropped_gate2: int = 0
