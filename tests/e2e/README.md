@@ -70,7 +70,9 @@ GitHub Actions workflow: `.github/workflows/v0-user-flow-e2e.yml`.
 
 - Triggers on PRs touching `tests/e2e/**`, `handlers/**`, `ledger/**`,
   `contracts.py`, `skills/bicameral-*/**`, or the workflow itself.
-- Runs in the `production` GitHub environment for `CLAUDE_CODE_OAUTH_TOKEN`.
+- Runs in the `ci-test` GitHub environment for `ANTHROPIC_API_KEY`
+  (switched from `production` + `CLAUDE_CODE_OAUTH_TOKEN` in #528 after the
+  org subscription was disabled).
 - Pinned `desktop/desktop` commit in the workflow file (update by editing
   the env var).
 - Uploads `test-results/e2e/*.ndjson` as job artifacts (30-day retention)

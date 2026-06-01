@@ -11,7 +11,7 @@
 
 AI agents ship code fast. They forget what your team agreed — and requirement gaps surfaced mid-implementation are buried under thousands of lines of code.
 
-Bicameral MCP is a **spec compliance layer** for AI-assisted engineering. Local-first; runs as an [MCP server](https://spec.modelcontextprotocol.io/). It ingests your meeting transcripts, PRDs, and Slack threads, captures any mid-implementation decision that was not discussed, to be ratified async by your product owner, and pins each one to the code that implements it — so your agent finds out the moment it drifts from either the written spec or the spoken one.
+Bicameral MCP is a **spec compliance layer** for AI-assisted engineering. Local-first; runs as an [MCP server](https://spec.modelcontextprotocol.io/). It ingests your meeting transcripts, PRDs, and Slack threads, captures any mid-implementation decision that was not discussed, routes it through async product ratification, and only treats code grounding/compliance as resolved when there is inspectable evidence — so your agent finds out the moment it drifts from either the written spec or the spoken one without manufacturing false certainty.
 
 ---
 
@@ -34,6 +34,12 @@ bicameral-mcp setup
 # Windows: substitute the uv installer line with PowerShell
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
+
+> **Windows contributors developing on bicameral-mcp itself (required, not recommended):** before cloning the repo, set
+> ```powershell
+> git config --global core.symlinks true
+> ```
+> The repo tracks `.claude/skills/bicameral-*` as symlinks to canonical `skills/`. Windows defaults to `core.symlinks=false`, which silently materializes those entries as plain text files containing the target path string — slash-command resolution then breaks with no obvious failure. CI enforces this via `tests/test_skills_symlink_integrity.py` (#357 sub-task 4), so a clone without the setting will fail the regression suite. Cloning via WSL works around it. **This requirement does not apply** to users who only `pip install bicameral-mcp` — the published wheel bundles skills as real files, no symlink resolution needed.
 
 The setup wizard detects your repo, registers the MCP server with Claude Code, installs a git hook that auto-syncs the ledger after every commit, and adds a session-end hook that catches mid-session decisions you didn't explicitly ingest. Restart Claude Code and you're done.
 
@@ -79,6 +85,8 @@ https://github.com/user-attachments/assets/8a0fdfb8-fc9a-49fc-9521-e5b5faf8646a
 **3. Ratify async (product owner).** The product owner reviews captured proposals and ratifies or rejects them on their own cadence. Drift tracking activates on ratification.
 
 https://github.com/user-attachments/assets/206e269e-49d6-407d-b338-ab3f2a2c70ec
+
+**Trust boundary.** Bicameral separates three probabilistic claims: decision extraction, code grounding, and compliance verdicts. Humans ratify product meaning; developers/EMs review weak grounding or low-confidence compliance. See [`docs/adr/0001-hitl-extraction-grounding-compliance.md`](docs/adr/0001-hitl-extraction-grounding-compliance.md).
 
 <p align="center">
   <a href="https://github.com/BicameralAI/bicameral-mcp">
