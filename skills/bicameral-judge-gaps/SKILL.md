@@ -27,6 +27,13 @@ explicitly rejected in each category's prompt. A finding that's
 technically correct but engineering-focused is a bug in this rubric.
 No codebase crawl is required — reason over `source_excerpt` only.
 
+> **Upstream enforcement (#393)**: dev-process / engineering-workflow
+> decisions with no product or business driver are now hard-excluded at
+> `bicameral-ingest` Step 1 (before they ever reach a brief), so they cannot
+> appear as gaps here in the first place. This rubric's engineering-gap
+> rejection remains the downstream backstop, but the primary filter is the
+> ingest hard-exclude — they share the same definition.
+
 ## When to use
 
 This skill is **not fired directly by user phrasings**. It is a

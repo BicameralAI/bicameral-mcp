@@ -40,6 +40,7 @@ bicameral.skill_end(skill_name="bicameral-ingest", session_id=<stored_id>,
     # G2 fields — extraction filter
     g2_candidates_evaluated: N,
     g2_dropped_hard_exclude: N,
+    g2_dropped_dev_process: N,
     g2_dropped_l3: N,
     g2_dropped_gate1: N,
     g2_dropped_gate2: N,
@@ -192,6 +193,23 @@ Read the source. For each statement, decide whether it's a real implementation d
 | Pure metrics / OKR status | "Q3 OKR is at 78%" / "we're at 84% retention" |
 | Pure question with no directional signal | "has anyone looked at Sentry vs PostHog?" (exploration request, not a direction) |
 | Reversed within the same source | speaker A proposes X → blocked → team agrees on Y → only Y is the decision, X is not |
+| **Dev-process / engineering-workflow with NO product or business driver** (#393) | CI/CD ("we'll use GitHub Actions" / "deploy via ArgoCD"); testing process ("80% coverage gate" / "use Playwright for e2e"); branching/release ("trunk-based development" / "release trains every 2 weeks"); linting/formatting ("enable strict TypeScript" / "Prettier 2-space"); dev tooling ("Docker Compose for local dev" / "switch to pnpm"); code-review process ("PRs need 2 approvals" / "squash-merge only"); monitoring/observability *setup* ("add Datadog APM" / "use Sentry for error tracking"); dependency management ("pin all deps" / "use Renovate") |
+
+> **Dev-process carve-out — do NOT over-exclude (#393).** The dev-process row
+> hard-excludes a statement **only when no product or business driver is named
+> in the same source.** Evaluate the driver against the **whole source**, not the
+> isolated clause — a driver counts if it appears in a sibling L1 in the same
+> source (per the Gate 1 L1-inheritance path below) or in ledger priors pulled in
+> Step 0.5. When a driver is present, do **not** hard-exclude: let the candidate
+> fall through to level classification and the Gate 1 "Keep these
+> (engineering-shaped but business-tied)" path. Examples that **stay tracked**:
+> "Migrate sessions to Redis before Black Friday — committed to 20k concurrent
+> checkout" (SLA driver); "Add PII redaction before logging — required by the GDPR
+> assessment" (regulatory driver). When the source is genuinely silent on a driver
+> but a fork plausibly exists, **park as `context_pending`** rather than
+> hard-excluding — the dev-process hard-exclude is for the driver-free,
+> fork-free engineering-hygiene case. Count every dev-process hard-exclude in
+> `g2_dropped_dev_process`.
 
 **SPECULATIVE PROPOSALS — aspirational, hedged, and exploratory candidates are NOT hard-excluded.** If a statement names a concrete subject (a feature, an architecture, a behavior the product could have), capture it as a `proposed` decision regardless of how tentative the language is. Hedged conditionals ("if infra approves, we'll switch to ScyllaDB"), aspirational statements ("I want to prioritize Google Calendar integration"), exploratory ideas ("we need something like Zoom attendance tracking"), and deferred items ("let's revisit this next quarter") all belong in the ledger — the team ratifies or rejects them there. Bicameral's whole value is serving as the central panel for that judgment; silently dropping speculative items before the team sees them defeats the purpose.
 
@@ -449,6 +467,30 @@ Apply level classification first. This is a feature spec — L1 extraction mode.
 → **Extract: 5 L1 decisions.** All are product commitments — user-observable behaviors the team has committed to. No Gate 1/Gate 2 needed. Descriptions stay in product language (no implementation details). The 90-day limit and 5-minute SLA are not "specs not decisions" — they are specific product commitments that another team might reasonably have set differently (could be 30 days, could be async confirmation). The density limit for L1 from a feature spec is 8, so 5 is fine.
 
 **Anti-pattern caught**: the old filter would have dropped all 5 as "spec, not a decision" (Gate 2 fail — "any team would implement this"). With level classification, these are correctly routed as L1 product commitments that bypass Gate 2.
+
+**Example 8 — Dev-process meeting: hard-exclude driver-free workflow items, KEEP the business-tied one (#393)**
+
+> Infra sync. Raj: "Let's standardize on GitHub Actions for CI and require 2 approvals on every PR." Priya: "Switch local dev to Docker Compose and pin all deps with Renovate." Lena: "We should add Datadog APM — it'll help us debug faster." Sam: "Separately — we committed to 20k concurrent checkouts for Black Friday, so move sessions to Redis before then." Maya: "And we promised users a live status page during incidents; stand up Prometheus + Grafana to feed it."
+
+Apply the **hard-exclude check first** (Step 1, before level classification), evaluating each candidate's driver against the **whole source**:
+
+| Candidate | Driver named in source? | Result |
+|---|---|---|
+| GitHub Actions for CI | None — CI/CD workflow | **HARD EXCLUDE** (dev-process) |
+| Require 2 approvals on every PR | None — code-review process | **HARD EXCLUDE** (dev-process) |
+| Docker Compose for local dev | None — dev tooling | **HARD EXCLUDE** (dev-process) |
+| Pin all deps with Renovate | None — dependency management | **HARD EXCLUDE** (dev-process) |
+| Add Datadog APM ("debug faster") | None — monitoring *setup*, hygiene only | **HARD EXCLUDE** (dev-process) |
+| Move sessions to Redis before Black Friday | ✓ 20k checkout SLA commitment (same source) | **KEEP** → L2, Gate 1 business-tied → `proposed` |
+| Prometheus + Grafana for status page | ✓ sibling L1 "users get a live status page during incidents" (same source) | **KEEP** → L2, business tie inferred from L1 → `proposed` |
+
+→ **Extract: 2 decisions.** Five dev-process items hard-excluded at Step 1
+(`g2_dropped_dev_process = 5`) — they never reach proposal state. The Redis
+move survives on its own named SLA driver; the Prometheus/Grafana monitoring
+survives because a sibling L1 in the same source supplies the product tie
+(monitoring setup that would be hygiene in isolation is business-tied here).
+**The carve-out is the whole point of #393** — dev-process noise is dropped, but
+infrastructure decisions that deliver a product commitment are still tracked.
 
 ### 2. Resolve code regions yourself, then hand explicit pins to the server
 

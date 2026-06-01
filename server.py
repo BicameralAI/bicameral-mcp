@@ -830,7 +830,7 @@ async def list_tools() -> list[Tool]:
                             "Skill-level metrics. Field names are strictly validated server-side — "
                             "unknown fields are dropped and echoed back in diagnostic_warning. "
                             "bicameral-ingest fields: decisions_ingested, g2_candidates_evaluated, "
-                            "g2_dropped_hard_exclude, g2_dropped_l3, g2_dropped_gate1, g2_dropped_gate2, "
+                            "g2_dropped_hard_exclude, g2_dropped_dev_process, g2_dropped_l3, g2_dropped_gate1, g2_dropped_gate2, "
                             "g2_dropped_implied, g2_parked_context_pending, g2_proposed_count, "
                             "g2_l1_count, g2_l2_count, g2_user_overrode, g3_decisions_grounded, "
                             "g3_decisions_ungrounded, g6_compliance_checks_received, g6_verdicts_compliant, "

@@ -31,6 +31,30 @@ It does two things — in order, always:
 - A list of candidate decision descriptions (pre-ingest)
 - An `IngestResponse` object (post-ingest, for collision/context-for handling)
 
+### Step R0 — Dev-process pre-filter (#393)
+
+Before deriving probes, scan the incoming candidate decision descriptions for
+**driver-free dev-process / engineering-workflow statements** and drop them from
+reconciliation. The canonical pattern list and the over-exclusion carve-out live
+in `skills/bicameral-ingest/SKILL.md` (HARD EXCLUDE → "Dev-process /
+engineering-workflow with NO product or business driver") — do not duplicate the
+list here; apply that same rule:
+
+- A candidate is dropped only when **no product or business driver is named in
+  the whole source** (a sibling L1 commitment or a Step-0.5 ledger prior counts
+  as a driver — keep those).
+- Dropped dev-process candidates are added to the returned **dropped list** (see
+  Execution protocol) so the calling flow excludes them from ingest. This is a
+  **mechanical, silent** resolution — no user probe.
+- This is graph-reconciliation hygiene: it prevents dev-process noise from
+  acquiring `feature_group` names, supersession edges, or context-for links in
+  the knowledge graph. Telemetry for the *ingest* path is counted by
+  `g2_dropped_dev_process` in `bicameral-ingest`; sentry-side drops are not
+  separately counted (they feed the same exclusion).
+
+If every incoming candidate is dropped here, skip Phase 2 — there is nothing
+left to reconcile or probe.
+
 ### Step R1 — Derive search probes
 
 From the input, extract 1–3 search probes. Each probe is a short
@@ -208,7 +232,8 @@ Then return control to the calling flow with:
 ## Rules
 
 1. **Mechanical resolutions are always silent.** No output for clear parallel
-   scope, exact name matches, or established driver pattern matches.
+   scope, exact name matches, established driver pattern matches, or the
+   Step R0 dev-process pre-filter drops (#393).
 2. **Cap at 3 supersession probes per sentry call.** Batch the rest.
 3. **Phase 1 empty path is silent.** Zero search results → no output,
    no probing, hand back immediately.
