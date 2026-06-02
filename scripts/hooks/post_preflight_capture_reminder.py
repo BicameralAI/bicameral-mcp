@@ -45,6 +45,11 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from hooks.preflight_intent import suppress_capture_reminder  # noqa: E402
+from hooks.session_prompt_store import read_session_prompt  # noqa: E402
 
 PREFLIGHT_TOOL_NAME = "mcp__bicameral__bicameral_preflight"
 
@@ -132,6 +137,12 @@ def main() -> int:
         return 0
     decisions = response.get("decisions") or []
     if not isinstance(decisions, list) or not decisions:
+        return 0
+    # #170 — suppress on read-only/informational prompts. Recall-biased: a
+    # missing/unreadable prompt or any implementation-verb prompt fires, so a
+    # refinement (smuggled or not) is never silently dropped (#175 invariant).
+    prompt = read_session_prompt(str(payload.get("session_id") or "")) or ""
+    if suppress_capture_reminder(prompt):
         return 0
     json.dump(
         {

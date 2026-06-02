@@ -515,13 +515,28 @@ Narrate one line: *"Captured refinement: '<paraphrase>' — wired as
 #### Hook reinforcement
 
 A PostToolUse hook scoped to `mcp__bicameral__bicameral_preflight` injects a
-`<system-reminder>` after every preflight call that surfaces ≥1 decision. The
+`<system-reminder>` after a preflight call that surfaces ≥1 decision. The
 reminder templates Step 5.6.1's `AskUserQuestion` shape with the surfaced
 `decision_id` + description filled in, so the question fires reliably even
 when the agent's natural inclination would be to skip the disambiguation.
 Source: `scripts/hooks/post_preflight_capture_reminder.py`; wired by
 `setup_wizard._install_claude_hooks` and the e2e harness's
 `materialize_settings_with_hooks`.
+
+**Read-only suppression gate (#170).** The reminder is suppressed for
+unambiguously read-only / informational prompts (e.g. "explain how the reorder
+flow works", "review the session module") where no refinement can exist. The
+gate is **recall-biased and deliberately narrow**: it suppresses ONLY when the
+prompt carries a read-only signal AND **no** implementation verb
+(`suppress_capture_reminder` in `scripts/hooks/preflight_intent.py`). Any
+write-intent prompt — including a refinement smuggled under a compatible verb
+("add tests … and expose X as a programmatic API") — always fires, preserving
+the #175 invariant that contradiction is never decided by a lexical scan over a
+write prompt. The prompt is handed from the UserPromptSubmit hook to this hook
+via `scripts/hooks/session_prompt_store.py` (session-scoped, swept after 24h and
+deleted on SessionEnd). Consequence: a compatible-write prompt like "add tests
+for drag-to-reorder" still fires the disambiguation (it cannot be lexically told
+apart from a smuggled refinement) — accepted by design over the data-loss risk.
 
 ### 6. Honor blocking hints (guided mode vs normal mode)
 

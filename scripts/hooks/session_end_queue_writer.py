@@ -24,6 +24,9 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from hooks.session_prompt_store import cleanup_session_prompt  # noqa: E402
+
 from events.transcript_queue import write_pending  # noqa: E402
 
 
@@ -34,7 +37,12 @@ def main() -> int:
         return 0
     if not isinstance(payload, dict):
         return 0
-    session_id = str(payload.get("session_id") or uuid.uuid4())
+    session_id_raw = str(payload.get("session_id") or "")
+    # #170 — best-effort cleanup of the prompt handoff file, before the
+    # transcript early-return so it runs even when no transcript is queued.
+    if session_id_raw:
+        cleanup_session_prompt(session_id_raw)
+    session_id = session_id_raw or str(uuid.uuid4())
     transcript_path = str(payload.get("transcript_path", "")).strip()
     cwd = str(payload.get("cwd", "")).strip()
     if not transcript_path or not cwd:

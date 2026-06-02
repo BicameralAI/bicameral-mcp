@@ -11,8 +11,10 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts.hooks.preflight_intent import (  # noqa: E402
     IMPLEMENTATION_VERBS,
     INDIRECT_INTENT_PHRASES,
+    READ_ONLY_PATTERNS,
     SKIP_PATTERNS,
     should_fire_preflight,
+    suppress_capture_reminder,
 )
 
 
@@ -68,3 +70,58 @@ def test_natural_contradiction_prompt():
 def test_empty_prompt_does_not_fire():
     assert not should_fire_preflight("")
     assert not should_fire_preflight("   \n\t")
+
+
+# ── #170 — capture-reminder suppression gate ─────────────────────────────
+
+
+def test_suppress_on_read_only_prompts():
+    """Read-only / informational prompts with no implementation verb suppress."""
+    read_only = (
+        "explain how the reorder flow works",
+        "how does the session cache invalidate?",
+        "review the auth middleware",
+        "summarize the drag-to-reorder decision",
+        "walk me through the rate limiter",
+        "what is the current retry policy?",
+    )
+    for prompt in read_only:
+        assert suppress_capture_reminder(prompt), f"{prompt!r} should suppress"
+
+
+def test_no_suppress_on_implementation_verb():
+    """ANY implementation verb fires (never suppress) — incl. the #175 smuggled-
+    refinement case. R1: also assert a NON-'add' verb to lock the regex, not the
+    literal token 'add'."""
+    must_fire = (
+        # the exact audit VETO example — compatible verb + smuggled structural refinement
+        "add tests for the reorder flow, and expose it as a programmatic API",
+        # R1 — different implementation verb, same smuggled-refinement shape
+        "refactor the reorder flow and expose it as a programmatic API",
+        "update cherry-pick.ts to use buttons instead of drag",
+    )
+    for prompt in must_fire:
+        assert not suppress_capture_reminder(prompt), f"{prompt!r} must fire (not suppress)"
+
+
+def test_no_suppress_acceptance_b_compatible_write():
+    """Documented #170 trade-off: 'add tests for X' carries an impl verb ('add'),
+    so it is NOT suppressed — acceptance case (b) is intentionally not met to
+    preserve the #175 no-data-loss invariant."""
+    assert not suppress_capture_reminder("add tests for drag-to-reorder")
+
+
+def test_no_suppress_contradiction_prompt():
+    """R3 — the Flow-2 contradiction prompt must never be suppressed."""
+    prompt = (
+        "I know the roadmap said drag-and-drop to reorder commits, "
+        "but actually we're switching to a text-editor approach. "
+        "Please update cherry-pick.ts and reorder.ts."
+    )
+    assert not suppress_capture_reminder(prompt)
+
+
+def test_suppress_empty_and_data_loadable():
+    assert not suppress_capture_reminder("")
+    assert not suppress_capture_reminder("   \n\t")
+    assert isinstance(READ_ONLY_PATTERNS, tuple) and len(READ_ONLY_PATTERNS) >= 8

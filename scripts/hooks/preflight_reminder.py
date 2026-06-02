@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from hooks.preflight_intent import should_fire_preflight  # noqa: E402
+from hooks.session_prompt_store import write_session_prompt  # noqa: E402
 
 REMINDER_TEXT = (
     "<system-reminder>\n"
@@ -76,6 +77,11 @@ def main() -> int:
     except (json.JSONDecodeError, ValueError):
         return 0
     prompt = payload.get("prompt", "") if isinstance(payload, dict) else ""
+    # #170 — hand the prompt off to the PostToolUse capture-reminder gate, which
+    # cannot see the prompt from its own payload. Write regardless of fire intent
+    # (a read-only prompt the agent still preflights on must be classifiable).
+    session_id = payload.get("session_id", "") if isinstance(payload, dict) else ""
+    write_session_prompt(str(session_id or ""), prompt)
     if should_fire_preflight(prompt):
         json.dump(
             {
