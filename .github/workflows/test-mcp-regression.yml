@@ -276,8 +276,12 @@ jobs:
       # bind handler / skill / fixture must keep recall ≥ 0.80, precision
       # ≥ 0.85, abort_rate ≤ 0.30 — OR explicitly re-record the cache
       # after a deliberate skill-prompt change. "Deliberate not drift."
+      # #540: dependabot-triggered PRs don't receive env-scoped secrets, so this
+      # key-dependent gate can't authenticate (every case errors -> recall 0.000).
+      # Skip it on dependabot runs; pytest + deterministic gates above still
+      # validate the dependency change.
       - name: M2 grounding-recall eval (hard gate)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && github.actor != 'dependabot[bot]'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_GROUNDING_EVAL_MODEL: claude-haiku-4-5-20251001
@@ -352,8 +356,9 @@ jobs:
       # BICAMERAL_PREFLIGHT_EVAL_RECORD=1 /
       # BICAMERAL_PREFLIGHT_INVOCATION_EVAL_RECORD=1 after a deliberate
       # skill-prompt change. "Deliberate not drift."
+      # #540: skip on dependabot runs (no env-scoped ANTHROPIC_API_KEY).
       - name: M_skill_preflight Step-1 (hard gate)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && github.actor != 'dependabot[bot]'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_PREFLIGHT_EVAL_MODEL: claude-haiku-4-5-20251001
@@ -362,8 +367,9 @@ jobs:
           --gate-mode hard
           -o test-results/skill-step1.json
 
+      # #540: skip on dependabot runs (no env-scoped ANTHROPIC_API_KEY).
       - name: M_skill_preflight Step-0 (hard gate)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && github.actor != 'dependabot[bot]'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_PREFLIGHT_INVOCATION_EVAL_MODEL: claude-haiku-4-5-20251001

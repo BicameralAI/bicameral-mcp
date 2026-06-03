@@ -94,7 +94,12 @@ jobs:
       # subscription tied to the OAuth token was disabled, surfacing as
       # oauth_org_not_allowed 403 on every flow before turn 1. `claude -p`
       # honours ANTHROPIC_API_KEY natively, sidestepping subscription policy.
+      # #540: dependabot-triggered PRs don't receive env-scoped secrets, so the
+      # key probe (and the e2e run below) can't authenticate. Skip them on
+      # dependabot runs — the install/setup steps above still validate the
+      # dependency change, and the job stays green instead of fast-failing.
       - name: Anthropic API key visibility probe
+        if: github.actor != 'dependabot[bot]'
         run: |
           set +e
           if [ -n "${ANTHROPIC_API_KEY}" ]; then
@@ -108,6 +113,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
       - name: Run v0 user flow e2e (assertion-only, blocking)
+        if: github.actor != 'dependabot[bot]'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python tests/e2e/run_e2e_flows.py
