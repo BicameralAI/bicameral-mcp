@@ -222,20 +222,6 @@ Docs must state:
 - Old direct payload compatibility is broken by design.
 - Removed behavior can be inspected at `0827444c80d45fe3474f68002166e1fc35708eda`.
 - Missing bot-backed behavior is intentionally unavailable in MCP until bot exposes it through `ToolRequest`.
-- Hosted reasoning, local OpenAI-compatible endpoints, and local CLI adapters are provider choices behind the bot/cloud reasoning boundary, not MCP-owned authority.
-- Hosted reasoning should be described as managed reasoning consistency: shared prompt/model policy, versioned advisory artifacts, audit metadata, and per-tenant memoization for repeated source snapshots.
-- Memoization reduces duplicate inferred decisions and hosted model cost, but does not make LLM output canonical truth.
-
-## Phase 6A - Reasoning Provider ADR Follow-Ups
-
-Open or update ADRs outside this MCP repo before implementing hosted/local reasoning configuration:
-
-- `bicameral-bot`: configurable reasoning providers, deterministic fallback requirements, model configuration dashboard surface, local OpenAI-compatible endpoint support, local CLI adapter support, and advisory-only reasoning artifacts.
-- `bicameral-bot`: reasoning provider output must enter governance as candidates, hints, rationale, summaries, or advisory artifacts; it cannot bypass `ToolRequest`, graph validation, review command gating, or event-store materialization.
-- `bicameral-cloud`: hosted reasoning service ownership for model routing, auth, tenant/workspace scoping, quotas, billing, redaction policy, telemetry, audit metadata, and cache/memoization semantics.
-- `bicameral-cloud`: per-tenant reasoning artifact memoization keyed by tenant, workspace, source snapshot hash, normalized input hash, task, model policy version, prompt version, schema version, and redaction policy version.
-- `bicameral-cloud`: immutable artifact/version policy so prompt/model/schema changes create new advisory artifacts rather than rewriting prior reasoning history.
-- `bicameral-cloud`: hosted model availability must degrade cleanly to caller, local endpoint, local CLI, or disabled modes.
 
 ## Phase 7 - Validation Gate
 
@@ -265,8 +251,6 @@ These are not reasons to keep old MCP implementations:
 - Bot dashboard URL discovery command, if `bicameral.dashboard` returns later.
 - Bot graph validation endpoints for any richer binding inspection behavior.
 - Bot-owned install/onboard command that MCP setup can call or detect.
-- Bot model configuration UI for hosted Bicameral, local OpenAI-compatible endpoints, and local CLI adapters.
-- Cloud hosted reasoning service with per-tenant memoized `ReasoningArtifact` storage and quota/cost controls.
 
 Until those land, MCP returns clear daemon capability errors or omits unsupported tools.
 

@@ -149,54 +149,8 @@ The product should support several reasoning provider modes without changing the
 
 - `disabled`: daemon accepts clean projections and uses deterministic fallback behavior only.
 - `caller`: MCP/coding agents submit model-derived hints and rationale through `ToolRequest`.
-- `local_endpoint`: users configure an OpenAI-compatible local endpoint such as Ollama, LM Studio, vLLM, or a llama.cpp wrapper.
-- `local_cli`: users configure a command that accepts typed JSON on stdin and returns typed JSON on stdout.
-- `hosted_bicameral`: signed-in users use Bicameral-hosted reasoning for managed extraction, summaries, and advisory analysis.
 
-MCP remains a caller/tool surface in all modes. Hosted or local daemon-side reasoning belongs behind the bot/cloud provider boundary, not inside MCP.
-
-## Hosted Reasoning And Memoization
-
-Hosted Bicameral reasoning should be positioned as managed reasoning consistency, not model authority. The value proposition is:
-
-> Consistent, cached, versioned AI interpretation of the same evidence across a team, while final authority stays in governance.
-
-Hosted reasoning can improve team ergonomics and become a paid capability because it provides:
-
-- zero local model setup;
-- shared team-wide model and prompt policy;
-- Bicameral-tuned extraction, span selection, level-hint, binding-suggestion, and conflict-summary tasks;
-- background integration ingest when no coding agent is active;
-- admin controls, usage limits, audit metadata, and predictable fallback behavior;
-- centralized upgrades to model routing and prompts.
-
-The hosted service should also memoize reasoning artifacts per tenant. For the same tenant, workspace, source snapshot, reasoning task, normalized input, model policy version, prompt version, schema version, and redaction policy version, the service returns the existing advisory artifact instead of asking the model again.
-
-This does not make the underlying model deterministic. It makes Bicameral's pipeline replay deterministic for already-seen inputs, reducing duplicate inferred decisions and model cost.
-
-Canonical cache key fields:
-
-```text
-tenant_id
-workspace_id
-reasoning_task
-source_snapshot_hash
-input_object_hash
-model_policy_version
-prompt_version
-schema_version
-redaction_policy_version
-```
-
-Reasoning artifacts are immutable advisory provenance records. Prompt/model/schema changes create a new artifact version; they do not silently rewrite prior review history. A new artifact is created only when the source snapshot, task, normalized input, model policy, prompt, schema, redaction policy, or explicit reanalysis request changes.
-
-The dashboard can expose this as a model configuration tab:
-
-- hosted Bicameral sign-in and workspace selection;
-- local OpenAI-compatible endpoint configuration;
-- local CLI adapter configuration;
-- per-task toggles for candidate extraction, evidence spans, level hints, binding suggestions, conflict summaries, and review summaries;
-- usage/quota and cache-hit visibility for hosted mode.
+MCP remains a caller/tool surface in all modes. Hosted or local daemon-side reasoning belongs behind bot/cloud ADRs, not inside the MCP refactor spec.
 
 ## External Ingest And Egress
 
