@@ -244,14 +244,21 @@ jobs:
       # bind handler / skill / fixture must keep recall ≥ 0.80, precision
       # ≥ 0.85, abort_rate ≤ 0.30 — OR explicitly re-record the cache
       # after a deliberate skill-prompt change. "Deliberate not drift."
-      - name: M2 grounding-recall eval (hard gate)
+      # #537: this metric is produced by a non-deterministic caller LLM and
+      # flaked the hard gate on unrelated PRs (recall swung 0.783–0.957 on an
+      # identical `main` base across #534/#535/#536). Quality thresholds
+      # (recall ≥ 0.80 etc.) are now warn-only — emitted to the run summary
+      # below but advisory — while a catastrophic floor (--catastrophic-recall,
+      # default 0.50) still hard-fails CI in any mode when the grounding path
+      # genuinely collapses. Per the gating-as-observability doctrine.
+      - name: M2 grounding-recall eval (warn + catastrophic floor)
         if: matrix.os == 'ubuntu-latest'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_GROUNDING_EVAL_MODEL: claude-haiku-4-5-20251001
         run: >
           python tests/eval_grounding_recall.py
-          --gate-mode hard
+          --gate-mode warn
           -o test-results/m2-grounding-recall.json
 
       # ── Surface M2 metrics on the GitHub run summary (#280 PR-3) ───
@@ -320,24 +327,30 @@ jobs:
       # BICAMERAL_PREFLIGHT_EVAL_RECORD=1 /
       # BICAMERAL_PREFLIGHT_INVOCATION_EVAL_RECORD=1 after a deliberate
       # skill-prompt change. "Deliberate not drift."
-      - name: M_skill_preflight Step-1 (hard gate)
+      # #537: both steps are caller-LLM driven (same nondeterminism that flaked
+      # M2). Quality thresholds (Step-1 per-axis recall ≥ 0.70; Step-0
+      # should-invoke recall ≥ 0.50, fp_rate ≤ 0.30) are warn-only — emitted to
+      # the run summary below — while catastrophic floors (--catastrophic-recall,
+      # defaults 0.40 / 0.25) still hard-fail CI in any mode on a genuine path
+      # collapse. Per the gating-as-observability doctrine.
+      - name: M_skill_preflight Step-1 (warn + catastrophic floor)
         if: matrix.os == 'ubuntu-latest'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_PREFLIGHT_EVAL_MODEL: claude-haiku-4-5-20251001
         run: >
           python tests/eval_preflight_skill_step1.py
-          --gate-mode hard
+          --gate-mode warn
           -o test-results/skill-step1.json
 
-      - name: M_skill_preflight Step-0 (hard gate)
+      - name: M_skill_preflight Step-0 (warn + catastrophic floor)
         if: matrix.os == 'ubuntu-latest'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BICAMERAL_PREFLIGHT_INVOCATION_EVAL_MODEL: claude-haiku-4-5-20251001
         run: >
           python tests/eval_preflight_skill_invocation.py
-          --gate-mode hard
+          --gate-mode warn
           -o test-results/skill-step0.json
 
       # ── Surface M_skill_preflight metrics on the GitHub run summary ──
