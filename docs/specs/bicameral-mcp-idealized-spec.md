@@ -145,6 +145,59 @@ Coding agents using MCP may have LLM capacity. Their outputs are caller hints, n
 
 MCP can submit candidate drafts, excerpts, binding hints, level hints, compliance concerns, and rationale through `ToolRequest`. The daemon validates deterministic facts where possible, normalizes policy inputs, gates review commands, and materializes only accepted events.
 
+The product should support several reasoning provider modes without changing the MCP authority boundary:
+
+- `disabled`: daemon accepts clean projections and uses deterministic fallback behavior only.
+- `caller`: MCP/coding agents submit model-derived hints and rationale through `ToolRequest`.
+- `local_endpoint`: users configure an OpenAI-compatible local endpoint such as Ollama, LM Studio, vLLM, or a llama.cpp wrapper.
+- `local_cli`: users configure a command that accepts typed JSON on stdin and returns typed JSON on stdout.
+- `hosted_bicameral`: signed-in users use Bicameral-hosted reasoning for managed extraction, summaries, and advisory analysis.
+
+MCP remains a caller/tool surface in all modes. Hosted or local daemon-side reasoning belongs behind the bot/cloud provider boundary, not inside MCP.
+
+## Hosted Reasoning And Memoization
+
+Hosted Bicameral reasoning should be positioned as managed reasoning consistency, not model authority. The value proposition is:
+
+> Consistent, cached, versioned AI interpretation of the same evidence across a team, while final authority stays in governance.
+
+Hosted reasoning can improve team ergonomics and become a paid capability because it provides:
+
+- zero local model setup;
+- shared team-wide model and prompt policy;
+- Bicameral-tuned extraction, span selection, level-hint, binding-suggestion, and conflict-summary tasks;
+- background integration ingest when no coding agent is active;
+- admin controls, usage limits, audit metadata, and predictable fallback behavior;
+- centralized upgrades to model routing and prompts.
+
+The hosted service should also memoize reasoning artifacts per tenant. For the same tenant, workspace, source snapshot, reasoning task, normalized input, model policy version, prompt version, schema version, and redaction policy version, the service returns the existing advisory artifact instead of asking the model again.
+
+This does not make the underlying model deterministic. It makes Bicameral's pipeline replay deterministic for already-seen inputs, reducing duplicate inferred decisions and model cost.
+
+Canonical cache key fields:
+
+```text
+tenant_id
+workspace_id
+reasoning_task
+source_snapshot_hash
+input_object_hash
+model_policy_version
+prompt_version
+schema_version
+redaction_policy_version
+```
+
+Reasoning artifacts are immutable advisory provenance records. Prompt/model/schema changes create a new artifact version; they do not silently rewrite prior review history. A new artifact is created only when the source snapshot, task, normalized input, model policy, prompt, schema, redaction policy, or explicit reanalysis request changes.
+
+The dashboard can expose this as a model configuration tab:
+
+- hosted Bicameral sign-in and workspace selection;
+- local OpenAI-compatible endpoint configuration;
+- local CLI adapter configuration;
+- per-task toggles for candidate extraction, evidence spans, level hints, binding suggestions, conflict summaries, and review summaries;
+- usage/quota and cache-hit visibility for hosted mode.
+
 ## External Ingest And Egress
 
 `ExternalIngestEnvelope` is separate from `ToolRequest`. MCP is a local tool surface under local actor/session authority, not an external source integration. MCP must not accept arbitrary external-integration payloads and route them as `ToolRequest` authority.
@@ -188,4 +241,3 @@ Breaking old MCP clients is acceptable and intended for this refactor. The relea
 - direct ledger/graph/dashboard behavior moved behind the bot daemon boundary;
 - previous implementation can be inspected at MCP commit `0827444c80d45fe3474f68002166e1fc35708eda`;
 - missing bot-backed behavior is intentionally unavailable rather than emulated in MCP.
-
