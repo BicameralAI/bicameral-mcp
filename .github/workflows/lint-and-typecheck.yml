@@ -9,7 +9,7 @@ jobs:
     name: ruff + mypy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           # Full history needed for the "No format-only commits in PR
           # history" step below (#357 sub-task 3 AC3). With the default
@@ -17,7 +17,7 @@ jobs:
           # so the `origin/dev..HEAD` range falls back to listing every
           # commit on dev — false positives across the whole repo history.
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: '3.11'
           cache: 'pip'

@@ -9,3 +9,13 @@ updates:
       - "flow:feature"
       - "dependencies"
       - "python"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "flow:feature"
+      - "dependencies"
+      - "github-actions"
