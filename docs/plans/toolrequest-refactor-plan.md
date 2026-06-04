@@ -43,7 +43,7 @@ This MCP refactor depends on a reduced bot RFQ set. These RFQs are tracked in `b
    - Covers Ledger View gaps plus remove-source/remove-decision/erasure product behavior.
    - Old MCP removal handlers are deleted until bot exposes canonical commands.
 6. **MCP package retirement boundary** (`@jinhongkuan`, review by `@Knapp-Kevin` and `@silongtan`).
-   - Covers setup, CLI wrappers, slash-command skills, diagnose/update/usage/feedback telemetry, release/install behavior, and migration notes.
+   - Covers setup, CLI wrappers, MCP prompts versus repo skills, diagnose/update/usage/feedback telemetry, release/install behavior, and migration notes.
 7. **Strip MCP to the ToolRequest thin client** (`@jinhongkuan`, review by `@silongtan` and `@Knapp-Kevin`).
    - Covers final deletion, request mapping, daemon client, schema tests, package cleanup, and the pre-refactor pointer.
 
@@ -72,6 +72,7 @@ Implement the new MCP core without deleting old code yet:
 - `authority.py`: `AuthorityContext` assembly with `auth_method=mcp_session`.
 - `responses.py`: `ToolResponse` to MCP `TextContent`/structured response formatting.
 - `tool_schemas.py`: MCP-facing input schemas for the supported command registry.
+- `prompts.py`: MCP prompts for generic Bicameral workflows that call supported ToolRequest-backed tools.
 
 Supported command registry:
 
@@ -92,6 +93,7 @@ Tests:
 - MCP arguments map to exact bot command names.
 - Every request includes `request_id`, `issued_at`, and `AuthorityContext`.
 - `audit_metadata.surface == "mcp"` and includes the MCP tool name.
+- Prompt-guided workflows check daemon capabilities before recommending or dispatching tool calls.
 - Daemon rejection is returned as daemon rejection, not hidden as local success.
 - Daemon unavailable returns a transport/setup error with operator action.
 
@@ -112,6 +114,13 @@ Keep or introduce MCP tools:
 - `bicameral.review.resolve_compliance`
 - `bicameral.history`
 - `bicameral.search`
+
+Keep or introduce MCP prompts for generic Bicameral workflows when they are thin recipes over the supported tools:
+
+- preflight workflow;
+- binding workflow;
+- local ingest workflow;
+- history/search workflow.
 
 Remove from core MCP list:
 
@@ -206,10 +215,15 @@ Update install/setup behavior so MCP registers itself as a client of bot:
 - Require or guide installation of `bicameral-bot` local daemon when missing.
 - Replace direct smoke tests with daemon connectivity and ToolRequest round trip smoke tests.
 - Move setup, CLI wrappers, slash-command skills, diagnose/update/usage/feedback telemetry, and release/install behavior into the MCP package retirement boundary. Keep only registration and smoke-test behavior that proves MCP can reach the bot daemon.
+- Reclassify old slash-command skills:
+  - Move generic Bicameral tool workflows into MCP prompts versioned with the MCP package.
+  - Leave repo/team behavior as repo-local skills outside MCP, such as repository trigger rules, ADR/context loading, contribution policy, and factory attestation.
+  - Delete skills that preserve old setup, diagnose, reset, update, telemetry, direct ledger writes, direct binding writes, or obsolete tool names.
 
 Configuration should include only:
 
 - bot daemon endpoint or discovery mode;
+- bot daemon version, ToolRequest protocol version, and supported command registry from capability handshake;
 - MCP actor/session identity derivation;
 - workspace root selection;
 - timeout/retry settings;

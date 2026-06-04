@@ -38,6 +38,7 @@ MCP owns only the agent-facing transport layer:
 - `AuthorityContext` assembly for MCP sessions.
 - Daemon connection discovery and health/error reporting.
 - MCP response formatting from daemon `ToolResponse`.
+- MCP prompts for generic Bicameral workflows that are tightly coupled to MCP tools.
 - Client-side idempotency and request correlation fields when needed.
 - Optional non-authoritative helper caches for transport speed only.
 - Package/install affordances that register the MCP server with supported agent clients.
@@ -57,6 +58,8 @@ The refactor must remove or stop using MCP implementations that own these respon
 - Hosted/team conflict advisory or organization-scale graph analysis.
 - LLM reasoning as authority.
 - Egress/write-back, notification, sync, or annotation contracts.
+- Repo-local skills, contribution policy, factory instructions, or repo-specific workflow guidance.
+- Bot daemon setup, lifecycle, diagnostics, reset, update, migration, usage, or feedback telemetry.
 
 If an old MCP capability is not implemented in bot yet, MCP still removes the old owner implementation. The plan must leave a pointer to commit `0827444c80d45fe3474f68002166e1fc35708eda` so maintainers can recover behavior during bot implementation without keeping obsolete authority in MCP.
 
@@ -87,6 +90,16 @@ Future versions may reintroduce some behavior only after bot defines a canonical
 Removal and erasure behavior is not a thin-client concern. Old MCP `remove_decision` and `remove_source` implementations are deleted. Bot/dashboard work must decide the user-facing removal policy and expose canonical commands before MCP can call it again.
 
 History, search, candidate review, signoff review, and compliance review are not separate MCP subsystems. They are existing bot-owned read/write concepts reached through `ToolRequest` command routing.
+
+## Prompts And Skills Boundary
+
+MCP may expose MCP prompts for generic Bicameral workflows that mainly guide the caller to use MCP tools, such as preflight, binding, local ingest, history, and search. These prompts are versioned with the MCP package and must call only supported ToolRequest-backed tools.
+
+MCP does not own repo-local skills. Repo skills are reserved for repo/team behavior: when to run Bicameral in that repository, which ADRs or context files to read, contribution policy, factory attestation, and workflows that span beyond Bicameral MCP.
+
+Bot owns per-user setup and lifecycle. MCP prompts must not install the daemon, migrate state, reset state, run diagnostics, write telemetry, or preserve old setup wizard behavior.
+
+To avoid version desync, MCP performs a daemon capability handshake before dispatching prompt-guided workflows. The handshake must cover bot daemon version, ToolRequest protocol version, supported command registry, and unsupported commands with reasons. Repo-local skills, when present, should declare the Bicameral/MCP contract version and required commands they expect.
 
 ## AuthorityContext
 
