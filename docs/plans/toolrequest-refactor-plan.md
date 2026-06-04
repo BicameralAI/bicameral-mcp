@@ -94,6 +94,7 @@ Tests:
 - Every request includes `request_id`, `issued_at`, and `AuthorityContext`.
 - `audit_metadata.surface == "mcp"` and includes the MCP tool name.
 - Prompt-guided workflows check daemon capabilities before recommending or dispatching tool calls.
+- MCP startup refuses unsupported daemon ToolRequest protocol versions.
 - Daemon rejection is returned as daemon rejection, not hidden as local success.
 - Daemon unavailable returns a transport/setup error with operator action.
 
@@ -281,6 +282,8 @@ Acceptance criteria:
 - No production import path references removed authority modules.
 - `list_tools` exposes only the supported ToolRequest-backed surface.
 - Every supported tool dispatches exactly one canonical `ToolRequest`.
+- MCP fails fast at startup when the daemon ToolRequest protocol version is unsupported.
+- MCP may start with partial command support only after protocol compatibility is established; unsupported commands return daemon capability errors.
 - MCP never writes Bicameral ledger/event/graph/dashboard state directly.
 - README and release notes name the breaking contract change.
 

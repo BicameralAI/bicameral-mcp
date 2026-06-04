@@ -99,7 +99,9 @@ MCP does not own repo-local skills. Repo skills are reserved for repo/team behav
 
 Bot owns per-user setup and lifecycle. MCP prompts must not install the daemon, migrate state, reset state, run diagnostics, write telemetry, or preserve old setup wizard behavior.
 
-To avoid version desync, MCP performs a daemon capability handshake before dispatching prompt-guided workflows. The handshake must cover bot daemon version, ToolRequest protocol version, supported command registry, and unsupported commands with reasons. Repo-local skills, when present, should declare the Bicameral/MCP contract version and required commands they expect.
+To avoid version desync, MCP performs a daemon capability handshake at startup. The handshake must cover bot daemon version, ToolRequest protocol version, supported command registry, and unsupported commands with reasons. MCP must refuse to start when the daemon's ToolRequest protocol version is unsupported. Once protocol compatibility is established, individual commands may still return daemon capability errors when that command is not implemented.
+
+Repo-local skills, when present, should declare the Bicameral/MCP contract version and required commands they expect.
 
 ## AuthorityContext
 
@@ -119,6 +121,7 @@ MCP may derive missing context from environment, daemon handshake, or explicit t
 MCP must:
 
 - Generate `request_id` and `issued_at` for every call unless the daemon supplies a safer request wrapper.
+- Perform a startup daemon capability handshake and fail fast on unsupported ToolRequest protocol versions.
 - Preserve bot command names exactly.
 - Validate only local transport shape before dispatch; bot remains the schema and governance authority.
 - Return daemon `ToolResponse` status, result payload, governance result, and request id.
@@ -128,6 +131,7 @@ MCP must:
 MCP must not:
 
 - Convert daemon rejection into local acceptance.
+- Start against an incompatible daemon protocol and defer the protocol mismatch to individual tool calls.
 - Mutate local Bicameral state after a daemon rejection.
 - Retry non-idempotent commands without an explicit request id/idempotency contract.
 - Hide graph evidence states such as `unknown_stale`, `unknown_not_indexed`, `ambiguous`, `unsupported`, or `approximate_candidate`.
