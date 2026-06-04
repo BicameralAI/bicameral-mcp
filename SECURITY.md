@@ -2,17 +2,22 @@
 
 ## Privacy posture
 
-Bicameral runs **entirely on your laptop**. Code, decisions, transcripts, and search queries never leave the machine unless you explicitly opt into team mode (which only shares an append-only event file via your existing git remote).
+Bicameral MCP is a local MCP client for the `bicameral-bot` daemon. MCP forwards
+ToolRequest payloads to the configured local daemon endpoint and does not own
+ledger, graph, dashboard, source adapter, telemetry, or governance storage.
 
-- **No telemetry of content** — only tool name, version, call duration, error flag, and integer counts. Decision text, transcripts, file paths, repo names, and any user-supplied string are never collected.
-- **Opt out of telemetry**: `export BICAMERAL_TELEMETRY=0` or set it in your `.mcp.json` `env` block.
-- **Full compliance posture** — host-trust model, acceptable use, install-trust model, audit log, diagnose output, availability stance — lives in [`docs/policies/`](docs/policies/).
+- **No MCP-local telemetry** — the cutover removes MCP-local usage and feedback telemetry.
+- **Daemon boundary** — content privacy and storage posture are owned by the configured `bicameral-bot` daemon and its selected substrate.
+- **Boundary docs** — the current MCP authority boundary is documented in
+  [`docs/specs/bicameral-mcp-idealized-spec.md`](docs/specs/bicameral-mcp-idealized-spec.md)
+  and [`docs/plans/toolrequest-refactor-plan.md`](docs/plans/toolrequest-refactor-plan.md).
 
 ## Threat model and trust boundary
 
 bicameral-mcp is a local-install developer tool. **The trust boundary is the OS user account.** Multi-user, hosted, or shared-machine deployments are out of scope; team-mode requires a future auth shim before such activation.
 
-See [`docs/policies/threat-model-and-trust-boundary.md`](docs/policies/threat-model-and-trust-boundary.md) for the canonical scope statement, in/out-of-scope deployment examples, the v0 team-mode posture, and the deferred Track 2 auth-shim design space.
+See [`docs/specs/bicameral-mcp-idealized-spec.md`](docs/specs/bicameral-mcp-idealized-spec.md)
+for the canonical MCP cutover scope.
 
 ## Software supply chain
 
@@ -22,11 +27,10 @@ Each release ships signed artifacts on the [Releases page](https://github.com/Bi
 |---|---|
 | `bicameral-mcp.sbom.json` | CycloneDX SBOM of the wheel's dependency closure |
 | `bicameral-mcp.sbom.intoto.jsonl` | Sigstore Rekor attestation over the SBOM |
-| `hooks-manifest.json{,.sig,.crt}` | Signed manifest of the post-install hooks |
-| `skills-manifest.toml{,.sig,.crt}` | Signed manifest of bundled skills |
 | `release-tag-commit.txt{,.sig,.crt}` | Cosign keyless signature of the release-tag commit |
 
-Verification procedure: [`docs/RELEASE_EVIDENCE_PROCEDURE.md`](docs/RELEASE_EVIDENCE_PROCEDURE.md).
+Release verification procedure will be rebuilt around the thin-client package
+before the next release promotion.
 
 GitHub's auto-generated dependency graph SBOM (SPDX format) is also available under **Insights → Dependency graph → Export SBOM**.
 
@@ -37,9 +41,7 @@ Only the **latest minor** is actively maintained. Critical fixes get backported 
 Check the recommended version your install will upgrade to:
 
 ```bash
-cat $(python -c 'import bicameral_mcp; print(bicameral_mcp.__file__)' | xargs dirname)/RECOMMENDED_VERSION
-# or
-bicameral-mcp update
+bicameral-mcp tools
 ```
 
 ## Reporting a vulnerability
@@ -63,8 +65,6 @@ We will acknowledge within 3 business days, and aim for a patch + advisory withi
 
 In scope for security reports:
 - The MCP server itself (`bicameral_mcp` Python package)
-- The bundled skill files installed by `bicameral-mcp setup`
-- The post-install hooks (`bicameral-mcp-preflight-reminder`, etc.)
 - The release supply chain (signed manifests, SBOM emitter, publish workflow)
 
 Out of scope:

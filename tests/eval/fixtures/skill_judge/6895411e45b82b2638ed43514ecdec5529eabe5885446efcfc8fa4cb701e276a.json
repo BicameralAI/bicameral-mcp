@@ -1,6 +1,0 @@
-{
-  "relevant_features": [
-    "compliance"
-  ],
-  "reasoning": "The compliance feature contains a decision about idle session auto-expiry after 15 minutes (SOC2 CC6.7), which directly governs the behavior the session timeout countdown UI banner will display and depend on."
-}

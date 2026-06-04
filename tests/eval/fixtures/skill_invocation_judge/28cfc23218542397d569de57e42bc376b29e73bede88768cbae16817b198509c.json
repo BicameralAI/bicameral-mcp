@@ -1,8 +1,0 @@
-{
-  "invoked_history": true,
-  "submitted": true,
-  "reasoning": "Fetched bicameral_history because background worker implementation plausibly relates to cross-cutting concerns (scheduling, audit, data consistency); found ungrounded audit decision requiring user context on system-initiated actions, which applies directly to usage counter updates.",
-  "turns": 2,
-  "tokens_in": 983,
-  "tokens_out": 622
-}

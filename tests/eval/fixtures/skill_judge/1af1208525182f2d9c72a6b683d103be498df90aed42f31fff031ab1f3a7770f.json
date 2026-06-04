@@ -1,6 +1,0 @@
-{
-  "relevant_features": [
-    "security"
-  ],
-  "reasoning": "The security feature's decision that external integration data must never be trusted without explicit verification directly governs the input validation schema for a webhook payload handler, which processes data from external sources."
-}

@@ -1,8 +1,0 @@
-{
-  "invoked_history": false,
-  "submitted": true,
-  "reasoning": "Dependency version bump (ruff 0.5.0 → 0.6.0) with no semantic change — no code-implementation surface; skipped bicameral_history per Tier-2 gate.",
-  "turns": 1,
-  "tokens_in": 415,
-  "tokens_out": 305
-}

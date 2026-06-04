@@ -1,8 +1,0 @@
-{
-  "invoked_history": true,
-  "submitted": true,
-  "reasoning": "Fetched bicameral_history because session timeout is a cross-cutting concern (auth/compliance policy) likely to have prior decisions not pinned to specific files; found ungrounded compliance decision requiring 15-minute idle session expiry per SOC2 CC6.7.",
-  "turns": 2,
-  "tokens_in": 917,
-  "tokens_out": 536
-}

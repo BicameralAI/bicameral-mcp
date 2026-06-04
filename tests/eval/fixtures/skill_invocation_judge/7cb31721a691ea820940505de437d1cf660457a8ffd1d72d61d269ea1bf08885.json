@@ -1,8 +1,0 @@
-{
-  "invoked_history": false,
-  "submitted": true,
-  "reasoning": "Documentation-only typo fix with no code changes; no implementation surface warrants ledger read.",
-  "turns": 1,
-  "tokens_in": 400,
-  "tokens_out": 235
-}

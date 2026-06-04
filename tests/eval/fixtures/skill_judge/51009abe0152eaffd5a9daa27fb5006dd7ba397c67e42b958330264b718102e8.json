@@ -1,6 +1,0 @@
-{
-  "relevant_features": [
-    "observability"
-  ],
-  "reasoning": "The observability feature contains a decision requiring end-to-end traceability across all services, which directly describes the behavior that trace ID propagation through async Celery tasks will touch and depend on."
-}

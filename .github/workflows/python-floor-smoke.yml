@@ -2,8 +2,7 @@ name: Python Floor Smoke Test
 
 # Prevention gate for the #491 bug class: `pyproject.toml`'s
 # `requires-python` floor drifting from code that actually uses a
-# newer-version-only API (e.g. `from datetime import UTC`, added in
-# 3.11). The lint gate (`ruff --target-version=py311`) catches most of
+# newer-version-only API. The lint gate (`ruff --target-version=py311`) catches most of
 # these statically; this runtime gate installs the package against the
 # declared floor and imports it end-to-end through the same path real
 # users hit (`bicameral-mcp --version`).
@@ -40,12 +39,10 @@ jobs:
           pip install .
 
       - name: Import smoke test (`bicameral-mcp --version`)
-        # The #491 repro: `from datetime import UTC` at
-        # preflight_telemetry.py:47 blows up at import time on 3.10.
         # `--version` is the smallest invocation that exercises the
-        # full server.py top-level import chain (handlers.* →
-        # preflight_telemetry). Run from outside the source tree so the
-        # installed package is exercised, not the in-tree files.
+        # thin-client server.py top-level import chain. Run from outside
+        # the source tree so the installed package is exercised, not the
+        # in-tree files.
         run: |
           cd /tmp
           bicameral-mcp --version

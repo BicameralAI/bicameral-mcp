@@ -1,215 +1,114 @@
-![Bicameral — without vs with](assets/bicameral-hero.png)
-
-<img src="assets/logo.png" width="96" align="right" alt="Bicameral logo">
-
 # Bicameral MCP
 
-[![PyPI version](https://img.shields.io/pypi/v/bicameral-mcp)](https://pypi.org/project/bicameral-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/bicameral-mcp)](https://pypi.org/project/bicameral-mcp/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/test-mcp-regression.yml?branch=main&label=tests)](https://github.com/BicameralAI/bicameral-mcp/actions)
+`bicameral-mcp` is the MCP transport client for the local `bicameral-bot`
+daemon. It exposes agent-friendly tools, maps them into canonical
+`ToolRequest` envelopes, sends those requests to the daemon, and returns daemon
+`ToolResponse` payloads.
 
-AI agents ship code fast. They forget what your team agreed — and requirement gaps surfaced mid-implementation are buried under thousands of lines of code.
+MCP is not the Bicameral daemon, Decision Ledger, code graph, dashboard,
+integration runtime, setup wizard, telemetry sink, or governance engine.
 
-Bicameral MCP is a **spec compliance layer** for AI-assisted engineering. Local-first; runs as an [MCP server](https://spec.modelcontextprotocol.io/). It ingests your meeting transcripts, PRDs, and Slack threads, captures any mid-implementation decision that was not discussed, routes it through async product ratification, and only treats code grounding/compliance as resolved when there is inspectable evidence — so your agent finds out the moment it drifts from either the written spec or the spoken one without manufacturing false certainty.
+## Current Contract
 
----
+The cutover target is the bot-owned ToolRequest protocol:
 
-## Quickstart
+```text
+MCP tool call
+  -> ToolRequest(command + AuthorityContext)
+  -> bicameral-bot daemon validation and governance policy
+  -> ToolResponse(status + result + governance_result)
+```
+
+MCP performs a daemon capability handshake at startup. It refuses to start when
+the daemon's ToolRequest protocol version is unsupported. After protocol
+compatibility is established, individual commands may still return daemon
+capability errors while bot parity is being implemented.
+
+## Configuration
+
+Set the bot daemon endpoint with:
 
 ```bash
-# Recommended: uv (single static binary, no Python prerequisite)
-curl -LsSf https://astral.sh/uv/install.sh | sh    # one-line install if you don't have uv
-uv tool install bicameral-mcp
-bicameral-mcp setup
+export BICAMERAL_DAEMON_URL=http://127.0.0.1:37373
 ```
+
+Optional context:
 
 ```bash
-# Alternative: plain pip (installs into your current Python env)
-pip install bicameral-mcp
-bicameral-mcp setup
+export BICAMERAL_ACTOR_ID="$(whoami)"
+export BICAMERAL_WORKSPACE="$PWD"
+export BICAMERAL_POLICY_SCOPE=default
 ```
 
-```powershell
-# Windows: substitute the uv installer line with PowerShell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-```
-
-> **Windows contributors developing on bicameral-mcp itself (required, not recommended):** before cloning the repo, set
-> ```powershell
-> git config --global core.symlinks true
-> ```
-> The repo tracks `.claude/skills/bicameral-*` as symlinks to canonical `skills/`. Windows defaults to `core.symlinks=false`, which silently materializes those entries as plain text files containing the target path string — slash-command resolution then breaks with no obvious failure. CI enforces this via `tests/test_skills_symlink_integrity.py` (#357 sub-task 4), so a clone without the setting will fail the regression suite. Cloning via WSL works around it. **This requirement does not apply** to users who only `pip install bicameral-mcp` — the published wheel bundles skills as real files, no symlink resolution needed.
-
-The setup wizard detects your repo, registers the MCP server with Claude Code, installs a git hook that auto-syncs the ledger after every commit, and adds a session-end hook that catches mid-session decisions you didn't explicitly ingest. Restart Claude Code and you're done.
-
-Verify:
+Run the MCP server:
 
 ```bash
-bicameral-mcp --smoke-test
+bicameral-mcp
 ```
 
----
+Print supported tool names without contacting the daemon:
 
-## How It Feels
-
-**Before implementing a feature**, your agent runs `bicameral.preflight` and surfaces:
-
-```
-(bicameral surfaced — checking Stripe webhook context)
-
-📌 3 prior decisions in scope:
-  ✓ Idempotency via Redis SETNX with 24h TTL
-    src/middleware/idempotency.ts:checkIdempotencyKey:42-67
-    Source: Sprint 14 planning · Ian, 2026-03-12
-
-  ⚠ DRIFTED: Trust Stripe event.created, not server time
-    src/handlers/webhook.ts:processEvent:80-92
-    Drift evidence: switched to Date.now() in PR #287
-
-~ 1 AI-surfaced question (no human source yet):
-  • Should we deduplicate by event.id or (account_id, event.id)?
-    Source: Slack #payments 2026-03-20
+```bash
+bicameral-mcp tools
 ```
 
-**See it in motion** — the loop in three beats:
+## Supported Tools
 
-**1. Ingest (PM or dev).** A transcript, PRD, or Slack thread comes in; bicameral extracts decisions and writes them to the ledger.
+MCP exposes only ToolRequest-backed tools:
 
-https://github.com/user-attachments/assets/e74ae39f-dd99-485b-8122-8c5211478eb1
-
-**2. Preflight (auto).** Before the agent edits code, bicameral surfaces prior decisions, drifted regions, and open questions for the file in scope.
-
-https://github.com/user-attachments/assets/8a0fdfb8-fc9a-49fc-9521-e5b5faf8646a
-
-**3. Ratify async (product owner).** The product owner reviews captured proposals and ratifies or rejects them on their own cadence. Drift tracking activates on ratification.
-
-https://github.com/user-attachments/assets/206e269e-49d6-407d-b338-ab3f2a2c70ec
-
-**Trust boundary.** Bicameral separates three probabilistic claims: decision extraction, code grounding, and compliance verdicts. Humans ratify product meaning; developers/EMs review weak grounding or low-confidence compliance. See [`docs/adr/0001-hitl-extraction-grounding-compliance.md`](docs/adr/0001-hitl-extraction-grounding-compliance.md).
-
-<p align="center">
-  <a href="https://github.com/BicameralAI/bicameral-mcp">
-    <img src="assets/star-on-github.svg" alt="Star Bicameral MCP on GitHub" />
-  </a>
-</p>
-
----
-
-## Solo or Team mode
-
-Bicameral runs in two modes; the setup wizard asks you which one at install time.
-
-| | Solo | Team |
-|---|---|---|
-| **Best for** | Individual builders; small projects with one decision-maker | Multiple people writing decisions for the same codebase (PMs, designers, multiple engineers) |
-| **Where decisions live** | Local SurrealDB at `.bicameral/ledger.db`; not shared | One append-only `<your-email>.jsonl` per teammate; replicated via a remote substrate you provision |
-| **Who can ingest** | You | Anyone on the shared substrate (PM ingests a PRD, dev pulls and surfaces it on `preflight`) |
-| **What gets shared** | Nothing leaves your machine | Decision payloads, canonical IDs, signoffs. **No source code** |
-| **How replication works** | N/A | Pull-only on tool invocation (~30 s freshness). No daemons, no webhooks, no central server |
-| **Failure if remote is down** | N/A | Falls back to local; resync next call. No blocking |
-
-### Team-mode remote substrate
-
-Team mode replicates events through a substrate **you provision and own** —
-nothing routes through a Bicameral-operated server, and your decision data
-never crosses our infrastructure. The wizard supports two backends:
-
-| Backend | Substrate | Setup |
-|---|---|---|
-| **Google Drive** (default) | A folder in your team's Google account. Each teammate writes to their own `<email>.jsonl`; everyone reads the rest. | 3-minute one-time OAuth client setup, then Create-or-Join in the wizard. |
-| **Local folder** (advanced) | A directory mounted on every teammate's machine (NFS, Dropbox, syncthing). | One prompt for the path. |
-
-S3, Dropbox-native, and Box backends are on the roadmap but not yet shipped — we
-deliberately ship Drive first, validate the model with paying teams, then extend.
-
-The Drive integration is scoped to `drive.file` — the Bicameral CLI on your
-machine can only touch files it creates inside the team folder; the rest of your
-Drive (other folders, Google Docs, shared files) is invisible to the CLI.
-Decision data flows your-CLI ↔ Google directly; **Bicameral the company does
-not receive copies of your files**. We do see aggregate OAuth telemetry (API
-request counts, OAuth consent records — not contents) as the OAuth app
-publisher, the same way any OAuth-using tool's vendor does. Token cache lives
-at `~/.bicameral/google-drive-token.json`, mode 0600. Full security posture
-and operator walkthrough: [`docs/team-mode-setup.md`](docs/team-mode-setup.md).
-
----
-
-## Slash Commands
-
-After setup, Claude Code gets these slash commands:
-
-| Command | When to use |
+| MCP tool | Bot command |
 |---|---|
-| `/bicameral-ingest` | Paste a transcript, PRD, or Slack thread to track its decisions |
-| `/bicameral-preflight` | Surface relevant decisions and drift before implementing |
-| `/bicameral-history` | See all tracked decisions grouped by feature area |
-| `/bicameral-dashboard` | Open the live decision dashboard in your browser |
-| `/bicameral-reset` | Wipe and replay the ledger (emergency use) |
+| `bicameral.ingest` | `ingest.submit_local` |
+| `bicameral.preflight` | `preflight.run` |
+| `bicameral.bind` | `binding.create` |
+| `bicameral.binding.inspect` | `binding.inspect` |
+| `bicameral.review.accept_candidate` | `review.accept_candidate` |
+| `bicameral.review.reject_candidate` | `review.reject_candidate` |
+| `bicameral.review.approve_signoff` | `review.approve_signoff` |
+| `bicameral.review.reject_signoff` | `review.reject_signoff` |
+| `bicameral.review.resolve_compliance` | `review.resolve_compliance` |
+| `bicameral.history` | `history.list` |
+| `bicameral.search` | `search.query` |
 
-The agent also fires these automatically — `preflight` before any code change, `ingest` when you paste a document.
+## Prompts And Skills
 
----
+MCP may expose MCP prompts for generic Bicameral workflows over supported tools,
+such as preflight, binding, ingest, history, and search.
 
-## What `setup` writes to your repo
+Repo-local skills are outside MCP. Keep repo/team behavior in repo skills:
+when to run Bicameral, which ADRs to read, contribution policy, factory
+attestation, and workflows that span beyond Bicameral MCP.
 
-| File | What it is |
-|---|---|
-| `.mcp.json` | MCP server config for Claude Code |
-| `.bicameral/config.yaml` | Mode (`solo`/`team`), guided-mode flag, and (in team mode) `team.backend` + `team.folder_id`/`team.remote_root` + `team.role` |
-| `.bicameral/ledger.db` | Local SurrealDB decision ledger (solo mode) |
-| `.bicameral/events/<email>.jsonl` | Append-only event log per teammate (team mode) |
-| `~/.bicameral/google-drive-token.json` | Drive OAuth token cache, mode 0600 (team mode + Drive backend only) |
-| `.gitignore` entry | Ignores `.bicameral/` in solo mode |
-| `.claude/settings.json` | PostToolUse hook (auto-sync after commits) + SessionEnd hook (capture mid-session decisions) |
-| `skills/bicameral-*/SKILL.md` | Canonical slash-command definitions (`.claude/skills/bicameral-*` are symlinks for the Claude Code resolver — never edit directly) |
+## Retired From MCP
 
-All data stays local. The embedded SurrealDB runs in-process — no separate server.
+The v0.2 direct MCP payload surface is not preserved. Removed or unsupported
+legacy behavior includes:
 
----
+- `link_commit`
+- `ratify`
+- `resolve_collision`
+- `remove_decision`
+- `remove_source`
+- `validate_symbols`
+- `get_neighbors`
+- setup wizard, reset, update, diagnose, usage, feedback, and telemetry
+- dashboard hosting
+- local ledger/event/graph/source/integration runtimes
 
-## MCP Tools Reference
+Missing bot-backed behavior is intentionally unavailable in MCP rather than
+emulated locally.
 
-<details>
-<summary><strong>13 tools across two categories</strong></summary>
+Previous implementation history can be inspected at:
 
-### Decision Ledger
+```text
+0827444c80d45fe3474f68002166e1fc35708eda
+```
 
-| Tool | Purpose |
-|---|---|
-| `bicameral.ingest` | Ingest a transcript, PRD, or Slack export into the ledger |
-| `bicameral.preflight` | Pre-flight: surface prior decisions and drift before coding |
-| `bicameral.search` | Search past decisions by topic |
-| `bicameral.brief` | Full brief for a feature area (decisions, drift, divergences, gaps) |
-| `bicameral.history` | Read-only snapshot of all decisions grouped by feature |
-| `bicameral.link_commit` | Sync a commit — update content hashes, re-evaluate drift |
-| `bicameral.drift` | Detect drift for decisions touching a specific file |
-| `bicameral.judge_gaps` | Run the business-requirement gap rubric on a topic |
-| `bicameral.resolve_compliance` | Write back caller-LLM compliance verdicts |
-| `bicameral.ratify` | Record product sign-off on a decision |
-| `bicameral.update` | Check for and apply recommended version updates |
-| `bicameral.reset` | Wipe the ledger for the current repo (dry-run by default) |
-| `bicameral.dashboard` | Start the local dashboard server and return its URL |
+## Development
 
-### Code Locator
+Focused cutover checks:
 
-| Tool | Purpose |
-|---|---|
-| `validate_symbols` | Fuzzy-match symbol name hypotheses against the code index |
-| `get_neighbors` | 1-hop structural graph traversal (callers, callees, imports) |
-
-</details>
-
----
-
-## Privacy & Compliance
-
-We take privacy seriously. Bicameral runs entirely on your laptop — code, decisions, and transcripts never leave the machine unless you explicitly opt into team mode (which only shares an append-only event file via your existing git remote). Telemetry is anonymous integers + tool names only — opt out with `BICAMERAL_TELEMETRY=0`. The full posture (host-trust model, acceptable use, install-trust model, audit log, diagnose output, ledger export, availability stance) is in [`docs/policies/`](docs/policies/); reporting + supply-chain attestation in [`SECURITY.md`](SECURITY.md).
-
-**Trust boundary**: bicameral-mcp is a local-install developer tool — the trust boundary is the OS user account, and multi-user, hosted, or shared-machine deployments are out of scope. The canonical scope statement (which deployment shapes are in or out of scope for the unauthenticated MCP stdio transport) is [`docs/policies/threat-model-and-trust-boundary.md`](docs/policies/threat-model-and-trust-boundary.md).
-
----
-
-## License
-
-MIT
+```bash
+python -m pytest tests/test_toolrequest_thin_client.py -q
+python -m build
+```
