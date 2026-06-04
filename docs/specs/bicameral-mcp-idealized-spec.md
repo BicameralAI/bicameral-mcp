@@ -1,7 +1,7 @@
 # Bicameral MCP Idealized Spec
 
 **Status:** draft for MCP refactor  
-**Date:** 2026-06-03  
+**Date:** 2026-06-04  
 **Target repo:** `BicameralAI/bicameral-mcp`  
 **Target branch:** `dev`  
 **Contract source:** `BicameralAI/bicameral-bot` `origin/dev` commit `6fe40b9` (`Merge PR #107: feat(protocol): canonical ToolRequest/ToolResponse local tool API (#103)`)  
@@ -84,6 +84,10 @@ Legacy tools that do not map to the finalized command registry are removed from 
 
 Future versions may reintroduce some behavior only after bot defines a canonical `ToolCommand`, protocol schema, and daemon dispatch path for it.
 
+Removal and erasure behavior is not a thin-client concern. Old MCP `remove_decision` and `remove_source` implementations are deleted. Bot/dashboard work must decide the user-facing removal policy and expose canonical commands before MCP can call it again.
+
+History, search, candidate review, signoff review, and compliance review are not separate MCP subsystems. They are existing bot-owned read/write concepts reached through `ToolRequest` command routing.
+
 ## AuthorityContext
 
 Every MCP-generated `ToolRequest` includes:
@@ -155,6 +159,8 @@ MCP remains a caller/tool surface in all modes. Hosted or local daemon-side reas
 ## External Ingest And Egress
 
 `ExternalIngestEnvelope` is separate from `ToolRequest`. MCP is a local tool surface under local actor/session authority, not an external source integration. MCP must not accept arbitrary external-integration payloads and route them as `ToolRequest` authority.
+
+External source adapters, Drive/webhook runtimes, and integration placement are covered by bot gateway/integration ownership. MCP deletes old source adapter code and keeps only local `ingest.submit_local` request mapping.
 
 `Egress` is future outbound write-back/notification/sync/annotation. MCP does not implement egress.
 

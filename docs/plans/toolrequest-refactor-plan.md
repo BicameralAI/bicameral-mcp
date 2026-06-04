@@ -1,7 +1,7 @@
 # ToolRequest Refactor Plan For Bicameral MCP
 
 **Status:** draft implementation plan  
-**Date:** 2026-06-03  
+**Date:** 2026-06-04  
 **Target repo:** `BicameralAI/bicameral-mcp`  
 **Target branch:** `dev`  
 **Finalized bot contract:** `BicameralAI/bicameral-bot` `origin/dev` commit `6fe40b9` (`Merge PR #107: feat(protocol): canonical ToolRequest/ToolResponse local tool API (#103)`)  
@@ -26,6 +26,29 @@ The refactor deletes MCP-owned daemon, ledger, graph, dashboard, integration, go
 - ADR-0010: graph evidence is snapshot-scoped and daemon-owned.
 - ADR-0014: caller LLM output is hints/rationale, not authority.
 
+## Grilled Bot RFQ Shape
+
+This MCP refactor depends on a reduced bot RFQ set. These RFQs are tracked in `bicameral-bot`; MCP must not preserve old implementations while waiting for them.
+
+1. **Wire `ToolRequest` commands into the local daemon read/write path** (`@jinhongkuan`).
+   - Covers runtime command dispatch, policy-shaped routing, `history.list`, `search.query`, candidate review, signoff review, compliance review, and retirement/mapping of old `ratify` and collision handlers.
+2. **Wire local `ingest.submit_local` through `ToolRequest`** (`@Knapp-Kevin`, review by `@jinhongkuan`).
+   - Covers local MCP-triggered source/session evidence, candidate creation, and refusal semantics.
+   - Does not create a new source-adapter RFQ; external ingest remains under existing Gateway/integration ownership.
+3. **Complete bot-owned binding evidence** (`@silongtan`).
+   - Covers `binding.create`, `binding.inspect`, snapshot mismatch handling, validation tokens, Rust symbol resolver integration, and materialized `BindingEvidence`.
+4. **Complete grounded preflight and compliance readiness** (`@silongtan`).
+   - Covers `preflight.run`, graph readiness, relevant decisions with binding/evidence states, compliance state visibility, and unknown/stale/unsupported warnings.
+5. **Dashboard and removal UX** (`@jinhongkuan`).
+   - Covers Ledger View gaps plus remove-source/remove-decision/erasure product behavior.
+   - Old MCP removal handlers are deleted until bot exposes canonical commands.
+6. **MCP package retirement boundary** (`@jinhongkuan`, review by `@Knapp-Kevin` and `@silongtan`).
+   - Covers setup, CLI wrappers, slash-command skills, diagnose/update/usage/feedback telemetry, release/install behavior, and migration notes.
+7. **Strip MCP to the ToolRequest thin client** (`@jinhongkuan`, review by `@silongtan` and `@Knapp-Kevin`).
+   - Covers final deletion, request mapping, daemon client, schema tests, package cleanup, and the pre-refactor pointer.
+
+No standalone RFQ is created for event-store substrates, team sync, ledger materialization, history/search, review commands, collision resolution, external source adapters, dashboard-only migration, CLI-only migration, skills-only migration, or telemetry-only migration. Those areas are either already covered by existing bot ADR/code or folded into the RFQs above.
+
 ## Phase 0 - Freeze And Mark The Cutover
 
 1. Create a branch from MCP `dev`.
@@ -33,7 +56,7 @@ The refactor deletes MCP-owned daemon, ledger, graph, dashboard, integration, go
    - `0827444c80d45fe3474f68002166e1fc35708eda`.
 3. Add a top-level deprecation notice in docs for removed direct MCP behavior.
 4. Confirm package/version strategy for the breaking release.
-5. Inventory public tools and classify each as keep, rename, remove, or future bot command.
+5. Inventory public tools and classify each as keep, rename, remove, future bot command, or bot/dashboard product decision.
 
 Expected output:
 
@@ -116,6 +139,8 @@ Notes:
 - `bicameral.review.approve_signoff` / `review.reject_signoff` replace old `bicameral.ratify` semantics.
 - `bicameral.dashboard` stays absent until bot exposes a stable dashboard command or URL discovery endpoint.
 - `validate_symbols` and `get_neighbors` stay absent because graph evidence belongs to bot.
+- `bicameral.remove_decision` and `bicameral.remove_source` stay absent because removal/erasure is a bot dashboard product decision, not a transport fallback.
+- `bicameral.resolve_collision` stays absent unless bot introduces a canonical review command beyond existing candidate/signoff/compliance review commands.
 
 Tests:
 
@@ -143,6 +168,8 @@ Remove production code directories that are no longer MCP-owned:
 - `pii_archive/`
 - `secrets_store/`
 - source/webhook integration runtimes.
+
+External source adapters and team sync code are deleted from MCP even if bot/integration parity is incomplete. Existing bot Gateway/integration ownership governs those gaps; MCP keeps the pre-refactor pointer for recovery.
 
 Remove old handler modules after `server.py` no longer imports them:
 
@@ -178,6 +205,7 @@ Update install/setup behavior so MCP registers itself as a client of bot:
 - Keep only MCP server registration and any client-local config needed to locate the bot daemon.
 - Require or guide installation of `bicameral-bot` local daemon when missing.
 - Replace direct smoke tests with daemon connectivity and ToolRequest round trip smoke tests.
+- Move setup, CLI wrappers, slash-command skills, diagnose/update/usage/feedback telemetry, and release/install behavior into the MCP package retirement boundary. Keep only registration and smoke-test behavior that proves MCP can reach the bot daemon.
 
 Configuration should include only:
 
@@ -247,6 +275,10 @@ Acceptance criteria:
 These are not reasons to keep old MCP implementations:
 
 - Runtime `ToolRequest` dispatch wiring in `bicameral-runtime`.
+- Local `ingest.submit_local` execution behind the daemon.
+- Complete binding evidence creation/inspection behind the daemon.
+- Grounded preflight/compliance readiness behind the daemon.
+- Dashboard removal/erasure UX and canonical removal commands, if any.
 - Final reconciliation between bot `ReviewCommandKind` and `ToolCommand` variants.
 - Bot dashboard URL discovery command, if `bicameral.dashboard` returns later.
 - Bot graph validation endpoints for any richer binding inspection behavior.
