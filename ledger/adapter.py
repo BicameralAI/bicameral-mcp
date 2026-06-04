@@ -15,11 +15,13 @@ from pathlib import Path
 
 from .client import LedgerClient, LedgerError
 from .queries import (
+    _validated_record_id,
     create_code_region,
     decision_exists,
     find_subject_identities_for_decision,
     get_all_decisions,
     get_compliance_verdict,
+    get_decision_description,
     get_decision_level,
     get_decision_source,
     get_decisions_for_file,
@@ -437,8 +439,7 @@ class SurrealDBLedgerAdapter:
 
     async def get_decision_description(self, decision_id: str) -> str:
         await self._ensure_connected()
-        rows = await self._client.query(f"SELECT description FROM {decision_id} LIMIT 1")
-        return str((rows or [{}])[0].get("description", "")) if rows else ""
+        return await get_decision_description(self._client, decision_id)
 
     async def get_decision_level(self, decision_id: str) -> str | None:
         """Return the decision's ``decision_level`` (``"L1"``/``"L2"``/``"L3"``)
@@ -984,8 +985,9 @@ class SurrealDBLedgerAdapter:
                 elif resolved[0] != region.get("start_line") or resolved[1] != region.get(
                     "end_line"
                 ):
+                    rid = _validated_record_id(region_id, "code_region")
                     await self._client.query(
-                        f"UPDATE {region_id} SET start_line = $sl, end_line = $el",
+                        f"UPDATE {rid} SET start_line = $sl, end_line = $el",
                         {"sl": resolved[0], "el": resolved[1]},
                     )
             regions_updated += 1
@@ -1811,12 +1813,13 @@ class SurrealDBLedgerAdapter:
         Idempotent. Returns the projected decision status after the write.
         """
         await self._ensure_connected()
+        did = _validated_record_id(decision_id, "decision")
         await self._client.query(
-            f"UPDATE {decision_id} SET signoff = $signoff, updated_at = time::now()",
+            f"UPDATE {did} SET signoff = $signoff, updated_at = time::now()",
             {"signoff": signoff},
         )
-        projected = await project_decision_status(self._client, decision_id)
-        await update_decision_status(self._client, decision_id, projected)
+        projected = await project_decision_status(self._client, did)
+        await update_decision_status(self._client, did, projected)
         return projected
 
     async def apply_supersede(
@@ -1834,24 +1837,26 @@ class SurrealDBLedgerAdapter:
         UPDATE is a full overwrite. Returns ``{"old_status": "superseded"}``.
         """
         await self._ensure_connected()
+        new_did = _validated_record_id(new_id, "decision")
+        old_did = _validated_record_id(old_id, "decision")
         await relate_supersedes(
             self._client,
-            new_id,
-            old_id,
+            new_did,
+            old_did,
             confidence=1.0,
             reason=(f"human-confirmed supersession via resolve_collision session={session_id}"),
         )
-        rows = await self._client.query(f"SELECT signoff FROM {old_id} LIMIT 1")
+        rows = await self._client.query(f"SELECT signoff FROM {old_did} LIMIT 1")
         old_signoff: dict = {}
         if rows and isinstance(rows[0], dict):
             old_signoff = rows[0].get("signoff") or {}
         await self._client.execute(
-            f"UPDATE {old_id} SET signoff = $s, updated_at = time::now()",
+            f"UPDATE {old_did} SET signoff = $s, updated_at = time::now()",
             {
                 "s": {
                     **old_signoff,
                     "state": "superseded",
-                    "superseded_by": new_id,
+                    "superseded_by": new_did,
                     "superseded_at": superseded_at,
                     "session_id": session_id,
                     "signer": signer,

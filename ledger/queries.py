@@ -11,7 +11,6 @@ No SDK types (RecordID etc.) leak through — normalization happens in client.py
 from __future__ import annotations
 
 import logging
-import re
 from datetime import UTC, datetime
 
 from .client import LedgerClient, LedgerError
@@ -1020,8 +1019,16 @@ async def promote_ephemeral_verdict(
 
 async def decision_exists(client: LedgerClient, decision_id: str) -> bool:
     """Return True iff a decision row exists with the given record id."""
-    rows = await client.query(f"SELECT id FROM {decision_id} LIMIT 1")
+    did = _validated_record_id(decision_id, "decision")
+    rows = await client.query(f"SELECT id FROM {did} LIMIT 1")
     return bool(rows)
+
+
+async def get_decision_description(client: LedgerClient, decision_id: str) -> str:
+    """Return ``decision.description`` for a validated decision record id."""
+    did = _validated_record_id(decision_id, "decision")
+    rows = await client.query(f"SELECT description FROM {did} LIMIT 1")
+    return str((rows or [{}])[0].get("description", "")) if rows else ""
 
 
 async def get_decisions_for_span(client: LedgerClient, span_id: str) -> list[str]:
@@ -1033,16 +1040,18 @@ async def get_decisions_for_span(client: LedgerClient, span_id: str) -> list[str
     Returns an empty list when the span has no derived decisions or does
     not exist.
     """
+    sid = _validated_record_id(span_id, "input_span")
     rows = await client.query(
         f"SELECT type::string(id) AS decision_id FROM decision "
-        f"WHERE <-yields<-input_span CONTAINS {span_id}",
+        f"WHERE <-yields<-input_span CONTAINS {sid}",
     )
     return [str(r["decision_id"]) for r in (rows or []) if r.get("decision_id")]
 
 
 async def input_span_exists(client: LedgerClient, span_id: str) -> bool:
     """Return True iff an input_span row exists with the given record id."""
-    rows = await client.query(f"SELECT id FROM {span_id} LIMIT 1")
+    sid = _validated_record_id(span_id, "input_span")
+    rows = await client.query(f"SELECT id FROM {sid} LIMIT 1")
     return bool(rows)
 
 
@@ -1050,9 +1059,10 @@ async def get_input_span_row(client: LedgerClient, span_id: str) -> dict | None:
     """Return the full input_span row (text, source_ref, source_type,
     meeting_date, speakers, created_at) for use in the source_removed.completed
     event payload. Returns None when the row does not exist."""
+    sid = _validated_record_id(span_id, "input_span")
     rows = await client.query(
         f"SELECT text, source_ref, source_type, meeting_date, speakers, created_at "
-        f"FROM {span_id} LIMIT 1",
+        f"FROM {sid} LIMIT 1",
     )
     if not rows:
         return None
@@ -1069,9 +1079,8 @@ async def get_decision_level(client: LedgerClient, decision_id: str) -> str | No
     ``"L3"`` rows are intentionally ungrounded at the identity layer
     and produce no ``code_subject`` / ``subject_identity`` writes.
     """
-    rows = await client.query(
-        f"SELECT decision_level FROM {decision_id} LIMIT 1",
-    )
+    did = _validated_record_id(decision_id, "decision")
+    rows = await client.query(f"SELECT decision_level FROM {did} LIMIT 1")
     if not rows:
         return None
     val = rows[0].get("decision_level")
@@ -1088,9 +1097,8 @@ async def get_decision_source(client: LedgerClient, decision_id: str) -> str | N
     PostHog — the source_type value space is a fixed enum from the
     ingest contract, not user content.
     """
-    rows = await client.query(
-        f"SELECT source_type FROM {decision_id} LIMIT 1",
-    )
+    did = _validated_record_id(decision_id, "decision")
+    rows = await client.query(f"SELECT source_type FROM {did} LIMIT 1")
     if not rows:
         return None
     val = rows[0].get("source_type")
@@ -1099,7 +1107,8 @@ async def get_decision_source(client: LedgerClient, decision_id: str) -> str | N
 
 async def region_exists(client: LedgerClient, region_id: str) -> bool:
     """Return True iff a code_region row exists with the given record id."""
-    rows = await client.query(f"SELECT id FROM {region_id} LIMIT 1")
+    rid = _validated_record_id(region_id, "code_region")
+    rows = await client.query(f"SELECT id FROM {rid} LIMIT 1")
     return bool(rows)
 
 
@@ -1118,8 +1127,9 @@ async def get_region_descriptor(
     Line numbers (start_line / end_line) are deliberately excluded — they
     shift across replays and would make cross-author matching brittle.
     """
+    rid = _validated_record_id(region_id, "code_region")
     rows = await client.query(
-        f"SELECT repo, file_path, symbol_name, content_hash FROM {region_id} LIMIT 1"
+        f"SELECT repo, file_path, symbol_name, content_hash FROM {rid} LIMIT 1"
     )
     if not rows or not isinstance(rows[0], dict):
         return None
@@ -1187,9 +1197,11 @@ async def relate_yields(
     decision_id: str,
 ) -> None:
     """Create input_span → yields → decision edge. Idempotent via UNIQUE(in, out)."""
+    sid = _validated_record_id(span_id, "input_span")
+    did = _validated_record_id(decision_id, "decision")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {span_id}->yields->{decision_id} SET created_at=time::now()",
+        f"RELATE {sid}->yields->{did} SET created_at=time::now()",
     )
 
 
@@ -1201,10 +1213,12 @@ async def relate_binds_to(
     provenance: dict | None = None,
 ) -> None:
     """Create decision → binds_to → code_region edge. Idempotent via UNIQUE(in, out)."""
+    did = _validated_record_id(decision_id, "decision")
+    rid = _validated_record_id(region_id, "code_region")
     prov = provenance or {}
     await _execute_idempotent_edge(
         client,
-        f"RELATE {decision_id}->binds_to->{region_id} SET confidence=$c, provenance=$p, created_at=time::now()",
+        f"RELATE {did}->binds_to->{rid} SET confidence=$c, provenance=$p, created_at=time::now()",
         {"c": confidence, "p": prov},
     )
 
@@ -1216,9 +1230,11 @@ async def relate_locates(
     confidence: float = 0.8,
 ) -> None:
     """Create symbol → locates → code_region edge. Idempotent via UNIQUE(in, out)."""
+    sid = _validated_record_id(symbol_id, "symbol")
+    rid = _validated_record_id(region_id, "code_region")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {symbol_id}->locates->{region_id} SET confidence=$c, created_at=time::now()",
+        f"RELATE {sid}->locates->{rid} SET confidence=$c, created_at=time::now()",
         {"c": confidence},
     )
 
@@ -1430,8 +1446,9 @@ async def update_decision_status(
     status: str,
 ) -> None:
     """Update the cached status on a decision node."""
+    did = _validated_record_id(decision_id, "decision")
     await client.execute(
-        f"UPDATE {decision_id} SET status = $s, updated_at = time::now()",
+        f"UPDATE {did} SET status = $s, updated_at = time::now()",
         {"s": status},
     )
 
@@ -1510,9 +1527,8 @@ async def get_canonical_id(
     decision_id: str,
 ) -> str | None:
     """Return the canonical_id for a local decision row, or None."""
-    rows = await client.query(
-        f"SELECT canonical_id FROM {decision_id} LIMIT 1",
-    )
+    did = _validated_record_id(decision_id, "decision")
+    rows = await client.query(f"SELECT canonical_id FROM {did} LIMIT 1")
     if rows and isinstance(rows[0], dict):
         cid = rows[0].get("canonical_id")
         return str(cid) if cid else None
@@ -1545,7 +1561,6 @@ async def find_decision_by_canonical_id(
 # defense-in-depth callers see clear Python errors before SurrealQL runs.
 
 _VALID_LEVELS = frozenset(("L1", "L2", "L3"))
-_DECISION_ID_RE = re.compile(r"^decision:[A-Za-z0-9_]+$")
 
 
 class DecisionNotFound(LedgerError):
@@ -1577,13 +1592,15 @@ async def update_decision_level(
     """
     if level not in _VALID_LEVELS:
         raise ValueError(f"invalid level {level!r}; expected one of L1, L2, L3")
-    if not _DECISION_ID_RE.match(decision_id):
-        raise ValueError(f"invalid decision_id shape: {decision_id!r}")
-    rows = await client.query(f"SELECT id FROM {decision_id} LIMIT 1")
+    try:
+        did = _validated_record_id(decision_id, "decision")
+    except LedgerError as exc:
+        raise ValueError(f"invalid decision_id shape: {decision_id!r}") from exc
+    rows = await client.query(f"SELECT id FROM {did} LIMIT 1")
     if not rows:
         raise DecisionNotFound(decision_id)
     await client.execute(
-        f"UPDATE {decision_id} SET decision_level = $level, updated_at = time::now()",
+        f"UPDATE {did} SET decision_level = $level, updated_at = time::now()",
         {"level": level},
     )
 
@@ -1595,8 +1612,9 @@ async def update_region_hash(
     pinned_commit: str = "",
 ) -> None:
     """Update content_hash + pinned_commit on a code_region after link_commit."""
+    rid = _validated_record_id(region_id, "code_region")
     await client.execute(
-        f"UPDATE {region_id} SET content_hash=$h, pinned_commit=$c",
+        f"UPDATE {rid} SET content_hash=$h, pinned_commit=$c",
         {"h": content_hash, "c": pinned_commit},
     )
 
@@ -1719,9 +1737,11 @@ async def delete_binds_to_edge(
     Used when a caller returns a not_relevant verdict — retrieval made a
     mistake and the binding should not be kept.
     """
+    did = _validated_record_id(decision_id, "decision")
+    rid = _validated_record_id(region_id, "code_region")
     try:
         await client.execute(
-            f"DELETE FROM binds_to WHERE in = {decision_id} AND out = {region_id}",
+            f"DELETE FROM binds_to WHERE in = {did} AND out = {rid}",
         )
     except Exception as exc:
         logger.warning("[delete_binds_to] %s → %s failed: %s", decision_id, region_id, exc)
@@ -1763,9 +1783,10 @@ async def set_decision_pruned(
     """Transition a decision's signoff to 'pruned' terminal state (#157)."""
     from datetime import datetime
 
+    did = _validated_record_id(decision_id, "decision")
     now = datetime.now(UTC).isoformat()
     await client.execute(
-        f"UPDATE {decision_id} SET signoff.state = 'pruned', "
+        f"UPDATE {did} SET signoff.state = 'pruned', "
         f"signoff.pruned_at = $ts, signoff.prune_reason = $r",
         {"ts": now, "r": reason},
     )
@@ -1857,9 +1878,8 @@ async def project_decision_status(
     are retired from tracking — callers must skip them before calling this
     function.
     """
-    dec_rows = await client.query(
-        f"SELECT signoff, status FROM {decision_id} LIMIT 1",
-    )
+    did = _validated_record_id(decision_id, "decision")
+    dec_rows = await client.query(f"SELECT signoff, status FROM {did} LIMIT 1")
     if not dec_rows:
         return "ungrounded"
 
@@ -1879,7 +1899,7 @@ async def project_decision_status(
         f"""
         SELECT type::string(out) AS region_id, out.content_hash AS content_hash
         FROM binds_to
-        WHERE in = {decision_id}
+        WHERE in = {did}
         """,
     )
 
@@ -2026,9 +2046,11 @@ async def relate_supersedes(
     reason: str = "",
 ) -> None:
     """Write decision → supersedes → decision edge. Idempotent via UNIQUE(in, out)."""
+    new_did = _validated_record_id(new_id, "decision")
+    old_did = _validated_record_id(old_id, "decision")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {new_id}->supersedes->{old_id} "
+        f"RELATE {new_did}->supersedes->{old_did} "
         "SET confidence=$c, reason=$r, created_at=time::now()",
         {"c": confidence, "r": reason},
     )
@@ -2047,9 +2069,11 @@ async def relate_context_for(
     state: 'confirmed' | 'rejected' | 'proposed'
     Idempotent: updates state if edge already exists (via UPSERT on unique pair).
     """
+    sid = _validated_record_id(span_id, "input_span")
+    did = _validated_record_id(decision_id, "decision")
     try:
         await client.execute(
-            f"RELATE {span_id}->context_for->{decision_id} "
+            f"RELATE {sid}->context_for->{did} "
             "SET state=$s, relevance_score=$rs, reason=$r, created_at=time::now()",
             {"s": state, "rs": relevance_score, "r": reason},
         )
@@ -2057,8 +2081,7 @@ async def relate_context_for(
         if "already contains" in str(exc):
             # Edge exists — update state and reason in place
             await client.execute(
-                f"UPDATE context_for SET state=$s, reason=$r "
-                f"WHERE in = {span_id} AND out = {decision_id}",
+                f"UPDATE context_for SET state=$s, reason=$r WHERE in = {sid} AND out = {did}",
                 {"s": state, "r": reason},
             )
         else:
@@ -2442,8 +2465,8 @@ async def update_binds_to_region(
     ``identity_supersedes`` edge written by ``write_identity_supersedes``.
     """
     did = _validated_record_id(decision_id, "decision")
-    old_id = _validated_record_id(old_region_id, "code_region")
-    new_id = _validated_record_id(new_region_id, "code_region")
+    old_rid = _validated_record_id(old_region_id, "code_region")
+    new_rid = _validated_record_id(new_region_id, "code_region")
     # Embed provenance as a SurrealQL object literal — passing it via
     # ``$p`` silently drops nested dicts to ``{}`` under surrealdb-py
     # 2.0.0. The literal value is internal-only (no caller input
@@ -2462,22 +2485,22 @@ async def update_binds_to_region(
     # UNIQUE(in, out) and rolls back. Pre-flight by checking whether
     # the desired end state is already in place; if so, no-op.
     existing = await client.query(
-        f"SELECT id FROM binds_to WHERE in = {did} AND out = {new_id} LIMIT 1",
+        f"SELECT id FROM binds_to WHERE in = {did} AND out = {new_rid} LIMIT 1",
     )
     if existing:
         # Desired edge already exists. Ensure the old edge is gone
         # (covers the partial-failure recovery case where a prior
         # transaction succeeded the RELATE but failed the DELETE).
         await client.execute(
-            f"DELETE FROM binds_to WHERE in = {did} AND out = {old_id}",
+            f"DELETE FROM binds_to WHERE in = {did} AND out = {old_rid}",
         )
         return
     try:
         await client.execute(
             f"""
             BEGIN TRANSACTION;
-            DELETE FROM binds_to WHERE in = {did} AND out = {old_id};
-            RELATE {did}->binds_to->{new_id}
+            DELETE FROM binds_to WHERE in = {did} AND out = {old_rid};
+            RELATE {did}->binds_to->{new_rid}
                 SET confidence = $c,
                     provenance = {{method: 'continuity_resolved'}},
                     created_at = time::now();
@@ -2509,11 +2532,11 @@ async def write_identity_supersedes(
     ``change_type`` must be one of ``moved``, ``renamed``, ``moved_and_renamed``
     (enforced by the schema's ASSERT).
     """
-    old_id = _validated_record_id(old_identity_id, "subject_identity")
-    new_id = _validated_record_id(new_identity_id, "subject_identity")
+    old_identity = _validated_record_id(old_identity_id, "subject_identity")
+    new_identity = _validated_record_id(new_identity_id, "subject_identity")
     await _execute_idempotent_edge(
         client,
-        f"RELATE {old_id}->identity_supersedes->{new_id} "
+        f"RELATE {old_identity}->identity_supersedes->{new_identity} "
         "SET change_type=$ct, confidence=$c, evidence_refs=$er, created_at=time::now()",
         {"ct": change_type, "c": confidence, "er": list(evidence_refs)},
     )
