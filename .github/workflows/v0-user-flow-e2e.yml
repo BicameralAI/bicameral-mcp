@@ -1,33 +1,34 @@
 name: v0 user flow e2e
 
+# ── SHELVED ──────────────────────────────────────────────────────────────
+# PR trigger removed — workflow is now dispatch-only.
+#
+# Reason: the e2e harness has accumulated unresolved maintenance debt:
+#   • Anthropic API key credit exhaustion causes hard failures on every
+#     PR touching handler/ledger/skill paths — no automatic recovery.
+#   • Agent-budget and prompt-following regressions (#272) produce
+#     non-deterministic assertion failures unrelated to code changes.
+#   • Auth path has been reworked twice (#528 OAuth→API key, #540
+#     dependabot skip) without stabilizing the green-path baseline.
+#   • Net effect: the suite blocks PRs without providing actionable signal.
+#
+# The test code and prompts are preserved intact for reference. To run
+# manually: Actions → v0 user flow e2e → Run workflow.
+#
+# Replacement: see #555 "RFQ: replacement e2e validation strategy".
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Original design (retained for context):
 # End-to-end validation of BicameralAI/bicameral#108's six canonical user
 # flows via real Claude Code CLI sessions with bicameral-mcp registered.
 # See tests/e2e/README.md for the design.
 #
 # Two-stage workflow:
-#   1. assertions  — always runs (PR + dispatch), no manual gate. Validates
-#                    MCP tool callability + surfaces agentic-layer advisories.
-#   2. recording   — manual dispatch only, gated by an environment with
-#                    required reviewers (`recording-approval`). Produces
-#                    split-screen demo MP4s; expensive (~30-45 min wall +
-#                    API spend), so worth gating behind explicit approval.
-#
-# Note: when this workflow file lands, it will not run on the PR that
-# adds it — pull_request workflows execute the version on the base
-# branch (main). First execution is on the next qualifying PR after merge.
+#   1. assertions  — validates MCP tool callability + agentic-layer advisories.
+#   2. recording   — gated by `recording-approval` environment. Produces
+#                    split-screen demo MP4s (~30-45 min wall + API spend).
 
 on:
-  pull_request:
-    branches: [main, dev]
-    paths:
-      - 'tests/e2e/**'
-      - 'handlers/**'
-      - 'ledger/**'
-      - 'contracts.py'
-      - 'skills/bicameral-**'
-      - 'server.py'
-      - 'pyproject.toml'
-      - '.github/workflows/v0-user-flow-e2e.yml'
   workflow_dispatch:
 
 env:
