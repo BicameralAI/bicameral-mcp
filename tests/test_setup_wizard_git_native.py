@@ -139,9 +139,7 @@ def _stub_non_mode_prompts(monkeypatch) -> None:
 # ── --mode flag tests ────────────────────────────────────────────────────
 
 
-def test_mode_flag_solo_skips_interactive_prompt(
-    git_repo: Path, monkeypatch, capsys
-) -> None:
+def test_mode_flag_solo_skips_interactive_prompt(git_repo: Path, monkeypatch, capsys) -> None:
     """run_setup(..., mode='solo') writes a solo config without calling
     _select_collaboration_mode. Validates the non-interactive FailSafe path."""
     # Seed a commit so HEAD exists (no committed config → else branch fires).
@@ -164,9 +162,7 @@ def test_mode_flag_solo_skips_interactive_prompt(
     assert "mode: solo" in config.read_text()
 
 
-def test_mode_flag_committed_config_wins_over_flag(
-    git_repo: Path, monkeypatch, capsys
-) -> None:
+def test_mode_flag_committed_config_wins_over_flag(git_repo: Path, monkeypatch, capsys) -> None:
     """Committed team config + mode='solo' → resolves to team and emits a
     divergence warning. Committed config always takes precedence."""
     _commit_config(
@@ -174,12 +170,16 @@ def test_mode_flag_committed_config_wins_over_flag(
         "mode: team\nteam:\n  backend: google_drive\n  folder_id: abc123\n",
     )
 
-    monkeypatch.setattr(setup_wizard, "_select_collaboration_mode",
-                        lambda *a, **kw: (_ for _ in ()).throw(
-                            AssertionError("should not prompt")))
-    monkeypatch.setattr(setup_wizard, "_select_team_backend",
-                        lambda *a, **kw: (_ for _ in ()).throw(
-                            AssertionError("should not prompt")))
+    monkeypatch.setattr(
+        setup_wizard,
+        "_select_collaboration_mode",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not prompt")),
+    )
+    monkeypatch.setattr(
+        setup_wizard,
+        "_select_team_backend",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError("should not prompt")),
+    )
     _stub_non_mode_prompts(monkeypatch)
 
     rc = setup_wizard.run_setup(repo_hint=str(git_repo), mode="solo")
@@ -190,9 +190,7 @@ def test_mode_flag_committed_config_wins_over_flag(
     assert "committed config takes precedence" in out
 
 
-def test_mode_flag_none_unchanged_behavior(
-    git_repo: Path, monkeypatch
-) -> None:
+def test_mode_flag_none_unchanged_behavior(git_repo: Path, monkeypatch) -> None:
     """mode=None ⇒ unchanged behavior: the interactive prompt is invoked."""
     (git_repo / "README.md").write_text("hi\n", encoding="utf-8")
     _git(["add", "README.md"], git_repo)
