@@ -125,6 +125,93 @@ def test_onboarding_skips_solo_prompts_when_head_has_solo_config(
     assert rc == 0
 
 
+def _stub_non_mode_prompts(monkeypatch) -> None:
+    """Patch out every interactive prompt except the collaboration-mode one."""
+    monkeypatch.setattr(setup_wizard, "_select_guided_mode", lambda: False)
+    monkeypatch.setattr(setup_wizard, "_select_telemetry", lambda: False)
+    monkeypatch.setattr(setup_wizard, "_select_agents", lambda: ["claude"])
+    monkeypatch.setattr(setup_wizard, "_install_for_agent", lambda *a, **kw: None)
+    monkeypatch.setattr(setup_wizard, "_install_skills", lambda *a, **kw: 0)
+    monkeypatch.setattr(setup_wizard, "_install_claude_hooks", lambda *a, **kw: False)
+    monkeypatch.setattr(setup_wizard, "_install_user_permissions_allowlist", lambda *a, **kw: False)
+
+
+# ── --mode flag tests ────────────────────────────────────────────────────
+
+
+def test_mode_flag_solo_skips_interactive_prompt(
+    git_repo: Path, monkeypatch, capsys
+) -> None:
+    """run_setup(..., mode='solo') writes a solo config without calling
+    _select_collaboration_mode. Validates the non-interactive FailSafe path."""
+    # Seed a commit so HEAD exists (no committed config → else branch fires).
+    (git_repo / "README.md").write_text("hi\n", encoding="utf-8")
+    _git(["add", "README.md"], git_repo)
+    _git(["commit", "-m", "seed"], git_repo)
+
+    def _explode(*a, **kw):
+        raise AssertionError("interactive collaboration-mode prompt should be skipped")
+
+    monkeypatch.setattr(setup_wizard, "_select_collaboration_mode", _explode)
+    monkeypatch.setattr(setup_wizard, "_is_interactive", lambda: False)
+    _stub_non_mode_prompts(monkeypatch)
+
+    rc = setup_wizard.run_setup(repo_hint=str(git_repo), mode="solo")
+    assert rc == 0
+
+    config = git_repo / ".bicameral" / "config.yaml"
+    assert config.exists()
+    assert "mode: solo" in config.read_text()
+
+
+def test_mode_flag_committed_config_wins_over_flag(
+    git_repo: Path, monkeypatch, capsys
+) -> None:
+    """Committed team config + mode='solo' → resolves to team and emits a
+    divergence warning. Committed config always takes precedence."""
+    _commit_config(
+        git_repo,
+        "mode: team\nteam:\n  backend: google_drive\n  folder_id: abc123\n",
+    )
+
+    monkeypatch.setattr(setup_wizard, "_select_collaboration_mode",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            AssertionError("should not prompt")))
+    monkeypatch.setattr(setup_wizard, "_select_team_backend",
+                        lambda *a, **kw: (_ for _ in ()).throw(
+                            AssertionError("should not prompt")))
+    _stub_non_mode_prompts(monkeypatch)
+
+    rc = setup_wizard.run_setup(repo_hint=str(git_repo), mode="solo")
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "--mode solo ignored" in out
+    assert "committed config takes precedence" in out
+
+
+def test_mode_flag_none_unchanged_behavior(
+    git_repo: Path, monkeypatch
+) -> None:
+    """mode=None ⇒ unchanged behavior: the interactive prompt is invoked."""
+    (git_repo / "README.md").write_text("hi\n", encoding="utf-8")
+    _git(["add", "README.md"], git_repo)
+    _git(["commit", "-m", "seed"], git_repo)
+
+    called = {"select": False}
+
+    def fake_select():
+        called["select"] = True
+        return "solo"
+
+    monkeypatch.setattr(setup_wizard, "_select_collaboration_mode", fake_select)
+    _stub_non_mode_prompts(monkeypatch)
+
+    rc = setup_wizard.run_setup(repo_hint=str(git_repo), mode=None)
+    assert rc == 0
+    assert called["select"], "_select_collaboration_mode should have been called when mode=None"
+
+
 def test_divergence_guard_warns_on_branch_without_config(
     git_repo: Path, monkeypatch, capsys
 ) -> None:

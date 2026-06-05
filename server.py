@@ -1496,6 +1496,13 @@ def _register_subparsers(parser: ArgumentParser, subparsers: Any) -> None:
     setup.add_argument(
         "--with-push-hook", action="store_true", help="also install pre-push drift hook (#48)"
     )
+    setup.add_argument(
+        "--mode",
+        choices=["solo", "team"],
+        default=None,
+        help="select collaboration mode non-interactively (default: prompt; "
+        "non-interactive without this flag falls back to team)",
+    )
     link = subparsers.add_parser(
         "link_commit",
         help="hash-level sync — link the given commit (default HEAD) into the ledger (#124)",
@@ -1582,6 +1589,7 @@ def _dispatch(args: Any) -> int:
             args.repo_path,
             args.history_path,
             with_push_hook=args.with_push_hook,
+            mode=args.mode,
         )
     if args.command == "link_commit":
         from cli.link_commit_cli import main as link_commit_main

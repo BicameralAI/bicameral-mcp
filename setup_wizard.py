@@ -1780,6 +1780,7 @@ def run_setup(
     history_hint: str | None = None,
     *,
     with_push_hook: bool = False,
+    mode: str | None = None,
 ) -> int:
     """Run the interactive setup wizard.
 
@@ -1845,6 +1846,11 @@ def run_setup(
     team_backend: dict | None = None
     if committed is not None and committed.get("mode") in ("team", "solo"):
         collab_mode = committed["mode"]
+        if mode is not None and mode != collab_mode:
+            print(
+                f"  Warning: --mode {mode} ignored — committed config says "
+                f"mode={collab_mode} (committed config takes precedence)"
+            )
         if collab_mode == "team" and isinstance(committed.get("team"), dict):
             team_block = committed["team"]
             backend = team_block.get("backend")
@@ -1873,7 +1879,7 @@ def run_setup(
                 )
                 return 1
 
-        collab_mode = _select_collaboration_mode()
+        collab_mode = mode if mode in ("solo", "team") else _select_collaboration_mode()
         if collab_mode == "team":
             # #277: Create vs Join vs LocalFolder dispatch for the shared ledger.
             team_backend = _select_team_backend(repo_path)

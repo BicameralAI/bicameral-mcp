@@ -22,6 +22,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import setup_wizard  # noqa: E402
+from server import cli_main  # noqa: E402
+
+
+def test_mode_flag_invalid_value_rejected_by_argparse():
+    """--mode with an invalid value ⇒ argparse exits non-zero (SystemExit)."""
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main(["setup", "--mode", "hybrid"])
+    assert exc_info.value.code != 0
 
 
 def test_install_skills_warns_when_source_missing(tmp_path, capsys):

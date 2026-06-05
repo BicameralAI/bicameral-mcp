@@ -3,6 +3,18 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.16.5 — `--mode {solo,team}` flag for non-interactive setup
+
+### Added
+
+- **`bicameral-mcp setup --mode {solo,team}`** — select collaboration mode non-interactively. Enables CI, scripted onboarding, and the FailSafe VS Code extension to choose solo or team without a TTY prompt. Omitting the flag preserves existing behavior (interactive prompt when TTY, team fallback otherwise). If a committed `.bicameral/config.yaml` already declares a mode, the committed mode takes precedence and `--mode` is ignored with a one-line warning.
+
+### Linked
+
+- Downstream: the FailSafe extension (`bicameral-mcp>=0.14,<0.16`) already invokes `--mode`; this release unblocks its pin bump.
+
+---
+
 ## v0.16.4 — Triage: locator-migration `.mcp.json` fix + v0.16.2 prevention gate
 
 Triage release. Two cherry-picks from `dev`:

@@ -91,6 +91,10 @@ https://github.com/user-attachments/assets/206e269e-49d6-407d-b338-ab3f2a2c70ec
 ## Solo or Team mode
 
 Bicameral runs in two modes; the setup wizard asks you which one at install time.
+For non-interactive callers (CI, scripted onboarding, VS Code extensions), pass
+`--mode solo` or `--mode team` to `bicameral-mcp setup` to select the mode
+without a prompt. If a committed `.bicameral/config.yaml` exists, the committed
+mode takes precedence and `--mode` is ignored with a warning.
 
 | | Solo | Team |
 |---|---|---|
