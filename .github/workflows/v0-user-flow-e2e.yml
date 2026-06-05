@@ -15,7 +15,7 @@ name: v0 user flow e2e
 # The test code and prompts are preserved intact for reference. To run
 # manually: Actions → v0 user flow e2e → Run workflow.
 #
-# Replacement: see RFC issue "RFQ: replacement e2e validation strategy".
+# Replacement: see #555 "RFQ: replacement e2e validation strategy".
 # ─────────────────────────────────────────────────────────────────────────
 #
 # Original design (retained for context):
