@@ -51,6 +51,7 @@ sys.path.insert(0, str(REPO_ROOT / "tests" / "eval"))
 sys.path.insert(0, str(REPO_ROOT / "tests" / "fixtures" / "grounding_recall"))
 
 from _bind_judge import BindJudgment, fixture_exists, run_bind_judgment  # type: ignore[import-not-found]  # noqa: E402, I001
+from _gate import gate_exit_code, is_inconclusive  # type: ignore[import-not-found]  # noqa: E402, I001
 from dataset import ALL_CASES, GENERATOR_VERSION, GroundingCase, cases_by_type  # type: ignore[import-not-found]  # noqa: E402, I001
 
 FIXTURE_REPO = REPO_ROOT / "tests" / "fixtures" / "grounding_recall" / "repo"
@@ -306,6 +307,25 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         breaches.append(f"abort_rate {summary['abort_rate']:.3f} > {args.max_abort_rate}")
     summary["gate_breaches"] = breaches
 
+    # Catastrophic floor (#537): hard-fails CI in any mode — but ONLY on a
+    # genuine grounding collapse, never on an eval that couldn't run. A high
+    # eval_error rate (e.g. missing API key / network on a CI re-run) zeroes
+    # recall without any grounding signal; that is inconclusive, not
+    # catastrophic, so we abstain and warn. A real collapse shows as low recall
+    # with the eval actually running (a low error rate).
+    total_cases = summary["total_cases"]
+    eval_errors = sum(1 for r in rows if r.get("outcome") == "eval_error")
+    error_rate = (eval_errors / total_cases) if total_cases else 0.0
+    summary["eval_error_rate"] = error_rate
+    inconclusive = is_inconclusive(eval_errors, total_cases)
+
+    catastrophic: list[str] = []
+    if not inconclusive and summary["recall"] < args.catastrophic_recall:
+        catastrophic.append(
+            f"recall {summary['recall']:.3f} < catastrophic floor {args.catastrophic_recall}"
+        )
+    summary["catastrophic_breaches"] = catastrophic
+
     report = {"summary": summary, "rows": rows}
 
     if args.output:
@@ -322,13 +342,24 @@ async def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     print(f"  avg_turns  : {summary['avg_turns']}")
     print(f"  tokens     : {summary['tokens_in_total']} in / {summary['tokens_out_total']} out")
     if breaches:
-        print(f"  ⚠ gate breaches: {'; '.join(breaches)}")
+        mode_note = "advisory (warn)" if args.gate_mode != "hard" else "gate"
+        print(f"  ⚠ {mode_note} breaches: {'; '.join(breaches)}")
     else:
         print("  ✓ all gates pass")
+    if catastrophic:
+        print(f"  ✗ CATASTROPHIC floor breached (hard-fails any mode): {'; '.join(catastrophic)}")
+    if inconclusive:
+        print(
+            f"  ⓘ inconclusive: {eval_errors}/{total_cases} cases errored "
+            f"(rate {error_rate:.2f}) — catastrophic floor abstained "
+            "(eval could not run; not a grounding collapse)"
+        )
 
-    if breaches and args.gate_mode == "hard":
-        return report, 1
-    return report, 0
+    return report, gate_exit_code(
+        quality_breaches=breaches,
+        catastrophic_breaches=catastrophic,
+        gate_mode=args.gate_mode,
+    )
 
 
 def main() -> int:
@@ -341,6 +372,13 @@ def main() -> int:
     p.add_argument("--min-recall", type=float, default=0.80)
     p.add_argument("--min-precision", type=float, default=0.85)
     p.add_argument("--max-abort-rate", type=float, default=0.30)
+    p.add_argument(
+        "--catastrophic-recall",
+        type=float,
+        default=0.50,
+        help="Hard floor (#537): recall below this hard-fails CI in any gate mode "
+        "(a collapsed grounding path, not LLM variance). Default 0.50.",
+    )
     p.add_argument("--gate-mode", choices=("warn", "hard"), default="warn")
     p.add_argument(
         "--skip-missing-fixtures",

@@ -33,6 +33,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tests" / "eval"))
 
+from _gate import gate_exit_code  # noqa: E402
 from _skill_judge import DEFAULT_MODEL, fixture_exists, judge_relevance  # noqa: E402
 
 DATASET = REPO_ROOT / "tests" / "eval" / "preflight_skill_dataset.jsonl"
@@ -75,6 +76,13 @@ def main() -> int:
         type=float,
         default=0.70,
         help="Per-axis recall gate (default 0.70 per the wiki M6 signal threshold)",
+    )
+    parser.add_argument(
+        "--catastrophic-recall",
+        type=float,
+        default=0.40,
+        help="Hard floor (#537): overall recall below this hard-fails CI in any "
+        "gate mode (a collapsed preflight path, not LLM variance). Default 0.40.",
     )
     parser.add_argument(
         "--model",
@@ -144,11 +152,19 @@ def main() -> int:
         if recall is not None and recall < args.min_recall:
             breaches.append(f"axis={axis} recall={recall:.3f} < {args.min_recall}")
 
+    # Catastrophic floor (#537): overall recall collapse hard-fails any mode.
+    catastrophic: list[str] = []
+    if overall_recall is not None and overall_recall < args.catastrophic_recall:
+        catastrophic.append(
+            f"overall recall={overall_recall:.3f} < catastrophic floor {args.catastrophic_recall}"
+        )
+
     payload = {
         "step": "step1_relevance",
         "model": args.model,
         "gate_mode": args.gate_mode,
         "min_recall": args.min_recall,
+        "catastrophic_recall": args.catastrophic_recall,
         "summary": {
             "total": total,
             "hits": hits,
@@ -158,6 +174,7 @@ def main() -> int:
             "recall": overall_recall,
             "per_axis": per_axis_summary,
             "gate_breaches": breaches,
+            "catastrophic_breaches": catastrophic,
         },
         "rows": case_rows,
     }
@@ -168,9 +185,11 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    if args.gate_mode == "hard" and breaches:
-        return 1
-    return 0
+    return gate_exit_code(
+        quality_breaches=breaches,
+        catastrophic_breaches=catastrophic,
+        gate_mode=args.gate_mode,
+    )
 
 
 if __name__ == "__main__":

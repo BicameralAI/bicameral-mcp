@@ -46,6 +46,7 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT / "tests" / "eval"))
 
+from _gate import gate_exit_code  # noqa: E402
 from _skill_invocation_judge import (  # noqa: E402
     DEFAULT_MODEL,
     classify_outcome,
@@ -84,6 +85,13 @@ def main() -> int:
             "Default 0.30 — over-fetching is wasted tokens; the skill should "
             "honor the negative controls."
         ),
+    )
+    parser.add_argument(
+        "--catastrophic-recall",
+        type=float,
+        default=0.25,
+        help="Hard floor (#537): should-invoke recall below this hard-fails CI in "
+        "any gate mode (a collapsed invocation path, not LLM variance). Default 0.25.",
     )
     parser.add_argument(
         "--model",
@@ -160,12 +168,18 @@ def main() -> int:
     if fp_rate is not None and fp_rate > args.max_fp_rate:
         breaches.append(f"fp_rate={fp_rate:.3f} > {args.max_fp_rate}")
 
+    # Catastrophic floor (#537): should-invoke recall collapse hard-fails any mode.
+    catastrophic: list[str] = []
+    if recall is not None and recall < args.catastrophic_recall:
+        catastrophic.append(f"recall={recall:.3f} < catastrophic floor {args.catastrophic_recall}")
+
     payload = {
         "step": "step0_invocation",
         "model": args.model,
         "gate_mode": args.gate_mode,
         "min_recall": args.min_recall,
         "max_fp_rate": args.max_fp_rate,
+        "catastrophic_recall": args.catastrophic_recall,
         "summary": {
             "total": len(rows),
             "counts": counts,
@@ -177,6 +191,7 @@ def main() -> int:
             "precision": precision,
             "fp_rate": fp_rate,
             "gate_breaches": breaches,
+            "catastrophic_breaches": catastrophic,
         },
         "rows": case_rows,
     }
@@ -187,9 +202,11 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    if args.gate_mode == "hard" and breaches:
-        return 1
-    return 0
+    return gate_exit_code(
+        quality_breaches=breaches,
+        catastrophic_breaches=catastrophic,
+        gate_mode=args.gate_mode,
+    )
 
 
 if __name__ == "__main__":
