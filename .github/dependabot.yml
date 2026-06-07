@@ -1,5 +1,15 @@
 version: 2
 updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "flow:feature"
+      - "dependencies"
+      - "github-actions"
+
   - package-ecosystem: "pip"
     directory: "/"
     target-branch: "dev"
