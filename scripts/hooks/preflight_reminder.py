@@ -14,6 +14,13 @@ discovery the rest of the contract depends on — preflight needs
 can't extract file paths if we forbid it from looking at the codebase
 first.
 
+#402: Slash-command prompts (``/qor-plan <issue-url>``) were silently
+skipping the gate because the classifier's verb list missed ``plan``
+and had no slash-command awareness. The hook now defers to
+:func:`classify_prompt` and records a ``trigger_evaluated`` JSONL event
+carrying the ``prompt_surface_form`` so regressions in the trigger
+surface are visible to the operator.
+
 Updated contract:
   - Read / Grep / Glob FIRST — caller LLM resolves "the reorder feature"
     to concrete file paths.
@@ -35,11 +42,13 @@ broken hook never blocks a user.
 from __future__ import annotations
 
 import json
+import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from hooks.preflight_intent import should_fire_preflight  # noqa: E402
+from hooks.preflight_intent import ClassifyResult, classify_prompt  # noqa: E402
 
 REMINDER_TEXT = (
     "<system-reminder>\n"
@@ -69,6 +78,59 @@ REMINDER_TEXT = (
     "</system-reminder>"
 )
 
+# #402 — trigger_evaluated telemetry: where the hook records each prompt's
+# classification + surface form. Local JSONL, append-only, mode 0o600.
+# The PostHog uplink for this stream is deferred — the hook is a subprocess
+# that exits in ~ms, so synchronous network I/O is not viable. A follow-up
+# will drain this file from the long-lived MCP server.
+_TRIGGER_LOG = Path.home() / ".bicameral" / "preflight_trigger_evaluated.jsonl"
+_TELEMETRY_OFF = frozenset({"0", "false", "no", "off"})
+
+
+def _telemetry_disabled() -> bool:
+    """Return True iff the operator has globally disabled bicameral telemetry.
+
+    Mirrors the check in ``telemetry.py`` so the trigger log obeys the same
+    opt-out switch users already know. Default: enabled.
+    """
+    raw = os.environ.get("BICAMERAL_TELEMETRY", "").strip().lower()
+    return raw in _TELEMETRY_OFF
+
+
+def _record_trigger_evaluated(result: ClassifyResult) -> None:
+    """Append a single ``trigger_evaluated`` row to the local JSONL log.
+
+    Best-effort: any I/O failure is swallowed so a broken telemetry path
+    never blocks a user prompt. Privacy: the prompt itself is NOT
+    recorded — only the classifier's surface-form label and fire bit,
+    plus the slash-command name when present (already public — the user
+    just typed it).
+    """
+    if _telemetry_disabled():
+        return
+    try:
+        _TRIGGER_LOG.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "event": "preflight.trigger_evaluated",
+            "ts": datetime.now(UTC).isoformat(),
+            "fired": result.fire,
+            "prompt_surface_form": result.prompt_surface_form,
+            "slash_command": result.slash_command,
+        }
+        line = json.dumps(record, separators=(",", ":")) + "\n"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        fd = os.open(str(_TRIGGER_LOG), flags, 0o600)
+        try:
+            with os.fdopen(fd, "ab") as f:
+                f.write(line.encode("utf-8"))
+        except Exception:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+    except OSError:
+        return
+
 
 def main() -> int:
     try:
@@ -76,7 +138,9 @@ def main() -> int:
     except (json.JSONDecodeError, ValueError):
         return 0
     prompt = payload.get("prompt", "") if isinstance(payload, dict) else ""
-    if should_fire_preflight(prompt):
+    result = classify_prompt(prompt)
+    _record_trigger_evaluated(result)
+    if result.fire:
         json.dump(
             {
                 "hookSpecificOutput": {
