@@ -1,0 +1,46 @@
+name: Security Scan
+
+# Bandit SAST (blocking) + pip-audit (advisory). Vendored rather than consumed:
+# bicameral-integrations has no reusable for these, and the scan targets differ
+# for mcp's flat package layout. Actions SHA-pinned per #544.
+# See docs/research-brief-557-ci-security-gates-2026-06-08.md (#557).
+
+on:
+  pull_request:
+    branches: ["main", "dev"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  bandit:
+    name: Bandit SAST (blocking)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip bandit==1.8.6
+      - name: Bandit (package source, excluding tests/dashboard/docs)
+        # Recurse the repo; in CI only tracked source is present (no vendored
+        # working trees). B101 (assert_used) skipped — asserts are idiomatic and
+        # tests are excluded anyway.
+        run: bandit -r . --exclude './tests,./dashboard,./docs,./mocks' --skip B101
+
+  pip-audit:
+    name: pip-audit (advisory)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip pip-audit==2.9.0
+      - name: Install project runtime deps so pip-audit sees them
+        run: python -m pip install -e .
+      - name: Audit installed dependencies for known CVEs
+        run: pip-audit

@@ -1,0 +1,37 @@
+name: CodeQL
+
+# Consumes the SHA-pinned reusable CodeQL template published by
+# BicameralAI/bicameral-integrations for the wider Bicameral ecosystem.
+# Pin: b1b52b5d (integrations main HEAD, 2026-06-08). Bump deliberately.
+# See docs/research-brief-557-ci-security-gates-2026-06-08.md (#557).
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main", "dev"]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  schedule:
+    - cron: "30 6 * * 1"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    # Write scopes are re-declared at the caller job so the top-level token
+    # stays read-only; the reusable's effective token is the intersection of
+    # this job's grant and the reusable's own job permissions.
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
+    uses: BicameralAI/bicameral-integrations/.github/workflows/_reusable-codeql.yml@b1b52b5d1c37c8cfdd5f916a9558cbf019b66a6e
+    with:
+      languages: python
