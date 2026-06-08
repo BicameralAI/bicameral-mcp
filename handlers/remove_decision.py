@@ -36,7 +36,7 @@ import logging
 from datetime import UTC, datetime
 
 from contracts import RemoveDecisionResponse
-from ledger.queries import decision_exists
+from ledger.queries import _validated_record_id, decision_exists
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ async def handle_remove_decision(
     subsequent calls because the row is no longer present — the event
     journal already records the original removal.
     """
+    decision_id = _validated_record_id(decision_id, "decision")
     if not reason or not reason.strip():
         raise ValueError("remove_decision requires a non-empty 'reason' (audit-trail obligation)")
 
@@ -162,6 +163,7 @@ async def _hard_delete_decision(client, decision_id: str) -> None:
     NONE on any decision that pointed at this id, so they become
     root-level decisions instead of dangling pointers.
     """
+    decision_id = _validated_record_id(decision_id, "decision")
     # NULL out child pointers so hierarchical decisions don't dangle.
     await client.query(
         f"UPDATE decision SET parent_decision_id = NONE WHERE parent_decision_id = '{decision_id}'"

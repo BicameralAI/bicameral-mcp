@@ -17,7 +17,7 @@ import logging
 from datetime import UTC, datetime
 
 from contracts import RatifyResponse
-from ledger.queries import decision_exists, project_decision_status
+from ledger.queries import _validated_record_id, decision_exists, project_decision_status
 from preflight_telemetry import telemetry_enabled, write_engagement
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,7 @@ async def handle_ratify(
     Idempotent: calling with the same action on an already-finalized decision
     returns was_new=False and leaves the existing signoff untouched.
     """
+    decision_id = _validated_record_id(decision_id, "decision")
     if action not in ("ratify", "reject"):
         raise ValueError(f"Unknown action '{action}'; must be 'ratify' or 'reject'")
 

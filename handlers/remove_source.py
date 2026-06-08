@@ -34,6 +34,7 @@ from datetime import UTC, datetime
 
 from contracts import RemoveSourcePlan, RemoveSourceResponse
 from ledger.queries import (
+    _validated_record_id,
     get_decisions_for_span,
     get_input_span_row,
     input_span_exists,
@@ -161,10 +162,12 @@ async def _apply_cascading_remove(
     """Soft-delete each decision in ``decision_ids`` and hard-delete the span
     row + its outgoing ``yields`` edges. Returns the list of decision ids
     that were actually mutated."""
+    span_id = _validated_record_id(span_id, "input_span")
     now_iso = datetime.now(UTC).isoformat()
     cascaded: list[str] = []
 
     for did in decision_ids:
+        did = _validated_record_id(did, "decision")
         existing = await client.query(
             f"SELECT signoff FROM {did} LIMIT 1",
         )
