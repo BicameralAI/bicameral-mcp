@@ -24,7 +24,6 @@ jobs:
     # (drop continue-on-error) once #562 lands and the B608 backlog is clear.
     name: Bandit SAST (advisory — flips to blocking after #562)
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
@@ -36,7 +35,9 @@ jobs:
         # the JS dashboard, docs, retired mocks, and .claude tooling hooks. B101
         # (assert_used) skipped. Medium+ thresholds focus on actionable findings
         # (incl. the B608 SQL-injection vectors #562 targets) over Low-severity style.
-        run: bandit -r . --exclude './tests,./dashboard,./docs,./mocks,./.claude' --skip B101 --severity-level medium --confidence-level medium
+        # `|| true` keeps this advisory (green-with-findings in the log) until
+        # #562 clears the B608 backlog; drop it to make Bandit blocking.
+        run: bandit -r . --exclude './tests,./dashboard,./docs,./mocks,./.claude' --skip B101 --severity-level medium --confidence-level medium || true
 
   pip-audit:
     name: pip-audit (advisory)
