@@ -154,6 +154,8 @@ jobs:
           tests/test_m_shadow_divergence_log.py
           tests/test_shadow_dispatch.py
           tests/test_query_safety_562.py
+          tests/test_preflight_intent.py
+          tests/test_preflight_hook.py
           -v --tb=short
           --junitxml=test-results/results.xml
           --html=test-results/report.html --self-contained-html

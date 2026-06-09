@@ -14,6 +14,7 @@ broken contract regardless of whether the hook process exits cleanly.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,14 +23,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK_SCRIPT = REPO_ROOT / "scripts" / "hooks" / "preflight_reminder.py"
 
 
-def _run_hook(stdin_text: str) -> tuple[int, str, str]:
+def _run_hook(stdin_text: str, env_overrides: dict[str, str] | None = None) -> tuple[int, str, str]:
     """Invoke the hook with stdin_text on stdin; return (rc, stdout, stderr)."""
+    env = os.environ.copy()
+    if env_overrides:
+        env.update(env_overrides)
     proc = subprocess.run(
         [sys.executable, str(HOOK_SCRIPT)],
         input=stdin_text,
         capture_output=True,
         text=True,
         timeout=10,
+        env=env,
     )
     return proc.returncode, proc.stdout, proc.stderr
 
@@ -120,3 +125,81 @@ def test_reminder_gates_writes_not_discovery():
     # Negative: must NOT forbid file-inspection tools (the old shape).
     assert "before any file-inspection tool" not in ctx
     assert "Before invoking any file-inspection tool" not in ctx
+
+
+# ── #402: slash-command surface form coverage ─────────────────────────
+
+
+def test_hook_fires_on_qor_plan_with_issue_url(tmp_path):
+    """End-to-end sociable test of the exact #402 reproduction.
+
+    The hook is run as a real subprocess (same shape as Claude Code 2.x
+    invokes it) with the literal failing prompt — ``/qor-plan
+    <github-issue-url>``. It must emit the preflight ``hookSpecificOutput``
+    envelope and write a ``trigger_evaluated`` row to the local JSONL log
+    with ``prompt_surface_form == "slash_command_with_url"``.
+
+    The classifier and the hook are NOT mocked — this is the contract
+    the agent layer actually sees.
+    """
+    payload = {"prompt": ("/qor-plan https://github.com/BicameralAI/bicameral-daemon/issues/1")}
+    env = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}
+    rc, out, _ = _run_hook(json.dumps(payload), env_overrides=env)
+    assert rc == 0
+    inner = _hook_output(json.loads(out))
+    assert "additionalContext" in inner
+    assert "bicameral.preflight" in inner["additionalContext"]
+
+    # The trigger_evaluated row carries the surface-form label so we can
+    # spot future regressions in the dashboard before users do.
+    log_file = tmp_path / ".bicameral" / "preflight_trigger_evaluated.jsonl"
+    assert log_file.exists(), "hook must write the trigger_evaluated row"
+    lines = [json.loads(line) for line in log_file.read_text().splitlines() if line]
+    assert any(
+        row.get("fired") is True
+        and row.get("prompt_surface_form") == "slash_command_with_url"
+        and row.get("slash_command") == "qor-plan"
+        for row in lines
+    ), f"expected trigger_evaluated row not found in {lines!r}"
+
+
+def test_hook_does_not_fire_for_qor_status(tmp_path):
+    """Read-only slash-commands must not produce ``hookSpecificOutput`` but
+    still record a ``fired: false`` telemetry row so we can spot future
+    over-fire regressions symmetrically."""
+    payload = {"prompt": "/qor-status"}
+    env = {"HOME": str(tmp_path), "USERPROFILE": str(tmp_path)}
+    rc, out, _ = _run_hook(json.dumps(payload), env_overrides=env)
+    assert rc == 0
+    parsed = json.loads(out) if out.strip() else {}
+    assert "hookSpecificOutput" not in parsed
+
+    log_file = tmp_path / ".bicameral" / "preflight_trigger_evaluated.jsonl"
+    assert log_file.exists()
+    lines = [json.loads(line) for line in log_file.read_text().splitlines() if line]
+    assert any(
+        row.get("fired") is False
+        and row.get("prompt_surface_form") == "slash_command_bare"
+        and row.get("slash_command") == "qor-status"
+        for row in lines
+    )
+
+
+def test_hook_telemetry_disabled_env_skips_jsonl(tmp_path):
+    """``BICAMERAL_TELEMETRY=0`` must suppress the trigger_evaluated log
+    without affecting the gate decision — opt-out parity with the
+    existing relay telemetry."""
+    payload = {"prompt": "/qor-plan add stripe webhook"}
+    env = {
+        "HOME": str(tmp_path),
+        "USERPROFILE": str(tmp_path),
+        "BICAMERAL_TELEMETRY": "0",
+    }
+    rc, out, _ = _run_hook(json.dumps(payload), env_overrides=env)
+    assert rc == 0
+    # Gate still fires — telemetry opt-out is decoupled from the gate.
+    inner = _hook_output(json.loads(out))
+    assert "additionalContext" in inner
+    # JSONL log is absent because telemetry is disabled.
+    log_file = tmp_path / ".bicameral" / "preflight_trigger_evaluated.jsonl"
+    assert not log_file.exists(), "BICAMERAL_TELEMETRY=0 must suppress the log file"
