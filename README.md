@@ -8,10 +8,19 @@
 [![Python](https://img.shields.io/pypi/pyversions/bicameral-mcp)](https://pypi.org/project/bicameral-mcp/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/test-mcp-regression.yml?branch=main&label=tests)](https://github.com/BicameralAI/bicameral-mcp/actions)
+[![Lint + Types](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/lint-and-typecheck.yml?branch=main&label=lint%2Btypes)](https://github.com/BicameralAI/bicameral-mcp/actions/workflows/lint-and-typecheck.yml)
+[![Secret scan](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/secret-scan.yml?branch=main&label=secret-scan)](https://github.com/BicameralAI/bicameral-mcp/actions/workflows/secret-scan.yml)
 
 AI agents ship code fast. They forget what your team agreed — and requirement gaps surfaced mid-implementation are buried under thousands of lines of code.
 
 Bicameral MCP is a **spec compliance layer** for AI-assisted engineering. Local-first; runs as an [MCP server](https://spec.modelcontextprotocol.io/). It ingests your meeting transcripts, PRDs, and Slack threads, captures any mid-implementation decision that was not discussed, to be ratified async by your product owner, and pins each one to the code that implements it — so your agent finds out the moment it drifts from either the written spec or the spoken one.
+
+| | |
+|---|---|
+| **Maturity** | Published on PyPI; local-first MCP server; Solo + Team modes (`setup` wizard picks at install) |
+| **Footprint** | Embedded SurrealDB in-process — no separate server, no daemon; install via `uv` or `pip` |
+| **Trust boundary** | The OS user account. Code, decisions, and transcripts stay on your machine unless you opt into Team mode (which shares an append-only event file via a substrate *you* own) |
+| **Assurance** | Phase-gated regression suite on real adapters (`memory://`); sociable handler/ledger tests; lint+types and secret-scan CI gates. Broader security/governance gates tracked in [#557](https://github.com/BicameralAI/bicameral-mcp/issues/557) |
 
 ---
 

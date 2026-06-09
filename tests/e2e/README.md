@@ -1,14 +1,20 @@
 # v0 user flow e2e
 
-End-to-end validation of `BicameralAI/bicameral#108`'s six canonical user
-flows, driven by **real Claude Code CLI sessions** with `bicameral-mcp`
-registered as an MCP server. Test fixture: a pinned commit of
-`github.com/desktop/desktop`, with `docs/process/roadmap.md` as ingest
-content.
+End-to-end validation of the canonical user flows in
+`BicameralAI/bicameral#108`, driven by **real Claude Code CLI sessions** with
+`bicameral-mcp` registered as an MCP server. Five flows (1–5) are automated.
+Test fixture: a pinned commit of `github.com/desktop/desktop`, with
+`docs/process/roadmap.md` as ingest content.
 
-This is the canonical CI test for the spec. The handler-replay simulation
-at `scripts/sim_issue_108_flows.py` complements it for fast local iteration
-on handler logic without burning Claude API calls.
+> **Status: shelved to manual dispatch (#556).** This suite is no longer a PR
+> gate. The harness accumulated maintenance debt — API-key credit exhaustion,
+> agent-budget non-determinism (#272), and twice-reworked auth (#528, #540) —
+> that blocked PRs without actionable signal. The test code and prompts are
+> preserved; run it manually via **Actions → v0 user flow e2e → Run workflow**.
+> A replacement validation strategy is tracked in RFQ #555.
+
+The handler-replay simulation at `scripts/sim_issue_108_flows.py` is the fast
+local path for iterating on handler logic without burning Claude API calls.
 
 ## What it tests
 
@@ -66,10 +72,13 @@ per flow.
 
 ## CI
 
-GitHub Actions workflow: `.github/workflows/v0-user-flow-e2e.yml`.
+GitHub Actions workflow: `.github/workflows/v0-user-flow-e2e.yml` —
+**dispatch-only (shelved, #556)**.
 
-- Triggers on PRs touching `tests/e2e/**`, `handlers/**`, `ledger/**`,
-  `contracts.py`, `skills/bicameral-*/**`, or the workflow itself.
+- **No PR trigger.** Run manually: Actions → *v0 user flow e2e* → *Run workflow*.
+  (It previously triggered on PRs touching `tests/e2e/**`, `handlers/**`,
+  `ledger/**`, `contracts.py`, or `skills/bicameral-*/**`.)
+- Replacement validation strategy: RFQ #555.
 - Runs in the `ci-test` GitHub environment for `ANTHROPIC_API_KEY`
   (switched from `production` + `CLAUDE_CODE_OAUTH_TOKEN` in #528 after the
   org subscription was disabled).

@@ -1,54 +1,76 @@
 # MCP Regression Tests
 
-Tests are gated by phase. Each phase gate is an env var. Run only what's implemented.
+The suite is **phase-gated**: each phase layers on the previous one and is toggled
+by an environment variable, so you can run only what is wired up locally. All
+phases run against **real adapters** — the legacy mock layer is retired (see
+`mocks/README.md` for history). In tests the embedded SurrealDB runs in-process
+via `SURREAL_URL=memory://` (no server, no persistence).
 
-## Running tests
+## Quickstart
 
 ```bash
-source .venv/bin/activate  # or: python -m pytest directly via .venv/bin/pytest
+source .venv/bin/activate            # or call .venv/bin/pytest directly
 
-# Packaging / startup smoke
+# Packaging / startup smoke — registers and lists every MCP tool
 bicameral-mcp --smoke-test
 
-# Phase 0 — always green (mocks only, no dependencies)
-pytest tests/test_phase0_mocks.py -v
-
-# Phase 1 — requires real code locator (Silong's work)
-USE_REAL_CODE_LOCATOR=1 REPO_PATH=/path/to/repo pytest tests/test_phase1_code_locator.py -v
-
-# Phase 2 — embedded SurrealDB path for tests
-USE_REAL_LEDGER=1 SURREAL_URL=memory:// pytest tests/test_phase2_ledger.py -v
-
-# Phase 3 — full integration (requires both)
-USE_REAL_CODE_LOCATOR=1 USE_REAL_LEDGER=1 SURREAL_URL=memory:// REPO_PATH=/path/to/repo pytest tests/test_phase3_integration.py -v
-
-# All phases at once (use for CI once all phases are complete)
-pytest tests/ -v
+# Full suite, the way CI runs it
+SURREAL_URL=memory:// pytest tests/ -v
 ```
 
-## Phase status
+## Phase gates
 
-| File | Passes without dependencies | Unblocked by |
-|------|-----------------------------|--------------|
-| `test_phase0_mocks.py` | YES | — |
-| `test_phase1_code_locator.py` | NO | real code locator index + provider credentials |
-| `test_phase2_ledger.py` | NO | `USE_REAL_LEDGER=1` + `memory://` or SurrealDB URL |
-| `test_phase3_integration.py` | NO | Both Phase 1 + Phase 2 complete |
+| Phase | File | Gate (env) | Validates |
+|---|---|---|---|
+| 1 | `test_phase1_code_locator.py` | `USE_REAL_CODE_LOCATOR=1` + `REPO_PATH=…` | Code-locator correctness: located paths exist on disk, symbols are real repo names, confidence in range |
+| 2 | `test_phase2_ledger.py` | `USE_REAL_LEDGER=1` + `SURREAL_URL=memory://` | Ledger correctness: idempotent ingest, BM25 search relevance, file→decision reverse traversal, `link_commit` status updates |
+| 3 | `test_phase3_integration.py` | Both of the above | End-to-end: ingest transcript → code locator → graph store → query-back coheres |
 
-## What each phase validates
+```bash
+# Phase 1
+USE_REAL_CODE_LOCATOR=1 REPO_PATH=/path/to/repo pytest tests/test_phase1_code_locator.py -v
 
-**Phase 0**: Contract shapes. Do all 4 tools return valid Pydantic types? Are all required fields present?
+# Phase 2
+USE_REAL_LEDGER=1 SURREAL_URL=memory:// pytest tests/test_phase2_ledger.py -v
 
-**Phase 1**: Code locator correctness. Do located file paths exist on disk? Are symbols real names from the repo? Is confidence in the expected range?
+# Phase 3 (full integration — needs both gates)
+USE_REAL_CODE_LOCATOR=1 USE_REAL_LEDGER=1 SURREAL_URL=memory:// REPO_PATH=/path/to/repo \
+  pytest tests/test_phase3_integration.py -v
+```
 
-**Phase 2**: Ledger correctness. Is ingestion idempotent? Does BM25 search return relevant results? Does reverse traversal (file → decisions) work? Does `link_commit` update statuses correctly?
+## Environment variables
 
-**Phase 3**: End-to-end pipeline. Does ingesting a sample transcript + running code locator + storing in graph + querying back produce a coherent result?
+| Var | Default | Effect |
+|---|---|---|
+| `SURREAL_URL` | `memory://` | Ledger URL for tests (in-process, no persistence). Override when exercising a persistent SurrealKV path. |
+| `USE_REAL_CODE_LOCATOR` | unset | Gate phase-1/3 code-locator tests on a real tree-sitter index. |
+| `USE_REAL_LEDGER` | unset | Gate phase-2/3 tests on a real embedded SurrealDB adapter. |
+| `REPO_PATH` | `.` | Repo the code locator indexes. |
 
 ## Packaging smoke
 
-The installable package surface is now the first startup check:
+The installable surface is the first startup check:
 
-1. `pip install -r requirements.txt`
+1. `pip install -e ".[test]"`
 2. `bicameral-mcp --smoke-test`
-3. Verify the command prints the 5 registered tool names
+3. It prints the server name/version and **every registered MCP tool name** — 20
+   today (18 `bicameral.*` ledger/session tools + the 2 code-locator primitives
+   `validate_symbols` and `get_neighbors`). The asserted source of truth is
+   `EXPECTED_TOOL_NAMES` in `server.py`; the smoke test fails if the live registry
+   drifts from it. The user-facing subset is documented in the root `README.md`
+   § MCP Tools Reference.
+
+## Sociable testing
+
+Handler and ledger tests default to **sociable** units (real `memory://` adapter,
+`SimpleNamespace` ctx) — not mocks. The full contract and the reference patterns
+are in the repo-root `CLAUDE.md` § "Sociable Testing for UX Paths".
+
+## What CI runs
+
+`.github/workflows/test-mcp-regression.yml` runs the phase suites plus the ledger,
+schema-recovery, replay-determinism, extractor-parity, shadow-dispatch, and
+dashboard tests in a single `pytest` invocation against `SURREAL_URL=memory://`,
+then uploads JUnit XML + a self-contained HTML report as artifacts. The end-to-end
+user-flow suite is separate and currently shelved to manual dispatch — see
+`tests/e2e/README.md`.
