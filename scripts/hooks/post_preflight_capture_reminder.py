@@ -45,6 +45,10 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from hooks._prompt_intent_state import read_intent  # noqa: E402
 
 PREFLIGHT_TOOL_NAME = "mcp__bicameral__bicameral_preflight"
 
@@ -132,6 +136,12 @@ def main() -> int:
         return 0
     decisions = response.get("decisions") or []
     if not isinstance(decisions, list) or not decisions:
+        return 0
+    # #170: the originating prompt had no implementation intent (read-only) —
+    # nothing to refine, so suppress the disambiguation reminder. `is False`
+    # (not falsy): only a definitive non-impl classification suppresses; a
+    # missing/unreadable state file (None) defaults to firing.
+    if read_intent(payload.get("session_id", "")) is False:
         return 0
     json.dump(
         {

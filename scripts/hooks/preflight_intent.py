@@ -177,14 +177,33 @@ def classify_prompt(prompt: str) -> ClassifyResult:
         if skip.search(prompt):
             return ClassifyResult(False, surface_form, command)
 
-    if _VERB_REGEX.search(prompt):
-        return ClassifyResult(True, surface_form, command)
-
-    lowered = prompt.lower()
-    if any(phrase in lowered for phrase in INDIRECT_INTENT_PHRASES):
+    if has_implementation_signal(prompt):
         return ClassifyResult(True, surface_form, command)
 
     return ClassifyResult(False, surface_form, command)
+
+
+def has_implementation_signal(prompt: str) -> bool:
+    """True iff the prompt carries any code-implementation signal — an
+    implementation verb or an indirect-intent phrase — INDEPENDENT of the
+    SKIP_PATTERNS.
+
+    #170: the post-preflight capture gate suppresses its disambiguation
+    reminder only when this is False (a genuinely read-only prompt cannot be
+    refining a surfaced decision). It deliberately does NOT consult
+    SKIP_PATTERNS: a skip-listed-but-verb-bearing prompt like "add tests for X"
+    still carries implementation signal and must reach the user-disambiguation
+    per #175 — never lexically pre-judged "compatible."
+    """
+    if not prompt or not prompt.strip():
+        return False
+    _surface_form, command, _remainder = _detect_surface_form(prompt)
+    if command is not None and command in IMPL_INTENT_SLASH_COMMANDS:
+        return True
+    if _VERB_REGEX.search(prompt):
+        return True
+    lowered = prompt.lower()
+    return any(phrase in lowered for phrase in INDIRECT_INTENT_PHRASES)
 
 
 def should_fire_preflight(prompt: str) -> bool:

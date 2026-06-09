@@ -48,7 +48,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from hooks.preflight_intent import ClassifyResult, classify_prompt  # noqa: E402
+from hooks._prompt_intent_state import write_intent  # noqa: E402
+from hooks.preflight_intent import (  # noqa: E402
+    ClassifyResult,
+    classify_prompt,
+    has_implementation_signal,
+)
 
 REMINDER_TEXT = (
     "<system-reminder>\n"
@@ -140,6 +145,15 @@ def main() -> int:
     prompt = payload.get("prompt", "") if isinstance(payload, dict) else ""
     result = classify_prompt(prompt)
     _record_trigger_evaluated(result)
+    # #170: persist whether the prompt carries ANY implementation signal so the
+    # PostToolUse capture hook can stay silent on genuinely read-only prompts
+    # (no refinement possible). Uses has_implementation_signal — NOT
+    # should_fire_preflight — so skip-listed-but-verb-bearing prompts like
+    # "add tests for X" still reach the user-disambiguation per #175.
+    write_intent(
+        payload.get("session_id", "") if isinstance(payload, dict) else "",
+        has_implementation_signal(prompt),
+    )
     if result.fire:
         json.dump(
             {
