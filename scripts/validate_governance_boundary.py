@@ -195,7 +195,9 @@ def main() -> int:
     for path in paths:
         root = forbidding_root(path, roots)
         if root is not None:
-            problems.append(f"local/sibling artifact must not be committed: {path}  (matches `{root}`)")
+            problems.append(
+                f"local/sibling artifact must not be committed: {path}  (matches `{root}`)"
+            )
 
     problems.extend(stray_governance_files(paths))
     problems.extend(check_registry_gitignore_agreement())
