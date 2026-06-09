@@ -1,6 +1,6 @@
 name: Security Scan
 
-# Bandit SAST (blocking) + pip-audit (advisory). Vendored rather than consumed:
+# Bandit SAST (advisory until the first full-tree backlog is cleared) + pip-audit (advisory). Vendored rather than consumed:
 # bicameral-integrations has no reusable for these, and the scan targets differ
 # for mcp's flat package layout. Actions SHA-pinned per #544.
 # See docs/research-brief-557-ci-security-gates-2026-06-08.md (#557).
@@ -16,16 +16,17 @@ permissions:
 
 jobs:
   bandit:
-    # ADVISORY for now (continue-on-error) — a first SAST pass on this large,
-    # never-scanned codebase surfaces pre-existing findings. Most are Low-severity
-    # (try/except/pass, subprocess-partial-path); the actionable ones are the
-    # Medium B608 (hardcoded_sql_expressions) sites in the ledger/CLI query paths,
-    # which #562 (daemon/projection query safety) remediates. Flip to blocking
-    # (drop continue-on-error) once #562 lands and the B608 backlog is clear.
-    name: Bandit SAST (advisory — flips to blocking after #562)
+    # ADVISORY for now: #562 closed the caller-controlled MCP query-safety P0,
+    # but the first full-tree Bandit pass still surfaces separate Medium/High
+    # findings in CLI/operator paths, code-locator storage, schema migration,
+    # URL fetches, and checksum helpers. Keep producing evidence without
+    # blocking unrelated work until that backlog is triaged.
+    name: Bandit SAST (advisory)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.13"
@@ -33,10 +34,8 @@ jobs:
       - name: Bandit (package source — Medium+ severity/confidence)
         # Recurse the repo; in CI only tracked source is present. Exclude tests,
         # the JS dashboard, docs, retired mocks, and .claude tooling hooks. B101
-        # (assert_used) skipped. Medium+ thresholds focus on actionable findings
-        # (incl. the B608 SQL-injection vectors #562 targets) over Low-severity style.
-        # `|| true` keeps this advisory (green-with-findings in the log) until
-        # #562 clears the B608 backlog; drop it to make Bandit blocking.
+        # (assert_used) skipped. Medium+ thresholds focus on actionable findings.
+        # `|| true` keeps this advisory while the initial full-tree backlog is triaged.
         run: bandit -r . --exclude './tests,./dashboard,./docs,./mocks,./.claude' --skip B101 --severity-level medium --confidence-level medium || true
 
   pip-audit:
@@ -45,6 +44,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.13"
