@@ -42,7 +42,7 @@ USE_REAL_CODE_LOCATOR=1 USE_REAL_LEDGER=1 SURREAL_URL=memory:// REPO_PATH=/path/
 
 | Var | Default | Effect |
 |---|---|---|
-| `SURREAL_URL` | `surrealkv://~/.bicameral/ledger.db` | Ledger URL. Use `memory://` for tests (in-process, no persistence). |
+| `SURREAL_URL` | `memory://` | Ledger URL for tests (in-process, no persistence). Override when exercising a persistent SurrealKV path. |
 | `USE_REAL_CODE_LOCATOR` | unset | Gate phase-1/3 code-locator tests on a real tree-sitter index. |
 | `USE_REAL_LEDGER` | unset | Gate phase-2/3 tests on a real embedded SurrealDB adapter. |
 | `REPO_PATH` | `.` | Repo the code locator indexes. |
