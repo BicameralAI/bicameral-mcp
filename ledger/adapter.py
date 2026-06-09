@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .client import LedgerClient, LedgerError
 from .queries import (
+    _validated_record_id,
     create_code_region,
     decision_exists,
     find_subject_identities_for_decision,
@@ -437,6 +438,7 @@ class SurrealDBLedgerAdapter:
 
     async def get_decision_description(self, decision_id: str) -> str:
         await self._ensure_connected()
+        decision_id = _validated_record_id(decision_id, "decision")
         rows = await self._client.query(f"SELECT description FROM {decision_id} LIMIT 1")
         return str((rows or [{}])[0].get("description", "")) if rows else ""
 
@@ -1811,6 +1813,7 @@ class SurrealDBLedgerAdapter:
         Idempotent. Returns the projected decision status after the write.
         """
         await self._ensure_connected()
+        decision_id = _validated_record_id(decision_id, "decision")
         await self._client.query(
             f"UPDATE {decision_id} SET signoff = $signoff, updated_at = time::now()",
             {"signoff": signoff},
@@ -1834,6 +1837,8 @@ class SurrealDBLedgerAdapter:
         UPDATE is a full overwrite. Returns ``{"old_status": "superseded"}``.
         """
         await self._ensure_connected()
+        new_id = _validated_record_id(new_id, "decision")
+        old_id = _validated_record_id(old_id, "decision")
         await relate_supersedes(
             self._client,
             new_id,

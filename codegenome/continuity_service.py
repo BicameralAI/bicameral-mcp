@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass
 
 from contracts import CodeRegionSummary, ContinuityResolution
+from ledger.queries import _validated_record_id
 
 from .adapter import CodeGenomeAdapter, SubjectIdentity
 from .continuity import find_continuity_match
@@ -233,6 +234,7 @@ async def evaluate_continuity_for_drift(
 
 async def _resolve_code_subject_id(ledger, decision_id: str) -> str | None:
     """Walk decision -> about -> code_subject; return the first subject id."""
+    decision_id = _validated_record_id(decision_id, "decision")
     rows = await ledger._client.query(  # type: ignore[attr-defined]
         f"SELECT type::string(id) AS subject_id FROM {decision_id}->about->code_subject LIMIT 1",
     )

@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 
 from contracts import ResolveCollisionResponse
 from ledger.queries import (
+    _validated_record_id,
     decision_exists,
     project_decision_status,
     relate_context_for,
@@ -52,6 +53,14 @@ async def handle_resolve_collision(
 
     inner = getattr(ledger, "_inner", ledger)
     client = inner._client
+    if new_id is not None:
+        new_id = _validated_record_id(new_id, "decision")
+    if old_id is not None:
+        old_id = _validated_record_id(old_id, "decision")
+    if span_id is not None:
+        span_id = _validated_record_id(span_id, "input_span")
+    if decision_id is not None:
+        decision_id = _validated_record_id(decision_id, "decision")
 
     _session_id = getattr(ctx, "session_id", None) or ""
     _now_iso = datetime.now(UTC).isoformat()
