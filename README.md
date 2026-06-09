@@ -10,6 +10,8 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/test-mcp-regression.yml?branch=main&label=tests)](https://github.com/BicameralAI/bicameral-mcp/actions)
 [![Lint + Types](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/lint-and-typecheck.yml?branch=main&label=lint%2Btypes)](https://github.com/BicameralAI/bicameral-mcp/actions/workflows/lint-and-typecheck.yml)
 [![Secret scan](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/secret-scan.yml?branch=main&label=secret-scan)](https://github.com/BicameralAI/bicameral-mcp/actions/workflows/secret-scan.yml)
+[![CodeQL](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/codeql.yml?branch=main&label=CodeQL)](https://github.com/BicameralAI/bicameral-mcp/actions/workflows/codeql.yml)
+[![Security Scan](https://img.shields.io/github/actions/workflow/status/BicameralAI/bicameral-mcp/security-scan.yml?branch=main&label=security-scan)](https://github.com/BicameralAI/bicameral-mcp/actions/workflows/security-scan.yml)
 
 AI agents ship code fast. They forget what your team agreed — and requirement gaps surfaced mid-implementation are buried under thousands of lines of code.
 
@@ -218,4 +220,3 @@ MIT
 `bicameral-mcp` is the agent-facing tool surface. It exposes local Bicameral actions to coding agents: ingest, preflight, bind, review-command emission, and local run loops.
 
 It is not the source-specific integration repo, the local bot runtime, or the hosted code graph. See `docs/adr/0001-mcp-repository-boundary.md`.
-

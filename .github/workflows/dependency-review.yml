@@ -1,0 +1,24 @@
+name: Dependency Review
+
+# Consumes the SHA-pinned reusable dependency-review template from
+# BicameralAI/bicameral-integrations. Pin: b1b52b5d (integrations main, 2026-06-08).
+# Starts ADVISORY (never fails the build) because it requires the repo's
+# Dependency Graph to be enabled; flip advisory:false + fail-on-severity once
+# Dependency Graph is confirmed on. See docs/research-brief-557-ci-security-gates-2026-06-08.md (#557).
+
+on:
+  pull_request:
+    branches: ["main", "dev"]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: BicameralAI/bicameral-integrations/.github/workflows/_reusable-dependency-review.yml@b1b52b5d1c37c8cfdd5f916a9558cbf019b66a6e
+    with:
+      advisory: true
+      fail-on-severity: moderate
