@@ -4,7 +4,7 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 tiktoken>=0.7.0,<1.0.0
 ruff>=0.5.0
-mypy>=1.10.0
+mypy>=2.1.0
 build>=1.0.0
 colorama
 pywin32>=310; sys_platform == "win32"
