@@ -92,6 +92,13 @@ def test_ttl_sweep_removes_stale():
     assert read_intent(fresh_sid) is True, "fresh state file must survive the sweep"
 
 
+def test_read_stale_is_none():
+    sid = _sid()
+    write_intent(sid, False)
+    os.utime(state_path(sid), (time.time() - 90_000, time.time() - 90_000))
+    assert read_intent(sid) is None
+
+
 # ── PostToolUse capture-hook behavioral tests (subprocess) ──────────────
 
 
@@ -146,7 +153,9 @@ def test_write_side_persists_signal():
     prompt = "refactor the rate limiter to a sliding window"
     rc, _ = _run(PRE_HOOK, {"prompt": prompt, "session_id": sid})
     assert rc == 0
-    assert read_intent(sid) == has_implementation_signal(prompt) is True
+    expected = has_implementation_signal(prompt)
+    assert expected is True
+    assert read_intent(sid) is True
 
 
 def test_write_side_persists_false_for_read_only():
@@ -154,4 +163,6 @@ def test_write_side_persists_false_for_read_only():
     prompt = "what does the rate limiter currently do?"
     rc, _ = _run(PRE_HOOK, {"prompt": prompt, "session_id": sid})
     assert rc == 0
-    assert read_intent(sid) == has_implementation_signal(prompt) is False
+    expected = has_implementation_signal(prompt)
+    assert expected is False
+    assert read_intent(sid) is False

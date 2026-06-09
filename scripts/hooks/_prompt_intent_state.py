@@ -4,9 +4,9 @@ The PostToolUse capture reminder (``post_preflight_capture_reminder.py``)
 should stay silent when the originating user prompt had no implementation
 intent — a read-only prompt cannot be refining a surfaced decision, so the
 disambiguation question is pure noise. The UserPromptSubmit hook
-(``preflight_reminder.py``) already computes ``should_fire_preflight(prompt)``;
-it persists that boolean here keyed by ``session_id``, and the capture hook
-reads it.
+(``preflight_reminder.py``) persists the boolean returned by
+``has_implementation_signal(prompt)`` here keyed by ``session_id``, and the
+capture hook reads it.
 
 Single source of truth for the handoff file. Pure filesystem; no ledger, no
 network. Files are swept on a TTL so they garbage-collect across session
@@ -69,11 +69,14 @@ def write_intent(session_id: str, fire: bool) -> None:
 
 def read_intent(session_id: str) -> bool | None:
     """Return the persisted ``fire`` boolean for ``session_id``, or ``None``
-    when absent, unreadable, or malformed."""
+    when absent, stale, unreadable, or malformed."""
     if not session_id:
         return None
     try:
-        data = json.loads(state_path(session_id).read_text(encoding="utf-8"))
+        path = state_path(session_id)
+        if time.time() - path.stat().st_mtime > _TTL_SECONDS:
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
     fire = data.get("fire") if isinstance(data, dict) else None
