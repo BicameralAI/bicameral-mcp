@@ -26,7 +26,7 @@ from daemon_client import (
     DaemonProtocolError,
 )
 from prompts import get_prompt_result, list_prompt_definitions
-from responses import error_text, format_tool_response
+from responses import error_text, format_preflight_response, format_tool_response
 from tool_request import MCP_TOOL_COMMANDS, build_tool_request
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
@@ -75,6 +75,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             authority=build_authority_context(name, arguments),
         )
         response = await _client().send_tool_request(tool_request)
+        if name == "bicameral.preflight":
+            return [format_preflight_response(response)]
         return [format_tool_response(response)]
     except (DaemonConnectionError, DaemonProtocolError, DaemonCapabilityError) as exc:
         return [error_text(exc.code, str(exc))]
