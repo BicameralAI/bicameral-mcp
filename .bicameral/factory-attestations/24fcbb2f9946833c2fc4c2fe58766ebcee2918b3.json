@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "24fcbb2f9946833c2fc4c2fe58766ebcee2918b3",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "playbooks/devin-bicameral-factory-run.md"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none"
+  },
+  "end_of_session_capture": {
+    "run": true
+  },
+  "attested_by": "Devin",
+  "timestamp": "2026-06-14T09:10:00Z"
+}
