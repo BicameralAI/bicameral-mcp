@@ -20,13 +20,17 @@ from mcp.server.models import InitializationOptions
 
 from authority import build_authority_context
 from daemon_client import (
-    DaemonCapabilityError,
     DaemonClient,
-    DaemonConnectionError,
+    DaemonClientError,
     DaemonProtocolError,
 )
 from prompts import get_prompt_result, list_prompt_definitions
-from responses import error_text, format_preflight_response, format_tool_response
+from responses import (
+    error_text,
+    format_preflight_response,
+    format_tool_response,
+    recovery_error_text,
+)
 from tool_request import MCP_TOOL_COMMANDS, build_tool_request
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
@@ -42,21 +46,23 @@ def _client() -> DaemonClient:
     return DaemonClient.from_env()
 
 
-async def _ensure_protocol_compatible() -> None:
-    capabilities = await _client().capabilities()
+async def _ensure_protocol_compatible(client: DaemonClient) -> None:
+    capabilities = await client.capabilities()
     protocol_version = capabilities.get("toolrequest_protocol_version") or capabilities.get(
         "protocol_version"
     )
     if protocol_version != TOOLREQUEST_PROTOCOL_VERSION:
         raise DaemonProtocolError(
             "unsupported ToolRequest protocol version: "
-            f"daemon={protocol_version!r}, mcp={TOOLREQUEST_PROTOCOL_VERSION!r}"
+            f"daemon={protocol_version!r}, mcp={TOOLREQUEST_PROTOCOL_VERSION!r}",
+            daemon_protocol_version=protocol_version,
+            mcp_protocol_version=TOOLREQUEST_PROTOCOL_VERSION,
         )
 
 
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    await _ensure_protocol_compatible()
+    await _ensure_protocol_compatible(_client())
     return list(SUPPORTED_TOOLS)
 
 
@@ -66,31 +72,38 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
     if name not in MCP_TOOL_COMMANDS:
         return [error_text("unsupported_tool", f"Unsupported Bicameral MCP tool: {name}")]
 
+    command_name = MCP_TOOL_COMMANDS[name]
+    client = _client()
     try:
-        await _ensure_protocol_compatible()
-        command_name = MCP_TOOL_COMMANDS[name]
+        await _ensure_protocol_compatible(client)
         tool_request = build_tool_request(
             command_name=command_name,
             params=arguments,
             authority=build_authority_context(name, arguments),
         )
-        response = await _client().send_tool_request(tool_request)
+        response = await client.send_tool_request(tool_request)
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
         return [format_tool_response(response)]
-    except (DaemonConnectionError, DaemonProtocolError, DaemonCapabilityError) as exc:
-        return [error_text(exc.code, str(exc))]
+    except DaemonClientError as exc:
+        return [
+            recovery_error_text(
+                exc,
+                requested_tool=name,
+                requested_command=command_name,
+            )
+        ]
 
 
 @server.list_prompts()
 async def list_prompts() -> list[types.Prompt]:
-    await _ensure_protocol_compatible()
+    await _ensure_protocol_compatible(_client())
     return list_prompt_definitions()
 
 
 @server.get_prompt()
 async def get_prompt(name: str, arguments: dict[str, str] | None) -> types.GetPromptResult:
-    await _ensure_protocol_compatible()
+    await _ensure_protocol_compatible(_client())
     return get_prompt_result(name, arguments or {})
 
 
