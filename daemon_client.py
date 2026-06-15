@@ -13,6 +13,14 @@ from typing import Any
 class DaemonClientError(RuntimeError):
     code = "daemon_error"
 
+    def __init__(self, message: str, **details: Any) -> None:
+        super().__init__(message)
+        # Informational context carried to the recovery payload renderer.
+        # None values are dropped so absent context does not leak null fields.
+        self.details: dict[str, Any] = {
+            key: value for key, value in details.items() if value is not None
+        }
+
 
 class DaemonConnectionError(DaemonClientError):
     code = "daemon_unavailable"
@@ -26,6 +34,34 @@ class DaemonCapabilityError(DaemonClientError):
     code = "daemon_capability_error"
 
 
+DAEMON_URL_ENV_VARS = ("BICAMERAL_DAEMON_URL", "BICAMERAL_BOT_DAEMON_URL")
+DEFAULT_DAEMON_URL = "http://127.0.0.1:37373"
+
+
+@dataclass(frozen=True)
+class DaemonEndpoint:
+    url: str
+    override_env_var: str | None
+    override_value: str | None
+
+
+def resolve_daemon_endpoint() -> DaemonEndpoint:
+    """Resolve the daemon URL and report which env override (if any) set it."""
+    for env_var in DAEMON_URL_ENV_VARS:
+        value = os.environ.get(env_var)
+        if value:
+            return DaemonEndpoint(
+                url=value.rstrip("/"),
+                override_env_var=env_var,
+                override_value=value,
+            )
+    return DaemonEndpoint(
+        url=DEFAULT_DAEMON_URL,
+        override_env_var=None,
+        override_value=None,
+    )
+
+
 @dataclass(frozen=True)
 class DaemonClient:
     base_url: str
@@ -33,13 +69,9 @@ class DaemonClient:
 
     @classmethod
     def from_env(cls) -> DaemonClient:
-        base_url = (
-            os.environ.get("BICAMERAL_DAEMON_URL")
-            or os.environ.get("BICAMERAL_BOT_DAEMON_URL")
-            or "http://127.0.0.1:37373"
-        )
+        endpoint = resolve_daemon_endpoint()
         timeout = float(os.environ.get("BICAMERAL_DAEMON_TIMEOUT", "10"))
-        return cls(base_url=base_url.rstrip("/"), timeout_seconds=timeout)
+        return cls(base_url=endpoint.url, timeout_seconds=timeout)
 
     async def capabilities(self) -> dict[str, Any]:
         return await self._json_request("GET", "/v2/capabilities")
@@ -81,14 +113,19 @@ class DaemonClient:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise DaemonConnectionError(f"daemon HTTP {exc.code} at {url}: {detail}") from exc
+            raise DaemonConnectionError(
+                f"daemon HTTP {exc.code} at {url}: {detail}",
+                daemon_endpoint=self.base_url,
+            ) from exc
         except urllib.error.URLError as exc:
             raise DaemonConnectionError(
-                f"cannot reach bicameral-bot daemon at {url}: {exc}"
+                f"cannot reach bicameral-bot daemon at {url}: {exc}",
+                daemon_endpoint=self.base_url,
             ) from exc
         except TimeoutError as exc:
             raise DaemonConnectionError(
-                f"timed out reaching bicameral-bot daemon at {url}"
+                f"timed out reaching bicameral-bot daemon at {url}",
+                daemon_endpoint=self.base_url,
             ) from exc
 
         try:

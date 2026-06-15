@@ -70,6 +70,46 @@ MCP exposes only ToolRequest-backed tools:
 | `bicameral.history` | `history.list` |
 | `bicameral.search` | `search.query` |
 
+## Troubleshooting: Daemon Handshake Failures
+
+MCP stays fail-fast on daemon capability handshake failures. It never starts,
+installs, upgrades, migrates, or repairs the daemon, and never falls back to
+legacy MCP-owned handlers. Instead, a failed tool call returns a typed MCP
+error with an informational `recovery` payload:
+
+```json
+{
+  "status": "error",
+  "error_code": "daemon_protocol_mismatch",
+  "recovery": {
+    "error_code": "daemon_protocol_mismatch",
+    "category": "setup",
+    "retryable": false,
+    "mcp_protocol_version": "v2",
+    "daemon_protocol_version": "v1",
+    "daemon_endpoint": "http://127.0.0.1:37373",
+    "requested_tool": "bicameral.preflight",
+    "requested_command": "preflight.run",
+    "operator_action": "Upgrade bicameral-mcp and bicameral-bot/daemon to matching tags, then retry."
+  }
+}
+```
+
+| `error_code` | Meaning | What to do |
+|---|---|---|
+| `daemon_unavailable` | MCP cannot reach the configured/local bot daemon. | Start or install the Bicameral bot daemon, then retry. |
+| `daemon_protocol_mismatch` | Daemon is reachable but its ToolRequest protocol version is incompatible. | Upgrade `bicameral-mcp` and `bicameral-bot`/daemon to matching tags, then retry. |
+| `daemon_capability_error` | Daemon answered capabilities but the requested command is unadvertised or deferred. | Use a supported command, or upgrade to a daemon tag that advertises the capability. |
+| Wrong daemon URL | Connection target is misconfigured via an env override. | Unset or correct `BICAMERAL_DAEMON_URL` / `BICAMERAL_BOT_DAEMON_URL`, then retry. |
+
+When a daemon URL env override is set, the recovery payload adds a
+`daemon_url_override` field and calls out the env var in `operator_action`, so a
+wrong URL is easy to spot even though it shares the `daemon_unavailable`
+transport path.
+
+Remediation such as installing, upgrading, starting, or migrating the daemon is
+bot-owned or CLI-owned, not MCP-owned.
+
 ## Prompts And Skills
 
 MCP may expose MCP prompts for generic Bicameral workflows over supported tools,

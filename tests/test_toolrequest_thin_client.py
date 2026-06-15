@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 import server
-from responses import format_preflight_response
+from daemon_client import (
+    DEFAULT_DAEMON_URL,
+    DaemonCapabilityError,
+    DaemonConnectionError,
+)
+from responses import build_recovery_payload, format_preflight_response
 from tool_request import MCP_TOOL_COMMANDS, build_tool_request
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
@@ -343,3 +348,177 @@ async def test_non_preflight_uses_generic_formatter(monkeypatch):
 
     assert "stages" not in response
     assert response["status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Daemon handshake recovery payloads (mcp#583)
+# ---------------------------------------------------------------------------
+
+
+class _RaisingClient:
+    """Fake daemon client that can fail at handshake or dispatch."""
+
+    def __init__(
+        self,
+        *,
+        capabilities_error: Exception | None = None,
+        send_error: Exception | None = None,
+        protocol_version: str = TOOLREQUEST_PROTOCOL_VERSION,
+    ):
+        self.capabilities_error = capabilities_error
+        self.send_error = send_error
+        self.protocol_version = protocol_version
+        self.requests: list[dict] = []
+
+    async def capabilities(self) -> dict:
+        if self.capabilities_error is not None:
+            raise self.capabilities_error
+        return {
+            "toolrequest_protocol_version": self.protocol_version,
+            "supported_commands": list(MCP_TOOL_COMMANDS.values()),
+        }
+
+    async def send_tool_request(self, tool_request: dict) -> dict:
+        self.requests.append(tool_request)
+        if self.send_error is not None:
+            raise self.send_error
+        return {
+            "request_id": tool_request["request_id"],
+            "status": "ok",
+            "result": {},
+        }
+
+
+def _clear_daemon_url_env(monkeypatch) -> None:
+    monkeypatch.delenv("BICAMERAL_DAEMON_URL", raising=False)
+    monkeypatch.delenv("BICAMERAL_BOT_DAEMON_URL", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_daemon_unavailable_renders_recovery(monkeypatch):
+    _clear_daemon_url_env(monkeypatch)
+    fake = _RaisingClient(
+        capabilities_error=DaemonConnectionError("cannot reach bicameral-bot daemon")
+    )
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool("bicameral.history", {})
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_unavailable"
+    recovery = response["recovery"]
+    assert recovery["error_code"] == "daemon_unavailable"
+    assert recovery["category"] == "setup"
+    assert recovery["retryable"] is True
+    assert recovery["requested_tool"] == "bicameral.history"
+    assert recovery["requested_command"] == "history.list"
+    assert "start" in recovery["operator_action"].lower()
+    assert "daemon_url_override" not in recovery
+    # Fail fast: no ToolRequest dispatched after handshake failure.
+    assert fake.requests == []
+
+
+@pytest.mark.asyncio
+async def test_protocol_mismatch_recovery_includes_both_versions(monkeypatch):
+    _clear_daemon_url_env(monkeypatch)
+    fake = _RaisingClient(protocol_version="v1")
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool("bicameral.search", {"query": "x"})
+    response = json.loads(content[0].text)
+
+    assert response["error_code"] == "daemon_protocol_mismatch"
+    recovery = response["recovery"]
+    assert recovery["mcp_protocol_version"] == TOOLREQUEST_PROTOCOL_VERSION
+    assert recovery["daemon_protocol_version"] == "v1"
+    assert recovery["retryable"] is False
+    assert fake.requests == []
+
+
+@pytest.mark.asyncio
+async def test_capability_error_recovery_includes_tool_and_command(monkeypatch):
+    _clear_daemon_url_env(monkeypatch)
+    fake = _RaisingClient(send_error=DaemonCapabilityError("daemon refused: unsupported_command"))
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool("bicameral.bind", {"decision_or_candidate_id": "DEC-1"})
+    response = json.loads(content[0].text)
+
+    assert response["error_code"] == "daemon_capability_error"
+    recovery = response["recovery"]
+    assert recovery["category"] == "capability"
+    assert recovery["requested_tool"] == "bicameral.bind"
+    assert recovery["requested_command"] == "binding.create"
+    # The command was advertised-compatible enough to dispatch; daemon refused it.
+    assert len(fake.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_wrong_daemon_url_calls_out_env_override(monkeypatch):
+    monkeypatch.setenv("BICAMERAL_BOT_DAEMON_URL", "http://wrong-host:1234")
+    fake = _RaisingClient(
+        capabilities_error=DaemonConnectionError(
+            "cannot reach bicameral-bot daemon",
+            daemon_endpoint="http://wrong-host:1234",
+        )
+    )
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool("bicameral.history", {})
+    response = json.loads(content[0].text)
+
+    recovery = response["recovery"]
+    assert recovery["daemon_url_override"]["env_var"] == "BICAMERAL_BOT_DAEMON_URL"
+    assert recovery["daemon_url_override"]["value"] == "http://wrong-host:1234"
+    assert "BICAMERAL_BOT_DAEMON_URL" in recovery["operator_action"]
+    assert recovery["daemon_endpoint"] == "http://wrong-host:1234"
+
+
+def test_build_recovery_payload_env_override_hint(monkeypatch):
+    monkeypatch.setenv("BICAMERAL_DAEMON_URL", "http://example.invalid:9999")
+
+    recovery = build_recovery_payload(
+        error_code="daemon_unavailable",
+        requested_tool="bicameral.history",
+        requested_command="history.list",
+    )
+
+    assert recovery["daemon_url_override"]["env_var"] == "BICAMERAL_DAEMON_URL"
+    assert recovery["daemon_url_override"]["value"] == "http://example.invalid:9999"
+    assert "BICAMERAL_DAEMON_URL" in recovery["operator_action"]
+    assert recovery["daemon_endpoint"] == "http://example.invalid:9999"
+
+
+def test_build_recovery_payload_no_override_uses_default_endpoint(monkeypatch):
+    _clear_daemon_url_env(monkeypatch)
+
+    recovery = build_recovery_payload(error_code="daemon_unavailable")
+
+    assert "daemon_url_override" not in recovery
+    assert recovery["daemon_endpoint"] == DEFAULT_DAEMON_URL
+
+
+def test_recovery_modules_import_no_legacy_authority():
+    forbidden = {
+        "adapters",
+        "code_locator",
+        "codegenome",
+        "daemon",
+        "dashboard",
+        "events",
+        "governance",
+        "handlers",
+        "integrations",
+        "ledger",
+        "sources",
+    }
+    for module_file in ("responses.py", "daemon_client.py"):
+        tree = ast.parse(Path(module_file).read_text())
+        imported_roots: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported_roots.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported_roots.add(node.module.split(".")[0])
+        assert imported_roots.isdisjoint(forbidden), module_file
