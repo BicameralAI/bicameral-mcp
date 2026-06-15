@@ -24,13 +24,19 @@ test-results/
 # distributed via the GitHub Actions artifact, not git.
 docs/demos/**/*.mp4
 
-# QOR governance (process-only — not part of the published artifact)
+# Sibling tools — local process/AI tooling (see docs/governance/SIBLINGS.md).
+# Never tracked, never referenced.
 .agent/
+.agents/
 .failsafe/
 .qor/
 .cursor/
 .windsurf/
 .claude/worktrees/
+GEMINI.md
+COPILOT.md
+CURSOR.md
+RUN_SUMMARY.md
 
 # Internal planning artifacts — not shipped in the wheel, not part of the
 # public docs surface. Plans are working memory between author + reviewers
