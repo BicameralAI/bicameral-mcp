@@ -20,10 +20,18 @@ test-results/
 .bicameral/
 
 # Local agent/process artifacts
+docs/demos/**/*.mp4
 .agent/
+.agents/
 .failsafe/
 .qor/
 .cursor/
+.windsurf/
+.claude/worktrees/
+GEMINI.md
+COPILOT.md
+CURSOR.md
+RUN_SUMMARY.md
 
 plan-*.md
 
