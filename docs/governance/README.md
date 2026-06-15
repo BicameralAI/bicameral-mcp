@@ -5,6 +5,7 @@ This directory holds the **tracked, public-facing** governance contract. It decl
 
 | File | Purpose |
 |---|---|
+| [`BOUNDARY.md`](BOUNDARY.md) | The tracked governance boundary contract — three layers, five invariants, enforced leak rules. |
 | [`SIBLINGS.md`](SIBLINGS.md) | The sibling registry — every leak-guarded local tool (Qor-logic, FailSafe, contributor tooling) and the rules that keep it out of commits. |
 
 **Doctrine is shared upstream.** The shared process rules (bic-logic) are owned in
