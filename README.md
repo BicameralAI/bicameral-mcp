@@ -112,3 +112,9 @@ Focused cutover checks:
 python -m pytest tests/test_toolrequest_thin_client.py -q
 python -m build
 ```
+
+## Repository boundary
+
+`bicameral-mcp` is the agent-facing tool surface. It exposes local Bicameral actions to coding agents: ingest, preflight, bind, review-command emission, and local run loops.
+
+It is not the source-specific integration repo, the local bot runtime, or the hosted code graph. See `docs/adr/0001-mcp-repository-boundary.md`.

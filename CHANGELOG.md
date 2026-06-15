@@ -33,6 +33,29 @@ emulated locally. Previous implementation history can be inspected at
 
 ---
 
+## v0.16.4 — Triage: locator-migration `.mcp.json` fix + v0.16.2 prevention gate
+
+Triage release. Two cherry-picks from `dev`:
+
+### Fixed
+
+- **`migrate-state` rewrites legacy `.mcp.json` env block** (#494). After #368 (Ledger Locator) moved per-project state to `~/.bicameral/projects/<id>/`, `migrate-state` moved files on disk but did not touch the `SURREAL_URL` / `CODE_LOCATOR_SQLITE_DB` env overrides in `<repo>/.mcp.json` that older setup_wizard versions wrote. `resolve_ledger_url()` honors `SURREAL_URL` unconditionally, so existing pilots were silently pinned to the pre-locator layout — exactly the cross-worktree determinism the locator was supposed to deliver. `migrate-state` now drops these env entries when they resolve into `<repo>/.bicameral/` and preserves them otherwise (`memory://`, custom paths outside the repo, other env keys, other MCP servers untouched).
+
+### Added (prevention)
+
+- **Python floor smoke test CI gate** (#493 follow-up to #491). One Ubuntu job per PR installs the package against the declared `requires-python` floor (3.11) via `pip install .` and runs `bicameral-mcp --version` end-to-end. Catches the recurrence of the v0.16.2 bug class (`requires-python` floor drifting from code that actually uses a newer-version-only API). Pairs with the `ruff --target-version=py311` lint gate already in `pyproject.toml`.
+
+### Affected users
+
+- **`.mcp.json` rewrite**: any pilot who installed bicameral-mcp before v0.16.0 and ran `migrate-state` since. Symptom: `bicameral.diagnose` reports `ledger_url: surrealkv://<repo>/.bicameral/local/ledger.db` instead of `surrealkv://~/.bicameral/projects/<id>/ledger.db`. Re-run `bicameral-mcp migrate-state --auto` after upgrade; the env block rewrites idempotently and the locator picks up the canonical path on next start.
+- **CI gate**: contributor-facing; no user-visible runtime change.
+
+### Linked
+
+- Closes #494 (the migration gap on existing `.mcp.json` files).
+- Follow-up to #491 (`requires-python >= 3.11` hotfix) — the prevention work that #491's body filed as deliberately deferred.
+
+---
 ## v0.16.3 — Hotfix: refuse to boot on surrealdb SDK version drift
 
 P1 hotfix. When bicameral-mcp's `surrealdb==X.Y.Z` pin changes between releases (or when a user has two installs on the same machine with different pins — pipx + uv tool, or two venvs), the previously-written ledger rows become unreadable by the newly-installed SDK. The deserialization fails mid-RPC with:
