@@ -34,6 +34,34 @@ class DaemonCapabilityError(DaemonClientError):
     code = "daemon_capability_error"
 
 
+class CapabilityReport:
+    """Structured result from a successful daemon capability handshake.
+
+    Captures the daemon's advertised protocol version and command surface
+    so callers can inspect what the tagged daemon actually supports.
+    """
+
+    __slots__ = (
+        "daemon_protocol_version",
+        "mcp_protocol_version",
+        "supported_commands",
+        "daemon_endpoint",
+    )
+
+    def __init__(
+        self,
+        *,
+        daemon_protocol_version: str,
+        mcp_protocol_version: str,
+        supported_commands: tuple[str, ...],
+        daemon_endpoint: str,
+    ) -> None:
+        self.daemon_protocol_version = daemon_protocol_version
+        self.mcp_protocol_version = mcp_protocol_version
+        self.supported_commands = supported_commands
+        self.daemon_endpoint = daemon_endpoint
+
+
 DAEMON_URL_ENV_VARS = ("BICAMERAL_DAEMON_URL", "BICAMERAL_BOT_DAEMON_URL")
 DEFAULT_DAEMON_URL = "http://127.0.0.1:37373"
 
