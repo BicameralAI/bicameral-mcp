@@ -3,6 +3,36 @@
 All notable changes to bicameral-mcp are tracked here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## v0.17.0 — ToolRequest thin-client cutover
+
+Breaking dev cutover. `bicameral-mcp` is now a transport client for the
+bot-owned ToolRequest daemon boundary.
+
+### Changed
+
+- MCP tools now map to canonical bot commands:
+  `ingest.submit_local`, `preflight.run`, `binding.create`,
+  `binding.inspect`, review commands, `history.list`, and `search.query`.
+- MCP performs a strict startup capability handshake and refuses unsupported
+  ToolRequest protocol versions.
+- MCP prompts replace generic slash-command workflows that are tightly coupled
+  to MCP tools.
+
+### Removed
+
+- MCP-owned ledger, graph, binding, dashboard, source adapter, integration,
+  telemetry, setup wizard, daemon lifecycle, and old handler authority.
+- Legacy tools such as `link_commit`, `ratify`, `resolve_collision`,
+  `remove_decision`, `remove_source`, `validate_symbols`, and `get_neighbors`.
+
+### Migration
+
+Missing bot-backed behavior is intentionally unavailable in MCP rather than
+emulated locally. Previous implementation history can be inspected at
+`0827444c80d45fe3474f68002166e1fc35708eda`.
+
+---
+
 ## v0.16.4 — Triage: locator-migration `.mcp.json` fix + v0.16.2 prevention gate
 
 Triage release. Two cherry-picks from `dev`:
@@ -26,7 +56,6 @@ Triage release. Two cherry-picks from `dev`:
 - Follow-up to #491 (`requires-python >= 3.11` hotfix) — the prevention work that #491's body filed as deliberately deferred.
 
 ---
-
 ## v0.16.3 — Hotfix: refuse to boot on surrealdb SDK version drift
 
 P1 hotfix. When bicameral-mcp's `surrealdb==X.Y.Z` pin changes between releases (or when a user has two installs on the same machine with different pins — pipx + uv tool, or two venvs), the previously-written ledger rows become unreadable by the newly-installed SDK. The deserialization fails mid-RPC with:

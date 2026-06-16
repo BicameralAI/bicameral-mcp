@@ -9,55 +9,22 @@ jobs:
     name: ruff + mypy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
           cache: 'pip'
       - name: Install
-        run: pip install -e ".[test]"
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --require-hashes -r requirements-ci.lock
+          python -m pip install --no-build-isolation --no-deps .
       - name: Ruff check
-        id: ruff_check
         run: ruff check .
       - name: Ruff format check
-        id: ruff_format
         run: ruff format --check .
       - name: Mypy
-        id: mypy
         run: mypy .
-      - name: Pre-commit install hint (on lint failure)
-        if: failure() && (steps.ruff_check.outcome == 'failure' || steps.ruff_format.outcome == 'failure')
-        # #357 sub-task 3: many of the historical `style:` cleanup commits
-        # (eb32e80, ee24395, 0cf574b, 1d752cc, 1690a30, cacfb62) could
-        # have been caught at commit time by `pre-commit`. Surface this
-        # to the developer when the lint step fails so the next push is
-        # the fixed one, not a follow-up `style:` cleanup commit.
-        run: |
-          echo "::error::Lint failed. Install the pre-commit hook locally to catch this before push:"
-          echo "::error::    pip install pre-commit && pre-commit install"
-          echo "::error::Then either re-stage and re-commit, or run: pre-commit run --all-files"
-          echo "## Lint failed — pre-commit hook would have caught this" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Install once per clone:" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "pip install pre-commit && pre-commit install" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "Then fix:" >> $GITHUB_STEP_SUMMARY
-          echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "pre-commit run --all-files" >> $GITHUB_STEP_SUMMARY
-          echo "git add -u && git commit --amend --no-edit  # or new commit" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          exit 1
-      - name: Plan-grounding lint (#114 Check A)
-        # Only lints plan-*.md files modified in this PR — historical
-        # plans that referenced now-deleted files would otherwise block
-        # CI for unrelated work. Adding/modifying a plan still gates.
-        run: |
-          git fetch origin ${{ github.base_ref }} --depth=1
-          PLANS=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- 'plan-*.md' 'docs/Planning/plan-*.md' 2>/dev/null || true)
-          if [ -n "$PLANS" ]; then
-            echo "Linting modified plans: $PLANS"
-            python scripts/lint_plan_grounding.py $PLANS
-          else
-            echo "No plan files modified in this PR — skipping"
-          fi
+      - name: Dependency audit
+        run: pip-audit --requirement requirements-ci.lock

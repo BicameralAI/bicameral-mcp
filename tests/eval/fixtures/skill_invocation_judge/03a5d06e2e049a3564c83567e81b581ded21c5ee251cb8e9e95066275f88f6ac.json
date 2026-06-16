@@ -1,8 +1,0 @@
-{
-  "invoked_history": false,
-  "submitted": true,
-  "reasoning": "YAML indentation fix is a CI/config-only whitespace change with no semantic logic impact; no decision ledger read needed.",
-  "turns": 1,
-  "tokens_in": 404,
-  "tokens_out": 338
-}

@@ -1,6 +1,0 @@
-{
-  "relevant_features": [
-    "logging"
-  ],
-  "reasoning": "The \"logging\" feature group contains a decision about PII redaction (credit card numbers) in logs, which directly applies to structured logging for a payment webhook handler where card data may appear."
-}

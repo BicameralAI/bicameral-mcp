@@ -1,8 +1,0 @@
-{
-  "invoked_history": false,
-  "submitted": true,
-  "reasoning": "Single-file constant rename is a mechanical refactor with no logic change, no cross-cutting concern, and no plausible decision surface — skipping ledger read.",
-  "turns": 1,
-  "tokens_in": 403,
-  "tokens_out": 334
-}

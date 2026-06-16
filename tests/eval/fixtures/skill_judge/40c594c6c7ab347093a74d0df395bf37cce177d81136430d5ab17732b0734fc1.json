@@ -1,6 +1,0 @@
-{
-  "relevant_features": [
-    "auth"
-  ],
-  "reasoning": "The \"auth\" feature contains a decision about role grants and dual-control approval, which directly describes behavior the admin tool for user role assignment will touch."
-}

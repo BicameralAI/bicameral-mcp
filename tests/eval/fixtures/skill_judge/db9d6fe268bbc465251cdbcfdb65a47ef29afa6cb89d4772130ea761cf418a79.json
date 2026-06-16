@@ -1,6 +1,0 @@
-{
-  "relevant_features": [
-    "permissions"
-  ],
-  "reasoning": "The \"permissions\" feature contains a decision (perm_admin_scope) that directly describes the admin endpoint scope requirement — exactly what the current task implements."
-}

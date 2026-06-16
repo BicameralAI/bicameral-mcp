@@ -1,8 +1,0 @@
-{
-  "invoked_history": true,
-  "submitted": true,
-  "reasoning": "Fetched bicameral_history because request context propagation is a cross-cutting architectural concern; found ungrounded observability decision on end-to-end traceability that directly applies to async task context flow.",
-  "turns": 2,
-  "tokens_in": 916,
-  "tokens_out": 464
-}

@@ -1,8 +1,0 @@
-{
-  "invoked_history": true,
-  "submitted": true,
-  "reasoning": "History read surfaced an ungrounded decision on dual-control approval for manager-level role grants, which directly impacts the CLI tool design and must be resolved before implementation.",
-  "turns": 2,
-  "tokens_in": 939,
-  "tokens_out": 468
-}

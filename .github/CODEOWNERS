@@ -1,17 +1,3 @@
 # CODEOWNERS for BicameralAI/bicameral-mcp.
-#
-# Maps file paths to GitHub users / teams whose review is required by the
-# `dev` branch-protection rule (require_code_owner_reviews: true).
-#
-# Syntax: gitignore-style globs, then one or more @usernames or
-# @org/team-handles. The LAST matching pattern wins (so list narrowest-first
-# only matters when patterns overlap — use distinct file paths where you can).
-#
-# See DEV_CYCLE.md §4.4 (Reviewers) and §4.7 (Schema-touching PRs) for the
-# review-tier rules these owners enforce.
 
-# Schema and migration registry — every change here goes through the
-# expand-only + flag-gate doctrine (DEV_CYCLE.md §4.7). Code-owner review
-# enforces the §4.7.3 reviewer checklist; the PR must demonstrate compliance
-# before merge.
-ledger/schema.py            @jinhongkuan
+* @jinhongkuan

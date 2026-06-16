@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "bicameral-mcp"
-version = "0.16.4"
-description = "Decision ledger MCP server — ingests meeting transcripts, maps decisions to code, tracks drift"
+version = "0.17.0"
+description = "Bicameral MCP thin client for the local bicameral-bot ToolRequest daemon"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Bicameral AI"}]
-keywords = ["mcp", "decision-ledger", "code-locator", "drift-detection", "llm"]
+keywords = ["mcp", "toolrequest", "bicameral-bot"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -22,47 +22,11 @@ classifiers = [
 ]
 dependencies = [
   "mcp[cli]>=1.6.0",
-  "tree-sitter>=0.23",
-  "tree-sitter-python>=0.23",
-  "tree-sitter-javascript>=0.23",
-  "tree-sitter-typescript>=0.23",
-  "tree-sitter-java>=0.23",
-  "tree-sitter-go>=0.23",
-  "tree-sitter-rust>=0.23",
-  "tree-sitter-c-sharp>=0.23",
-  # #367: pinned tighter than the others because Elixir is the first language
-  # extracted via the generic tags-query path — we have no walker fallback,
-  # so a grammar bump that shifts node names breaks Elixir indexing silently.
-  # Bump the upper bound deliberately after verifying tests/test_extract_elixir.py
-  # still passes on the new grammar version.
-  "tree-sitter-elixir>=0.3.5,<0.4",
-  "rapidfuzz>=3.6.0",
-  "pydantic>=2.0.0",
-  "pyyaml>=6.0",
-  "python-dotenv",
-  # PEP 440 version comparisons in handlers/update.py (channel-aware update routing).
-  # `packaging` is a transitive dep of pip/hatchling/build and is reliably present
-  # in any pip-managed env, but we depend on it directly so it ships in the wheel
-  # metadata as a first-class requirement.
-  "packaging>=21",
-  # Patch-level pin closes wire-format drift surface (#252 Layer 1).
-  # The on-disk SurrealKV record header carries a revision number that
-  # must match the surrealdb-py deserializer. A `>=` floor lets a routine
-  # `pip install --upgrade` swap the lib under an existing ledger and
-  # produces "Invalid revision N for type Value" deserialization errors.
-  # Future bumps require explicit migration via the schema-revision
-  # sentinel (#252 Layer 2) and operator-driven export/import (Layer 4).
-  "surrealdb==2.0.0",
-  "questionary>=2.0.0",
-  "sigstore>=3.0",
-  # Google Drive backend for team-mode replication (#277).
-  "google-auth-oauthlib>=1.2",
-  "google-api-python-client>=2.100",
 ]
 
 [project.optional-dependencies]
 cocoindex = [
-  "cocoindex>=1.0.0a38,<2.0.0",
+  "cocoindex>=1.0.7,<2.0.0",
   "sentence-transformers>=2.6.0",
   "cocoindex-code>=0.1.0",
 ]
@@ -70,10 +34,11 @@ test = [
   "pytest>=8.0.0",
   "pytest-asyncio>=0.23.0",
   "tiktoken>=0.7.0,<1.0.0",
-  "ruff>=0.5.0",
-  "mypy>=1.10.0",
-  "build>=1.0.0",
-  "pre-commit>=3.5.0",
+  "ruff>=0.15.16",
+  "mypy>=2.1.0",
+  "build>=1.5.0",
+  "pre-commit>=4.6.0",
+  "coverage[toml]>=7.14.1",
 ]
 release = [
   "cyclonedx-bom>=4.0",
@@ -81,48 +46,44 @@ release = [
 
 [project.scripts]
 bicameral-mcp = "server:cli_main"
-bicameral-mcp-preflight-reminder = "scripts.hooks.preflight_reminder:main"
-bicameral-mcp-post-commit-sync-reminder = "scripts.hooks.post_commit_sync_reminder:main"
-bicameral-mcp-collision-capture-reminder = "scripts.hooks.post_preflight_capture_reminder:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
-exclude = [
-  "tests",
-  "visual-plan",
-  "mocks",
-  "test-results",
-  "docs/demos/**/*.mp4",
-  "share",
+only-include = [
+  "server.py",
+  "authority.py",
+  "daemon_client.py",
+  "prompts.py",
+  "responses.py",
+  "tool_request.py",
+  "tool_schemas.py",
+  "version.py",
 ]
-artifacts = ["skills/**/*.md", "skills/**/*.yaml"]
 
-# `force-include` ships skill source unconditionally, regardless of Hatchling's
-# package-discovery rules. Required because `skills/` has no `__init__.py` and
-# `artifacts` alone does not bundle these files into the wheel (verified empty
-# pre-fix). Locked by tests/test_installer_packaging.py.
-[tool.hatch.build.targets.wheel.force-include]
-"skills" = "skills"
-
-# Build hook generates `share/bicameral-mcp/hooks-manifest.json` before
-# the wheel is packaged (#218 Phase 1). The shared-data table below then
-# bundles it into the wheel at `<sys.prefix>/share/bicameral-mcp/...`.
-[tool.hatch.build.targets.wheel.hooks.custom]
-path = "scripts/hooks_manifest_build_hook.py"
-
-[tool.hatch.build.targets.wheel.shared-data]
-"share/bicameral-mcp/hooks-manifest.json" = "share/bicameral-mcp/hooks-manifest.json"
-"share/bicameral-mcp/skills-manifest.toml" = "share/bicameral-mcp/skills-manifest.toml"
+[tool.hatch.build.targets.sdist]
+only-include = [
+  "README.md",
+  "CHANGELOG.md",
+  "SECURITY.md",
+  "pyproject.toml",
+  "server.py",
+  "authority.py",
+  "daemon_client.py",
+  "prompts.py",
+  "responses.py",
+  "tool_request.py",
+  "tool_schemas.py",
+  "version.py",
+  "docs/specs/bicameral-mcp-idealized-spec.md",
+  "docs/plans/toolrequest-refactor-plan.md",
+  "tests/test_toolrequest_thin_client.py",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
 extend-exclude = [
   "test-results",
-  "visual-plan",
-  "mocks",
   ".agent",
-  ".claude",
 ]
 
 [tool.ruff.lint]
@@ -130,51 +91,17 @@ select = ["E", "F", "W", "I", "B", "UP"]  # pyflakes + pycodestyle + isort + bug
 ignore = ["E501"]  # line-length handled by formatter
 
 [tool.ruff.lint.per-file-ignores]
-# Test files often reference module-internal symbols imported via patching,
-# use intentional unused-locals for clarity, and use assert-style equality.
-# Day-one CI keeps tests/ lenient; tighten in follow-up cleanup PRs.
 "tests/**" = ["F401", "F811", "F821", "F841", "E712", "B017", "B904", "E402", "E731"]
-"scripts/**" = ["F401", "F841", "E402", "E731"]
 
 [tool.mypy]
 python_version = "3.11"
-ignore_missing_imports = true  # project depends on pydantic, mcp, surrealdb — many unstubbed
+ignore_missing_imports = true
 warn_return_any = false
 strict_optional = true
-disable_error_code = ["import-untyped"]  # missing third-party stubs (e.g. PyYAML) — chip away in follow-ups
+disable_error_code = ["import-untyped"]
 exclude = [
   "test-results/",
-  "visual-plan/",
-  "mocks/",
   ".agent/",
-  ".claude/",
   "build/",
   "dist/",
-  # Tests/fixtures aren't part of the production type surface; tighten in follow-ups.
-  "^tests/",
-  "^scripts/",
 ]
-
-# Day-one mypy: noisy modules suppressed wholesale to keep CI green.
-# Each entry below is a follow-up cleanup target. Track in a separate type-cleanup
-# project — do NOT remove entries here without first fixing the underlying errors.
-[[tool.mypy.overrides]]
-module = [
-  "server",
-  "setup_wizard",
-  "code_locator.indexing.cocoindex_pipeline",
-  "code_locator.indexing.symbol_extractor",
-  "adapters.code_locator",
-  "ledger.adapter",
-  "ledger.status",
-  "ledger.queries",
-  "ledger.schema",
-  "codegenome.continuity",
-  "codegenome.continuity_service",
-  "handlers.ratify",
-  "handlers.search_decisions",
-  "handlers.resolve_compliance",
-  "handlers.preflight",
-  "handlers.detect_drift",
-]
-ignore_errors = true
