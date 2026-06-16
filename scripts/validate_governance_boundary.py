@@ -55,6 +55,8 @@ GOVERNANCE_ALLOWLIST = {
     "docs/governance/doctrine-deterministic-governance.md",
 }
 
+FACTORY_ATTESTATION_PATTERN = ".bicameral/factory-attestations/*.json"
+
 
 def git_lines(args: list[str]) -> list[str]:
     result = subprocess.run(
@@ -123,6 +125,8 @@ def match_root(path: str, root: str) -> bool:
 
 def forbidding_root(path: str, roots: list[str]) -> str | None:
     if path in GOVERNANCE_ALLOWLIST:
+        return None
+    if fnmatch.fnmatch(path, FACTORY_ATTESTATION_PATTERN):
         return None
     for root in roots:
         if match_root(path, root):
