@@ -20,9 +20,11 @@ from mcp.server.models import InitializationOptions
 
 from authority import build_authority_context
 from daemon_client import (
+    CapabilityReport,
     DaemonClient,
     DaemonClientError,
     DaemonProtocolError,
+    resolve_daemon_endpoint,
 )
 from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
@@ -46,7 +48,7 @@ def _client() -> DaemonClient:
     return DaemonClient.from_env()
 
 
-async def _ensure_protocol_compatible(client: DaemonClient) -> None:
+async def _ensure_protocol_compatible(client: DaemonClient) -> CapabilityReport:
     capabilities = await client.capabilities()
     protocol_version = capabilities.get("toolrequest_protocol_version") or capabilities.get(
         "protocol_version"
@@ -58,6 +60,14 @@ async def _ensure_protocol_compatible(client: DaemonClient) -> None:
             daemon_protocol_version=protocol_version,
             mcp_protocol_version=TOOLREQUEST_PROTOCOL_VERSION,
         )
+    supported_commands = tuple(capabilities.get("supported_commands", []))
+    endpoint = resolve_daemon_endpoint()
+    return CapabilityReport(
+        daemon_protocol_version=protocol_version,
+        mcp_protocol_version=TOOLREQUEST_PROTOCOL_VERSION,
+        supported_commands=supported_commands,
+        daemon_endpoint=endpoint.url,
+    )
 
 
 @server.list_tools()
