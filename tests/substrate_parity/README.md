@@ -77,3 +77,35 @@ python tests/substrate_parity/diff_parity.py \
   run and pass, #148's portability acceptance stays open — do not claim it.
 - The git `post-commit` signal (#610 Signal B) is a git hook, not a Claude Code
   hook; verify it separately under each substrate's commit path.
+
+## Measured results (2026-06-19, first run)
+
+Probe wired via `--settings` (isolated; live config untouched), tool-using
+workload (Read a file, reply) on `claude` 2.1.x.
+
+| event | interactive | headless `claude -p` |
+|-------|:-----------:|:--------------------:|
+| SessionStart | fired | fired |
+| UserPromptSubmit | fired | fired |
+| PreToolUse | fired | fired |
+| PostToolUse ★ | fired | fired |
+| Stop ★ | fired | fired |
+| SessionEnd ★ | fired | fired |
+| PreCompact ★ | not exercised | not exercised |
+
+`diff_parity.py interactive vs headless` → exit 0, no divergence. **`SessionEnd`
+fires under headless `claude -p`** — the load-bearing assumption for #610/#148,
+now verified and at parity with interactive.
+
+Honest scope of this run:
+- The interactive leg was `claude` (non-`-p`) driven via piped stdin + EOF — it
+  exercises the interactive (non-print) hook path but is **one turn**, not a
+  human-at-keyboard TTY. A confirmatory true-TTY pass is still worth doing.
+- **`PreCompact` is unverified.** It fires only on actual context compaction;
+  a trivial workload has nothing to compact, and a piped-stdin `/compact` is not
+  processed as a turn. To capture it, run a real interactive session that either
+  reaches the auto-compact threshold or issues `/compact` with substantive
+  context loaded, with the fixture settings active, then re-run `diff_parity.py`.
+- **Cron / hosted-runner leg not run** (deferred to GA per #610). Until the cron
+  leg and `PreCompact` are confirmed, #148 full portability stays open — the
+  interactive+headless parity above materially de-risks it but does not close it.
