@@ -1,0 +1,37 @@
+# Repo-local governance facts for bicameral-mcp.
+# Validated by bicameral-factory schemas/repo-governance.schema.json; aggregated into the org
+# dashboard (#106, #113). Initial classification/runtime_role are proposals — adjust in review.
+schema_version: 1
+repo: BicameralAI/bicameral-mcp
+classification: product-supporting
+visibility: public
+governance_owner: BicameralAI/bicameral-factory
+runtime_role: agent-surface
+release_trust_required: true
+required_checks:
+  - sbom
+  - codeql
+  - scorecard
+  - dependency-review
+branch_protection:
+  main:
+    require_pr: true
+    required_approvals: 1
+    require_status_checks: true
+    restrict_force_push: true
+shadow_genome_sources:
+  - failed_ci
+  - reverted_prs
+  - correction_records
+  - repeated_review_findings
+public_exposure:
+  allowed:
+    - governance doctrine
+    - schemas
+    - redacted examples
+  prohibited:
+    - live dashboard data
+    - shadow genome output
+    - risk register
+    - review queues
+    - security posture deltas
