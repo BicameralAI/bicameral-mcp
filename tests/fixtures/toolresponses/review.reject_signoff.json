@@ -1,0 +1,11 @@
+{
+  "request_id": "88888888-8888-4888-8888-888888888888",
+  "status": "ok",
+  "result": {
+    "target_id": "DEC-7",
+    "transition": "signoff_rejected",
+    "reason": "needs a second reviewer",
+    "touched_ids": ["DEC-7"]
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}

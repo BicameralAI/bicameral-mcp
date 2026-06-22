@@ -1,0 +1,11 @@
+{
+  "request_id": "99999999-9999-4999-8999-999999999999",
+  "status": "unsupported",
+  "result": {
+    "target_id": "DEC-7",
+    "capability": "review.resolve_compliance",
+    "deferred": true,
+    "reason": "compliance resolution is deferred/unsupported in the V1 daemon runtime"
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}

@@ -1,0 +1,17 @@
+{
+  "request_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "status": "ok",
+  "result": {
+    "matches": [
+      {
+        "kind": "decision",
+        "decision_id": "DEC-7",
+        "title": "Use cherry-pick for single-commit backports",
+        "source_link": "local://meeting-2026-06-22.md",
+        "excerpt": "We agreed cherry-pick is the default for single-commit backports."
+      }
+    ],
+    "binding_scope": {"status": "unsupported", "reason": "binding search scope unsupported until binding evidence projection exists"}
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}
