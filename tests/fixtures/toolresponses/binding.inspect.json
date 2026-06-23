@@ -1,0 +1,18 @@
+{
+  "request_id": "44444444-4444-4444-8444-444444444444",
+  "status": "ok",
+  "result": {
+    "decision_or_candidate_id": "DEC-1",
+    "bindings": [
+      {
+        "symbol": "app/src/lib/git/cherry-pick.ts:applyCherryPick",
+        "evidence_state": "verified",
+        "validated_sha": "e6c50fb028171e9cec03594273c8116bb135847e",
+        "currentness": "current",
+        "source_link": "local://app/src/lib/git/cherry-pick.ts#L42"
+      }
+    ],
+    "graph_snapshot_id": "snap-2026-06-22"
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}
