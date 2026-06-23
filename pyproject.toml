@@ -78,6 +78,7 @@ only-include = [
   "tests/test_toolrequest_thin_client.py",
   "tests/test_toolrequest_conformance.py",
   "tests/fixtures/toolresponses",
+  "tests/test_codegenome_authority_retired.py",
 ]
 
 [tool.ruff]
