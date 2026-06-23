@@ -14,7 +14,7 @@ cyclonedx-bom>=7.3.0
 pip-audit>=2.7.0
 
 # Security floors for transitive dependencies (pip-audit advisories)
-cryptography>=48.0.1  # GHSA-537c-gmf6-5ccf
+cryptography>=49.0.0  # GHSA-537c-gmf6-5ccf
 starlette>=1.3.1  # CVE-2026-54282, CVE-2026-54283
 msgpack>=1.2.1  # GHSA-6v7p-g79w-8964
 pydantic-settings>=2.14.2  # GHSA-4xgf-cpjx-pc3j
