@@ -38,6 +38,11 @@ jobs:
       - name: Install package without resolving dependencies
         run: python -m pip install --no-build-isolation --no-deps .
 
+      - name: Replay deterministic v0 user flow
+        # mcp#628: scripted flow sequence only. This does not invoke Claude,
+        # provider APIs, a live daemon, transcript comparison, or recording.
+        run: python scripts/sim_issue_108_flows.py --check
+
       - name: Run deterministic test suite
         # Fail if any test reaches the network: the gate must stay hermetic.
         # No daemon URL / API key in env → daemon-touching code raises the
