@@ -88,6 +88,19 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.evidence.refresh",
+        description="Request daemon-owned evidence currentness refresh for a tracked Decision.",
+        inputSchema=_schema(
+            {
+                "decision_id": {
+                    "type": "string",
+                    "description": "Decision id whose evidence currentness should be refreshed.",
+                },
+            },
+            ["decision_id"],
+        ),
+    ),
+    Tool(
         name="bicameral.review.accept_candidate",
         description="Accept a decision candidate through bot governance.",
         inputSchema=_review_schema(),

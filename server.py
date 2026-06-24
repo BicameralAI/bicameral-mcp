@@ -21,6 +21,7 @@ from mcp.server.models import InitializationOptions
 from authority import build_authority_context
 from daemon_client import (
     CapabilityReport,
+    DaemonCapabilityError,
     DaemonClient,
     DaemonClientError,
     DaemonProtocolError,
@@ -70,6 +71,13 @@ async def _ensure_protocol_compatible(client: DaemonClient) -> CapabilityReport:
     )
 
 
+def _ensure_command_advertised(command_name: str, capability_report: CapabilityReport) -> None:
+    if command_name not in capability_report.supported_commands:
+        raise DaemonCapabilityError(
+            f"daemon does not advertise ToolRequest command: {command_name}"
+        )
+
+
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
     await _ensure_protocol_compatible(_client())
@@ -85,7 +93,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
     command_name = MCP_TOOL_COMMANDS[name]
     client = _client()
     try:
-        await _ensure_protocol_compatible(client)
+        capability_report = await _ensure_protocol_compatible(client)
+        _ensure_command_advertised(command_name, capability_report)
         tool_request = build_tool_request(
             command_name=command_name,
             params=arguments,

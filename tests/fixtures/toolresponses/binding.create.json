@@ -1,0 +1,15 @@
+{
+  "request_id": "33333333-3333-4333-8333-333333333333",
+  "status": "ambiguous",
+  "result": {
+    "decision_or_candidate_id": "DEC-1",
+    "evidence_state": "ambiguous",
+    "verified": false,
+    "candidates": [
+      {"symbol": "app/src/lib/git/cherry-pick.ts:applyCherryPick", "score": 0.0},
+      {"symbol": "app/src/lib/git/rebase.ts:applyRebase", "score": 0.0}
+    ],
+    "reason": "more than one symbol matches the binding hint; bot will not assert verified evidence"
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}

@@ -1,0 +1,10 @@
+{
+  "request_id": "66666666-6666-4666-8666-666666666666",
+  "status": "ok",
+  "result": {
+    "target_id": "cand-0002",
+    "transition": "candidate_rejected",
+    "touched_ids": ["cand-0002"]
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}

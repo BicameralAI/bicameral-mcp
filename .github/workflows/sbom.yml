@@ -1,0 +1,23 @@
+name: SBOM
+
+# Adopts the org reusable SBOM workflow owned by bicameral-integrations (#105).
+# OIDC + build provenance attestations enabled per the org-wide decision (#105).
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    # SBOM needs id-token + attestations write for provenance; it does not write
+    # repo contents, so contents stays read (Scorecard Token-Permissions).
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    uses: BicameralAI/bicameral-integrations/.github/workflows/_reusable-sbom.yml@f28ab9dd21e2ffc2f79597c587dcf3c575f9d2ea
+    with:
+      attest: ${{ github.event_name == 'release' }}

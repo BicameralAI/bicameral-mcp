@@ -25,6 +25,12 @@ PROMPTS: dict[str, str] = {
         "bicameral.history for replayed ledger state and bicameral.search for "
         "querying decisions, candidates, and bindings."
     ),
+    "evidence_refresh": (
+        "Request manual evidence currentness refresh through Bicameral. Call "
+        "bicameral.evidence.refresh with a decision_id. Display the daemon-authored "
+        "currentness or typed rejection as-is; do not run local link_commit, mutate "
+        "ledger state, rebuild graphs, or infer compliance/signoff."
+    ),
 }
 
 

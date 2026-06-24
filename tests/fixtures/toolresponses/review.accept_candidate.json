@@ -1,0 +1,11 @@
+{
+  "request_id": "55555555-5555-4555-8555-555555555555",
+  "status": "ok",
+  "result": {
+    "target_id": "cand-0001",
+    "transition": "candidate_accepted",
+    "decision_id": "DEC-7",
+    "touched_ids": ["cand-0001", "DEC-7"]
+  },
+  "responded_at": "2026-06-22T00:00:00Z"
+}
