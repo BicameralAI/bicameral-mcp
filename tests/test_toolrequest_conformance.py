@@ -123,6 +123,12 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"decision_or_candidate_id", "commit_sha"},
         required={"decision_or_candidate_id"},
     ),
+    "bicameral.evidence.refresh": _CommandSpec(
+        command="evidence.refresh",
+        args={"decision_id": "DEC-7", **_CONTROL_AND_NOISE},
+        expected_params={"decision_id"},
+        required={"decision_id"},
+    ),
     "bicameral.review.accept_candidate": _CommandSpec(
         command="review.accept_candidate",
         args={"target_id": "cand-1", "reason": "ok", **_CONTROL_AND_NOISE},
@@ -358,6 +364,49 @@ async def test_resolve_compliance_deferred_passthrough(monkeypatch):
     # V1 contract: compliance resolution is typed unsupported/deferred, not "ok".
     assert parsed["status"] == "unsupported"
     assert parsed["result"]["deferred"] is True
+
+
+EVIDENCE_REFRESH_TYPED_STATES = [
+    "current",
+    "content_changed",
+    "target_missing",
+    "graph_unavailable",
+    "graph_not_configured",
+    "unsupported_workspace",
+    "needs_index_refresh",
+    "ineligible_decision",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", EVIDENCE_REFRESH_TYPED_STATES)
+async def test_evidence_refresh_typed_currentness_passthrough(state, monkeypatch):
+    def respond(command, _req):
+        if command == "evidence.refresh":
+            return {
+                "status": state,
+                "result": {
+                    "decision_id": "DEC-7",
+                    "currentness": state,
+                    "signoff_mutated": False,
+                    "compliance_mutated": False,
+                    "binding_evidence_mutated": False,
+                },
+                "responded_at": "2026-06-23T00:00:00Z",
+            }
+        return None
+
+    daemon = _RecordingDaemon(response_for=respond)
+    _patch_daemon(monkeypatch, daemon)
+
+    content = await server.call_tool("bicameral.evidence.refresh", {"decision_id": "DEC-7"})
+    parsed = json.loads(content[0].text)
+
+    assert parsed["status"] == state
+    assert parsed["result"]["currentness"] == state
+    assert parsed["result"]["signoff_mutated"] is False
+    assert parsed["result"]["compliance_mutated"] is False
+    assert parsed["result"]["binding_evidence_mutated"] is False
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.preflight": "preflight.run",
     "bicameral.bind": "binding.create",
     "bicameral.binding.inspect": "binding.inspect",
+    "bicameral.evidence.refresh": "evidence.refresh",
     "bicameral.review.accept_candidate": "review.accept_candidate",
     "bicameral.review.reject_candidate": "review.reject_candidate",
     "bicameral.review.approve_signoff": "review.approve_signoff",
@@ -64,6 +65,8 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "decision_or_candidate_id", "bindings", "commit_sha", "ref_name")
     if command_name == "binding.inspect":
         return _only(cleaned, "decision_or_candidate_id", "commit_sha")
+    if command_name == "evidence.refresh":
+        return _only(cleaned, "decision_id")
     if command_name in {
         "review.accept_candidate",
         "review.reject_candidate",
