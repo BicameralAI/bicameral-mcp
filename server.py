@@ -31,6 +31,7 @@ from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
     error_text,
     format_preflight_response,
+    format_recall_packet,
     format_tool_response,
     recovery_error_text,
 )
@@ -103,6 +104,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         response = await client.send_tool_request(tool_request)
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
+        if "recall_packet" in response:
+            return [format_recall_packet(response)]
         return [format_tool_response(response)]
     except DaemonClientError as exc:
         return [
