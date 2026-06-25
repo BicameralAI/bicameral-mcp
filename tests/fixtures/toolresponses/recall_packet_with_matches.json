@@ -1,0 +1,36 @@
+{
+  "request_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "status": "ok",
+  "recall_packet": {
+    "searched_scope": ["decisions:local_ledger", "candidates:local_ledger"],
+    "unknown_scope": ["bindings:graph_index", "decisions:team_remote"],
+    "matches": [
+      {
+        "kind": "decision",
+        "id": "DEC-12",
+        "title": "Use structured logging for all daemon requests",
+        "evidence_refs": ["ev-001", "ev-002"],
+        "freshness": "stale",
+        "readiness": "accepted",
+        "source_link": "local://adr-0003.md",
+        "excerpt": "All daemon requests must use structured logging with request_id correlation."
+      },
+      {
+        "kind": "candidate",
+        "id": "CAND-5",
+        "title": "Prefer asyncio.TaskGroup over gather for error propagation",
+        "evidence_refs": ["ev-003"],
+        "freshness": "current",
+        "readiness": "source_only",
+        "source_link": "local://session-2026-06-20.md",
+        "excerpt": "Session evidence suggests asyncio.TaskGroup is preferred."
+      }
+    ],
+    "allowed_next_actions": ["bind", "inspect", "expand_scope"],
+    "expand_scope": {
+      "available": ["bindings:graph_index", "decisions:team_remote"],
+      "hint": "Run with scope='all' to include graph-indexed bindings and team remote decisions."
+    }
+  },
+  "responded_at": "2026-06-24T00:00:00Z"
+}

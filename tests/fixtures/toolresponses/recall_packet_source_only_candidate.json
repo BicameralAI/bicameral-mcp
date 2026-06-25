@@ -1,0 +1,22 @@
+{
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "status": "ok",
+  "recall_packet": {
+    "searched_scope": ["decisions:local_ledger", "candidates:local_ledger"],
+    "unknown_scope": [],
+    "matches": [
+      {
+        "kind": "candidate",
+        "id": "CAND-9",
+        "title": "Retry transient daemon errors with exponential backoff",
+        "evidence_refs": ["ev-020", "ev-021"],
+        "freshness": "current",
+        "readiness": "source_only",
+        "source_link": "local://transcript-2026-06-23.md",
+        "excerpt": "Agent noted transient failures; suggested retry with backoff."
+      }
+    ],
+    "allowed_next_actions": ["review.accept_candidate", "review.reject_candidate"]
+  },
+  "responded_at": "2026-06-24T00:00:03Z"
+}

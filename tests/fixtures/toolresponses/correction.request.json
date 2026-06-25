@@ -1,8 +1,11 @@
 {
-  "request_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "request_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   "status": "ok",
-  "correction_id": "CORR-1",
-  "outcome": "acknowledged",
-  "session_directive": {"mode": "continue"},
+  "result": {
+    "correction_id": "corr-0001",
+    "packet_id": "pkt-abc",
+    "accepted": true,
+    "message": "Correction request submitted successfully."
+  },
   "responded_at": "2026-06-25T00:00:00Z"
 }

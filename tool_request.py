@@ -21,7 +21,15 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
+    "bicameral.request_correction": "correction.request",
 }
+
+# Tools that are locally gated and never dispatched to the daemon.
+LOCAL_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "bicameral.request_correction.approve",
+    }
+)
 
 SUPPORTED_COMMANDS = tuple(MCP_TOOL_COMMANDS.values())
 
@@ -62,7 +70,7 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "evidence",
         )
     if command_name == "preflight.run":
-        return _only(cleaned, "files", "symbols", "diff_context", "branch")
+        return _only(cleaned, "files", "symbols", "diff_context", "branch", "checkpoint_hint")
     if command_name == "binding.create":
         return _only(cleaned, "decision_or_candidate_id", "bindings", "commit_sha", "ref_name")
     if command_name == "binding.inspect":
@@ -85,7 +93,7 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
     if command_name == "lookup.query":
         return _only(cleaned, "files", "symbols", "scope", "include_context")
     if command_name == "correction.request":
-        return _only(cleaned, "target_id", "correction_type", "reason", "context")
+        return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
     return cleaned
 
 

@@ -48,6 +48,78 @@ def format_tool_response(response: dict[str, Any]) -> TextContent:
     return TextContent(type="text", text=json.dumps(response, indent=2, sort_keys=True))
 
 
+def format_recall_packet(response: dict[str, Any]) -> TextContent:
+    """Render a daemon-authored RecallPacket without strengthening claims.
+
+    The RecallPacket is a daemon-owned evidence lookup result.  MCP renders it
+    faithfully: searched scope, unknown scope, matches (with evidence refs and
+    freshness/readiness labels), and allowed next actions.
+
+    Rendering rules (mcp#638):
+    - No-match output states the lookup found no relevant items *only within
+      the searched scope* — it never infers no-conflict, compliance, safety,
+      or global completeness from narrow scope.
+    - Unknown scope is never hidden or summarized away.
+    - Stale / source_only / candidate labels remain visible.
+    - Expand-scope affordances are forwarded when present.
+    """
+    recall: dict[str, Any] = response.get("recall_packet", {})
+
+    searched_scope = recall.get("searched_scope", [])
+    unknown_scope = recall.get("unknown_scope", [])
+    matches = recall.get("matches", [])
+    allowed_next_actions = recall.get("allowed_next_actions", [])
+
+    rendered_matches: list[dict[str, Any]] = []
+    for match in matches:
+        rendered: dict[str, Any] = {
+            "kind": match.get("kind"),
+            "id": match.get("id"),
+            "title": match.get("title"),
+        }
+        if match.get("evidence_refs"):
+            rendered["evidence_refs"] = match["evidence_refs"]
+        if match.get("freshness"):
+            rendered["freshness"] = match["freshness"]
+        if match.get("readiness"):
+            rendered["readiness"] = match["readiness"]
+        if match.get("source_link"):
+            rendered["source_link"] = match["source_link"]
+        if match.get("excerpt"):
+            rendered["excerpt"] = match["excerpt"]
+        rendered_matches.append(rendered)
+
+    no_match_note: str | None = None
+    if not matches:
+        scope_desc = ", ".join(searched_scope) if searched_scope else "requested scope"
+        no_match_note = (
+            f"Lookup found no relevant items within searched scope: {scope_desc}. "
+            "This does not imply absence outside searched scope."
+        )
+
+    mcp_output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "searched_scope": searched_scope,
+        "unknown_scope": unknown_scope,
+        "matches": rendered_matches,
+    }
+
+    if no_match_note:
+        mcp_output["no_match_note"] = no_match_note
+
+    if allowed_next_actions:
+        mcp_output["allowed_next_actions"] = allowed_next_actions
+
+    expand_scope = recall.get("expand_scope")
+    if expand_scope:
+        mcp_output["expand_scope"] = expand_scope
+
+    mcp_output["responded_at"] = response.get("responded_at", _now())
+
+    return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
+
+
 def format_preflight_response(response: dict[str, Any]) -> TextContent:
     """Render a preflight daemon response with explicit staged section.
 
