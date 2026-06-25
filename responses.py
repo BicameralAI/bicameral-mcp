@@ -83,6 +83,48 @@ def format_preflight_response(response: dict[str, Any]) -> TextContent:
     return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
 
 
+def format_lookup_response(response: dict[str, Any]) -> TextContent:
+    """Render a daemon lookup response with explicit state surfaces.
+
+    Surfaces the daemon-authored RecallPacket fields: searched sources,
+    corpus version, matches, unknown scope, and allowed next actions.
+    When the daemon returns a deferred or unsupported state, the response
+    renders that state explicitly rather than hiding it.
+    """
+    status = response.get("status", "ok")
+    recall_packet = response.get("recall_packet", {})
+
+    mcp_output: dict[str, Any] = {
+        "status": status,
+        "request_id": response.get("request_id"),
+        "recall_packet": {
+            "searched_sources": recall_packet.get("searched_sources", []),
+            "corpus_version": recall_packet.get("corpus_version"),
+            "matches": recall_packet.get("matches", []),
+            "unknown_scope": recall_packet.get("unknown_scope", []),
+            "allowed_next_actions": recall_packet.get("allowed_next_actions", []),
+        },
+        "session_directive": response.get("session_directive", {"mode": "continue"}),
+    }
+    return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
+
+
+def format_correction_response(response: dict[str, Any]) -> TextContent:
+    """Render a daemon correction response.
+
+    Surfaces the correction outcome exactly as returned by the daemon.
+    MCP does not own the correction lifecycle — it only renders the result.
+    """
+    mcp_output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "correction_id": response.get("correction_id"),
+        "outcome": response.get("outcome", "acknowledged"),
+        "session_directive": response.get("session_directive", {"mode": "continue"}),
+    }
+    return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
+
+
 def error_text(code: str, message: str) -> TextContent:
     payload = {
         "status": "error",

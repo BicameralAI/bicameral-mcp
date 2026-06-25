@@ -9,6 +9,8 @@ from uuid import uuid4
 MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
     "bicameral.preflight": "preflight.run",
+    "bicameral.lookup": "lookup.query",
+    "bicameral.request_correction": "correction.request",
     "bicameral.bind": "binding.create",
     "bicameral.binding.inspect": "binding.inspect",
     "bicameral.evidence.refresh": "evidence.refresh",
@@ -80,6 +82,10 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "decision_id", "include_events", "include_bindings", "since")
     if command_name == "search.query":
         return _only(cleaned, "query", "scope", "filters", "limit")
+    if command_name == "lookup.query":
+        return _only(cleaned, "files", "symbols", "scope", "include_context")
+    if command_name == "correction.request":
+        return _only(cleaned, "target_id", "correction_type", "reason", "context")
     return cleaned
 
 

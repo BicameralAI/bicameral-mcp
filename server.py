@@ -30,6 +30,8 @@ from daemon_client import (
 from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
     error_text,
+    format_correction_response,
+    format_lookup_response,
     format_preflight_response,
     format_tool_response,
     recovery_error_text,
@@ -103,6 +105,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         response = await client.send_tool_request(tool_request)
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
+        if name == "bicameral.lookup":
+            return [format_lookup_response(response)]
+        if name == "bicameral.request_correction":
+            return [format_correction_response(response)]
         return [format_tool_response(response)]
     except DaemonClientError as exc:
         return [

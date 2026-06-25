@@ -1,0 +1,8 @@
+{
+  "request_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "status": "ok",
+  "correction_id": "CORR-1",
+  "outcome": "acknowledged",
+  "session_directive": {"mode": "continue"},
+  "responded_at": "2026-06-25T00:00:00Z"
+}

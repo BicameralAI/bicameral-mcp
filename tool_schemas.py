@@ -64,6 +64,48 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.lookup",
+        description="Query relevant decisions and constraints from the daemon before implementation. Returns daemon-authored RecallPacket with searched sources, matches, and allowed next actions.",
+        inputSchema=_schema(
+            {
+                "files": {"type": "array", "items": {"type": "string"}},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "scope": {
+                    "type": "string",
+                    "enum": ["pre_work", "mid_session", "pre_write"],
+                    "description": "Lookup checkpoint scope.",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "description": "Include extended context in recall results.",
+                },
+            }
+        ),
+    ),
+    Tool(
+        name="bicameral.request_correction",
+        description="Request the daemon to capture or correct a constraint. Requires user approval before submission. MCP does not own the capture outcome.",
+        inputSchema=_schema(
+            {
+                "target_id": {
+                    "type": "string",
+                    "description": "Decision or candidate id to correct.",
+                },
+                "correction_type": {
+                    "type": "string",
+                    "enum": ["amend", "supersede", "withdraw"],
+                    "description": "Type of correction requested.",
+                },
+                "reason": {"type": "string", "description": "Justification for the correction."},
+                "context": {
+                    "type": "object",
+                    "description": "Additional context for the correction request.",
+                },
+            },
+            ["target_id", "correction_type", "reason"],
+        ),
+    ),
+    Tool(
         name="bicameral.bind",
         description="Propose binding evidence for a decision or candidate.",
         inputSchema=_schema(
