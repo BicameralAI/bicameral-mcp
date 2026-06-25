@@ -33,6 +33,21 @@ from daemon_client import (
 from tool_request import MCP_TOOL_COMMANDS, SUPPORTED_COMMANDS, build_tool_request
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
+# Canonical correction params matching the approval-gated protocol.
+_CORRECTION_PARAMS = {
+    "packet_id": "pkt-test",
+    "correction_request": "fix drift in binding",
+    "reason": "verified locally",
+}
+
+
+async def _approve_correction(params: dict[str, Any]) -> None:
+    """Grant single-use approval for a correction scope before submission."""
+    scope_keys = {"packet_id", "excerpt", "diff", "correction_request"}
+    approve_params = {k: v for k, v in params.items() if k in scope_keys}
+    await server.call_tool("bicameral.request_correction.approve", approve_params)
+
+
 # ---------------------------------------------------------------------------
 # Fake daemon clients
 # ---------------------------------------------------------------------------
@@ -154,10 +169,9 @@ class TestCapabilityGating:
         daemon = _NoLookupDaemon()
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        content = await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"},
-        )
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
+        content = await server.call_tool("bicameral.request_correction", params)
         response = json.loads(content[0].text)
 
         assert response["status"] == "error"
@@ -204,7 +218,11 @@ class TestCapabilityGating:
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        scope_args = {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"}
+        scope_args = {
+            "packet_id": "pkt-1",
+            "correction_request": "amend constraint",
+            "reason": "test",
+        }
         # Grant approval first
         await server.call_tool("bicameral.request_correction.approve", scope_args)
         content = await server.call_tool("bicameral.request_correction", scope_args)
@@ -251,10 +269,9 @@ class TestExplicitStateRendering:
         """Unreachable daemon -> daemon_unavailable error for correction."""
         monkeypatch.setattr(server, "_client", lambda: _UnreachableDaemon())
 
-        content = await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"},
-        )
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
+        content = await server.call_tool("bicameral.request_correction", params)
         response = json.loads(content[0].text)
 
         assert response["status"] == "error"
@@ -282,10 +299,9 @@ class TestExplicitStateRendering:
         daemon = _NoLookupDaemon()
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        content = await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"},
-        )
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
+        content = await server.call_tool("bicameral.request_correction", params)
         response = json.loads(content[0].text)
         recovery = response["recovery"]
 
@@ -312,10 +328,9 @@ class TestExplicitStateRendering:
         daemon = _DeferredLookupDaemon()
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        content = await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "fix"},
-        )
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
+        content = await server.call_tool("bicameral.request_correction", params)
         response = json.loads(content[0].text)
 
         assert response["status"] == "error"
@@ -534,18 +549,21 @@ class TestNoLocalState:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "c-1",
-                "outcome": "acknowledged",
+                "result": {
+                    "correction_id": "c-1",
+                    "packet_id": "pkt-test",
+                    "accepted": True,
+                    "message": "OK",
+                },
             }
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
         monkeypatch.setenv("BICAMERAL_WORKSPACE", str(tmp_path))
 
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
         before = set(tmp_path.rglob("*"))
-        await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "amend", "reason": "fix"},
-        )
+        await server.call_tool("bicameral.request_correction", params)
         after = set(tmp_path.rglob("*"))
 
         assert before == after, f"correction created local files: {after - before}"
@@ -594,17 +612,20 @@ class TestNoLocalState:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "c-2", "packet_id": "pkt-1", "accepted": true,
-                "outcome": "acknowledged",
+                "result": {
+                    "correction_id": "c-2",
+                    "packet_id": "pkt-test",
+                    "accepted": True,
+                    "message": "OK",
+                },
             }
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
         monkeypatch.setenv("BICAMERAL_WORKSPACE", str(tmp_path))
 
-        await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "amend", "reason": "fix"},
-        )
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
+        await server.call_tool("bicameral.request_correction", params)
 
         snapshot_files = list(tmp_path.rglob("*snapshot*")) + list(
             tmp_path.rglob("*SourceSnapshot*")
@@ -617,17 +638,20 @@ class TestNoLocalState:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "c-3", "packet_id": "pkt-1", "accepted": true,
-                "outcome": "acknowledged",
+                "result": {
+                    "correction_id": "c-3",
+                    "packet_id": "pkt-test",
+                    "accepted": True,
+                    "message": "OK",
+                },
             }
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
         monkeypatch.setenv("BICAMERAL_WORKSPACE", str(tmp_path))
 
-        await server.call_tool(
-            "bicameral.request_correction",
-            {"packet_id": "pkt-1", "correction_request": "withdraw", "reason": "obsolete"},
-        )
+        params = dict(_CORRECTION_PARAMS)
+        await _approve_correction(params)
+        await server.call_tool("bicameral.request_correction", params)
 
         binding_files = list(tmp_path.rglob("*binding*"))
         assert binding_files == []

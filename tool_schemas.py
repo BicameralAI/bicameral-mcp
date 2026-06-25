@@ -91,29 +91,6 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
-        name="bicameral.request_correction",
-        description="Request the daemon to capture or correct a constraint. Requires user approval before submission. MCP does not own the capture outcome.",
-        inputSchema=_schema(
-            {
-                "target_id": {
-                    "type": "string",
-                    "description": "Decision or candidate id to correct.",
-                },
-                "correction_type": {
-                    "type": "string",
-                    "enum": ["amend", "supersede", "withdraw"],
-                    "description": "Type of correction requested.",
-                },
-                "reason": {"type": "string", "description": "Justification for the correction."},
-                "context": {
-                    "type": "object",
-                    "description": "Additional context for the correction request.",
-                },
-            },
-            ["target_id", "correction_type", "reason"],
-        ),
-    ),
-    Tool(
         name="bicameral.bind",
         description="Propose binding evidence for a decision or candidate.",
         inputSchema=_schema(
