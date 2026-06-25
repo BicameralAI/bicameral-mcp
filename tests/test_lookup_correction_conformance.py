@@ -156,7 +156,7 @@ class TestCapabilityGating:
 
         content = await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "dec-1", "correction_type": "amend", "reason": "test"},
+            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"},
         )
         response = json.loads(content[0].text)
 
@@ -194,16 +194,20 @@ class TestCapabilityGating:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "corr-123",
-                "outcome": "acknowledged",
+                "result": {
+                    "correction_id": "corr-123",
+                    "packet_id": "pkt-1",
+                    "accepted": True,
+                    "message": "OK",
+                },
             }
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        content = await server.call_tool(
-            "bicameral.request_correction",
-            {"target_id": "dec-1", "correction_type": "amend", "reason": "test"},
-        )
+        scope_args = {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"}
+        # Grant approval first
+        await server.call_tool("bicameral.request_correction.approve", scope_args)
+        content = await server.call_tool("bicameral.request_correction", scope_args)
         response = json.loads(content[0].text)
 
         assert response["status"] == "ok"
@@ -249,7 +253,7 @@ class TestExplicitStateRendering:
 
         content = await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "dec-1", "correction_type": "amend", "reason": "test"},
+            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"},
         )
         response = json.loads(content[0].text)
 
@@ -280,7 +284,7 @@ class TestExplicitStateRendering:
 
         content = await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "dec-1", "correction_type": "amend", "reason": "test"},
+            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "test"},
         )
         response = json.loads(content[0].text)
         recovery = response["recovery"]
@@ -310,7 +314,7 @@ class TestExplicitStateRendering:
 
         content = await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "dec-1", "correction_type": "amend", "reason": "fix"},
+            {"packet_id": "pkt-1", "correction_request": "amend constraint", "reason": "fix"},
         )
         response = json.loads(content[0].text)
 
@@ -391,29 +395,31 @@ class TestToolRequestMapping:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "corr-456",
-                "outcome": "acknowledged",
+                "result": {
+                    "correction_id": "corr-456",
+                    "packet_id": "pkt-99",
+                    "accepted": True,
+                    "message": "Correction accepted.",
+                },
             }
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        await server.call_tool(
-            "bicameral.request_correction",
-            {
-                "target_id": "dec-99",
-                "correction_type": "supersede",
-                "reason": "outdated constraint",
-                "context": {"source": "session"},
-            },
-        )
+        scope_args = {
+            "packet_id": "pkt-99",
+            "correction_request": "supersede outdated constraint",
+            "reason": "outdated constraint",
+        }
+        # Grant approval first
+        await server.call_tool("bicameral.request_correction.approve", scope_args)
+        await server.call_tool("bicameral.request_correction", scope_args)
 
         assert len(daemon.requests) == 1
         req = daemon.requests[0]
         assert req["command"]["name"] == "correction.request"
-        assert req["command"]["params"]["target_id"] == "dec-99"
-        assert req["command"]["params"]["correction_type"] == "supersede"
+        assert req["command"]["params"]["packet_id"] == "pkt-99"
+        assert req["command"]["params"]["correction_request"] == "supersede outdated constraint"
         assert req["command"]["params"]["reason"] == "outdated constraint"
-        assert req["command"]["params"]["context"] == {"source": "session"}
         assert "request_id" in req
         assert "authority" in req
 
@@ -445,27 +451,31 @@ class TestToolRequestMapping:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "corr-1",
-                "outcome": "acknowledged",
+                "result": {
+                    "correction_id": "corr-1",
+                    "packet_id": "pkt-1",
+                    "accepted": True,
+                    "message": "OK",
+                },
             }
         )
         monkeypatch.setattr(server, "_client", lambda: daemon)
 
-        await server.call_tool(
-            "bicameral.request_correction",
-            {
-                "target_id": "dec-1",
-                "correction_type": "withdraw",
-                "reason": "no longer relevant",
-                "actor_id": "admin",
-                "policy_scope": ["prod"],
-            },
-        )
+        scope_args = {
+            "packet_id": "pkt-1",
+            "correction_request": "withdraw binding",
+            "reason": "no longer relevant",
+            "actor_id": "admin",
+            "policy_scope": ["prod"],
+        }
+        # Grant approval first
+        await server.call_tool("bicameral.request_correction.approve", scope_args)
+        await server.call_tool("bicameral.request_correction", scope_args)
 
         params = daemon.requests[0]["command"]["params"]
         assert "actor_id" not in params
         assert "policy_scope" not in params
-        assert params["target_id"] == "dec-1"
+        assert params["packet_id"] == "pkt-1"
 
     def test_build_tool_request_lookup_structure(self):
         """build_tool_request produces valid envelope for lookup.query."""
@@ -483,13 +493,13 @@ class TestToolRequestMapping:
         """build_tool_request produces valid envelope for correction.request."""
         req = build_tool_request(
             command_name="correction.request",
-            params={"target_id": "d-1", "correction_type": "amend", "reason": "fix"},
+            params={"packet_id": "pkt-1", "correction_request": "amend", "reason": "fix"},
             authority={"actor_id": "test", "auth_method": "mcp_session"},
         )
         assert req["command"]["name"] == "correction.request"
         assert req["command"]["params"] == {
-            "target_id": "d-1",
-            "correction_type": "amend",
+            "packet_id": "pkt-1",
+            "correction_request": "amend",
             "reason": "fix",
         }
 
@@ -534,7 +544,7 @@ class TestNoLocalState:
         before = set(tmp_path.rglob("*"))
         await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "d-1", "correction_type": "amend", "reason": "fix"},
+            {"packet_id": "pkt-1", "correction_request": "amend", "reason": "fix"},
         )
         after = set(tmp_path.rglob("*"))
 
@@ -584,7 +594,7 @@ class TestNoLocalState:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "c-2",
+                "correction_id": "c-2", "packet_id": "pkt-1", "accepted": true,
                 "outcome": "acknowledged",
             }
         )
@@ -593,7 +603,7 @@ class TestNoLocalState:
 
         await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "d-1", "correction_type": "amend", "reason": "fix"},
+            {"packet_id": "pkt-1", "correction_request": "amend", "reason": "fix"},
         )
 
         snapshot_files = list(tmp_path.rglob("*snapshot*")) + list(
@@ -607,7 +617,7 @@ class TestNoLocalState:
         daemon = _FullCapabilityDaemon(
             response_override={
                 "status": "ok",
-                "correction_id": "c-3",
+                "correction_id": "c-3", "packet_id": "pkt-1", "accepted": true,
                 "outcome": "acknowledged",
             }
         )
@@ -616,7 +626,7 @@ class TestNoLocalState:
 
         await server.call_tool(
             "bicameral.request_correction",
-            {"target_id": "d-1", "correction_type": "withdraw", "reason": "obsolete"},
+            {"packet_id": "pkt-1", "correction_request": "withdraw", "reason": "obsolete"},
         )
 
         binding_files = list(tmp_path.rglob("*binding*"))

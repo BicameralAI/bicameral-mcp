@@ -187,12 +187,14 @@ def format_correction_response(response: dict[str, Any]) -> TextContent:
     Surfaces the correction outcome exactly as returned by the daemon.
     MCP does not own the correction lifecycle — it only renders the result.
     """
+    result = response.get("result", {})
     mcp_output: dict[str, Any] = {
         "status": response.get("status", "ok"),
         "request_id": response.get("request_id"),
-        "correction_id": response.get("correction_id"),
-        "outcome": response.get("outcome", "acknowledged"),
-        "session_directive": response.get("session_directive", {"mode": "continue"}),
+        "correction_id": result.get("correction_id"),
+        "packet_id": result.get("packet_id"),
+        "accepted": result.get("accepted"),
+        "message": result.get("message"),
     }
     return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
 
