@@ -50,6 +50,7 @@ bicameral-mcp = "server:cli_main"
 [tool.hatch.build.targets.wheel]
 only-include = [
   "server.py",
+  "approval_gate.py",
   "authority.py",
   "daemon_client.py",
   "prompts.py",
@@ -66,6 +67,7 @@ only-include = [
   "SECURITY.md",
   "pyproject.toml",
   "server.py",
+  "approval_gate.py",
   "authority.py",
   "daemon_client.py",
   "prompts.py",
