@@ -21,7 +21,6 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
-    "bicameral.request_correction": "correction.request",
 }
 
 # Tools that are locally gated and never dispatched to the daemon.
