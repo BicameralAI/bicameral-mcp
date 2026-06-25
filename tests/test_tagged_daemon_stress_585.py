@@ -16,8 +16,8 @@ through the production MCP code paths (``server.list_tools``,
 * handshake -> ``CapabilityReport`` (protocol ``v2``, 16 commands, deferred set);
 * supported read command (``history.list``) through ``call_tool``;
 * staged preflight rendering;
-* deferred command (``review.resolve_compliance``) -> typed, daemon-authored
-  ``rejected`` payload forwarded verbatim (MCP synthesizes nothing, no fallback);
+* deferred command (``review.resolve_compliance``) -> typed MCP capability
+  recovery before dispatch because v0.1.5 advertises it only as deferred;
 * agent retry behavior (iterated identical calls stay consistent);
 * concurrent tool calls;
 * no MCP-local fallback for out-of-scope surfaces (graph/locator/dashboard/
@@ -208,7 +208,7 @@ class TestTaggedV015StressMatrix:
         assert payload["stages"]["enforcement"]["status"] == "unsupported"
         assert payload["session_directive"] == {"mode": "continue"}
 
-    async def test_deferred_command_returns_typed_daemon_authored_rejection(self, monkeypatch):
+    async def test_deferred_command_returns_typed_capability_recovery(self, monkeypatch):
         with _v015_daemon() as base_url:
             monkeypatch.setattr(server, "_client", lambda: _client_for(base_url))
             result = await server.call_tool(
@@ -216,11 +216,13 @@ class TestTaggedV015StressMatrix:
                 {"target_id": "dec-x", "compliance_verdict": "compliant"},
             )
         payload = json.loads(result[0].text)
-        # Daemon authors the rejection; MCP forwards it verbatim, synthesizing
-        # neither success nor a local handler result.
-        assert payload["status"] == "rejected"
-        assert "unsupported_capability" in payload["message"]
-        assert payload["trace"]["failure_reason"].startswith("unsupported_capability")
+        # v0.1.5 lists this command in deferred_commands, not supported_commands.
+        # Current MCP fails typed before dispatch instead of calling a command the
+        # daemon does not advertise as executable.
+        assert payload["status"] == "error"
+        assert payload["error_code"] == "daemon_capability_error"
+        assert payload["recovery"]["requested_command"] == "review.resolve_compliance"
+        assert payload["recovery"]["category"] == "capability"
         assert "staged" not in payload
 
     async def test_agent_retry_iterated_calls_are_consistent(self, monkeypatch):
