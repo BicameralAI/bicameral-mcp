@@ -72,6 +72,25 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.lookup",
+        description="Query relevant decisions and constraints from the daemon before implementation. Returns daemon-authored RecallPacket with searched sources, matches, and allowed next actions.",
+        inputSchema=_schema(
+            {
+                "files": {"type": "array", "items": {"type": "string"}},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "scope": {
+                    "type": "string",
+                    "enum": ["pre_work", "mid_session", "pre_write"],
+                    "description": "Lookup checkpoint scope.",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "description": "Include extended context in recall results.",
+                },
+            }
+        ),
+    ),
+    Tool(
         name="bicameral.bind",
         description="Propose binding evidence for a decision or candidate.",
         inputSchema=_schema(

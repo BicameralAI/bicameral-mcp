@@ -1,0 +1,21 @@
+{
+  "request_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "status": "ok",
+  "recall_packet": {
+    "searched_sources": ["decisions", "candidates"],
+    "corpus_version": "2026-06-25T00:00:00Z",
+    "matches": [
+      {
+        "kind": "decision",
+        "decision_id": "DEC-12",
+        "title": "Use daemon-owned lookup for constraint recall",
+        "source_link": "local://rfq-612-staged-preflight.md",
+        "excerpt": "MCP consumes and renders the daemon-authored RecallPacket."
+      }
+    ],
+    "unknown_scope": [],
+    "allowed_next_actions": ["proceed", "expand_scope"]
+  },
+  "session_directive": {"mode": "continue"},
+  "responded_at": "2026-06-25T00:00:00Z"
+}

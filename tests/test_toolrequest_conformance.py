@@ -179,6 +179,12 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"decision_id", "include_events", "include_bindings", "since"},
         required=set(),
     ),
+    "bicameral.lookup": _CommandSpec(
+        command="lookup.query",
+        args={"files": ["src/main.py"], "scope": "pre_work", **_CONTROL_AND_NOISE},
+        expected_params={"files", "symbols", "scope", "include_context"},
+        required=set(),
+    ),
     "bicameral.search": _CommandSpec(
         command="search.query",
         args={"query": "cherry-pick", "scope": "decisions", **_CONTROL_AND_NOISE},
@@ -509,13 +515,25 @@ def _load_fixture(command: str) -> dict:
 
 @pytest.mark.parametrize("command", sorted(set(MCP_TOOL_COMMANDS.values())))
 def test_contract_fixture_renders_through_renderer(command):
-    from responses import format_preflight_response, format_tool_response
+    from responses import (
+        format_correction_response,
+        format_lookup_response,
+        format_preflight_response,
+        format_tool_response,
+    )
 
     payload = _load_fixture(command)
     assert payload["status"]  # fixture carries an explicit status
     assert payload["request_id"]
 
-    renderer = format_preflight_response if command == "preflight.run" else format_tool_response
+    if command == "preflight.run":
+        renderer = format_preflight_response
+    elif command == "lookup.query":
+        renderer = format_lookup_response
+    elif command == "correction.request":
+        renderer = format_correction_response
+    else:
+        renderer = format_tool_response
     content = renderer(payload)
     rendered = json.loads(content.text)
     assert isinstance(rendered, dict)
