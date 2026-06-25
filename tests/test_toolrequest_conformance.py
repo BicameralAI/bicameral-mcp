@@ -185,17 +185,6 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"files", "symbols", "scope", "include_context"},
         required=set(),
     ),
-    "bicameral.request_correction": _CommandSpec(
-        command="correction.request",
-        args={
-            "target_id": "DEC-9",
-            "correction_type": "amend",
-            "reason": "constraint outdated",
-            **_CONTROL_AND_NOISE,
-        },
-        expected_params={"target_id", "correction_type", "reason", "context"},
-        required={"target_id", "correction_type", "reason"},
-    ),
     "bicameral.search": _CommandSpec(
         command="search.query",
         args={"query": "cherry-pick", "scope": "decisions", **_CONTROL_AND_NOISE},
