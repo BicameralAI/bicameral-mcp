@@ -1,0 +1,22 @@
+{
+  "request_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "status": "ok",
+  "recall_packet": {
+    "searched_scope": ["decisions:local_ledger", "candidates:local_ledger"],
+    "unknown_scope": ["bindings:graph_index"],
+    "matches": [
+      {
+        "kind": "decision",
+        "id": "DEC-7",
+        "title": "Use cherry-pick for single-commit backports",
+        "evidence_refs": ["ev-010"],
+        "freshness": "stale",
+        "readiness": "accepted",
+        "source_link": "local://meeting-2026-06-22.md",
+        "excerpt": "We agreed cherry-pick is the default for single-commit backports."
+      }
+    ],
+    "allowed_next_actions": ["bind", "inspect"]
+  },
+  "responded_at": "2026-06-24T00:00:02Z"
+}
