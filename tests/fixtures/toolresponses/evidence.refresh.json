@@ -1,0 +1,21 @@
+{
+  "request_id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "status": "content_changed",
+  "result": {
+    "decision_id": "DEC-7",
+    "currentness": "content_changed",
+    "graph_readiness": "ready",
+    "evaluated_snapshot_id": "snap-2026-06-23",
+    "bindings": [
+      {
+        "binding_id": "bind-0001",
+        "currentness": "content_changed",
+        "detail": "Accepted binding target still exists, but code content changed since validation."
+      }
+    ],
+    "signoff_mutated": false,
+    "compliance_mutated": false,
+    "binding_evidence_mutated": false
+  },
+  "responded_at": "2026-06-23T00:00:00Z"
+}

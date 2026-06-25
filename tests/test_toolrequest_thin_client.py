@@ -125,7 +125,7 @@ async def test_prompts_are_generic_tool_workflows(monkeypatch):
     prompts = await server.list_prompts()
     names = {prompt.name for prompt in prompts}
 
-    assert {"preflight", "bind", "ingest", "history_search"} <= names
+    assert {"preflight", "bind", "ingest", "history_search", "evidence_refresh"} <= names
     prompt = await server.get_prompt("preflight", {"branch": "feature/x"})
     text = prompt.messages[0].content.text
     assert "bicameral.preflight" in text
@@ -348,6 +348,60 @@ async def test_non_preflight_uses_generic_formatter(monkeypatch):
 
     assert "stages" not in response
     assert response["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_evidence_refresh_maps_to_thin_toolrequest(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.evidence.refresh",
+        {
+            "decision_id": "DEC-7",
+            "workspace": "/repo",
+            "actor_id": "agent-refresh",
+            "link_commit": "must-not-forward",
+            "ensure_ledger_synced": True,
+        },
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "ok"
+    assert fake.requests[0]["command"] == {
+        "name": "evidence.refresh",
+        "params": {"decision_id": "DEC-7"},
+    }
+    assert fake.requests[0]["authority"]["actor_id"] == "agent-refresh"
+    assert fake.requests[0]["authority"]["workspace"] == "/repo"
+
+
+@pytest.mark.asyncio
+async def test_evidence_refresh_absent_capability_returns_typed_error(monkeypatch):
+    class _NoEvidenceRefreshClient(_FakeClient):
+        async def capabilities(self) -> dict:
+            capabilities = await super().capabilities()
+            capabilities["supported_commands"] = [
+                command
+                for command in capabilities["supported_commands"]
+                if command != "evidence.refresh"
+            ]
+            return capabilities
+
+    fake = _NoEvidenceRefreshClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.evidence.refresh",
+        {"decision_id": "DEC-7"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_capability_error"
+    assert response["recovery"]["requested_tool"] == "bicameral.evidence.refresh"
+    assert response["recovery"]["requested_command"] == "evidence.refresh"
+    assert fake.requests == []
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,32 @@
+{
+  "_comment": "Substrate parity fixture (GH #611). Merge the `hooks` block into the .claude/settings.json of the substrate under test (interactive project settings, the env used by `claude -p`, or the cron/cloud-agent runner config). Set BICAMERAL_PARITY_SUBSTRATE and BICAMERAL_PARITY_LOG in that substrate's environment before the run. Each command is a strict no-op probe; --event is passed explicitly so substrates that do not deliver stdin JSON still record a correct event name. $CLAUDE_PROJECT_DIR is provided by Claude Code at hook execution time.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event SessionStart" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event UserPromptSubmit" }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event PreToolUse" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event PostToolUse" }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event Notification" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event Stop" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event SubagentStop" }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event PreCompact" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/tests/substrate_parity/parity_hook.py\" --event SessionEnd" }] }
+    ]
+  }
+}

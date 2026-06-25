@@ -76,6 +76,9 @@ only-include = [
   "docs/specs/bicameral-mcp-idealized-spec.md",
   "docs/plans/toolrequest-refactor-plan.md",
   "tests/test_toolrequest_thin_client.py",
+  "tests/test_toolrequest_conformance.py",
+  "tests/fixtures/toolresponses",
+  "tests/test_codegenome_authority_retired.py",
 ]
 
 [tool.ruff]
