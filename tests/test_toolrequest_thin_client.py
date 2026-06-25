@@ -13,7 +13,7 @@ from daemon_client import (
     DaemonConnectionError,
 )
 from responses import build_recovery_payload, format_preflight_response
-from tool_request import MCP_TOOL_COMMANDS, build_tool_request
+from tool_request import LOCAL_ONLY_TOOLS, MCP_TOOL_COMMANDS, build_tool_request
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
 # Alpha staged preflight response fixture from bot#323.
@@ -67,7 +67,7 @@ async def test_list_tools_exposes_only_toolrequest_backed_surface(monkeypatch):
     tools = await server.list_tools()
     names = {tool.name for tool in tools}
 
-    assert names == set(MCP_TOOL_COMMANDS)
+    assert names == set(MCP_TOOL_COMMANDS) | LOCAL_ONLY_TOOLS
     assert "bicameral.link_commit" not in names
     assert "bicameral.ratify" not in names
     assert "validate_symbols" not in names
