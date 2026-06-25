@@ -60,7 +60,7 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "evidence",
         )
     if command_name == "preflight.run":
-        return _only(cleaned, "files", "symbols", "diff_context", "branch")
+        return _only(cleaned, "files", "symbols", "diff_context", "branch", "checkpoint_hint")
     if command_name == "binding.create":
         return _only(cleaned, "decision_or_candidate_id", "bindings", "commit_sha", "ref_name")
     if command_name == "binding.inspect":
