@@ -106,6 +106,113 @@ async def test_call_tool_maps_to_canonical_toolrequest(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_preflight_includes_checkpoint_hint_when_provided(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+    monkeypatch.setenv("BICAMERAL_ACTOR_ID", "agent-hint")
+    monkeypatch.setenv("BICAMERAL_WORKSPACE", "/repo")
+
+    content = await server.call_tool(
+        "bicameral.preflight",
+        {
+            "files": ["src/main.rs"],
+            "checkpoint_hint": "pre_work",
+        },
+    )
+
+    response = json.loads(content[0].text)
+    assert response["status"] == "ok"
+    assert fake.requests[0]["command"] == {
+        "name": "preflight.run",
+        "params": {
+            "files": ["src/main.rs"],
+            "checkpoint_hint": "pre_work",
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_preflight_omits_checkpoint_hint_when_absent(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+    monkeypatch.setenv("BICAMERAL_ACTOR_ID", "agent-no-hint")
+    monkeypatch.setenv("BICAMERAL_WORKSPACE", "/repo")
+
+    content = await server.call_tool(
+        "bicameral.preflight",
+        {"files": ["a.py"], "symbols": ["Foo"]},
+    )
+
+    response = json.loads(content[0].text)
+    assert response["status"] == "ok"
+    params = fake.requests[0]["command"]["params"]
+    assert "checkpoint_hint" not in params
+    assert params == {"files": ["a.py"], "symbols": ["Foo"]}
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_hint_does_not_change_authority(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+    monkeypatch.setenv("BICAMERAL_ACTOR_ID", "agent-auth")
+    monkeypatch.setenv("BICAMERAL_WORKSPACE", "/repo")
+
+    await server.call_tool(
+        "bicameral.preflight",
+        {"files": ["x.py"], "checkpoint_hint": "pre_write"},
+    )
+    await server.call_tool(
+        "bicameral.preflight",
+        {"files": ["x.py"]},
+    )
+
+    auth_with_hint = fake.requests[0]["authority"]
+    auth_without_hint = fake.requests[1]["authority"]
+    assert auth_with_hint["actor_id"] == auth_without_hint["actor_id"]
+    assert auth_with_hint["auth_method"] == auth_without_hint["auth_method"]
+    assert auth_with_hint["workspace"] == auth_without_hint["workspace"]
+    assert auth_with_hint["policy_scope"] == auth_without_hint["policy_scope"]
+    assert (
+        auth_with_hint["audit_metadata"]["mcp_tool"]
+        == auth_without_hint["audit_metadata"]["mcp_tool"]
+    )
+
+
+def test_preflight_toolrequest_shape_with_checkpoint_hint():
+    request = build_tool_request(
+        command_name="preflight.run",
+        params={
+            "files": ["src/lib.rs"],
+            "symbols": ["LedgerStore"],
+            "checkpoint_hint": "mid_session",
+            "actor_id": "should-be-stripped",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+
+    assert request["command"] == {
+        "name": "preflight.run",
+        "params": {
+            "files": ["src/lib.rs"],
+            "symbols": ["LedgerStore"],
+            "checkpoint_hint": "mid_session",
+        },
+    }
+    assert request["authority"]["auth_method"] == "mcp_session"
+    assert request["issued_at"].endswith("Z")
+
+
+def test_preflight_schema_exposes_checkpoint_hint():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.preflight")
+    assert tool is not None
+    props = tool.inputSchema["properties"]
+    assert "checkpoint_hint" in props
+    assert props["checkpoint_hint"]["type"] == "string"
+
+
+@pytest.mark.asyncio
 async def test_protocol_mismatch_fails_before_dispatch(monkeypatch):
     fake = _FakeClient(protocol_version="v1")
     monkeypatch.setattr(server, "_client", lambda: fake)

@@ -6,6 +6,9 @@ PROMPTS: dict[str, str] = {
     "preflight": (
         "Run Bicameral preflight before implementation. Call bicameral.preflight "
         "with the relevant files, symbols, diff context, and branch if known. "
+        "Include checkpoint_hint (pre_work, mid_session, or pre_write) when "
+        "session context is available; it is inert metadata forwarded to the "
+        "daemon and does not change MCP authority or behavior. "
         "Use the daemon's graph evidence states as authoritative; do not infer "
         "global consistency from local no-conflict results."
     ),

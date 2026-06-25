@@ -60,6 +60,14 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "symbols": {"type": "array", "items": {"type": "string"}},
                 "diff_context": {"type": "string"},
                 "branch": {"type": "string"},
+                "checkpoint_hint": {
+                    "type": "string",
+                    "description": (
+                        "Optional session checkpoint hint forwarded to the daemon. "
+                        "Values such as pre_work, mid_session, or pre_write are "
+                        "metadata only and do not change MCP authority or behavior."
+                    ),
+                },
             }
         ),
     ),
