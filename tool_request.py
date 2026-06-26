@@ -57,17 +57,7 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
     cleaned = {key: value for key, value in params.items() if key not in control_keys}
 
     if command_name == "ingest.submit_local":
-        return _only(
-            cleaned,
-            "source_uri",
-            "source_type",
-            "label",
-            "title",
-            "description",
-            "level",
-            "snapshot_content",
-            "evidence",
-        )
+        return _ingest_params(cleaned)
     if command_name == "preflight.run":
         return _only(cleaned, "files", "symbols", "diff_context", "branch", "checkpoint_hint")
     if command_name == "binding.create":
@@ -94,6 +84,35 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
     if command_name == "correction.request":
         return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
     return cleaned
+
+
+VALID_DECISION_LEVELS: frozenset[str] = frozenset({"L1", "L2", "L3"})
+
+
+def _ingest_params(cleaned: dict[str, Any]) -> dict[str, Any]:
+    """Shape ingest.submit_local params with decision_level classification signal.
+
+    When the caller provides ``decision_level``, it is forwarded as-is.
+    When omitted, ``pending_classification`` is injected so the daemon
+    knows to apply heuristic classification rather than silently storing
+    the decision as unclassified (which codegenome/bind treats as
+    tolerant L3).
+    """
+    result = _only(
+        cleaned,
+        "source_uri",
+        "source_type",
+        "label",
+        "title",
+        "description",
+        "level",
+        "decision_level",
+        "snapshot_content",
+        "evidence",
+    )
+    if "decision_level" not in result:
+        result["pending_classification"] = True
+    return result
 
 
 def _only(values: dict[str, Any], *keys: str) -> dict[str, Any]:
