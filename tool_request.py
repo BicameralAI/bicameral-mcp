@@ -158,6 +158,5 @@ def _resolve_workspace_ref(workspace: str) -> tuple[str, str]:
         return "", ""
 
 
-
 def _only(values: dict[str, Any], *keys: str) -> dict[str, Any]:
     return {key: values[key] for key in keys if key in values}
