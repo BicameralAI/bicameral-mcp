@@ -34,6 +34,15 @@ PROMPTS: dict[str, str] = {
         "currentness or typed rejection as-is; do not run local link_commit, mutate "
         "ledger state, rebuild graphs, or infer compliance/signoff."
     ),
+    "brief": (
+        "Generate a decision context brief through Bicameral for onboarding or "
+        "decision explanation. Call bicameral.brief with the feature area or "
+        "cross-cutting topic. Optionally pass decision_ids to narrow to specific "
+        "decisions, since to limit the timeline start, and include_graph to add "
+        "decision graph edges. The result is a daemon-authored Markdown narrative "
+        "with timeline, open items, and decision graph — display it as-is. Do not "
+        "infer compliance, completeness, or safety beyond what the daemon states."
+    ),
 }
 
 
