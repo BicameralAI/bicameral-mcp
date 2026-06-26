@@ -90,8 +90,21 @@ def _patch_daemon(monkeypatch, daemon, workspace="/repo"):
 # ------------------------------------------------------------------
 
 
+def _git_init(path: str) -> None:
+    """Initialise a throwaway git repo with identity config (needed on CI)."""
+    subprocess.check_call(["git", "init", path], stdout=subprocess.DEVNULL)
+    subprocess.check_call(
+        ["git", "-C", path, "config", "user.email", "test@test"],
+        stdout=subprocess.DEVNULL,
+    )
+    subprocess.check_call(
+        ["git", "-C", path, "config", "user.name", "test"],
+        stdout=subprocess.DEVNULL,
+    )
+
+
 def test_resolve_workspace_ref_returns_head_and_branch(tmp_path):
-    subprocess.check_call(["git", "init", str(tmp_path)], stdout=subprocess.DEVNULL)
+    _git_init(str(tmp_path))
     subprocess.check_call(
         ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
         stdout=subprocess.DEVNULL,
@@ -103,7 +116,7 @@ def test_resolve_workspace_ref_returns_head_and_branch(tmp_path):
 
 
 def test_resolve_workspace_ref_feature_branch(tmp_path):
-    subprocess.check_call(["git", "init", str(tmp_path)], stdout=subprocess.DEVNULL)
+    _git_init(str(tmp_path))
     subprocess.check_call(
         ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
         stdout=subprocess.DEVNULL,
@@ -147,7 +160,7 @@ async def test_binding_create_auto_populates_ref_from_workspace(monkeypatch, tmp
     """On a feature branch with no explicit commit_sha/ref_name, MCP must
     auto-populate them from the workspace git state so the daemon can
     perform effective-ref selection (#332)."""
-    subprocess.check_call(["git", "init", str(tmp_path)], stdout=subprocess.DEVNULL)
+    _git_init(str(tmp_path))
     subprocess.check_call(
         ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
         stdout=subprocess.DEVNULL,
@@ -199,7 +212,7 @@ async def test_binding_create_auto_populates_ref_from_workspace(monkeypatch, tmp
 async def test_binding_create_preserves_explicit_ref(monkeypatch, tmp_path):
     """When the caller provides explicit commit_sha and ref_name, MCP must
     not override them — preserving authoritative-branch behavior."""
-    subprocess.check_call(["git", "init", str(tmp_path)], stdout=subprocess.DEVNULL)
+    _git_init(str(tmp_path))
     subprocess.check_call(
         ["git", "-C", str(tmp_path), "commit", "--allow-empty", "-m", "init"],
         stdout=subprocess.DEVNULL,
