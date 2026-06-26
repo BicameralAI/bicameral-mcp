@@ -30,6 +30,15 @@ from daemon_client import DaemonConnectionError
 from tool_request import MCP_TOOL_COMMANDS
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
+
+@pytest.fixture(autouse=True)
+def _reset_approval_gate():
+    """Ensure the module-level approval gate is clean between conformance tests."""
+    server._approval_gate.clear()
+    yield
+    server._approval_gate.clear()
+
+
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
 
 # Read-model MCP tools: per the data-flow spec these are read-only and must
@@ -170,11 +179,28 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"decision_id", "include_events", "include_bindings", "since"},
         required=set(),
     ),
+    "bicameral.lookup": _CommandSpec(
+        command="lookup.query",
+        args={"files": ["src/main.py"], "scope": "pre_work", **_CONTROL_AND_NOISE},
+        expected_params={"files", "symbols", "scope", "include_context"},
+        required=set(),
+    ),
     "bicameral.search": _CommandSpec(
         command="search.query",
         args={"query": "cherry-pick", "scope": "decisions", **_CONTROL_AND_NOISE},
         expected_params={"query", "scope", "filters", "limit"},
         required={"query"},
+    ),
+    "bicameral.request_correction": _CommandSpec(
+        command="correction.request",
+        args={
+            "packet_id": "pkt-conformance",
+            "correction_request": "fix drift in binding",
+            "reason": "verified locally",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"packet_id", "excerpt", "diff", "correction_request", "reason"},
+        required=set(),
     ),
 }
 
@@ -257,6 +283,15 @@ async def test_tool_emits_well_formed_toolrequest(tool_name, monkeypatch):
     spec = COMMAND_SPECS[tool_name]
     daemon = _RecordingDaemon()
     _patch_daemon(monkeypatch, daemon)
+
+    # request_correction requires prior approval gate grant.
+    if tool_name == "bicameral.request_correction":
+        scope_args = {
+            k: v
+            for k, v in spec.args.items()
+            if k in ("packet_id", "excerpt", "diff", "correction_request")
+        }
+        await server.call_tool("bicameral.request_correction.approve", scope_args)
 
     content = await server.call_tool(tool_name, dict(spec.args))
 
@@ -451,6 +486,16 @@ async def test_handshake_failure_dispatches_no_request(tool_name, monkeypatch):
     daemon = _Unreachable()
     _patch_daemon(monkeypatch, daemon)
 
+    # request_correction requires prior approval gate grant.
+    if tool_name == "bicameral.request_correction":
+        spec = COMMAND_SPECS[tool_name]
+        scope_args = {
+            k: v
+            for k, v in spec.args.items()
+            if k in ("packet_id", "excerpt", "diff", "correction_request")
+        }
+        await server.call_tool("bicameral.request_correction.approve", scope_args)
+
     content = await server.call_tool(tool_name, dict(COMMAND_SPECS[tool_name].args))
     parsed = json.loads(content[0].text)
 
@@ -470,13 +515,25 @@ def _load_fixture(command: str) -> dict:
 
 @pytest.mark.parametrize("command", sorted(set(MCP_TOOL_COMMANDS.values())))
 def test_contract_fixture_renders_through_renderer(command):
-    from responses import format_preflight_response, format_tool_response
+    from responses import (
+        format_correction_response,
+        format_lookup_response,
+        format_preflight_response,
+        format_tool_response,
+    )
 
     payload = _load_fixture(command)
     assert payload["status"]  # fixture carries an explicit status
     assert payload["request_id"]
 
-    renderer = format_preflight_response if command == "preflight.run" else format_tool_response
+    if command == "preflight.run":
+        renderer = format_preflight_response
+    elif command == "lookup.query":
+        renderer = format_lookup_response
+    elif command == "correction.request":
+        renderer = format_correction_response
+    else:
+        renderer = format_tool_response
     content = renderer(payload)
     rendered = json.loads(content.text)
     assert isinstance(rendered, dict)

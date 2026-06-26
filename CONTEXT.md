@@ -51,3 +51,9 @@ _Avoid_: UI writes YAML, connector writes canonical decisions directly
 **MCP tool surface**:
 The local agent-facing command surface that lets coding agents interact with Bicameral by emitting protocol-shaped evidence, queries, and review commands.
 _Avoid_: integration adapter, canonical writer, hosted daemon
+
+**CapabilityReport**:
+Structured result from the daemon capability handshake. It reports daemon-advertised protocol version, supported commands, endpoint, and readiness/capability metadata so MCP can decide whether it can attempt a ToolRequest. It is a report, not a grant.
+_Authority verbs_: return, inspect
+_Avoid_: command grant, governance authority, fallback authority, local policy bypass
+_Related_: #606

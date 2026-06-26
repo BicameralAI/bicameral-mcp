@@ -60,6 +60,33 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "symbols": {"type": "array", "items": {"type": "string"}},
                 "diff_context": {"type": "string"},
                 "branch": {"type": "string"},
+                "checkpoint_hint": {
+                    "type": "string",
+                    "description": (
+                        "Optional session checkpoint hint forwarded to the daemon. "
+                        "Values such as pre_work, mid_session, or pre_write are "
+                        "metadata only and do not change MCP authority or behavior."
+                    ),
+                },
+            }
+        ),
+    ),
+    Tool(
+        name="bicameral.lookup",
+        description="Query relevant decisions and constraints from the daemon before implementation. Returns daemon-authored RecallPacket with searched sources, matches, and allowed next actions.",
+        inputSchema=_schema(
+            {
+                "files": {"type": "array", "items": {"type": "string"}},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "scope": {
+                    "type": "string",
+                    "enum": ["pre_work", "mid_session", "pre_write"],
+                    "description": "Lookup checkpoint scope.",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "description": "Include extended context in recall results.",
+                },
             }
         ),
     ),
@@ -158,6 +185,68 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "limit": {"type": "integer"},
             },
             ["query"],
+        ),
+    ),
+    Tool(
+        name="bicameral.request_correction.approve",
+        description=(
+            "Grant single-use approval for a scoped correction request. "
+            "The user must confirm the specific packet item, excerpt, diff, "
+            "or correction request text before submission is allowed. "
+            "Approval is consumed on the next successful request_correction call."
+        ),
+        inputSchema=_schema(
+            {
+                "packet_id": {
+                    "type": "string",
+                    "description": "Packet item ID the correction targets.",
+                },
+                "excerpt": {
+                    "type": "string",
+                    "description": "Excerpt text the correction targets.",
+                },
+                "diff": {
+                    "type": "string",
+                    "description": "Diff content the correction targets.",
+                },
+                "correction_request": {
+                    "type": "string",
+                    "description": "The correction request text to approve.",
+                },
+            },
+        ),
+    ),
+    Tool(
+        name="bicameral.request_correction",
+        description=(
+            "Submit a correction request to the bot daemon. Requires prior "
+            "single-use approval via bicameral.request_correction.approve "
+            "scoped to the same packet item, excerpt, diff, or correction "
+            "request. Submission is rejected locally without approval."
+        ),
+        inputSchema=_schema(
+            {
+                "packet_id": {
+                    "type": "string",
+                    "description": "Packet item ID the correction targets.",
+                },
+                "excerpt": {
+                    "type": "string",
+                    "description": "Excerpt text the correction targets.",
+                },
+                "diff": {
+                    "type": "string",
+                    "description": "Diff content the correction targets.",
+                },
+                "correction_request": {
+                    "type": "string",
+                    "description": "The correction request text to submit.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason or context for the correction.",
+                },
+            },
         ),
     ),
 )

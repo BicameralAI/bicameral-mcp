@@ -1,0 +1,15 @@
+{
+  "request_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "status": "ok",
+  "recall_packet": {
+    "searched_scope": ["decisions:local_ledger"],
+    "unknown_scope": ["candidates:local_ledger", "bindings:graph_index", "decisions:team_remote"],
+    "matches": [],
+    "allowed_next_actions": ["expand_scope"],
+    "expand_scope": {
+      "available": ["candidates:local_ledger", "bindings:graph_index", "decisions:team_remote"],
+      "hint": "Searched scope was narrow. Expand to include candidates and team-remote decisions."
+    }
+  },
+  "responded_at": "2026-06-24T00:00:01Z"
+}
