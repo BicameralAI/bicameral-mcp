@@ -1,0 +1,11 @@
+{
+  "request_id": "99999999-9999-4999-8999-999999999903",
+  "status": "ok",
+  "result": {
+    "report_id": "CR-FIXTURE-001",
+    "action": "resolve",
+    "accepted": true,
+    "message": "Contradiction resolved by product owner."
+  },
+  "responded_at": "2026-06-26T00:00:00Z"
+}
