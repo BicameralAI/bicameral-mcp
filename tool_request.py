@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import subprocess
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+log = logging.getLogger(__name__)
 
 MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
@@ -64,6 +69,17 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
     if command_name == "preflight.run":
         return _only(cleaned, "files", "symbols", "diff_context", "branch", "checkpoint_hint")
     if command_name == "binding.create":
+        workspace = (
+            params.get("workspace")
+            or os.environ.get("BICAMERAL_WORKSPACE")
+            or os.environ.get("REPO_PATH")
+            or os.getcwd()
+        )
+        head_sha, branch = _resolve_workspace_ref(workspace)
+        if head_sha:
+            cleaned.setdefault("commit_sha", head_sha)
+        if branch:
+            cleaned.setdefault("ref_name", branch)
         return _only(cleaned, "decision_or_candidate_id", "bindings", "commit_sha", "ref_name")
     if command_name == "binding.inspect":
         return _only(cleaned, "decision_or_candidate_id", "commit_sha")
@@ -120,6 +136,33 @@ def _ingest_params(cleaned: dict[str, Any]) -> dict[str, Any]:
     if "decision_level" not in result:
         result["pending_classification"] = True
     return result
+
+
+def _resolve_workspace_ref(workspace: str) -> tuple[str, str]:
+    """Return ``(head_sha, branch)`` for *workspace*, or ``("", "")`` on failure."""
+    try:
+        head_sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=workspace,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=workspace,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        return head_sha, branch
+    except Exception:
+        log.debug("workspace ref resolution skipped for %s", workspace)
+        return "", ""
 
 
 def _only(values: dict[str, Any], *keys: str) -> dict[str, Any]:

@@ -165,6 +165,7 @@ class MemoryReplayDaemon:
 
         if command == "binding.create":
             self.revision += 1
+            effective_ref = params.get("commit_sha", "authoritative-fallback")
             return self._response(
                 tool_request,
                 "ok",
@@ -172,6 +173,7 @@ class MemoryReplayDaemon:
                     "decision_or_candidate_id": params["decision_or_candidate_id"],
                     "evidence_state": "verified",
                     "verified": True,
+                    "bind_effective_ref": effective_ref,
                     "ledger_revision": self.revision,
                 },
             )
