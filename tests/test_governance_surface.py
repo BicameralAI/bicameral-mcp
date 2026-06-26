@@ -536,7 +536,7 @@ async def test_governance_resolve_acknowledge_flow(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_governance_resolve_route_includes_route_to(monkeypatch):
+async def test_server_governance_resolve_route_includes_route_to(monkeypatch):
     fake = _FakeClient(
         response_override={
             "status": "ok",
