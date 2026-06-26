@@ -20,6 +20,7 @@ from mcp.server.models import InitializationOptions
 
 from approval_gate import ApprovalGate, scope_from_params
 from authority import build_authority_context
+from brief_renderer import format_brief_narrative
 from coverage_guard import check_coverage
 from daemon_client import (
     CapabilityReport,
@@ -154,6 +155,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         response = await client.send_tool_request(tool_request)
         caller_file_paths = arguments.get("files")
         filter_pending_checks(response, caller_file_paths)
+        if name == "bicameral.brief":
+            return [format_brief_narrative(response)]
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
         if name == "bicameral.lookup":

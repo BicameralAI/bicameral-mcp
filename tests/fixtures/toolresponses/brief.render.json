@@ -1,0 +1,95 @@
+{
+  "request_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "status": "ok",
+  "brief": {
+    "topic": "Backport Strategy",
+    "generated_at": "2026-06-25T12:00:00Z",
+    "stats": {
+      "total_decisions": 3,
+      "active": 2,
+      "drifted": 1,
+      "superseded": 1,
+      "pending_ratification": 0
+    },
+    "entries": [
+      {
+        "date": "2026-06-10",
+        "decision_id": "DEC-5",
+        "title": "Require rebase for multi-commit backports",
+        "actor": "alice",
+        "status": "superseded",
+        "freshness": "stale",
+        "superseded_by": "DEC-12",
+        "source": {
+          "label": "ADR-0001",
+          "link": "local://adr-0001.md"
+        },
+        "excerpt": "Multi-commit backports must be rebased to maintain linear history."
+      },
+      {
+        "date": "2026-06-15",
+        "decision_id": "DEC-7",
+        "title": "Use cherry-pick for single-commit backports",
+        "actor": "bob",
+        "status": "signed_off",
+        "freshness": "current",
+        "signoff": {
+          "date": "2026-06-18",
+          "signer": "carol"
+        },
+        "source": {
+          "label": "Meeting 2026-06-15",
+          "link": "local://meeting-2026-06-15.md"
+        },
+        "bindings": [
+          {
+            "symbol": "backport_single_commit",
+            "lines": "42-58"
+          }
+        ],
+        "excerpt": "Cherry-pick is the canonical method for single-commit backports."
+      },
+      {
+        "date": "2026-06-22",
+        "decision_id": "DEC-12",
+        "title": "Adopt squash-merge for multi-commit backports",
+        "actor": "alice",
+        "status": "accepted",
+        "freshness": "drifted",
+        "source": {
+          "label": "ADR-0003",
+          "link": "local://adr-0003.md"
+        },
+        "excerpt": "Squash-merge replaces rebase for multi-commit backports after tooling issues."
+      }
+    ],
+    "open_items": [
+      {
+        "kind": "drift_detected",
+        "decision_id": "DEC-12",
+        "title": "Adopt squash-merge for multi-commit backports",
+        "detail": "Implementation in release.py still uses rebase strategy."
+      }
+    ],
+    "graph_edges": [
+      {
+        "source": "DEC-12",
+        "relation": "supersedes",
+        "target": "DEC-5"
+      },
+      {
+        "source": "DEC-7",
+        "relation": "context_for",
+        "target": "DEC-12"
+      },
+      {
+        "source": "DEC-12",
+        "relation": "drifted_by",
+        "ref": "ev-drift-001"
+      }
+    ],
+    "unknown_scope": ["bindings:graph_index"],
+    "limitations": ["Binding evidence projection not yet materialized"]
+  },
+  "responded_at": "2026-06-25T12:00:00Z"
+}

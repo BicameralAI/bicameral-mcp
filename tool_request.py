@@ -19,6 +19,7 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.review.approve_signoff": "review.approve_signoff",
     "bicameral.review.reject_signoff": "review.reject_signoff",
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
+    "bicameral.brief": "brief.render",
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
     "bicameral.privacy.erase_subject": "privacy.erase_subject",
@@ -77,6 +78,8 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "target_id", "reason")
     if command_name == "review.resolve_compliance":
         return _only(cleaned, "target_id", "compliance_verdict", "reason")
+    if command_name == "brief.render":
+        return _only(cleaned, "topic", "decision_ids", "since", "include_graph")
     if command_name == "history.list":
         return _only(cleaned, "decision_id", "include_events", "include_bindings", "since")
     if command_name == "search.query":

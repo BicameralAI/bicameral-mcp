@@ -172,6 +172,37 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.brief",
+        description=(
+            "Render a chronological narrative brief for a feature area or "
+            "cross-cutting query from the decision ledger. Returns a "
+            "daemon-authored Markdown summary with timeline, decision graph, "
+            "and open items suitable for onboarding and decision explanation."
+        ),
+        inputSchema=_schema(
+            {
+                "topic": {
+                    "type": "string",
+                    "description": "Feature area or cross-cutting query to brief.",
+                },
+                "decision_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional explicit decision IDs to include.",
+                },
+                "since": {
+                    "type": "string",
+                    "description": "ISO-8601 date to limit timeline start.",
+                },
+                "include_graph": {
+                    "type": "boolean",
+                    "description": "Include decision graph edges in the brief.",
+                },
+            },
+            ["topic"],
+        ),
+    ),
+    Tool(
         name="bicameral.history",
         description="Read replayed/materialized decision state from the bot daemon.",
         inputSchema=_schema(
