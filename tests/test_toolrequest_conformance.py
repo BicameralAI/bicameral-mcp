@@ -99,8 +99,10 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
             "title",
             "description",
             "level",
+            "decision_level",
             "snapshot_content",
             "evidence",
+            "pending_classification",
         },
         required={"source_uri", "source_type", "title", "description"},
     ),
@@ -554,3 +556,81 @@ def test_search_and_history_fixtures_type_binding_scope_unsupported():
     for command in ("search.query", "history.list"):
         payload = _load_fixture(command)
         assert payload["result"]["binding_scope"]["status"] == "unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Layer 5 — decision_level classification on ingest (#340).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_without_decision_level_injects_pending_classification(monkeypatch):
+    """When decision_level is omitted, MCP injects pending_classification=True
+    so the daemon can apply heuristic classification instead of silently storing
+    the decision as unclassified (which codegenome/bind treats as tolerant L3).
+    """
+    daemon = _RecordingDaemon()
+    _patch_daemon(monkeypatch, daemon)
+
+    await server.call_tool(
+        "bicameral.ingest",
+        {
+            "source_uri": "local://meeting.md",
+            "source_type": "meeting",
+            "title": "Backport policy",
+            "description": "cherry-pick is default",
+        },
+    )
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["command"]["params"]
+    assert "decision_level" not in params
+    assert params["pending_classification"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", ["L1", "L2", "L3"])
+async def test_ingest_with_explicit_decision_level_forwards_without_pending(level, monkeypatch):
+    """When the caller provides an explicit decision_level, it is forwarded
+    as-is and pending_classification is NOT injected.
+    """
+    daemon = _RecordingDaemon()
+    _patch_daemon(monkeypatch, daemon)
+
+    await server.call_tool(
+        "bicameral.ingest",
+        {
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Explicit level test",
+            "description": "testing explicit classification",
+            "decision_level": level,
+        },
+    )
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["command"]["params"]
+    assert params["decision_level"] == level
+    assert "pending_classification" not in params
+
+
+@pytest.mark.asyncio
+async def test_ingest_decision_level_does_not_leak_into_authority(monkeypatch):
+    """decision_level is a command param, not a control/authority key."""
+    daemon = _RecordingDaemon()
+    _patch_daemon(monkeypatch, daemon)
+
+    await server.call_tool(
+        "bicameral.ingest",
+        {
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Auth boundary test",
+            "description": "decision_level must not appear in authority",
+            "decision_level": "L1",
+        },
+    )
+
+    authority = daemon.requests[0]["authority"]
+    assert "decision_level" not in authority
+    assert "pending_classification" not in authority

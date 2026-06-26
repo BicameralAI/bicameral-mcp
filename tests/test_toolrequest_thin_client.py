@@ -13,7 +13,12 @@ from daemon_client import (
     DaemonConnectionError,
 )
 from responses import build_recovery_payload, format_preflight_response
-from tool_request import LOCAL_ONLY_TOOLS, MCP_TOOL_COMMANDS, build_tool_request
+from tool_request import (
+    LOCAL_ONLY_TOOLS,
+    MCP_TOOL_COMMANDS,
+    VALID_DECISION_LEVELS,
+    build_tool_request,
+)
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
 # Alpha staged preflight response fixture from bot#323.
@@ -683,3 +688,58 @@ def test_recovery_modules_import_no_legacy_authority():
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported_roots.add(node.module.split(".")[0])
         assert imported_roots.isdisjoint(forbidden), module_file
+
+
+# ---------------------------------------------------------------------------
+# decision_level classification on ingest (#340)
+# ---------------------------------------------------------------------------
+
+
+def test_valid_decision_levels_is_l1_l2_l3():
+    assert VALID_DECISION_LEVELS == {"L1", "L2", "L3"}
+
+
+def test_ingest_toolrequest_with_decision_level():
+    request = build_tool_request(
+        command_name="ingest.submit_local",
+        params={
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Unit test",
+            "description": "decision_level forwarding",
+            "decision_level": "L2",
+            "actor_id": "control-stripped",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    params = request["command"]["params"]
+    assert params["decision_level"] == "L2"
+    assert "pending_classification" not in params
+    assert "actor_id" not in params
+
+
+def test_ingest_toolrequest_without_decision_level_gets_pending():
+    request = build_tool_request(
+        command_name="ingest.submit_local",
+        params={
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Unit test",
+            "description": "no decision_level",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    params = request["command"]["params"]
+    assert "decision_level" not in params
+    assert params["pending_classification"] is True
+
+
+def test_ingest_schema_exposes_decision_level():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.ingest")
+    assert tool is not None
+    props = tool.inputSchema["properties"]
+    assert "decision_level" in props
+    assert props["decision_level"]["type"] == "string"
+    assert props["decision_level"]["enum"] == ["L1", "L2", "L3"]

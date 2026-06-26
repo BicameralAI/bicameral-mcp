@@ -45,6 +45,18 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "level": {"type": "string"},
+                "decision_level": {
+                    "type": "string",
+                    "enum": ["L1", "L2", "L3"],
+                    "description": (
+                        "Explicit decision-level classification. "
+                        "L1 = behavioral commitment (evidence-evaluated, not code-bound), "
+                        "L2 = code-grounded identity (enters codegenome graph), "
+                        "L3 = lightweight/tolerant (never tracked in identity graph). "
+                        "When omitted the daemon receives a pending_classification "
+                        "signal and applies heuristic or marks the decision pending."
+                    ),
+                },
                 "snapshot_content": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "object"}},
             },
