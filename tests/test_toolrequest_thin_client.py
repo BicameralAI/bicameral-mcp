@@ -245,7 +245,7 @@ async def test_prompts_are_generic_tool_workflows(monkeypatch):
     prompts = await server.list_prompts()
     names = {prompt.name for prompt in prompts}
 
-    assert {"preflight", "bind", "ingest", "history_search", "evidence_refresh"} <= names
+    assert {"preflight", "bind", "ingest", "history_search", "evidence_refresh", "brief"} <= names
     prompt = await server.get_prompt("preflight", {"branch": "feature/x"})
     text = prompt.messages[0].content.text
     assert "bicameral.preflight" in text
