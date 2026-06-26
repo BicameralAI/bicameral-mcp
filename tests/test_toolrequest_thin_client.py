@@ -13,7 +13,12 @@ from daemon_client import (
     DaemonConnectionError,
 )
 from responses import build_recovery_payload, format_preflight_response
-from tool_request import LOCAL_ONLY_TOOLS, MCP_TOOL_COMMANDS, build_tool_request
+from tool_request import (
+    LOCAL_ONLY_TOOLS,
+    MCP_TOOL_COMMANDS,
+    VALID_DECISION_LEVELS,
+    build_tool_request,
+)
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
 # Alpha staged preflight response fixture from bot#323.
@@ -90,7 +95,9 @@ async def test_call_tool_maps_to_canonical_toolrequest(monkeypatch):
     assert response["status"] == "ok"
     assert "stages" in response
     assert "session_directive" in response
-    assert fake.requests[0]["command"] == {
+    # Coverage guard (#343) dispatches a lookup.query before the primary preflight.run.
+    preflight_req = next(r for r in fake.requests if r["command"]["name"] == "preflight.run")
+    assert preflight_req["command"] == {
         "name": "preflight.run",
         "params": {
             "files": ["src/lib.rs"],
@@ -98,11 +105,11 @@ async def test_call_tool_maps_to_canonical_toolrequest(monkeypatch):
             "branch": "feature/x",
         },
     }
-    assert fake.requests[0]["authority"]["auth_method"] == "mcp_session"
-    assert fake.requests[0]["authority"]["actor_id"] == "agent-123"
-    assert fake.requests[0]["authority"]["workspace"] == "/repo"
-    assert fake.requests[0]["authority"]["audit_metadata"]["surface"] == "mcp"
-    assert fake.requests[0]["authority"]["audit_metadata"]["mcp_tool"] == "bicameral.preflight"
+    assert preflight_req["authority"]["auth_method"] == "mcp_session"
+    assert preflight_req["authority"]["actor_id"] == "agent-123"
+    assert preflight_req["authority"]["workspace"] == "/repo"
+    assert preflight_req["authority"]["audit_metadata"]["surface"] == "mcp"
+    assert preflight_req["authority"]["audit_metadata"]["mcp_tool"] == "bicameral.preflight"
 
 
 @pytest.mark.asyncio
@@ -122,7 +129,9 @@ async def test_preflight_includes_checkpoint_hint_when_provided(monkeypatch):
 
     response = json.loads(content[0].text)
     assert response["status"] == "ok"
-    assert fake.requests[0]["command"] == {
+    # Coverage guard (#343) dispatches lookup.query first; find preflight.run.
+    preflight_req = next(r for r in fake.requests if r["command"]["name"] == "preflight.run")
+    assert preflight_req["command"] == {
         "name": "preflight.run",
         "params": {
             "files": ["src/main.rs"],
@@ -145,7 +154,9 @@ async def test_preflight_omits_checkpoint_hint_when_absent(monkeypatch):
 
     response = json.loads(content[0].text)
     assert response["status"] == "ok"
-    params = fake.requests[0]["command"]["params"]
+    # Coverage guard (#343) dispatches lookup.query first; find preflight.run.
+    preflight_req = next(r for r in fake.requests if r["command"]["name"] == "preflight.run")
+    params = preflight_req["command"]["params"]
     assert "checkpoint_hint" not in params
     assert params == {"files": ["a.py"], "symbols": ["Foo"]}
 
@@ -166,8 +177,10 @@ async def test_checkpoint_hint_does_not_change_authority(monkeypatch):
         {"files": ["x.py"]},
     )
 
-    auth_with_hint = fake.requests[0]["authority"]
-    auth_without_hint = fake.requests[1]["authority"]
+    # Coverage guard (#343) dispatches lookup.query before each preflight.run.
+    preflight_reqs = [r for r in fake.requests if r["command"]["name"] == "preflight.run"]
+    auth_with_hint = preflight_reqs[0]["authority"]
+    auth_without_hint = preflight_reqs[1]["authority"]
     assert auth_with_hint["actor_id"] == auth_without_hint["actor_id"]
     assert auth_with_hint["auth_method"] == auth_without_hint["auth_method"]
     assert auth_with_hint["workspace"] == auth_without_hint["workspace"]
@@ -683,3 +696,58 @@ def test_recovery_modules_import_no_legacy_authority():
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported_roots.add(node.module.split(".")[0])
         assert imported_roots.isdisjoint(forbidden), module_file
+
+
+# ---------------------------------------------------------------------------
+# decision_level classification on ingest (#340)
+# ---------------------------------------------------------------------------
+
+
+def test_valid_decision_levels_is_l1_l2_l3():
+    assert VALID_DECISION_LEVELS == {"L1", "L2", "L3"}
+
+
+def test_ingest_toolrequest_with_decision_level():
+    request = build_tool_request(
+        command_name="ingest.submit_local",
+        params={
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Unit test",
+            "description": "decision_level forwarding",
+            "decision_level": "L2",
+            "actor_id": "control-stripped",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    params = request["command"]["params"]
+    assert params["decision_level"] == "L2"
+    assert "pending_classification" not in params
+    assert "actor_id" not in params
+
+
+def test_ingest_toolrequest_without_decision_level_gets_pending():
+    request = build_tool_request(
+        command_name="ingest.submit_local",
+        params={
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Unit test",
+            "description": "no decision_level",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    params = request["command"]["params"]
+    assert "decision_level" not in params
+    assert params["pending_classification"] is True
+
+
+def test_ingest_schema_exposes_decision_level():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.ingest")
+    assert tool is not None
+    props = tool.inputSchema["properties"]
+    assert "decision_level" in props
+    assert props["decision_level"]["type"] == "string"
+    assert props["decision_level"]["enum"] == ["L1", "L2", "L3"]

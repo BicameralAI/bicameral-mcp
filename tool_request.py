@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import subprocess
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
+
+log = logging.getLogger(__name__)
 
 MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
@@ -19,14 +24,17 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.review.approve_signoff": "review.approve_signoff",
     "bicameral.review.reject_signoff": "review.reject_signoff",
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
+    "bicameral.brief": "brief.render",
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
+    "bicameral.privacy.erase_subject": "privacy.erase_subject",
 }
 
 # Tools that are locally gated and never dispatched to the daemon.
 LOCAL_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "bicameral.request_correction.approve",
+        "bicameral.privacy.erase_subject.approve",
     }
 )
 
@@ -57,20 +65,21 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
     cleaned = {key: value for key, value in params.items() if key not in control_keys}
 
     if command_name == "ingest.submit_local":
-        return _only(
-            cleaned,
-            "source_uri",
-            "source_type",
-            "label",
-            "title",
-            "description",
-            "level",
-            "snapshot_content",
-            "evidence",
-        )
+        return _ingest_params(cleaned)
     if command_name == "preflight.run":
         return _only(cleaned, "files", "symbols", "diff_context", "branch", "checkpoint_hint")
     if command_name == "binding.create":
+        workspace = (
+            params.get("workspace")
+            or os.environ.get("BICAMERAL_WORKSPACE")
+            or os.environ.get("REPO_PATH")
+            or os.getcwd()
+        )
+        head_sha, branch = _resolve_workspace_ref(workspace)
+        if head_sha:
+            cleaned.setdefault("commit_sha", head_sha)
+        if branch:
+            cleaned.setdefault("ref_name", branch)
         return _only(cleaned, "decision_or_candidate_id", "bindings", "commit_sha", "ref_name")
     if command_name == "binding.inspect":
         return _only(cleaned, "decision_or_candidate_id", "commit_sha")
@@ -85,6 +94,8 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "target_id", "reason")
     if command_name == "review.resolve_compliance":
         return _only(cleaned, "target_id", "compliance_verdict", "reason")
+    if command_name == "brief.render":
+        return _only(cleaned, "topic", "decision_ids", "since", "include_graph")
     if command_name == "history.list":
         return _only(cleaned, "decision_id", "include_events", "include_bindings", "since")
     if command_name == "search.query":
@@ -93,7 +104,65 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "files", "symbols", "scope", "include_context")
     if command_name == "correction.request":
         return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
+    if command_name == "privacy.erase_subject":
+        return _only(cleaned, "subject_id", "predicate", "reason")
     return cleaned
+
+
+VALID_DECISION_LEVELS: frozenset[str] = frozenset({"L1", "L2", "L3"})
+
+
+def _ingest_params(cleaned: dict[str, Any]) -> dict[str, Any]:
+    """Shape ingest.submit_local params with decision_level classification signal.
+
+    When the caller provides ``decision_level``, it is forwarded as-is.
+    When omitted, ``pending_classification`` is injected so the daemon
+    knows to apply heuristic classification rather than silently storing
+    the decision as unclassified (which codegenome/bind treats as
+    tolerant L3).
+    """
+    result = _only(
+        cleaned,
+        "source_uri",
+        "source_type",
+        "label",
+        "title",
+        "description",
+        "level",
+        "decision_level",
+        "snapshot_content",
+        "evidence",
+    )
+    if "decision_level" not in result:
+        result["pending_classification"] = True
+    return result
+
+
+def _resolve_workspace_ref(workspace: str) -> tuple[str, str]:
+    """Return ``(head_sha, branch)`` for *workspace*, or ``("", "")`` on failure."""
+    try:
+        head_sha = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=workspace,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        branch = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=workspace,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+        return head_sha, branch
+    except Exception:
+        log.debug("workspace ref resolution skipped for %s", workspace)
+        return "", ""
 
 
 def _only(values: dict[str, Any], *keys: str) -> dict[str, Any]:

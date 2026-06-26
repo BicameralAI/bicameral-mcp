@@ -33,10 +33,12 @@ from version import TOOLREQUEST_PROTOCOL_VERSION
 
 @pytest.fixture(autouse=True)
 def _reset_approval_gate():
-    """Ensure the module-level approval gate is clean between conformance tests."""
+    """Ensure the module-level approval gates are clean between conformance tests."""
     server._approval_gate.clear()
+    server._erasure_gate.clear()
     yield
     server._approval_gate.clear()
+    server._erasure_gate.clear()
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
@@ -46,6 +48,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
 READ_MODEL_TOOLS = {
     "bicameral.preflight",
     "bicameral.binding.inspect",
+    "bicameral.brief",
     "bicameral.history",
     "bicameral.search",
 }
@@ -99,8 +102,10 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
             "title",
             "description",
             "level",
+            "decision_level",
             "snapshot_content",
             "evidence",
+            "pending_classification",
         },
         required={"source_uri", "source_type", "title", "description"},
     ),
@@ -173,6 +178,12 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"target_id", "compliance_verdict", "reason"},
         required={"target_id", "compliance_verdict"},
     ),
+    "bicameral.brief": _CommandSpec(
+        command="brief.render",
+        args={"topic": "Backport Strategy", "include_graph": True, **_CONTROL_AND_NOISE},
+        expected_params={"topic", "decision_ids", "since", "include_graph"},
+        required={"topic"},
+    ),
     "bicameral.history": _CommandSpec(
         command="history.list",
         args={"decision_id": "DEC-7", "include_events": True, **_CONTROL_AND_NOISE},
@@ -201,6 +212,17 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         },
         expected_params={"packet_id", "excerpt", "diff", "correction_request", "reason"},
         required=set(),
+    ),
+    "bicameral.privacy.erase_subject": _CommandSpec(
+        command="privacy.erase_subject",
+        args={
+            "subject_id": "user-conformance",
+            "predicate": "before:2025-01-01",
+            "reason": "GDPR Art.17 request",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"subject_id", "predicate", "reason"},
+        required={"subject_id"},
     ),
 }
 
@@ -284,7 +306,7 @@ async def test_tool_emits_well_formed_toolrequest(tool_name, monkeypatch):
     daemon = _RecordingDaemon()
     _patch_daemon(monkeypatch, daemon)
 
-    # request_correction requires prior approval gate grant.
+    # Approval-gated tools require prior approval grant.
     if tool_name == "bicameral.request_correction":
         scope_args = {
             k: v
@@ -292,12 +314,24 @@ async def test_tool_emits_well_formed_toolrequest(tool_name, monkeypatch):
             if k in ("packet_id", "excerpt", "diff", "correction_request")
         }
         await server.call_tool("bicameral.request_correction.approve", scope_args)
+    if tool_name == "bicameral.privacy.erase_subject":
+        scope_args = {
+            k: v for k, v in spec.args.items() if k in ("subject_id", "predicate", "reason")
+        }
+        await server.call_tool("bicameral.privacy.erase_subject.approve", scope_args)
 
     content = await server.call_tool(tool_name, dict(spec.args))
 
-    # Exactly one ToolRequest dispatched per tool call.
-    assert len(daemon.requests) == 1
-    request = daemon.requests[0]
+    # Exactly one ToolRequest dispatched per tool call — except for preflight,
+    # which dispatches an additional coverage guard lookup.query (#343).
+    if tool_name == "bicameral.preflight":
+        assert len(daemon.requests) == 2
+        # First request is the coverage guard (lookup.query); primary is second.
+        assert daemon.requests[0]["command"]["name"] == "lookup.query"
+        request = daemon.requests[1]
+    else:
+        assert len(daemon.requests) == 1
+        request = daemon.requests[0]
 
     # Envelope shape is the v2 contract: request_id, command, authority, issued_at.
     assert set(request) == {"request_id", "command", "authority", "issued_at"}
@@ -454,6 +488,7 @@ def test_read_model_tools_map_only_to_read_commands():
     assert read_commands == {
         "preflight.run",
         "binding.inspect",
+        "brief.render",
         "history.list",
         "search.query",
     }
@@ -468,10 +503,22 @@ async def test_read_model_tool_dispatches_exactly_one_read_command(tool_name, mo
 
     await server.call_tool(tool_name, dict(spec.args))
 
-    assert len(daemon.requests) == 1
-    emitted = daemon.requests[0]["command"]["name"]
+    # Preflight dispatches an extra coverage guard lookup.query (#343).
+    if tool_name == "bicameral.preflight":
+        assert len(daemon.requests) == 2
+        assert daemon.requests[0]["command"]["name"] == "lookup.query"
+        emitted = daemon.requests[1]["command"]["name"]
+    else:
+        assert len(daemon.requests) == 1
+        emitted = daemon.requests[0]["command"]["name"]
     assert emitted == spec.command
-    assert emitted in {"preflight.run", "binding.inspect", "history.list", "search.query"}
+    assert emitted in {
+        "preflight.run",
+        "binding.inspect",
+        "brief.render",
+        "history.list",
+        "search.query",
+    }
 
 
 @pytest.mark.asyncio
@@ -486,7 +533,7 @@ async def test_handshake_failure_dispatches_no_request(tool_name, monkeypatch):
     daemon = _Unreachable()
     _patch_daemon(monkeypatch, daemon)
 
-    # request_correction requires prior approval gate grant.
+    # Approval-gated tools require prior approval grant.
     if tool_name == "bicameral.request_correction":
         spec = COMMAND_SPECS[tool_name]
         scope_args = {
@@ -495,6 +542,12 @@ async def test_handshake_failure_dispatches_no_request(tool_name, monkeypatch):
             if k in ("packet_id", "excerpt", "diff", "correction_request")
         }
         await server.call_tool("bicameral.request_correction.approve", scope_args)
+    if tool_name == "bicameral.privacy.erase_subject":
+        spec = COMMAND_SPECS[tool_name]
+        scope_args = {
+            k: v for k, v in spec.args.items() if k in ("subject_id", "predicate", "reason")
+        }
+        await server.call_tool("bicameral.privacy.erase_subject.approve", scope_args)
 
     content = await server.call_tool(tool_name, dict(COMMAND_SPECS[tool_name].args))
     parsed = json.loads(content[0].text)
@@ -526,7 +579,11 @@ def test_contract_fixture_renders_through_renderer(command):
     assert payload["status"]  # fixture carries an explicit status
     assert payload["request_id"]
 
-    if command == "preflight.run":
+    if command == "brief.render":
+        from brief_renderer import format_brief_narrative
+
+        renderer = format_brief_narrative
+    elif command == "preflight.run":
         renderer = format_preflight_response
     elif command == "lookup.query":
         renderer = format_lookup_response
@@ -535,8 +592,12 @@ def test_contract_fixture_renders_through_renderer(command):
     else:
         renderer = format_tool_response
     content = renderer(payload)
-    rendered = json.loads(content.text)
-    assert isinstance(rendered, dict)
+    if command == "brief.render":
+        assert isinstance(content.text, str)
+        assert len(content.text) > 0
+    else:
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
 
 
 def test_preflight_fixture_surfaces_source_only_limitation():
@@ -554,3 +615,81 @@ def test_search_and_history_fixtures_type_binding_scope_unsupported():
     for command in ("search.query", "history.list"):
         payload = _load_fixture(command)
         assert payload["result"]["binding_scope"]["status"] == "unsupported"
+
+
+# ---------------------------------------------------------------------------
+# Layer 5 — decision_level classification on ingest (#340).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ingest_without_decision_level_injects_pending_classification(monkeypatch):
+    """When decision_level is omitted, MCP injects pending_classification=True
+    so the daemon can apply heuristic classification instead of silently storing
+    the decision as unclassified (which codegenome/bind treats as tolerant L3).
+    """
+    daemon = _RecordingDaemon()
+    _patch_daemon(monkeypatch, daemon)
+
+    await server.call_tool(
+        "bicameral.ingest",
+        {
+            "source_uri": "local://meeting.md",
+            "source_type": "meeting",
+            "title": "Backport policy",
+            "description": "cherry-pick is default",
+        },
+    )
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["command"]["params"]
+    assert "decision_level" not in params
+    assert params["pending_classification"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("level", ["L1", "L2", "L3"])
+async def test_ingest_with_explicit_decision_level_forwards_without_pending(level, monkeypatch):
+    """When the caller provides an explicit decision_level, it is forwarded
+    as-is and pending_classification is NOT injected.
+    """
+    daemon = _RecordingDaemon()
+    _patch_daemon(monkeypatch, daemon)
+
+    await server.call_tool(
+        "bicameral.ingest",
+        {
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Explicit level test",
+            "description": "testing explicit classification",
+            "decision_level": level,
+        },
+    )
+
+    assert len(daemon.requests) == 1
+    params = daemon.requests[0]["command"]["params"]
+    assert params["decision_level"] == level
+    assert "pending_classification" not in params
+
+
+@pytest.mark.asyncio
+async def test_ingest_decision_level_does_not_leak_into_authority(monkeypatch):
+    """decision_level is a command param, not a control/authority key."""
+    daemon = _RecordingDaemon()
+    _patch_daemon(monkeypatch, daemon)
+
+    await server.call_tool(
+        "bicameral.ingest",
+        {
+            "source_uri": "local://notes.md",
+            "source_type": "session",
+            "title": "Auth boundary test",
+            "description": "decision_level must not appear in authority",
+            "decision_level": "L1",
+        },
+    )
+
+    authority = daemon.requests[0]["authority"]
+    assert "decision_level" not in authority
+    assert "pending_classification" not in authority

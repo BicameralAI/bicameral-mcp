@@ -1,7 +1,7 @@
 # ADR-0001: Agent Tool Surface
 
 **Date:** 2026-05-27  
-**Status:** proposed  
+**Status:** accepted  
 **Level:** L1
 
 ## Problem

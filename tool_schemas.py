@@ -45,6 +45,18 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "title": {"type": "string"},
                 "description": {"type": "string"},
                 "level": {"type": "string"},
+                "decision_level": {
+                    "type": "string",
+                    "enum": ["L1", "L2", "L3"],
+                    "description": (
+                        "Explicit decision-level classification. "
+                        "L1 = behavioral commitment (evidence-evaluated, not code-bound), "
+                        "L2 = code-grounded identity (enters codegenome graph), "
+                        "L3 = lightweight/tolerant (never tracked in identity graph). "
+                        "When omitted the daemon receives a pending_classification "
+                        "signal and applies heuristic or marks the decision pending."
+                    ),
+                },
                 "snapshot_content": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "object"}},
             },
@@ -160,6 +172,37 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.brief",
+        description=(
+            "Render a chronological narrative brief for a feature area or "
+            "cross-cutting query from the decision ledger. Returns a "
+            "daemon-authored Markdown summary with timeline, decision graph, "
+            "and open items suitable for onboarding and decision explanation."
+        ),
+        inputSchema=_schema(
+            {
+                "topic": {
+                    "type": "string",
+                    "description": "Feature area or cross-cutting query to brief.",
+                },
+                "decision_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional explicit decision IDs to include.",
+                },
+                "since": {
+                    "type": "string",
+                    "description": "ISO-8601 date to limit timeline start.",
+                },
+                "include_graph": {
+                    "type": "boolean",
+                    "description": "Include decision graph edges in the brief.",
+                },
+            },
+            ["topic"],
+        ),
+    ),
+    Tool(
         name="bicameral.history",
         description="Read replayed/materialized decision state from the bot daemon.",
         inputSchema=_schema(
@@ -185,6 +228,62 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "limit": {"type": "integer"},
             },
             ["query"],
+        ),
+    ),
+    Tool(
+        name="bicameral.privacy.erase_subject.approve",
+        description=(
+            "Grant single-use approval for a scoped PII erasure request. "
+            "The user must confirm the subject identifier and optional "
+            "predicate before erasure is allowed. Approval is consumed "
+            "on the next successful erase_subject call. Required by "
+            "GDPR Art.17 right-to-erasure (fail-closed approval gate)."
+        ),
+        inputSchema=_schema(
+            {
+                "subject_id": {
+                    "type": "string",
+                    "description": "Identifier of the data subject to erase.",
+                },
+                "predicate": {
+                    "type": "string",
+                    "description": "Optional filter predicate for selective erasure.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the erasure request (audit trail).",
+                },
+            },
+            ["subject_id"],
+        ),
+    ),
+    Tool(
+        name="bicameral.privacy.erase_subject",
+        description=(
+            "Erase PII for a data subject from the daemon-owned PII archive. "
+            "Requires prior single-use approval via "
+            "bicameral.privacy.erase_subject.approve scoped to the same "
+            "subject_id. Routes to the daemon's privacy.erase_subject "
+            "command. Fail-closed: erasure is rejected locally without "
+            "approval, and archive failures do not fall back to inline "
+            "storage. Implements GDPR Art.17 right-to-erasure."
+        ),
+        inputSchema=_schema(
+            {
+                "subject_id": {
+                    "type": "string",
+                    "description": "Identifier of the data subject to erase.",
+                },
+                "predicate": {
+                    "type": "string",
+                    "description": "Optional filter predicate for selective erasure.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the erasure request (audit trail).",
+                },
+            },
+            ["subject_id"],
         ),
     ),
     Tool(
@@ -249,6 +348,14 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
             },
         ),
     ),
+)
+
+
+ERASURE_TOOLS: frozenset[str] = frozenset(
+    {
+        "bicameral.privacy.erase_subject",
+        "bicameral.privacy.erase_subject.approve",
+    }
 )
 
 

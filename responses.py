@@ -120,6 +120,36 @@ def format_recall_packet(response: dict[str, Any]) -> TextContent:
     return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
 
 
+def format_preflight_no_fire(*, files: list[str], request_id: str) -> TextContent:
+    """Render a preflight no-fire decision for un-ingested file scope.
+
+    Returned when the coverage guard determines that none of the requested
+    files have ledger/code_region bindings.  All stages are reported as
+    ``skipped`` with a clear reason so the agent understands why the full
+    preflight pipeline was not executed.
+    """
+    stages: dict[str, Any] = {}
+    for stage_name in PREFLIGHT_STAGES:
+        stages[stage_name] = {
+            "status": "skipped",
+            "reason": "no_coverage",
+        }
+
+    mcp_output: dict[str, Any] = {
+        "status": "no_fire",
+        "request_id": request_id,
+        "reason": "coverage_guard",
+        "detail": (
+            "All requested files have zero ledger/code_region coverage. "
+            "Preflight skipped — no binding evidence exists for this scope."
+        ),
+        "stages": stages,
+        "session_directive": {"mode": "continue"},
+        "guarded_files": files,
+    }
+    return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
+
+
 def format_preflight_response(response: dict[str, Any]) -> TextContent:
     """Render a preflight daemon response with explicit staged section.
 

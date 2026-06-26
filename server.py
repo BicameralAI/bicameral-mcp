@@ -20,6 +20,8 @@ from mcp.server.models import InitializationOptions
 
 from approval_gate import ApprovalGate, scope_from_params
 from authority import build_authority_context
+from brief_renderer import format_brief_narrative
+from coverage_guard import check_coverage
 from daemon_client import (
     CapabilityReport,
     DaemonCapabilityError,
@@ -28,16 +30,24 @@ from daemon_client import (
     DaemonProtocolError,
     resolve_daemon_endpoint,
 )
+from erasure_gate import (
+    ErasureGate,
+)
+from erasure_gate import (
+    scope_from_params as erasure_scope_from_params,
+)
 from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
     error_text,
     format_correction_response,
     format_lookup_response,
+    format_preflight_no_fire,
     format_preflight_response,
     format_recall_packet,
     format_tool_response,
     recovery_error_text,
 )
+from sync_payload_filter import filter_pending_checks
 from tool_request import MCP_TOOL_COMMANDS, build_tool_request
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
@@ -45,6 +55,7 @@ from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
 server = Server(SERVER_NAME)
 
 _approval_gate = ApprovalGate()
+_erasure_gate = ErasureGate()
 
 
 def _notification_options() -> NotificationOptions:
@@ -94,9 +105,11 @@ async def list_tools() -> list[types.Tool]:
 async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.TextContent]:
     arguments = arguments or {}
 
-    # --- Local-only approval tool ---
+    # --- Local-only approval tools ---
     if name == "bicameral.request_correction.approve":
         return _handle_approve(arguments)
+    if name == "bicameral.privacy.erase_subject.approve":
+        return _handle_erasure_approve(arguments)
 
     if name not in MCP_TOOL_COMMANDS:
         return [error_text("unsupported_tool", f"Unsupported Bicameral MCP tool: {name}")]
@@ -107,17 +120,43 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         if gate_result is not None:
             return gate_result
 
+    # --- Approval gate for erasure (GDPR Art.17, fail-closed) ---
+    if name == "bicameral.privacy.erase_subject":
+        gate_result = _enforce_erasure_gate(arguments)
+        if gate_result is not None:
+            return gate_result
+
     command_name = MCP_TOOL_COMMANDS[name]
     client = _client()
     try:
         capability_report = await _ensure_protocol_compatible(client)
         _ensure_command_advertised(command_name, capability_report)
+
+        # --- Coverage guard: fast-path elimination for un-ingested files ---
+        if name == "bicameral.preflight":
+            files = arguments.get("files")
+            if files:
+                no_coverage = await check_coverage(
+                    client=client,
+                    files=files,
+                    supported_commands=capability_report.supported_commands,
+                    arguments=arguments,
+                )
+                if no_coverage:
+                    from uuid import uuid4
+
+                    return [format_preflight_no_fire(files=files, request_id=str(uuid4()))]
+
         tool_request = build_tool_request(
             command_name=command_name,
             params=arguments,
             authority=build_authority_context(name, arguments),
         )
         response = await client.send_tool_request(tool_request)
+        caller_file_paths = arguments.get("files")
+        filter_pending_checks(response, caller_file_paths)
+        if name == "bicameral.brief":
+            return [format_brief_narrative(response)]
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
         if name == "bicameral.lookup":
@@ -177,6 +216,55 @@ def _enforce_approval_gate(
             "message": (
                 "Correction submission rejected: no matching single-use approval found. "
                 "Call bicameral.request_correction.approve with the same scope first."
+            ),
+            "requested_scope": scope.description(),
+        }
+        return [types.TextContent(type="text", text=json.dumps(payload))]
+    return None
+
+
+def _handle_erasure_approve(arguments: dict[str, Any]) -> list[types.TextContent]:
+    """Grant a single-use scoped approval for privacy.erase_subject."""
+    import json
+
+    try:
+        scope = erasure_scope_from_params(arguments)
+    except ValueError as exc:
+        return [error_text("erasure_scope_invalid", str(exc))]
+
+    key = _erasure_gate.grant(scope)
+    payload = {
+        "status": "approved",
+        "scope": scope.description(),
+        "approval_key": key,
+        "message": (
+            "Single-use erasure approval granted. Call "
+            "bicameral.privacy.erase_subject with matching "
+            "subject_id to execute erasure."
+        ),
+    }
+    return [types.TextContent(type="text", text=json.dumps(payload))]
+
+
+def _enforce_erasure_gate(
+    arguments: dict[str, Any],
+) -> list[types.TextContent] | None:
+    """Check and consume erasure approval. Returns error content if rejected."""
+    import json
+
+    try:
+        scope = erasure_scope_from_params(arguments)
+    except ValueError as exc:
+        return [error_text("erasure_scope_invalid", str(exc))]
+
+    if not _erasure_gate.consume(scope):
+        payload = {
+            "status": "error",
+            "error_code": "erasure_approval_required",
+            "message": (
+                "Erasure rejected: no matching single-use approval found. "
+                "Call bicameral.privacy.erase_subject.approve with the "
+                "same subject_id first. (GDPR Art.17 fail-closed gate)"
             ),
             "requested_scope": scope.description(),
         }
