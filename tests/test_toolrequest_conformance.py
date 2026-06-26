@@ -295,9 +295,16 @@ async def test_tool_emits_well_formed_toolrequest(tool_name, monkeypatch):
 
     content = await server.call_tool(tool_name, dict(spec.args))
 
-    # Exactly one ToolRequest dispatched per tool call.
-    assert len(daemon.requests) == 1
-    request = daemon.requests[0]
+    # Exactly one ToolRequest dispatched per tool call — except for preflight,
+    # which dispatches an additional coverage guard lookup.query (#343).
+    if tool_name == "bicameral.preflight":
+        assert len(daemon.requests) == 2
+        # First request is the coverage guard (lookup.query); primary is second.
+        assert daemon.requests[0]["command"]["name"] == "lookup.query"
+        request = daemon.requests[1]
+    else:
+        assert len(daemon.requests) == 1
+        request = daemon.requests[0]
 
     # Envelope shape is the v2 contract: request_id, command, authority, issued_at.
     assert set(request) == {"request_id", "command", "authority", "issued_at"}
@@ -468,8 +475,14 @@ async def test_read_model_tool_dispatches_exactly_one_read_command(tool_name, mo
 
     await server.call_tool(tool_name, dict(spec.args))
 
-    assert len(daemon.requests) == 1
-    emitted = daemon.requests[0]["command"]["name"]
+    # Preflight dispatches an extra coverage guard lookup.query (#343).
+    if tool_name == "bicameral.preflight":
+        assert len(daemon.requests) == 2
+        assert daemon.requests[0]["command"]["name"] == "lookup.query"
+        emitted = daemon.requests[1]["command"]["name"]
+    else:
+        assert len(daemon.requests) == 1
+        emitted = daemon.requests[0]["command"]["name"]
     assert emitted == spec.command
     assert emitted in {"preflight.run", "binding.inspect", "history.list", "search.query"}
 

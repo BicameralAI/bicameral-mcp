@@ -20,6 +20,7 @@ from mcp.server.models import InitializationOptions
 
 from approval_gate import ApprovalGate, scope_from_params
 from authority import build_authority_context
+from coverage_guard import check_coverage
 from daemon_client import (
     CapabilityReport,
     DaemonCapabilityError,
@@ -33,6 +34,7 @@ from responses import (
     error_text,
     format_correction_response,
     format_lookup_response,
+    format_preflight_no_fire,
     format_preflight_response,
     format_recall_packet,
     format_tool_response,
@@ -112,6 +114,22 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
     try:
         capability_report = await _ensure_protocol_compatible(client)
         _ensure_command_advertised(command_name, capability_report)
+
+        # --- Coverage guard: fast-path elimination for un-ingested files ---
+        if name == "bicameral.preflight":
+            files = arguments.get("files")
+            if files:
+                no_coverage = await check_coverage(
+                    client=client,
+                    files=files,
+                    supported_commands=capability_report.supported_commands,
+                    arguments=arguments,
+                )
+                if no_coverage:
+                    from uuid import uuid4
+
+                    return [format_preflight_no_fire(files=files, request_id=str(uuid4()))]
+
         tool_request = build_tool_request(
             command_name=command_name,
             params=arguments,
