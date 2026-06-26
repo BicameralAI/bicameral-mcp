@@ -48,6 +48,7 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
 READ_MODEL_TOOLS = {
     "bicameral.preflight",
     "bicameral.binding.inspect",
+    "bicameral.brief",
     "bicameral.history",
     "bicameral.search",
 }
@@ -176,6 +177,12 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         },
         expected_params={"target_id", "compliance_verdict", "reason"},
         required={"target_id", "compliance_verdict"},
+    ),
+    "bicameral.brief": _CommandSpec(
+        command="brief.render",
+        args={"topic": "Backport Strategy", "include_graph": True, **_CONTROL_AND_NOISE},
+        expected_params={"topic", "decision_ids", "since", "include_graph"},
+        required={"topic"},
     ),
     "bicameral.history": _CommandSpec(
         command="history.list",
@@ -481,6 +488,7 @@ def test_read_model_tools_map_only_to_read_commands():
     assert read_commands == {
         "preflight.run",
         "binding.inspect",
+        "brief.render",
         "history.list",
         "search.query",
     }
@@ -504,7 +512,13 @@ async def test_read_model_tool_dispatches_exactly_one_read_command(tool_name, mo
         assert len(daemon.requests) == 1
         emitted = daemon.requests[0]["command"]["name"]
     assert emitted == spec.command
-    assert emitted in {"preflight.run", "binding.inspect", "history.list", "search.query"}
+    assert emitted in {
+        "preflight.run",
+        "binding.inspect",
+        "brief.render",
+        "history.list",
+        "search.query",
+    }
 
 
 @pytest.mark.asyncio
@@ -565,7 +579,11 @@ def test_contract_fixture_renders_through_renderer(command):
     assert payload["status"]  # fixture carries an explicit status
     assert payload["request_id"]
 
-    if command == "preflight.run":
+    if command == "brief.render":
+        from brief_renderer import format_brief_narrative
+
+        renderer = format_brief_narrative
+    elif command == "preflight.run":
         renderer = format_preflight_response
     elif command == "lookup.query":
         renderer = format_lookup_response
@@ -574,8 +592,12 @@ def test_contract_fixture_renders_through_renderer(command):
     else:
         renderer = format_tool_response
     content = renderer(payload)
-    rendered = json.loads(content.text)
-    assert isinstance(rendered, dict)
+    if command == "brief.render":
+        assert isinstance(content.text, str)
+        assert len(content.text) > 0
+    else:
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
 
 
 def test_preflight_fixture_surfaces_source_only_limitation():
