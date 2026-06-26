@@ -1,0 +1,11 @@
+{
+  "request_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "status": "ok",
+  "result": {
+    "subject_id": "user-42",
+    "erased": true,
+    "rows_affected": 3,
+    "message": "PII erasure completed for subject user-42."
+  },
+  "responded_at": "2026-06-26T00:00:00Z"
+}

@@ -33,10 +33,12 @@ from version import TOOLREQUEST_PROTOCOL_VERSION
 
 @pytest.fixture(autouse=True)
 def _reset_approval_gate():
-    """Ensure the module-level approval gate is clean between conformance tests."""
+    """Ensure the module-level approval gates are clean between conformance tests."""
     server._approval_gate.clear()
+    server._erasure_gate.clear()
     yield
     server._approval_gate.clear()
+    server._erasure_gate.clear()
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
@@ -202,6 +204,17 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"packet_id", "excerpt", "diff", "correction_request", "reason"},
         required=set(),
     ),
+    "bicameral.privacy.erase_subject": _CommandSpec(
+        command="privacy.erase_subject",
+        args={
+            "subject_id": "user-conformance",
+            "predicate": "before:2025-01-01",
+            "reason": "GDPR Art.17 request",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"subject_id", "predicate", "reason"},
+        required={"subject_id"},
+    ),
 }
 
 _CONTROL_KEYS = {"actor_id", "session_id", "workspace", "policy_scope"}
@@ -284,7 +297,7 @@ async def test_tool_emits_well_formed_toolrequest(tool_name, monkeypatch):
     daemon = _RecordingDaemon()
     _patch_daemon(monkeypatch, daemon)
 
-    # request_correction requires prior approval gate grant.
+    # Approval-gated tools require prior approval grant.
     if tool_name == "bicameral.request_correction":
         scope_args = {
             k: v
@@ -292,6 +305,11 @@ async def test_tool_emits_well_formed_toolrequest(tool_name, monkeypatch):
             if k in ("packet_id", "excerpt", "diff", "correction_request")
         }
         await server.call_tool("bicameral.request_correction.approve", scope_args)
+    if tool_name == "bicameral.privacy.erase_subject":
+        scope_args = {
+            k: v for k, v in spec.args.items() if k in ("subject_id", "predicate", "reason")
+        }
+        await server.call_tool("bicameral.privacy.erase_subject.approve", scope_args)
 
     content = await server.call_tool(tool_name, dict(spec.args))
 
@@ -486,7 +504,7 @@ async def test_handshake_failure_dispatches_no_request(tool_name, monkeypatch):
     daemon = _Unreachable()
     _patch_daemon(monkeypatch, daemon)
 
-    # request_correction requires prior approval gate grant.
+    # Approval-gated tools require prior approval grant.
     if tool_name == "bicameral.request_correction":
         spec = COMMAND_SPECS[tool_name]
         scope_args = {
@@ -495,6 +513,12 @@ async def test_handshake_failure_dispatches_no_request(tool_name, monkeypatch):
             if k in ("packet_id", "excerpt", "diff", "correction_request")
         }
         await server.call_tool("bicameral.request_correction.approve", scope_args)
+    if tool_name == "bicameral.privacy.erase_subject":
+        spec = COMMAND_SPECS[tool_name]
+        scope_args = {
+            k: v for k, v in spec.args.items() if k in ("subject_id", "predicate", "reason")
+        }
+        await server.call_tool("bicameral.privacy.erase_subject.approve", scope_args)
 
     content = await server.call_tool(tool_name, dict(COMMAND_SPECS[tool_name].args))
     parsed = json.loads(content[0].text)

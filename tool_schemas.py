@@ -188,6 +188,62 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.privacy.erase_subject.approve",
+        description=(
+            "Grant single-use approval for a scoped PII erasure request. "
+            "The user must confirm the subject identifier and optional "
+            "predicate before erasure is allowed. Approval is consumed "
+            "on the next successful erase_subject call. Required by "
+            "GDPR Art.17 right-to-erasure (fail-closed approval gate)."
+        ),
+        inputSchema=_schema(
+            {
+                "subject_id": {
+                    "type": "string",
+                    "description": "Identifier of the data subject to erase.",
+                },
+                "predicate": {
+                    "type": "string",
+                    "description": "Optional filter predicate for selective erasure.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the erasure request (audit trail).",
+                },
+            },
+            ["subject_id"],
+        ),
+    ),
+    Tool(
+        name="bicameral.privacy.erase_subject",
+        description=(
+            "Erase PII for a data subject from the daemon-owned PII archive. "
+            "Requires prior single-use approval via "
+            "bicameral.privacy.erase_subject.approve scoped to the same "
+            "subject_id. Routes to the daemon's privacy.erase_subject "
+            "command. Fail-closed: erasure is rejected locally without "
+            "approval, and archive failures do not fall back to inline "
+            "storage. Implements GDPR Art.17 right-to-erasure."
+        ),
+        inputSchema=_schema(
+            {
+                "subject_id": {
+                    "type": "string",
+                    "description": "Identifier of the data subject to erase.",
+                },
+                "predicate": {
+                    "type": "string",
+                    "description": "Optional filter predicate for selective erasure.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the erasure request (audit trail).",
+                },
+            },
+            ["subject_id"],
+        ),
+    ),
+    Tool(
         name="bicameral.request_correction.approve",
         description=(
             "Grant single-use approval for a scoped correction request. "
@@ -249,6 +305,14 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
             },
         ),
     ),
+)
+
+
+ERASURE_TOOLS: frozenset[str] = frozenset(
+    {
+        "bicameral.privacy.erase_subject",
+        "bicameral.privacy.erase_subject.approve",
+    }
 )
 
 

@@ -21,12 +21,14 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
+    "bicameral.privacy.erase_subject": "privacy.erase_subject",
 }
 
 # Tools that are locally gated and never dispatched to the daemon.
 LOCAL_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "bicameral.request_correction.approve",
+        "bicameral.privacy.erase_subject.approve",
     }
 )
 
@@ -93,6 +95,8 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "files", "symbols", "scope", "include_context")
     if command_name == "correction.request":
         return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
+    if command_name == "privacy.erase_subject":
+        return _only(cleaned, "subject_id", "predicate", "reason")
     return cleaned
 
 

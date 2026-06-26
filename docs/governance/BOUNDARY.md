@@ -42,7 +42,8 @@ PR-diff) path:
 1. falls under a **registered sibling root** — from [`SIBLINGS.md`](SIBLINGS.md) unioned with a
    built-in default floor of common agent-scratch roots;
 2. is a non-allowlisted file under `docs/governance/` — only `BOUNDARY.md`, `SIBLINGS.md`,
-   `README.md`, and `PIN.json` are commit-permitted there;
+   `README.md`, `PIN.json`, `compliance-stance-matrix.md`, and
+   `doctrine-deterministic-governance.md` are commit-permitted there;
 3. or when a registered sibling root is **not** covered by `.gitignore` (registry ⇔
    `.gitignore` must agree).
 
