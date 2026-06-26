@@ -14,6 +14,7 @@ log = logging.getLogger(__name__)
 MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
     "bicameral.preflight": "preflight.run",
+    "bicameral.context": "lookup.query",
     "bicameral.lookup": "lookup.query",
     "bicameral.request_correction": "correction.request",
     "bicameral.bind": "binding.create",
@@ -101,7 +102,23 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
     if command_name == "search.query":
         return _only(cleaned, "query", "scope", "filters", "limit")
     if command_name == "lookup.query":
-        return _only(cleaned, "files", "symbols", "scope", "include_context")
+        return _only(
+            cleaned,
+            "query",
+            "ticket",
+            "branch",
+            "pr",
+            "repo",
+            "files",
+            "symbols",
+            "code_region",
+            "feature_area",
+            "agent_session_context",
+            "planned_action",
+            "checkpoint_hint",
+            "scope",
+            "include_context",
+        )
     if command_name == "correction.request":
         return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
     if command_name == "privacy.erase_subject":

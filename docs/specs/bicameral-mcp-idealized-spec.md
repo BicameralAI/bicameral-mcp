@@ -71,8 +71,11 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 |---|---|---|
 | `bicameral.ingest` | `ingest.submit_local` | Local actor submits source/session evidence or candidate drafts. |
 | `bicameral.preflight` | `preflight.run` | Reads relevant decisions and graph-scoped evidence via daemon. |
+| `bicameral.context` | `lookup.query` | Requests daemon-authored relevance-time ContextPacket/RecallPacket output for agent and developer workflows. |
+| `bicameral.lookup` | `lookup.query` | Queries daemon-authored RecallPacket output without MCP-local relevance or authority computation. |
 | `bicameral.bind` | `binding.create` | Proposes binding evidence; daemon owns validation and materialization. |
 | `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon. |
+| `bicameral.evidence.refresh` | `evidence.refresh` | Requests daemon-owned evidence currentness refresh for a tracked Decision. |
 | `bicameral.review.accept_candidate` | `review.accept_candidate` | Review command, not direct ledger mutation. |
 | `bicameral.review.reject_candidate` | `review.reject_candidate` | Review command, not direct ledger mutation. |
 | `bicameral.review.approve_signoff` | `review.approve_signoff` | Review command gated by bot policy. |
@@ -80,6 +83,7 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | `bicameral.review.resolve_compliance` | `review.resolve_compliance` | Review command gated by bot policy and evidence state. |
 | `bicameral.history` | `history.list` | Read replayed/materialized state. |
 | `bicameral.search` | `search.query` | Search daemon-owned state. |
+| `bicameral.request_correction` | `correction.request` | Submits an explicitly approved correction request to the daemon-owned correction path. |
 
 `bicameral.dashboard` is deferred unless bot exposes a local dashboard command or stable URL discovery endpoint. MCP may later add it as convenience only; it must not host the dashboard.
 
