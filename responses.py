@@ -211,6 +211,65 @@ def format_lookup_response(response: dict[str, Any]) -> TextContent:
     return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
 
 
+def format_context_packet_response(response: dict[str, Any]) -> TextContent:
+    """Render a daemon-authored relevance-time context packet.
+
+    The packet is a lookup/read artifact. MCP preserves daemon-authored source
+    distinction, freshness/readiness, rationale, risk, confidence, and required
+    actions when present, but it does not compute relevance, infer completeness,
+    or convert no-match/partial coverage into safety or compliance claims.
+    """
+    packet = response.get("context_packet") or response.get("recall_packet") or {}
+    matches = packet.get("matches", [])
+    searched_sources = packet.get("searched_sources") or packet.get("searched_scope", [])
+    unknown_scope = packet.get("unknown_scope", [])
+
+    rendered_matches: list[dict[str, Any]] = []
+    for match in matches:
+        rendered: dict[str, Any] = {
+            "match_id": match.get("match_id") or match.get("id"),
+            "kind": match.get("kind"),
+            "title": match.get("title"),
+            "summary": match.get("summary"),
+            "authority": match.get("authority"),
+            "evidence_refs": match.get("evidence_refs", []),
+            "relevance_reasons": match.get("relevance_reasons", []),
+            "freshness_state": match.get("freshness_state") or match.get("freshness"),
+            "review_state": match.get("review_state") or match.get("readiness"),
+            "risk": match.get("risk"),
+            "confidence": match.get("confidence"),
+            "rationale": match.get("rationale"),
+            "required_actions": match.get("required_actions", []),
+        }
+        rendered_matches.append(
+            {key: value for key, value in rendered.items() if value not in (None, [], {})}
+        )
+
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "context_packet": {
+            "packet_id": packet.get("packet_id"),
+            "request": packet.get("request", {}),
+            "corpus": packet.get("corpus", {}),
+            "searched_sources": searched_sources,
+            "matches": rendered_matches,
+            "unknown_scope": unknown_scope,
+            "allowed_next_actions": packet.get("allowed_next_actions", []),
+            "receipt_ref": packet.get("receipt_ref"),
+        },
+        "session_directive": response.get("session_directive", {"mode": "continue"}),
+    }
+
+    if not matches:
+        output["context_packet"]["no_match_note"] = (
+            "No relevant items were returned for the searched sources. "
+            "This does not imply absence outside searched or configured scope."
+        )
+
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
 def format_correction_response(response: dict[str, Any]) -> TextContent:
     """Render a daemon correction response.
 

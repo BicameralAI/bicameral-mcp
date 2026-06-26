@@ -46,6 +46,8 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
 # Read-model MCP tools: per the data-flow spec these are read-only and must
 # never drive a mutating canonical event. Everything else may append events.
 READ_MODEL_TOOLS = {
+    "bicameral.context",
+    "bicameral.lookup",
     "bicameral.preflight",
     "bicameral.binding.inspect",
     "bicameral.brief",
@@ -117,7 +119,44 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
             "branch": "feature/x",
             **_CONTROL_AND_NOISE,
         },
-        expected_params={"files", "symbols", "diff_context", "branch"},
+        expected_params={"files", "symbols", "diff_context", "branch", "checkpoint_hint"},
+        required=set(),
+    ),
+    "bicameral.context": _CommandSpec(
+        command="lookup.query",
+        args={
+            "query": "payment retry behavior",
+            "ticket": "PROD-123",
+            "branch": "feature/context-packet",
+            "pr": "https://github.com/example/repo/pull/7",
+            "repo": "example/repo",
+            "files": ["src/payments/retry.py"],
+            "symbols": ["RetryPolicy"],
+            "code_region": {"path": "src/payments/retry.py", "start_line": 10, "end_line": 40},
+            "feature_area": "billing",
+            "agent_session_context": {"session_id": "sess-1", "checkpoint": "pre_work"},
+            "planned_action": "change retry timeout",
+            "checkpoint_hint": "pre_work",
+            "scope": "trusted_corpus",
+            "include_context": True,
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "query",
+            "ticket",
+            "branch",
+            "pr",
+            "repo",
+            "files",
+            "symbols",
+            "code_region",
+            "feature_area",
+            "agent_session_context",
+            "planned_action",
+            "checkpoint_hint",
+            "scope",
+            "include_context",
+        },
         required=set(),
     ),
     "bicameral.bind": _CommandSpec(
@@ -486,6 +525,7 @@ async def test_evidence_refresh_typed_currentness_passthrough(state, monkeypatch
 def test_read_model_tools_map_only_to_read_commands():
     read_commands = {MCP_TOOL_COMMANDS[t] for t in READ_MODEL_TOOLS}
     assert read_commands == {
+        "lookup.query",
         "preflight.run",
         "binding.inspect",
         "brief.render",
@@ -513,6 +553,7 @@ async def test_read_model_tool_dispatches_exactly_one_read_command(tool_name, mo
         emitted = daemon.requests[0]["command"]["name"]
     assert emitted == spec.command
     assert emitted in {
+        "lookup.query",
         "preflight.run",
         "binding.inspect",
         "brief.render",
@@ -569,6 +610,7 @@ def _load_fixture(command: str) -> dict:
 @pytest.mark.parametrize("command", sorted(set(MCP_TOOL_COMMANDS.values())))
 def test_contract_fixture_renders_through_renderer(command):
     from responses import (
+        format_context_packet_response,
         format_correction_response,
         format_lookup_response,
         format_preflight_response,
@@ -586,6 +628,10 @@ def test_contract_fixture_renders_through_renderer(command):
     elif command == "preflight.run":
         renderer = format_preflight_response
     elif command == "lookup.query":
+        renderer = format_context_packet_response
+        content = renderer(payload)
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
         renderer = format_lookup_response
     elif command == "correction.request":
         renderer = format_correction_response
