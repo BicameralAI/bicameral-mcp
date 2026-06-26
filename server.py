@@ -38,6 +38,7 @@ from responses import (
     format_tool_response,
     recovery_error_text,
 )
+from sync_payload_filter import filter_pending_checks
 from tool_request import MCP_TOOL_COMMANDS, build_tool_request
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
@@ -118,6 +119,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             authority=build_authority_context(name, arguments),
         )
         response = await client.send_tool_request(tool_request)
+        caller_file_paths = arguments.get("files")
+        filter_pending_checks(response, caller_file_paths)
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
         if name == "bicameral.lookup":
