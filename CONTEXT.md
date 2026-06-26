@@ -57,3 +57,15 @@ Structured result from the daemon capability handshake. It reports daemon-advert
 _Authority verbs_: return, inspect
 _Avoid_: command grant, governance authority, fallback authority, local policy bypass
 _Related_: #606
+
+**RecallPacket**:
+Daemon-authored lookup result that describes searched scope, unknown scope, matches, evidence references, freshness/readiness labels, and allowed next actions. MCP may render the packet but must not strengthen it into a completeness, safety, compliance, or no-conflict claim.
+_Authority verbs_: return, render
+_Avoid_: compliance result, global search result, no-conflict proof, merge-safety signal
+_Related_: #638, #639
+
+**correction_id**:
+Daemon-assigned identifier for an accepted correction request outcome. It identifies the daemon-mediated request result; it is not local MCP approval, proof of ledger materialization, or evidence that a correction has become canonical.
+_Authority verbs_: return, reference
+_Avoid_: approval id, ledger event id, canonical decision id, local write token
+_Related_: #639, #640
