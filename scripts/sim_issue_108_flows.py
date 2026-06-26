@@ -38,6 +38,7 @@ MEMORY_WORKSPACE = "memory://issue-108-v0-replay"
 
 EXPECTED_COMMAND_SEQUENCE = (
     "ingest.submit_local",
+    "lookup.query",  # coverage guard (#343) probes before full preflight
     "preflight.run",
     "binding.inspect",
     "binding.create",
@@ -105,6 +106,23 @@ class MemoryReplayDaemon:
                     "candidate_id": "cand-v0-meeting",
                     "decision_id": "DEC-v0-001",
                     "storage": "memory://",
+                    "ledger_revision": self.revision,
+                },
+            )
+
+        if command == "lookup.query":
+            # Coverage guard probe — return matches so guard falls through to
+            # full preflight (simulates files that DO have ledger coverage).
+            return self._response(
+                tool_request,
+                "ok",
+                {
+                    "recall_packet": {
+                        "searched_sources": params.get("files", []),
+                        "matches": [{"decision_id": "DEC-v0-001", "confidence": 0.9}],
+                        "unknown_scope": [],
+                    },
+                    "mutation": "none",
                     "ledger_revision": self.revision,
                 },
             )
@@ -313,8 +331,13 @@ def assert_replay_contract(result: ReplayResult, requests: list[dict[str, Any]])
     if forbidden:
         raise AssertionError(f"legacy authority-shaped commands appeared: {sorted(forbidden)}")
 
-    if result.request_count != len(replay_steps()):
-        raise AssertionError(f"expected one ToolRequest per step, got {result.request_count}")
+    # Coverage guard (#343) adds one lookup.query before preflight.run.
+    expected_count = len(replay_steps()) + 1
+    if result.request_count != expected_count:
+        raise AssertionError(
+            f"expected {expected_count} ToolRequests (steps + coverage guard), "
+            f"got {result.request_count}"
+        )
 
     for request in requests:
         command = request["command"]["name"]
@@ -327,7 +350,10 @@ def assert_replay_contract(result: ReplayResult, requests: list[dict[str, Any]])
             if leaked_control:
                 raise AssertionError(f"{command} leaked control keys into params: {leaked_control}")
 
-    for command, response in zip(result.command_sequence, result.responses, strict=True):
+    # Coverage guard (#343) inserts lookup.query into command_sequence without a
+    # corresponding visible response; filter it for the step-to-response mapping.
+    step_commands = [c for c in result.command_sequence if c != "lookup.query"]
+    for command, response in zip(step_commands, result.responses, strict=True):
         result_payload = response.get("result", {})
         if command in READ_OR_ADVISORY_COMMANDS:
             if result_payload.get("mutation") not in (None, "none"):

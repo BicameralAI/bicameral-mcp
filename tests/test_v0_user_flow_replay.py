@@ -23,7 +23,10 @@ async def test_issue_108_replay_emits_expected_toolrequest_sequence():
 @pytest.mark.asyncio
 async def test_issue_108_replay_preserves_typed_failures_and_non_mutation():
     result = await run_replay()
-    by_command = dict(zip(result.command_sequence, result.responses, strict=True))
+    # Coverage guard (#343) adds lookup.query to command_sequence without a
+    # corresponding visible response; filter it for the step-to-response mapping.
+    step_commands = [c for c in result.command_sequence if c != "lookup.query"]
+    by_command = dict(zip(step_commands, result.responses, strict=True))
 
     assert by_command["binding.inspect"]["status"] == "stale"
     assert by_command["evidence.refresh"]["status"] == "content_changed"
