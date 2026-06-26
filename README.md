@@ -113,7 +113,7 @@ bot-owned or CLI-owned, not MCP-owned.
 ## Prompts And Skills
 
 MCP may expose MCP prompts for generic Bicameral workflows over supported tools,
-such as preflight, binding, ingest, history, and search.
+such as preflight, binding, ingest, history, search, and brief.
 
 Repo-local skills are outside MCP. Keep repo/team behavior in repo skills:
 when to run Bicameral, which ADRs to read, contribution policy, factory
