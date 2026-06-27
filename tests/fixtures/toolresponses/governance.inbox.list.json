@@ -1,0 +1,24 @@
+{
+  "request_id": "99999999-9999-4999-8999-999999999901",
+  "status": "ok",
+  "findings": [
+    {
+      "report_id": "CR-FIXTURE-001",
+      "status": "open",
+      "reason_code": "active_contradiction",
+      "affected_refs": ["DEC-1"],
+      "evidence_refs": ["EV-1"],
+      "allowed_actions": ["resolve", "acknowledge", "dismiss", "route"],
+      "summary": "Contradicts existing decision DEC-1"
+    },
+    {
+      "report_id": "CR-FIXTURE-002",
+      "status": "acknowledged",
+      "reason_code": "active_contradiction",
+      "affected_refs": ["DEC-2", "DEC-3"],
+      "evidence_refs": [],
+      "allowed_actions": ["resolve", "dismiss"]
+    }
+  ],
+  "responded_at": "2026-06-26T00:00:00Z"
+}

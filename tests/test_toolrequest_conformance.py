@@ -224,6 +224,33 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"subject_id", "predicate", "reason"},
         required={"subject_id"},
     ),
+    "bicameral.governance.inbox": _CommandSpec(
+        command="governance.inbox.list",
+        args={
+            "status_filter": ["open", "acknowledged"],
+            "limit": 25,
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"status_filter", "limit"},
+        required=set(),
+    ),
+    "bicameral.governance.inspect": _CommandSpec(
+        command="governance.inspect",
+        args={"report_id": "CR-CONFORMANCE-001", **_CONTROL_AND_NOISE},
+        expected_params={"report_id"},
+        required={"report_id"},
+    ),
+    "bicameral.governance.resolve": _CommandSpec(
+        command="governance.resolve_contradiction",
+        args={
+            "report_id": "CR-CONFORMANCE-001",
+            "action": "resolve",
+            "reason": "verified by owner",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"report_id", "action", "reason", "route_to"},
+        required={"report_id", "action"},
+    ),
 }
 
 _CONTROL_KEYS = {"actor_id", "session_id", "workspace", "policy_scope"}
@@ -589,6 +616,18 @@ def test_contract_fixture_renders_through_renderer(command):
         renderer = format_lookup_response
     elif command == "correction.request":
         renderer = format_correction_response
+    elif command == "governance.inbox.list":
+        from governance_surface import format_governance_inbox
+
+        renderer = format_governance_inbox
+    elif command == "governance.inspect":
+        from governance_surface import format_governance_inspect
+
+        renderer = format_governance_inspect
+    elif command == "governance.resolve_contradiction":
+        from governance_surface import format_governance_resolve
+
+        renderer = format_governance_resolve
     else:
         renderer = format_tool_response
     content = renderer(payload)
