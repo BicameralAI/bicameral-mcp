@@ -60,8 +60,11 @@ MCP exposes only ToolRequest-backed tools:
 |---|---|
 | `bicameral.ingest` | `ingest.submit_local` |
 | `bicameral.preflight` | `preflight.run` |
+| `bicameral.context` | `lookup.query` |
+| `bicameral.lookup` | `lookup.query` |
 | `bicameral.bind` | `binding.create` |
 | `bicameral.binding.inspect` | `binding.inspect` |
+| `bicameral.evidence.refresh` | `evidence.refresh` |
 | `bicameral.review.accept_candidate` | `review.accept_candidate` |
 | `bicameral.review.reject_candidate` | `review.reject_candidate` |
 | `bicameral.review.approve_signoff` | `review.approve_signoff` |
@@ -69,6 +72,7 @@ MCP exposes only ToolRequest-backed tools:
 | `bicameral.review.resolve_compliance` | `review.resolve_compliance` |
 | `bicameral.history` | `history.list` |
 | `bicameral.search` | `search.query` |
+| `bicameral.request_correction` | `correction.request` |
 
 ## Troubleshooting: Daemon Handshake Failures
 
