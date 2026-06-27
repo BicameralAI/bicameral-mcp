@@ -36,6 +36,11 @@ from erasure_gate import (
 from erasure_gate import (
     scope_from_params as erasure_scope_from_params,
 )
+from governance_surface import (
+    format_governance_inbox,
+    format_governance_inspect,
+    format_governance_resolve,
+)
 from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
     error_text,
@@ -166,6 +171,12 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_context_packet_response(response)]
         if name == "bicameral.request_correction":
             return [format_correction_response(response)]
+        if name == "bicameral.governance.inbox":
+            return [format_governance_inbox(response)]
+        if name == "bicameral.governance.inspect":
+            return [format_governance_inspect(response)]
+        if name == "bicameral.governance.resolve":
+            return [format_governance_resolve(response)]
         if "recall_packet" in response:
             return [format_recall_packet(response)]
         return [format_tool_response(response)]

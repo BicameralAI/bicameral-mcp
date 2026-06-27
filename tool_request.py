@@ -29,6 +29,9 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
     "bicameral.privacy.erase_subject": "privacy.erase_subject",
+    "bicameral.governance.inbox": "governance.inbox.list",
+    "bicameral.governance.inspect": "governance.inspect",
+    "bicameral.governance.resolve": "governance.resolve_contradiction",
 }
 
 # Tools that are locally gated and never dispatched to the daemon.
@@ -123,6 +126,12 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
     if command_name == "privacy.erase_subject":
         return _only(cleaned, "subject_id", "predicate", "reason")
+    if command_name == "governance.inbox.list":
+        return _only(cleaned, "status_filter", "limit")
+    if command_name == "governance.inspect":
+        return _only(cleaned, "report_id")
+    if command_name == "governance.resolve_contradiction":
+        return _only(cleaned, "report_id", "action", "reason", "route_to")
     return cleaned
 
 

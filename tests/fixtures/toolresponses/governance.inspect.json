@@ -1,0 +1,16 @@
+{
+  "request_id": "99999999-9999-4999-8999-999999999902",
+  "status": "ok",
+  "finding": {
+    "report_id": "CR-FIXTURE-001",
+    "status": "open",
+    "reason_code": "active_contradiction",
+    "affected_refs": ["DEC-1"],
+    "evidence_refs": ["EV-1"],
+    "allowed_actions": ["resolve", "acknowledge", "dismiss", "route"],
+    "summary": "Contradicts existing decision DEC-1",
+    "detail": "Decision DEC-1 specifies cherry-pick as default backport strategy, but new evidence suggests rebase is preferred.",
+    "created_at": "2026-06-25T10:00:00Z"
+  },
+  "responded_at": "2026-06-26T00:00:00Z"
+}

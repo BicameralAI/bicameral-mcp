@@ -286,6 +286,77 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.governance.inbox",
+        description=(
+            "List active governance inbox items (contradiction findings) for the "
+            "current actor. Returns open and acknowledged findings deterministically "
+            "without duplicating the same ContradictionReport."
+        ),
+        inputSchema=_schema(
+            {
+                "status_filter": {
+                    "type": "array",
+                    "items": {
+                        "type": "string",
+                        "enum": ["open", "acknowledged"],
+                    },
+                    "description": (
+                        "Filter by finding status. Defaults to active findings "
+                        "(open + acknowledged)."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of inbox items to return.",
+                },
+            }
+        ),
+    ),
+    Tool(
+        name="bicameral.governance.inspect",
+        description="Inspect a specific governance finding by its contradiction report ID.",
+        inputSchema=_schema(
+            {
+                "report_id": {
+                    "type": "string",
+                    "description": "ContradictionReport ID to inspect.",
+                },
+            },
+            ["report_id"],
+        ),
+    ),
+    Tool(
+        name="bicameral.governance.resolve",
+        description=(
+            "Resolve an active contradiction finding through the bot governance "
+            "protocol. Authorized Product Owner or delegate can resolve, acknowledge, "
+            "dismiss, or route the finding. Unauthorized actors receive an explicit "
+            "unauthorized result and no canonical event is submitted."
+        ),
+        inputSchema=_schema(
+            {
+                "report_id": {
+                    "type": "string",
+                    "description": "ContradictionReport ID to resolve.",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["resolve", "acknowledge", "dismiss", "route"],
+                    "description": "Resolution action to take on the finding.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the resolution action.",
+                },
+                "route_to": {
+                    "type": "string",
+                    "description": "Target actor or team when action is 'route'.",
+                },
+            },
+            ["report_id", "action"],
+        ),
+    ),
+    Tool(
         name="bicameral.privacy.erase_subject.approve",
         description=(
             "Grant single-use approval for a scoped PII erasure request. "
