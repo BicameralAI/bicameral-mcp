@@ -158,6 +158,70 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.correction_findings",
+        description=(
+            "Request daemon-authored correction-capture findings for PR, ticket, "
+            "branch, repo, file, code-region, feature-area, or agent-session context. "
+            "MCP renders findings and review handoff actions only; the daemon owns "
+            "correction detection, authority, and canonical state."
+        ),
+        inputSchema=_schema(
+            {
+                "query": {
+                    "type": "string",
+                    "description": "Optional natural-language task or lookup query.",
+                },
+                "ticket": {
+                    "type": "string",
+                    "description": "Ticket, issue, or work item identifier or URL.",
+                },
+                "branch": {"type": "string"},
+                "pr": {
+                    "type": "string",
+                    "description": "Pull request identifier or URL.",
+                },
+                "repo": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "code_region": {
+                    "type": "object",
+                    "description": "Optional daemon-interpreted code region hint.",
+                },
+                "feature_area": {"type": "string"},
+                "agent_session_context": {
+                    "type": "object",
+                    "description": "Bounded agent-session hints; not a raw transcript dump.",
+                },
+                "planned_action": {"type": "string"},
+                "checkpoint_hint": {
+                    "type": "string",
+                    "enum": ["pre_work", "mid_session", "pre_write", "manual_lookup"],
+                    "description": "Optional inert checkpoint metadata.",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional daemon-defined corpus or lookup scope hint.",
+                },
+                "finding_status": {
+                    "type": "string",
+                    "description": "Optional daemon-defined correction finding status filter.",
+                },
+                "severity": {
+                    "type": "string",
+                    "description": "Optional daemon-defined finding severity filter.",
+                },
+                "include_correction_findings": {
+                    "type": "boolean",
+                    "description": "Ask daemon for correction-capture finding fields when supported.",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "description": "Ask daemon for compact context fields when supported.",
+                },
+            }
+        ),
+    ),
+    Tool(
         name="bicameral.bind",
         description="Propose binding evidence for a decision or candidate.",
         inputSchema=_schema(

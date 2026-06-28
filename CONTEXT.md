@@ -70,6 +70,12 @@ _Authority verbs_: return, render
 _Avoid_: raw source dump, MCP-ranked context, local canonical truth, merge-safety signal
 _Related_: #613
 
+**CorrectionFinding**:
+Daemon-authored finding that a changed code region may require a trusted-corpus, source-doc, Decision, or constraint correction. It is a review handoff artifact, not a canonical update. MCP may request and render findings and route users to approved review/correction tools; MCP must not decide drift, mutate source docs, or materialize corpus truth locally.
+_Authority verbs_: return, render, route
+_Avoid_: accepted correction, canonical update, drift verdict, source-doc write, merge-safety signal
+_Related_: #618
+
 **correction_id**:
 Daemon-assigned identifier for an accepted correction request outcome. It identifies the daemon-mediated request result; it is not local MCP approval, proof of ledger materialization, or evidence that a correction has become canonical.
 _Authority verbs_: return, reference

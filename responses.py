@@ -270,6 +270,70 @@ def format_context_packet_response(response: dict[str, Any]) -> TextContent:
     return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
 
 
+def format_correction_findings_response(response: dict[str, Any]) -> TextContent:
+    """Render daemon-authored correction-capture findings.
+
+    Correction findings are advisory/review handoff artifacts. MCP preserves
+    daemon-authored source distinctions and suggested actions, but it does not
+    compute drift, decide correction eligibility, mutate corpus truth, or
+    promote findings into canonical Decisions.
+    """
+    packet = response.get("correction_findings_packet") or response.get("context_packet") or {}
+    findings = packet.get("findings") or packet.get("correction_findings") or []
+
+    rendered_findings: list[dict[str, Any]] = []
+    for finding in findings:
+        rendered: dict[str, Any] = {
+            "finding_id": finding.get("finding_id") or finding.get("id"),
+            "summary": finding.get("summary"),
+            "affected_code_region": finding.get("affected_code_region")
+            or finding.get("code_region"),
+            "trusted_corpus_ref": finding.get("trusted_corpus_ref"),
+            "source_doc_ref": finding.get("source_doc_ref") or finding.get("source_doc"),
+            "decision_refs": finding.get("decision_refs")
+            or finding.get("related_decision_ids", []),
+            "constraint_refs": finding.get("constraint_refs")
+            or finding.get("related_constraint_ids", []),
+            "evidence_refs": finding.get("evidence_refs", []),
+            "candidate_change": finding.get("candidate_change"),
+            "authority": finding.get("authority"),
+            "severity": finding.get("severity"),
+            "confidence": finding.get("confidence"),
+            "confidence_bps": finding.get("confidence_bps"),
+            "review_state": finding.get("review_state"),
+            "suggested_action": finding.get("suggested_action"),
+            "required_actions": finding.get("required_actions", []),
+            "allowed_next_actions": finding.get("allowed_next_actions", []),
+        }
+        rendered_findings.append(
+            {key: value for key, value in rendered.items() if value not in (None, [], {})}
+        )
+
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "correction_findings_packet": {
+            "packet_id": packet.get("packet_id"),
+            "request": packet.get("request", {}),
+            "searched_sources": packet.get("searched_sources", []),
+            "findings": rendered_findings,
+            "unknown_scope": packet.get("unknown_scope", []),
+            "allowed_next_actions": packet.get("allowed_next_actions", []),
+            "review_handoff": packet.get("review_handoff", {}),
+            "receipt_ref": packet.get("receipt_ref"),
+        },
+        "session_directive": response.get("session_directive", {"mode": "continue"}),
+    }
+
+    if not findings:
+        output["correction_findings_packet"]["no_findings_note"] = (
+            "No correction-capture findings were returned for the searched scope. "
+            "This does not imply absence outside searched or configured scope."
+        )
+
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
 def format_correction_response(response: dict[str, Any]) -> TextContent:
     """Render a daemon correction response.
 

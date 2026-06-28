@@ -61,6 +61,7 @@ MCP exposes only ToolRequest-backed tools:
 | `bicameral.ingest` | `ingest.submit_local` |
 | `bicameral.preflight` | `preflight.run` |
 | `bicameral.context` | `lookup.query` |
+| `bicameral.correction_findings` | `lookup.query` |
 | `bicameral.lookup` | `lookup.query` |
 | `bicameral.bind` | `binding.create` |
 | `bicameral.binding.inspect` | `binding.inspect` |
