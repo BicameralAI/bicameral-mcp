@@ -1,0 +1,12 @@
+{
+  "request_id": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "status": "ok",
+  "result": {
+    "candidate_id": "00000000-0000-0000-0000-000000000002",
+    "outcome": "routed_to_signoff",
+    "decision_id": null,
+    "review_state": "proposed",
+    "trace_ref": "trace-promote-fixture"
+  },
+  "responded_at": "2026-06-28T00:00:00Z"
+}

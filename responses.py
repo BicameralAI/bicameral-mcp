@@ -334,6 +334,88 @@ def format_correction_findings_response(response: dict[str, Any]) -> TextContent
     return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
 
 
+def format_review_queue_response(
+    response: dict[str, Any], *, item_key: str = "review_items"
+) -> TextContent:
+    """Render daemon-authored review items/results without adding authority.
+
+    The daemon owns candidate identity, corpus proposal validity, review
+    authorization, and canonical transitions. MCP preserves review payload
+    fields useful to operators: evidence, source distinction, provenance,
+    affected surface, rationale, authority, review state, and allowed actions.
+    """
+    result = response.get("result", {})
+    raw_items = (
+        result.get("matches")
+        or result.get("items")
+        or result.get("candidates")
+        or response.get("items")
+        or response.get("candidates")
+        or []
+    )
+
+    rendered_items: list[dict[str, Any]] = []
+    for item in raw_items:
+        rendered_items.append(_render_review_item(item))
+
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        item_key: rendered_items,
+        "total": len(rendered_items),
+        "session_directive": response.get("session_directive", {"mode": "continue"}),
+    }
+
+    if result and not rendered_items:
+        output["result"] = _render_review_item(result)
+
+    if result.get("binding_scope"):
+        output["binding_scope"] = result["binding_scope"]
+    if result.get("allowed_next_actions"):
+        output["allowed_next_actions"] = result["allowed_next_actions"]
+    if response.get("error_code"):
+        output["error_code"] = response["error_code"]
+
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
+def _render_review_item(item: dict[str, Any]) -> dict[str, Any]:
+    rendered: dict[str, Any] = {
+        "kind": item.get("kind"),
+        "id": item.get("id")
+        or item.get("candidate_id")
+        or item.get("proposal_id")
+        or item.get("target_id"),
+        "decision_id": item.get("decision_id"),
+        "title": item.get("title"),
+        "summary": item.get("summary"),
+        "status": item.get("status"),
+        "review_state": item.get("review_state"),
+        "authority": item.get("authority"),
+        "transition": item.get("transition"),
+        "outcome": item.get("outcome"),
+        "evidence_refs": item.get("evidence_refs", []),
+        "source_refs": item.get("source_refs", []),
+        "source_link": item.get("source_link"),
+        "source_doc_ref": item.get("source_doc_ref") or item.get("source_doc"),
+        "trusted_corpus_ref": item.get("trusted_corpus_ref"),
+        "provenance": item.get("provenance"),
+        "affected_surface": item.get("affected_surface")
+        or item.get("affected_code_region")
+        or item.get("affected_refs"),
+        "rationale": item.get("rationale"),
+        "excerpt": item.get("excerpt"),
+        "reason": item.get("reason"),
+        "allowed_actions": item.get("allowed_actions", []),
+        "allowed_next_actions": item.get("allowed_next_actions", []),
+        "suggested_actions": item.get("suggested_actions", []),
+        "required_actions": item.get("required_actions", []),
+        "touched_ids": item.get("touched_ids", []),
+        "trace_ref": item.get("trace_ref"),
+    }
+    return {key: value for key, value in rendered.items() if value not in (None, [], {})}
+
+
 def format_correction_response(response: dict[str, Any]) -> TextContent:
     """Render a daemon correction response.
 
