@@ -66,8 +66,71 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 },
                 "snapshot_content": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "object"}},
+                "candidate_drafts": {"type": "array", "items": {"type": "object"}},
+                "binding_hints": {"type": "array", "items": {"type": "object"}},
+                "rationale": {"type": "string"},
+                "metadata": {"type": "object"},
             },
             ["source_uri", "source_type", "title", "description"],
+        ),
+    ),
+    Tool(
+        name="bicameral.capture_context",
+        description=(
+            "Submit MCP session, tool, command-output, and code-hint context as "
+            "bot-owned Source/SourceSnapshot/EvidenceReference-compatible local "
+            "ingest input. Code hints remain advisory binding_hints; MCP does not "
+            "claim graph verification, compliance, signoff, or event-store authority."
+        ),
+        inputSchema=_schema(
+            {
+                "source_uri": {
+                    "type": "string",
+                    "description": "Optional source link for this capture; defaults to mcp://session/...",
+                },
+                "source_type": {
+                    "type": "string",
+                    "description": "Bot SourceKind-compatible source type.",
+                },
+                "source_kind": {
+                    "type": "string",
+                    "description": "Optional SourceKind vocabulary mirror for metadata.",
+                },
+                "source_link": {
+                    "type": "string",
+                    "description": "Optional human-facing source link for metadata.",
+                },
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "label": {"type": "string"},
+                "snapshot_content": {
+                    "type": "string",
+                    "description": "Optional pre-rendered SourceSnapshot content.",
+                },
+                "session_turns": {"type": "array", "items": {"type": "object"}},
+                "tool_calls": {"type": "array", "items": {"type": "object"}},
+                "tool_outputs": {"type": "array", "items": {"type": "object"}},
+                "command_outputs": {"type": "array", "items": {"type": "object"}},
+                "code_hints": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Advisory file/range/symbol/diff hints forwarded as binding_hints.",
+                },
+                "code_region_hints": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional LLM-produced code-region hints, metadata only.",
+                },
+                "evidence": {"type": "array", "items": {"type": "object"}},
+                "evidence_references": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional caller-known EvidenceReference-compatible refs.",
+                },
+                "correlation_id": {"type": "string"},
+                "rationale": {"type": "string"},
+                "metadata": {"type": "object"},
+            }
         ),
     ),
     Tool(

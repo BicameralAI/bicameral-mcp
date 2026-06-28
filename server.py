@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 from typing import Any
 
 import mcp.server.stdio
@@ -222,7 +223,114 @@ def _command_arguments_for_tool(name: str, arguments: dict[str, Any]) -> dict[st
             "include_correction_findings": True,
             **arguments,
         }
+    if name == "bicameral.capture_context":
+        return _capture_context_arguments(arguments)
     return arguments
+
+
+def _capture_context_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    """Shape local MCP context into daemon-owned ingest.submit_local params.
+
+    The output is Source/SourceSnapshot/EvidenceReference-compatible input for
+    the daemon. Code hints are advisory binding_hints only; MCP does not verify
+    graph scope, create bindings, resolve compliance, approve signoff, or write
+    canonical events.
+    """
+    correlation_id = arguments.get("correlation_id") or arguments.get("session_id")
+    source_uri = arguments.get("source_uri") or f"mcp://session/{correlation_id or 'capture'}"
+    source_type = arguments.get("source_type") or arguments.get("source_kind") or "mcp_session"
+
+    snapshot_payload = {
+        "kind": "SourceSnapshot",
+        "source": {
+            "kind": "Source",
+            "source_uri": source_uri,
+            "source_type": source_type,
+            "source_link": arguments.get("source_link"),
+        },
+        "session_turns": arguments.get("session_turns", []),
+        "tool_calls": arguments.get("tool_calls", []),
+        "tool_outputs": arguments.get("tool_outputs", []),
+        "command_outputs": arguments.get("command_outputs", []),
+        "code_hints": arguments.get("code_hints", []),
+        "code_region_hints": arguments.get("code_region_hints", []),
+        "evidence_references": arguments.get("evidence_references", []),
+        "correlation_id": correlation_id,
+    }
+    snapshot_content = arguments.get("snapshot_content") or json.dumps(
+        {key: value for key, value in snapshot_payload.items() if value not in (None, [], {})},
+        sort_keys=True,
+    )
+
+    metadata = {
+        **(arguments.get("metadata") or {}),
+        "bot_vocabulary": ["Source", "SourceSnapshot", "EvidenceReference", "SourceKind"],
+        "source_kind": source_type,
+        "source_link": arguments.get("source_link"),
+        "correlation_id": correlation_id,
+        "mcp_session_id": arguments.get("session_id"),
+        "mcp_capture": {
+            "tool": "bicameral.capture_context",
+            "has_session_turns": bool(arguments.get("session_turns")),
+            "has_tool_calls": bool(arguments.get("tool_calls")),
+            "has_tool_outputs": bool(arguments.get("tool_outputs")),
+            "has_command_outputs": bool(arguments.get("command_outputs")),
+            "has_code_hints": bool(arguments.get("code_hints")),
+            "has_code_region_hints": bool(arguments.get("code_region_hints")),
+        },
+        "evidence_references": arguments.get("evidence_references", []),
+        "code_region_hints": arguments.get("code_region_hints", []),
+    }
+
+    ingest_args: dict[str, Any] = {
+        "source_uri": source_uri,
+        "source_type": source_type,
+        "label": arguments.get("label"),
+        "title": arguments.get("title") or "MCP context capture",
+        "description": arguments.get("description")
+        or "MCP session/tool/code context submitted as bot-owned source evidence.",
+        "snapshot_content": snapshot_content,
+        "evidence": _capture_evidence(arguments),
+        "binding_hints": _capture_binding_hints(arguments.get("code_hints", [])),
+        "rationale": arguments.get("rationale"),
+        "metadata": {key: value for key, value in metadata.items() if value not in (None, [], {})},
+    }
+
+    return {key: value for key, value in ingest_args.items() if value not in (None, [], {})}
+
+
+def _capture_evidence(arguments: dict[str, Any]) -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = list(arguments.get("evidence") or [])
+    for output in arguments.get("command_outputs", []):
+        excerpt = output.get("excerpt") or output.get("output") or output.get("stdout")
+        if excerpt:
+            evidence.append({"excerpt": str(excerpt)})
+    for output in arguments.get("tool_outputs", []):
+        excerpt = output.get("excerpt") or output.get("output") or output.get("content")
+        if excerpt:
+            evidence.append({"excerpt": str(excerpt)})
+    for turn in arguments.get("session_turns", []):
+        excerpt = turn.get("excerpt") or turn.get("content") or turn.get("text")
+        if excerpt:
+            evidence.append({"excerpt": str(excerpt)})
+    return evidence
+
+
+def _capture_binding_hints(code_hints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    binding_hints: list[dict[str, Any]] = []
+    for hint in code_hints:
+        file = hint.get("file") or hint.get("path")
+        if not file:
+            continue
+        binding_hint = {
+            "file": file,
+            "range": hint.get("range"),
+            "symbol": hint.get("symbol"),
+        }
+        binding_hints.append(
+            {key: value for key, value in binding_hint.items() if value not in (None, [], {})}
+        )
+    return binding_hints
 
 
 def _handle_approve(arguments: dict[str, Any]) -> list[types.TextContent]:

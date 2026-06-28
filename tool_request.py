@@ -13,6 +13,7 @@ log = logging.getLogger(__name__)
 
 MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
+    "bicameral.capture_context": "ingest.submit_local",
     "bicameral.preflight": "preflight.run",
     "bicameral.context": "lookup.query",
     "bicameral.correction_findings": "lookup.query",
@@ -184,9 +185,14 @@ def _ingest_params(cleaned: dict[str, Any]) -> dict[str, Any]:
         "title",
         "description",
         "level",
+        "suggested_level",
         "decision_level",
         "snapshot_content",
         "evidence",
+        "candidate_drafts",
+        "binding_hints",
+        "rationale",
+        "metadata",
     )
     if "decision_level" not in result:
         result["pending_classification"] = True

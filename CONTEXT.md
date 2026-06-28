@@ -82,6 +82,12 @@ _Authority verbs_: list, render, submit
 _Avoid_: local approval, canonical mutation, reviewer assignment, trusted-corpus write, merge-safety signal
 _Related_: #614
 
+**MCP context capture**:
+Local MCP session, tool, command-output, and code-hint context submitted to the daemon as `ingest.submit_local` input using bot vocabulary such as Source, SourceSnapshot, EvidenceReference, SourceKind, and source link. Code hints are advisory binding_hints only. MCP may package and submit the context; MCP must not claim graph verification, binding authority, compliance, signoff, or event-store authority.
+_Authority verbs_: package, submit
+_Avoid_: graph verified, accepted binding, compliance result, signoff, local SourceSnapshot file, canonical event
+_Related_: #582
+
 **correction_id**:
 Daemon-assigned identifier for an accepted correction request outcome. It identifies the daemon-mediated request result; it is not local MCP approval, proof of ledger materialization, or evidence that a correction has become canonical.
 _Authority verbs_: return, reference
