@@ -15,6 +15,7 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
     "bicameral.preflight": "preflight.run",
     "bicameral.context": "lookup.query",
+    "bicameral.correction_findings": "lookup.query",
     "bicameral.lookup": "lookup.query",
     "bicameral.request_correction": "correction.request",
     "bicameral.bind": "binding.create",
@@ -120,6 +121,9 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "planned_action",
             "checkpoint_hint",
             "scope",
+            "finding_status",
+            "severity",
+            "include_correction_findings",
             "include_context",
         )
     if command_name == "correction.request":

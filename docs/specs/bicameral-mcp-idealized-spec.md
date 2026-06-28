@@ -72,6 +72,7 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | `bicameral.ingest` | `ingest.submit_local` | Local actor submits source/session evidence or candidate drafts. |
 | `bicameral.preflight` | `preflight.run` | Reads relevant decisions and graph-scoped evidence via daemon. |
 | `bicameral.context` | `lookup.query` | Requests daemon-authored relevance-time ContextPacket/RecallPacket output for agent and developer workflows. |
+| `bicameral.correction_findings` | `lookup.query` | Requests daemon-authored correction-capture findings for PR/agent workflows without MCP-local drift or corpus mutation. |
 | `bicameral.lookup` | `lookup.query` | Queries daemon-authored RecallPacket output without MCP-local relevance or authority computation. |
 | `bicameral.bind` | `binding.create` | Proposes binding evidence; daemon owns validation and materialization. |
 | `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon. |
