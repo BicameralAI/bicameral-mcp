@@ -59,6 +59,7 @@ MCP exposes only ToolRequest-backed tools:
 | MCP tool | Bot command |
 |---|---|
 | `bicameral.ingest` | `ingest.submit_local` |
+| `bicameral.capture_context` | `ingest.submit_local` |
 | `bicameral.preflight` | `preflight.run` |
 | `bicameral.context` | `lookup.query` |
 | `bicameral.correction_findings` | `lookup.query` |
