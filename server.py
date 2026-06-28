@@ -51,6 +51,7 @@ from responses import (
     format_preflight_no_fire,
     format_preflight_response,
     format_recall_packet,
+    format_review_queue_response,
     format_tool_response,
     recovery_error_text,
 )
@@ -154,9 +155,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
 
                     return [format_preflight_no_fire(files=files, request_id=str(uuid4()))]
 
+        command_arguments = _command_arguments_for_tool(name, arguments)
         tool_request = build_tool_request(
             command_name=command_name,
-            params=arguments,
+            params=command_arguments,
             authority=build_authority_context(name, arguments),
         )
         response = await client.send_tool_request(tool_request)
@@ -172,8 +174,21 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_context_packet_response(response)]
         if name == "bicameral.correction_findings":
             return [format_correction_findings_response(response)]
+        if name == "bicameral.review.corpus_proposals":
+            return [format_correction_findings_response(response)]
+        if name == "bicameral.review.candidates":
+            return [format_review_queue_response(response, item_key="decision_candidates")]
+        if name in {
+            "bicameral.review.promote_candidate",
+            "bicameral.review.request_corpus_change",
+        }:
+            return [format_review_queue_response(response, item_key="review_result")]
         if name == "bicameral.request_correction":
             return [format_correction_response(response)]
+        if name == "bicameral.review.contradictions":
+            return [format_governance_inbox(response)]
+        if name == "bicameral.review.triage_contradiction":
+            return [format_governance_resolve(response)]
         if name == "bicameral.governance.inbox":
             return [format_governance_inbox(response)]
         if name == "bicameral.governance.inspect":
@@ -191,6 +206,23 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
                 requested_command=command_name,
             )
         ]
+
+
+def _command_arguments_for_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """Apply MCP-tool defaults before command-param allowlisting.
+
+    Defaults are transport ergonomics only; the daemon still owns query
+    semantics, review authority, and canonical state transitions.
+    """
+    if name == "bicameral.review.candidates":
+        return {"query": "", "scope": "candidates", **arguments}
+    if name == "bicameral.review.corpus_proposals":
+        return {
+            "scope": "correction_capture",
+            "include_correction_findings": True,
+            **arguments,
+        }
+    return arguments
 
 
 def _handle_approve(arguments: dict[str, Any]) -> list[types.TextContent]:

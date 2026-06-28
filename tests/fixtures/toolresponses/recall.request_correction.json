@@ -1,0 +1,11 @@
+{
+  "request_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "status": "ok",
+  "result": {
+    "packet_id": "00000000-0000-0000-0000-000000000001",
+    "outcome": "accepted",
+    "correction_candidate_id": "00000000-0000-0000-0000-000000000004",
+    "trace_ref": "trace-correction-fixture"
+  },
+  "responded_at": "2026-06-28T00:00:00Z"
+}

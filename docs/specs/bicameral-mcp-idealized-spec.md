@@ -77,11 +77,20 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | `bicameral.bind` | `binding.create` | Proposes binding evidence; daemon owns validation and materialization. |
 | `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon. |
 | `bicameral.evidence.refresh` | `evidence.refresh` | Requests daemon-owned evidence currentness refresh for a tracked Decision. |
+| `bicameral.review.candidates` | `search.query` | Lists daemon-owned decision candidates for review while preserving evidence/source/provenance/rationale fields. |
+| `bicameral.review.corpus_proposals` | `lookup.query` | Lists daemon-authored corpus-change proposals/correction findings without MCP-local corpus mutation. |
 | `bicameral.review.accept_candidate` | `review.accept_candidate` | Review command, not direct ledger mutation. |
 | `bicameral.review.reject_candidate` | `review.reject_candidate` | Review command, not direct ledger mutation. |
+| `bicameral.review.promote_candidate` | `recall.promote_decision_candidate` | Requests daemon-governed candidate promotion/routing from a RecallPacket reference. |
+| `bicameral.review.request_corpus_change` | `recall.request_correction` | Requests daemon-governed corpus correction/change review from selected RecallPacket items. |
 | `bicameral.review.approve_signoff` | `review.approve_signoff` | Review command gated by bot policy. |
 | `bicameral.review.reject_signoff` | `review.reject_signoff` | Review command gated by bot policy. |
 | `bicameral.review.resolve_compliance` | `review.resolve_compliance` | Review command gated by bot policy and evidence state. |
+| `bicameral.review.contradictions` | `governance.inbox.list` | Lists contradiction findings for review via the daemon governance inbox. |
+| `bicameral.review.triage_contradiction` | `governance.resolve_contradiction` | Submits contradiction triage updates; daemon owns authorization and state transition. |
+| `bicameral.governance.inbox` | `governance.inbox.list` | Lists active governance inbox items. |
+| `bicameral.governance.inspect` | `governance.inspect` | Inspects a daemon-authored governance finding. |
+| `bicameral.governance.resolve` | `governance.resolve_contradiction` | Resolves, acknowledges, dismisses, or routes a contradiction through daemon governance. |
 | `bicameral.history` | `history.list` | Read replayed/materialized state. |
 | `bicameral.search` | `search.query` | Search daemon-owned state. |
 | `bicameral.request_correction` | `correction.request` | Submits an explicitly approved correction request to the daemon-owned correction path. |

@@ -76,6 +76,12 @@ _Authority verbs_: return, render, route
 _Avoid_: accepted correction, canonical update, drift verdict, source-doc write, merge-safety signal
 _Related_: #618
 
+**review handoff**:
+Daemon-authored review surface for decision candidates, corpus-change proposals, and contradiction findings. MCP may list these items, preserve evidence/source/provenance/affected-surface/rationale fields, and submit authorized review or triage commands to the daemon. MCP must not infer approval, mutate trusted corpus, assign reviewer authority, or materialize canonical state locally.
+_Authority verbs_: list, render, submit
+_Avoid_: local approval, canonical mutation, reviewer assignment, trusted-corpus write, merge-safety signal
+_Related_: #614
+
 **correction_id**:
 Daemon-assigned identifier for an accepted correction request outcome. It identifies the daemon-mediated request result; it is not local MCP approval, proof of ledger materialization, or evidence that a correction has become canonical.
 _Authority verbs_: return, reference
