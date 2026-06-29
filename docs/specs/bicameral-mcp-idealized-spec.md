@@ -76,7 +76,7 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | `bicameral.correction_findings` | `lookup.query` | Requests daemon-authored correction-capture findings for PR/agent workflows without MCP-local drift or corpus mutation. |
 | `bicameral.lookup` | `lookup.query` | Queries daemon-authored RecallPacket output without MCP-local relevance or authority computation. |
 | `bicameral.bind` | `binding.create` | Proposes binding evidence; daemon owns validation and materialization. |
-| `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon. |
+| `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon and renders source links/EvidenceReferences without compliance inference. |
 | `bicameral.evidence.refresh` | `evidence.refresh` | Requests daemon-owned evidence currentness refresh for a tracked Decision. |
 | `bicameral.review.candidates` | `search.query` | Lists daemon-owned decision candidates for review while preserving evidence/source/provenance/rationale fields. |
 | `bicameral.review.corpus_proposals` | `lookup.query` | Lists daemon-authored corpus-change proposals/correction findings without MCP-local corpus mutation. |
@@ -92,8 +92,8 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | `bicameral.governance.inbox` | `governance.inbox.list` | Lists active governance inbox items. |
 | `bicameral.governance.inspect` | `governance.inspect` | Inspects a daemon-authored governance finding. |
 | `bicameral.governance.resolve` | `governance.resolve_contradiction` | Resolves, acknowledges, dismisses, or routes a contradiction through daemon governance. |
-| `bicameral.history` | `history.list` | Read replayed/materialized state. |
-| `bicameral.search` | `search.query` | Search daemon-owned state. |
+| `bicameral.history` | `history.list` | Reads replayed/materialized state and renders daemon-provided source links/EvidenceReferences. |
+| `bicameral.search` | `search.query` | Searches daemon-owned state and renders daemon-provided source links/EvidenceReferences. |
 | `bicameral.request_correction` | `correction.request` | Submits an explicitly approved correction request to the daemon-owned correction path. |
 
 `bicameral.dashboard` is deferred unless bot exposes a local dashboard command or stable URL discovery endpoint. MCP may later add it as convenience only; it must not host the dashboard.

@@ -846,6 +846,7 @@ def test_contract_fixture_renders_through_renderer(command):
         format_correction_response,
         format_lookup_response,
         format_preflight_response,
+        format_source_link_response,
         format_tool_response,
     )
 
@@ -867,6 +868,24 @@ def test_contract_fixture_renders_through_renderer(command):
         renderer = format_lookup_response
     elif command == "correction.request":
         renderer = format_correction_response
+    elif command == "binding.inspect":
+        content = format_source_link_response(payload, surface="binding.inspect")
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "source_link_note" in rendered
+        return
+    elif command == "history.list":
+        content = format_source_link_response(payload, surface="history")
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "source_link_note" in rendered
+        return
+    elif command == "search.query":
+        content = format_source_link_response(payload, surface="search")
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "source_link_note" in rendered
+        return
     elif command == "governance.inbox.list":
         from governance_surface import format_governance_inbox
 

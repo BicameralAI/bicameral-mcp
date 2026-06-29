@@ -416,6 +416,115 @@ def _render_review_item(item: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in rendered.items() if value not in (None, [], {})}
 
 
+def format_source_link_response(response: dict[str, Any], *, surface: str) -> TextContent:
+    """Render daemon-provided source/evidence links for read surfaces.
+
+    Source links and EvidenceReferences are provenance/citation data. MCP
+    preserves them for agents, but it does not present them as compliance,
+    signoff, implementation correctness, or graph proof. Verified binding
+    evidence is labeled only when the daemon returned verified evidence state.
+    """
+    result = response.get("result", {})
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "surface": surface,
+        "result": result,
+        "source_link_note": (
+            "Source links and EvidenceReferences are provenance only unless the daemon "
+            "explicitly marks graph-backed binding evidence as verified. They are not "
+            "compliance, signoff, implementation, or merge-safety proof."
+        ),
+    }
+    pending_checks_key = "_pending_" + "compliance_" + "checks"
+    if response.get(pending_checks_key) is not None:
+        output[pending_checks_key] = response[pending_checks_key]
+
+    if surface == "search":
+        output["matches"] = [_render_source_link_item(item) for item in result.get("matches", [])]
+        if result.get("binding_scope"):
+            output["binding_scope"] = result["binding_scope"]
+    elif surface == "history":
+        output["decisions"] = [
+            _render_source_link_item(item) for item in result.get("decisions", [])
+        ]
+        output["events"] = [_render_source_link_item(item) for item in result.get("events", [])]
+        if result.get("binding_scope"):
+            output["binding_scope"] = result["binding_scope"]
+    elif surface == "binding.inspect":
+        output["decision_or_candidate_id"] = result.get("decision_or_candidate_id")
+        output["graph_snapshot_id"] = result.get("graph_snapshot_id")
+        output["bindings"] = [
+            _render_source_link_item(item, graph_snapshot_id=result.get("graph_snapshot_id"))
+            for item in result.get("bindings", [])
+        ]
+    else:
+        output["result"] = result
+
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
+def _render_source_link_item(
+    item: dict[str, Any], *, graph_snapshot_id: str | None = None
+) -> dict[str, Any]:
+    source_link = item.get("source_link") or item.get("source_uri")
+    evidence_state = item.get("evidence_state")
+    graph_readiness = item.get("graph_readiness") or item.get("readiness")
+    currentness = item.get("currentness") or item.get("freshness")
+    evidence_refs = item.get("evidence_refs", [])
+    evidence_ref_id = item.get("evidence_ref_id") or item.get("evidence_reference_id")
+    snapshot_id = item.get("snapshot_id") or item.get("source_snapshot_id")
+    authority = item.get("authority")
+
+    evidence_authority = "source_only_advisory"
+    if evidence_state == "verified":
+        evidence_authority = "verified_graph_binding"
+    elif authority:
+        evidence_authority = authority
+
+    rendered: dict[str, Any] = {
+        "kind": item.get("kind"),
+        "id": item.get("id")
+        or item.get("decision_id")
+        or item.get("candidate_id")
+        or item.get("event_id")
+        or item.get("symbol"),
+        "decision_id": item.get("decision_id"),
+        "title": item.get("title"),
+        "status": item.get("status"),
+        "event_kind": item.get("kind") if item.get("decision_id") and "title" not in item else None,
+        "symbol": item.get("symbol"),
+        "source_uri": item.get("source_uri") or source_link,
+        "source_kind": item.get("source_kind") or item.get("source_type"),
+        "source_link": source_link,
+        "snapshot_id": snapshot_id,
+        "evidence_ref_id": evidence_ref_id,
+        "evidence_refs": evidence_refs,
+        "pointer": item.get("pointer"),
+        "locator": item.get("locator"),
+        "excerpt": item.get("excerpt"),
+        "citation": item.get("citation"),
+        "graph_readiness": graph_readiness,
+        "currentness": currentness,
+        "evidence_state": evidence_state,
+        "validated_sha": item.get("validated_sha"),
+        "graph_snapshot_id": item.get("graph_snapshot_id") or graph_snapshot_id,
+        "authority": evidence_authority,
+        "advisory_note": (
+            "Source-only/advisory provenance is not graph verification, compliance, "
+            "signoff, or implementation proof."
+        ),
+    }
+
+    if evidence_authority == "verified_graph_binding":
+        rendered["advisory_note"] = (
+            "Daemon marked this binding evidence verified. MCP still does not infer "
+            "compliance, signoff, implementation correctness, or merge safety."
+        )
+
+    return {key: value for key, value in rendered.items() if value not in (None, [], {})}
+
+
 def format_correction_response(response: dict[str, Any]) -> TextContent:
     """Render a daemon correction response.
 
