@@ -88,6 +88,12 @@ _Authority verbs_: package, submit
 _Avoid_: graph verified, accepted binding, compliance result, signoff, local SourceSnapshot file, canonical event
 _Related_: #582
 
+**source link**:
+Daemon-provided provenance pointer to source-backed context, such as source URI, source kind, snapshot id, EvidenceReference id, locator, pointer, excerpt, or citation. MCP may render source links on search/history/inspection surfaces. Source links are not compliance, signoff, implementation, graph verification, or merge-safety proof unless the daemon separately returns verified graph-backed binding evidence.
+_Authority verbs_: render, cite
+_Avoid_: compliance proof, signoff proof, implementation proof, graph proof, merge-safety signal
+_Related_: #581
+
 **correction_id**:
 Daemon-assigned identifier for an accepted correction request outcome. It identifies the daemon-mediated request result; it is not local MCP approval, proof of ledger materialization, or evidence that a correction has become canonical.
 _Authority verbs_: return, reference

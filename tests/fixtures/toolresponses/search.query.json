@@ -7,6 +7,10 @@
         "kind": "decision",
         "decision_id": "DEC-7",
         "title": "Use cherry-pick for single-commit backports",
+        "source_uri": "local://meeting-2026-06-22.md",
+        "source_kind": "meeting",
+        "source_snapshot_id": "snap-search-1",
+        "evidence_ref_id": "ev-search-1",
         "source_link": "local://meeting-2026-06-22.md",
         "excerpt": "We agreed cherry-pick is the default for single-commit backports."
       }

@@ -53,6 +53,7 @@ from responses import (
     format_preflight_response,
     format_recall_packet,
     format_review_queue_response,
+    format_source_link_response,
     format_tool_response,
     recovery_error_text,
 )
@@ -169,6 +170,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_brief_narrative(response)]
         if name == "bicameral.preflight":
             return [format_preflight_response(response)]
+        if "recall_packet" in response:
+            return [format_recall_packet(response)]
+        if name == "bicameral.binding.inspect":
+            return [format_source_link_response(response, surface="binding.inspect")]
         if name == "bicameral.lookup":
             return [format_lookup_response(response)]
         if name == "bicameral.context":
@@ -196,8 +201,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_governance_inspect(response)]
         if name == "bicameral.governance.resolve":
             return [format_governance_resolve(response)]
-        if "recall_packet" in response:
-            return [format_recall_packet(response)]
+        if name == "bicameral.history":
+            return [format_source_link_response(response, surface="history")]
+        if name == "bicameral.search":
+            return [format_source_link_response(response, surface="search")]
         return [format_tool_response(response)]
     except DaemonClientError as exc:
         return [
