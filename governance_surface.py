@@ -37,11 +37,18 @@ def format_governance_inbox(response: dict[str, Any]) -> TextContent:
         item: dict[str, Any] = {
             "report_id": report_id,
             "status": finding.get("status"),
+            "triage_state": finding.get("triage_state"),
             "reason_code": finding.get("reason_code"),
             "affected_refs": finding.get("affected_refs", []),
+            "affected_surface": finding.get("affected_surface"),
             "evidence_refs": finding.get("evidence_refs", []),
+            "source_refs": finding.get("source_refs", []),
+            "source_doc_ref": finding.get("source_doc_ref"),
+            "provenance": finding.get("provenance"),
+            "rationale": finding.get("rationale"),
             "allowed_actions": finding.get("allowed_actions", []),
         }
+        item = {key: value for key, value in item.items() if value not in (None, [], {})}
         if finding.get("summary"):
             item["summary"] = finding["summary"]
         deduplicated.append(item)
@@ -62,11 +69,18 @@ def format_governance_inspect(response: dict[str, Any]) -> TextContent:
     rendered: dict[str, Any] = {
         "report_id": finding.get("report_id"),
         "status": finding.get("status"),
+        "triage_state": finding.get("triage_state"),
         "reason_code": finding.get("reason_code"),
         "affected_refs": finding.get("affected_refs", []),
+        "affected_surface": finding.get("affected_surface"),
         "evidence_refs": finding.get("evidence_refs", []),
+        "source_refs": finding.get("source_refs", []),
+        "source_doc_ref": finding.get("source_doc_ref"),
+        "provenance": finding.get("provenance"),
+        "rationale": finding.get("rationale"),
         "allowed_actions": finding.get("allowed_actions", []),
     }
+    rendered = {key: value for key, value in rendered.items() if value not in (None, [], {})}
     if finding.get("summary"):
         rendered["summary"] = finding["summary"]
     if finding.get("detail"):
@@ -96,8 +110,10 @@ def format_governance_resolve(response: dict[str, Any]) -> TextContent:
         "request_id": response.get("request_id"),
         "report_id": result.get("report_id"),
         "action": result.get("action"),
+        "triage_state": result.get("triage_state"),
         "accepted": result.get("accepted"),
     }
+    mcp_output = {key: value for key, value in mcp_output.items() if value is not None}
     if result.get("message"):
         mcp_output["message"] = result["message"]
     if response.get("error_code"):

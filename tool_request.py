@@ -13,15 +13,21 @@ log = logging.getLogger(__name__)
 
 MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.ingest": "ingest.submit_local",
+    "bicameral.capture_context": "ingest.submit_local",
     "bicameral.preflight": "preflight.run",
     "bicameral.context": "lookup.query",
+    "bicameral.correction_findings": "lookup.query",
     "bicameral.lookup": "lookup.query",
     "bicameral.request_correction": "correction.request",
     "bicameral.bind": "binding.create",
     "bicameral.binding.inspect": "binding.inspect",
     "bicameral.evidence.refresh": "evidence.refresh",
+    "bicameral.review.candidates": "search.query",
+    "bicameral.review.corpus_proposals": "lookup.query",
     "bicameral.review.accept_candidate": "review.accept_candidate",
     "bicameral.review.reject_candidate": "review.reject_candidate",
+    "bicameral.review.promote_candidate": "recall.promote_decision_candidate",
+    "bicameral.review.request_corpus_change": "recall.request_correction",
     "bicameral.review.approve_signoff": "review.approve_signoff",
     "bicameral.review.reject_signoff": "review.reject_signoff",
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
@@ -29,6 +35,8 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
     "bicameral.privacy.erase_subject": "privacy.erase_subject",
+    "bicameral.review.contradictions": "governance.inbox.list",
+    "bicameral.review.triage_contradiction": "governance.resolve_contradiction",
     "bicameral.governance.inbox": "governance.inbox.list",
     "bicameral.governance.inspect": "governance.inspect",
     "bicameral.governance.resolve": "governance.resolve_contradiction",
@@ -120,7 +128,29 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "planned_action",
             "checkpoint_hint",
             "scope",
+            "finding_status",
+            "severity",
+            "include_correction_findings",
             "include_context",
+        )
+    if command_name == "recall.promote_decision_candidate":
+        return _only(
+            cleaned,
+            "packet_id",
+            "candidate_id",
+            "promotion_outcome",
+            "supersedes_decision_id",
+            "scoping_relationship",
+            "approval_proof",
+        )
+    if command_name == "recall.request_correction":
+        return _only(
+            cleaned,
+            "packet_id",
+            "selected_item_ids",
+            "correction_kind",
+            "rationale",
+            "approval_proof",
         )
     if command_name == "correction.request":
         return _only(cleaned, "packet_id", "excerpt", "diff", "correction_request", "reason")
@@ -155,9 +185,14 @@ def _ingest_params(cleaned: dict[str, Any]) -> dict[str, Any]:
         "title",
         "description",
         "level",
+        "suggested_level",
         "decision_level",
         "snapshot_content",
         "evidence",
+        "candidate_drafts",
+        "binding_hints",
+        "rationale",
+        "metadata",
     )
     if "decision_level" not in result:
         result["pending_classification"] = True

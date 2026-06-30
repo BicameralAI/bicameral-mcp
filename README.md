@@ -59,19 +59,30 @@ MCP exposes only ToolRequest-backed tools:
 | MCP tool | Bot command |
 |---|---|
 | `bicameral.ingest` | `ingest.submit_local` |
+| `bicameral.capture_context` | `ingest.submit_local` |
 | `bicameral.preflight` | `preflight.run` |
 | `bicameral.context` | `lookup.query` |
+| `bicameral.correction_findings` | `lookup.query` |
 | `bicameral.lookup` | `lookup.query` |
 | `bicameral.bind` | `binding.create` |
 | `bicameral.binding.inspect` | `binding.inspect` |
 | `bicameral.evidence.refresh` | `evidence.refresh` |
+| `bicameral.review.candidates` | `search.query` |
+| `bicameral.review.corpus_proposals` | `lookup.query` |
 | `bicameral.review.accept_candidate` | `review.accept_candidate` |
 | `bicameral.review.reject_candidate` | `review.reject_candidate` |
+| `bicameral.review.promote_candidate` | `recall.promote_decision_candidate` |
+| `bicameral.review.request_corpus_change` | `recall.request_correction` |
 | `bicameral.review.approve_signoff` | `review.approve_signoff` |
 | `bicameral.review.reject_signoff` | `review.reject_signoff` |
 | `bicameral.review.resolve_compliance` | `review.resolve_compliance` |
 | `bicameral.history` | `history.list` |
 | `bicameral.search` | `search.query` |
+| `bicameral.review.contradictions` | `governance.inbox.list` |
+| `bicameral.review.triage_contradiction` | `governance.resolve_contradiction` |
+| `bicameral.governance.inbox` | `governance.inbox.list` |
+| `bicameral.governance.inspect` | `governance.inspect` |
+| `bicameral.governance.resolve` | `governance.resolve_contradiction` |
 | `bicameral.request_correction` | `correction.request` |
 
 ## Troubleshooting: Daemon Handshake Failures

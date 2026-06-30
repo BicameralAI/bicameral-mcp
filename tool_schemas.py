@@ -33,6 +33,13 @@ def _review_schema() -> dict:
     )
 
 
+def _approval_proof_schema() -> dict:
+    return {
+        "type": "object",
+        "description": "Daemon-validated approval proof for governed recall review actions.",
+    }
+
+
 SUPPORTED_TOOLS: tuple[Tool, ...] = (
     Tool(
         name="bicameral.ingest",
@@ -59,8 +66,71 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 },
                 "snapshot_content": {"type": "string"},
                 "evidence": {"type": "array", "items": {"type": "object"}},
+                "candidate_drafts": {"type": "array", "items": {"type": "object"}},
+                "binding_hints": {"type": "array", "items": {"type": "object"}},
+                "rationale": {"type": "string"},
+                "metadata": {"type": "object"},
             },
             ["source_uri", "source_type", "title", "description"],
+        ),
+    ),
+    Tool(
+        name="bicameral.capture_context",
+        description=(
+            "Submit MCP session, tool, command-output, and code-hint context as "
+            "bot-owned Source/SourceSnapshot/EvidenceReference-compatible local "
+            "ingest input. Code hints remain advisory binding_hints; MCP does not "
+            "claim graph verification, compliance, signoff, or event-store authority."
+        ),
+        inputSchema=_schema(
+            {
+                "source_uri": {
+                    "type": "string",
+                    "description": "Optional source link for this capture; defaults to mcp://session/...",
+                },
+                "source_type": {
+                    "type": "string",
+                    "description": "Bot SourceKind-compatible source type.",
+                },
+                "source_kind": {
+                    "type": "string",
+                    "description": "Optional SourceKind vocabulary mirror for metadata.",
+                },
+                "source_link": {
+                    "type": "string",
+                    "description": "Optional human-facing source link for metadata.",
+                },
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+                "label": {"type": "string"},
+                "snapshot_content": {
+                    "type": "string",
+                    "description": "Optional pre-rendered SourceSnapshot content.",
+                },
+                "session_turns": {"type": "array", "items": {"type": "object"}},
+                "tool_calls": {"type": "array", "items": {"type": "object"}},
+                "tool_outputs": {"type": "array", "items": {"type": "object"}},
+                "command_outputs": {"type": "array", "items": {"type": "object"}},
+                "code_hints": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Advisory file/range/symbol/diff hints forwarded as binding_hints.",
+                },
+                "code_region_hints": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional LLM-produced code-region hints, metadata only.",
+                },
+                "evidence": {"type": "array", "items": {"type": "object"}},
+                "evidence_references": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional caller-known EvidenceReference-compatible refs.",
+                },
+                "correlation_id": {"type": "string"},
+                "rationale": {"type": "string"},
+                "metadata": {"type": "object"},
+            }
         ),
     ),
     Tool(
@@ -158,6 +228,70 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.correction_findings",
+        description=(
+            "Request daemon-authored correction-capture findings for PR, ticket, "
+            "branch, repo, file, code-region, feature-area, or agent-session context. "
+            "MCP renders findings and review handoff actions only; the daemon owns "
+            "correction detection, authority, and canonical state."
+        ),
+        inputSchema=_schema(
+            {
+                "query": {
+                    "type": "string",
+                    "description": "Optional natural-language task or lookup query.",
+                },
+                "ticket": {
+                    "type": "string",
+                    "description": "Ticket, issue, or work item identifier or URL.",
+                },
+                "branch": {"type": "string"},
+                "pr": {
+                    "type": "string",
+                    "description": "Pull request identifier or URL.",
+                },
+                "repo": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "code_region": {
+                    "type": "object",
+                    "description": "Optional daemon-interpreted code region hint.",
+                },
+                "feature_area": {"type": "string"},
+                "agent_session_context": {
+                    "type": "object",
+                    "description": "Bounded agent-session hints; not a raw transcript dump.",
+                },
+                "planned_action": {"type": "string"},
+                "checkpoint_hint": {
+                    "type": "string",
+                    "enum": ["pre_work", "mid_session", "pre_write", "manual_lookup"],
+                    "description": "Optional inert checkpoint metadata.",
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Optional daemon-defined corpus or lookup scope hint.",
+                },
+                "finding_status": {
+                    "type": "string",
+                    "description": "Optional daemon-defined correction finding status filter.",
+                },
+                "severity": {
+                    "type": "string",
+                    "description": "Optional daemon-defined finding severity filter.",
+                },
+                "include_correction_findings": {
+                    "type": "boolean",
+                    "description": "Ask daemon for correction-capture finding fields when supported.",
+                },
+                "include_context": {
+                    "type": "boolean",
+                    "description": "Ask daemon for compact context fields when supported.",
+                },
+            }
+        ),
+    ),
+    Tool(
         name="bicameral.bind",
         description="Propose binding evidence for a decision or candidate.",
         inputSchema=_schema(
@@ -195,6 +329,56 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.review.candidates",
+        description=(
+            "List daemon-owned decision candidates for review. MCP forwards a "
+            "search.query request scoped to candidates and renders evidence, source, "
+            "provenance, affected-surface, rationale, and allowed review actions "
+            "when returned by the daemon."
+        ),
+        inputSchema=_schema(
+            {
+                "query": {
+                    "type": "string",
+                    "description": "Optional candidate search query; defaults to empty list query.",
+                },
+                "filters": {"type": "object"},
+                "limit": {"type": "integer"},
+            }
+        ),
+    ),
+    Tool(
+        name="bicameral.review.corpus_proposals",
+        description=(
+            "List daemon-authored corpus-change proposals/correction findings for "
+            "review without mutating trusted corpus state. MCP requests lookup.query "
+            "with correction-finding fields and renders review handoff payloads."
+        ),
+        inputSchema=_schema(
+            {
+                "query": {"type": "string"},
+                "ticket": {"type": "string"},
+                "branch": {"type": "string"},
+                "pr": {"type": "string"},
+                "repo": {"type": "string"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "symbols": {"type": "array", "items": {"type": "string"}},
+                "code_region": {"type": "object"},
+                "feature_area": {"type": "string"},
+                "agent_session_context": {"type": "object"},
+                "planned_action": {"type": "string"},
+                "checkpoint_hint": {
+                    "type": "string",
+                    "enum": ["pre_work", "mid_session", "pre_write", "manual_lookup"],
+                },
+                "scope": {"type": "string"},
+                "finding_status": {"type": "string"},
+                "severity": {"type": "string"},
+                "include_context": {"type": "boolean"},
+            }
+        ),
+    ),
+    Tool(
         name="bicameral.review.accept_candidate",
         description="Accept a decision candidate through bot governance.",
         inputSchema=_review_schema(),
@@ -203,6 +387,49 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         name="bicameral.review.reject_candidate",
         description="Reject a decision candidate through bot governance.",
         inputSchema=_review_schema(),
+    ),
+    Tool(
+        name="bicameral.review.promote_candidate",
+        description=(
+            "Request daemon-governed promotion, supersession, or routing of a "
+            "DecisionCandidate from a RecallPacket. The daemon validates candidate "
+            "identity, approval proof, authority, and canonical transitions."
+        ),
+        inputSchema=_schema(
+            {
+                "packet_id": {"type": "string"},
+                "candidate_id": {"type": "string"},
+                "promotion_outcome": {
+                    "type": "string",
+                    "description": "Daemon-defined promotion outcome, e.g. new_constraint.",
+                },
+                "supersedes_decision_id": {"type": "string"},
+                "scoping_relationship": {"type": "string"},
+                "approval_proof": _approval_proof_schema(),
+            },
+            ["packet_id", "candidate_id", "promotion_outcome", "approval_proof"],
+        ),
+    ),
+    Tool(
+        name="bicameral.review.request_corpus_change",
+        description=(
+            "Request daemon-governed correction/corpus-change review from a "
+            "RecallPacket selection. This is a review handoff only; the daemon "
+            "owns authorization and any later canonical state transition."
+        ),
+        inputSchema=_schema(
+            {
+                "packet_id": {"type": "string"},
+                "selected_item_ids": {"type": "array", "items": {"type": "string"}},
+                "correction_kind": {
+                    "type": "string",
+                    "description": "Daemon-defined correction kind, e.g. source_contradiction.",
+                },
+                "rationale": {"type": "string"},
+                "approval_proof": _approval_proof_schema(),
+            },
+            ["packet_id", "selected_item_ids", "correction_kind", "rationale", "approval_proof"],
+        ),
     ),
     Tool(
         name="bicameral.review.approve_signoff",
@@ -283,6 +510,43 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "limit": {"type": "integer"},
             },
             ["query"],
+        ),
+    ),
+    Tool(
+        name="bicameral.review.contradictions",
+        description=(
+            "List active contradiction findings for review. Alias for the daemon "
+            "governance inbox, preserving evidence, source distinction, provenance, "
+            "affected surface, rationale, and allowed triage actions."
+        ),
+        inputSchema=_schema(
+            {
+                "status_filter": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["open", "acknowledged"]},
+                },
+                "limit": {"type": "integer"},
+            }
+        ),
+    ),
+    Tool(
+        name="bicameral.review.triage_contradiction",
+        description=(
+            "Submit a contradiction triage state update through daemon governance. "
+            "MCP forwards the request; the daemon enforces authority and canonical "
+            "state transitions."
+        ),
+        inputSchema=_schema(
+            {
+                "report_id": {"type": "string"},
+                "action": {
+                    "type": "string",
+                    "enum": ["resolve", "acknowledge", "dismiss", "route"],
+                },
+                "reason": {"type": "string"},
+                "route_to": {"type": "string"},
+            },
+            ["report_id", "action"],
         ),
     ),
     Tool(

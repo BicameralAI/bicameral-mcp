@@ -7,11 +7,20 @@
         "decision_id": "DEC-7",
         "title": "Use cherry-pick for single-commit backports",
         "status": "signed_off",
+        "source_uri": "local://meeting-2026-06-22.md",
+        "source_kind": "meeting",
+        "source_snapshot_id": "snap-history-1",
+        "evidence_ref_id": "ev-history-1",
         "source_link": "local://meeting-2026-06-22.md"
       }
     ],
     "events": [
-      {"decision_id": "DEC-7", "kind": "candidate_accepted"},
+      {
+        "decision_id": "DEC-7",
+        "kind": "candidate_accepted",
+        "evidence_refs": ["ev-history-1"],
+        "source_link": "local://meeting-2026-06-22.md#candidate"
+      },
       {"decision_id": "DEC-7", "kind": "signoff_approved"}
     ],
     "binding_scope": {"status": "unsupported", "reason": "binding evidence projection not yet materialized"}

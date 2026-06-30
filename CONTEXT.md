@@ -70,6 +70,30 @@ _Authority verbs_: return, render
 _Avoid_: raw source dump, MCP-ranked context, local canonical truth, merge-safety signal
 _Related_: #613
 
+**CorrectionFinding**:
+Daemon-authored finding that a changed code region may require a trusted-corpus, source-doc, Decision, or constraint correction. It is a review handoff artifact, not a canonical update. MCP may request and render findings and route users to approved review/correction tools; MCP must not decide drift, mutate source docs, or materialize corpus truth locally.
+_Authority verbs_: return, render, route
+_Avoid_: accepted correction, canonical update, drift verdict, source-doc write, merge-safety signal
+_Related_: #618
+
+**review handoff**:
+Daemon-authored review surface for decision candidates, corpus-change proposals, and contradiction findings. MCP may list these items, preserve evidence/source/provenance/affected-surface/rationale fields, and submit authorized review or triage commands to the daemon. MCP must not infer approval, mutate trusted corpus, assign reviewer authority, or materialize canonical state locally.
+_Authority verbs_: list, render, submit
+_Avoid_: local approval, canonical mutation, reviewer assignment, trusted-corpus write, merge-safety signal
+_Related_: #614
+
+**MCP context capture**:
+Local MCP session, tool, command-output, and code-hint context submitted to the daemon as `ingest.submit_local` input using bot vocabulary such as Source, SourceSnapshot, EvidenceReference, SourceKind, and source link. Code hints are advisory binding_hints only. MCP may package and submit the context; MCP must not claim graph verification, binding authority, compliance, signoff, or event-store authority.
+_Authority verbs_: package, submit
+_Avoid_: graph verified, accepted binding, compliance result, signoff, local SourceSnapshot file, canonical event
+_Related_: #582
+
+**source link**:
+Daemon-provided provenance pointer to source-backed context, such as source URI, source kind, snapshot id, EvidenceReference id, locator, pointer, excerpt, or citation. MCP may render source links on search/history/inspection surfaces. Source links are not compliance, signoff, implementation, graph verification, or merge-safety proof unless the daemon separately returns verified graph-backed binding evidence.
+_Authority verbs_: render, cite
+_Avoid_: compliance proof, signoff proof, implementation proof, graph proof, merge-safety signal
+_Related_: #581
+
 **correction_id**:
 Daemon-assigned identifier for an accepted correction request outcome. It identifies the daemon-mediated request result; it is not local MCP approval, proof of ledger materialization, or evidence that a correction has become canonical.
 _Authority verbs_: return, reference

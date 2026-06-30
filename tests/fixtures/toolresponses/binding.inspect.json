@@ -9,6 +9,9 @@
         "evidence_state": "verified",
         "validated_sha": "e6c50fb028171e9cec03594273c8116bb135847e",
         "currentness": "current",
+        "evidence_ref_id": "ev-binding-1",
+        "source_uri": "local://app/src/lib/git/cherry-pick.ts#L42",
+        "source_kind": "code",
         "source_link": "local://app/src/lib/git/cherry-pick.ts#L42"
       }
     ],
