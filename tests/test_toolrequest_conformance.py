@@ -47,8 +47,12 @@ FIXTURE_DIR = Path(__file__).parent / "fixtures" / "toolresponses"
 # never drive a mutating canonical event. Everything else may append events.
 READ_MODEL_TOOLS = {
     "bicameral.context",
+    "bicameral.correction_findings",
     "bicameral.lookup",
     "bicameral.preflight",
+    "bicameral.review.candidates",
+    "bicameral.review.corpus_proposals",
+    "bicameral.review.contradictions",
     "bicameral.binding.inspect",
     "bicameral.brief",
     "bicameral.history",
@@ -107,6 +111,45 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
             "decision_level",
             "snapshot_content",
             "evidence",
+            "candidate_drafts",
+            "binding_hints",
+            "rationale",
+            "metadata",
+            "pending_classification",
+        },
+        required={"source_uri", "source_type", "title", "description"},
+    ),
+    "bicameral.capture_context": _CommandSpec(
+        command="ingest.submit_local",
+        args={
+            "session_id": "sess-capture",
+            "correlation_id": "corr-582",
+            "source_kind": "mcp_session",
+            "source_link": "mcp://session/sess-capture",
+            "session_turns": [{"role": "assistant", "content": "Changed retry policy."}],
+            "tool_calls": [{"tool": "edit", "request_id": "tool-1"}],
+            "tool_outputs": [{"tool": "pytest", "output": "1 passed"}],
+            "command_outputs": [{"command": "pytest -q", "stdout": "1 passed"}],
+            "code_hints": [{"file": "src/retry.py", "range": "10:1-20:1", "symbol": "Retry"}],
+            "code_region_hints": [{"path": "src/retry.py", "start_line": 10, "end_line": 20}],
+            "evidence_references": [{"kind": "command_output", "id": "cmd-1"}],
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "source_uri",
+            "source_type",
+            "label",
+            "title",
+            "description",
+            "level",
+            "suggested_level",
+            "decision_level",
+            "snapshot_content",
+            "evidence",
+            "candidate_drafts",
+            "binding_hints",
+            "rationale",
+            "metadata",
             "pending_classification",
         },
         required={"source_uri", "source_type", "title", "description"},
@@ -159,6 +202,49 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         },
         required=set(),
     ),
+    "bicameral.correction_findings": _CommandSpec(
+        command="lookup.query",
+        args={
+            "query": "billing retry doc may be stale",
+            "ticket": "BILL-123",
+            "branch": "feature/correction-findings",
+            "pr": "https://github.com/example/repo/pull/9",
+            "repo": "example/repo",
+            "files": ["src/payments/retry.py"],
+            "symbols": ["RetryPolicy"],
+            "code_region": {"path": "src/payments/retry.py", "start_line": 12, "end_line": 44},
+            "feature_area": "billing",
+            "agent_session_context": {"session_id": "sess-2", "checkpoint": "pre_write"},
+            "planned_action": "change retry behavior",
+            "checkpoint_hint": "pre_write",
+            "scope": "correction_capture",
+            "finding_status": "active",
+            "severity": "high",
+            "include_correction_findings": True,
+            "include_context": True,
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "query",
+            "ticket",
+            "branch",
+            "pr",
+            "repo",
+            "files",
+            "symbols",
+            "code_region",
+            "feature_area",
+            "agent_session_context",
+            "planned_action",
+            "checkpoint_hint",
+            "scope",
+            "finding_status",
+            "severity",
+            "include_correction_findings",
+            "include_context",
+        },
+        required=set(),
+    ),
     "bicameral.bind": _CommandSpec(
         command="binding.create",
         args={
@@ -182,6 +268,50 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"decision_id"},
         required={"decision_id"},
     ),
+    "bicameral.review.candidates": _CommandSpec(
+        command="search.query",
+        args={
+            "query": "checkout policy",
+            "filters": {"review_state": "proposed"},
+            "limit": 20,
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"query", "scope", "filters", "limit"},
+        required={"query"},
+    ),
+    "bicameral.review.corpus_proposals": _CommandSpec(
+        command="lookup.query",
+        args={
+            "query": "source doc conflicts with checkout policy",
+            "ticket": "CHECK-7",
+            "pr": "https://github.com/example/repo/pull/77",
+            "repo": "example/repo",
+            "files": ["src/checkout/policy.py"],
+            "finding_status": "active",
+            "include_context": True,
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "query",
+            "ticket",
+            "branch",
+            "pr",
+            "repo",
+            "files",
+            "symbols",
+            "code_region",
+            "feature_area",
+            "agent_session_context",
+            "planned_action",
+            "checkpoint_hint",
+            "scope",
+            "finding_status",
+            "severity",
+            "include_correction_findings",
+            "include_context",
+        },
+        required=set(),
+    ),
     "bicameral.review.accept_candidate": _CommandSpec(
         command="review.accept_candidate",
         args={"target_id": "cand-1", "reason": "ok", **_CONTROL_AND_NOISE},
@@ -193,6 +323,58 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         args={"target_id": "cand-1", "reason": "no", **_CONTROL_AND_NOISE},
         expected_params={"target_id", "reason"},
         required={"target_id"},
+    ),
+    "bicameral.review.promote_candidate": _CommandSpec(
+        command="recall.promote_decision_candidate",
+        args={
+            "packet_id": "00000000-0000-0000-0000-000000000001",
+            "candidate_id": "00000000-0000-0000-0000-000000000002",
+            "promotion_outcome": "new_constraint",
+            "approval_proof": {
+                "kind": "signoff_token",
+                "value": "tok-conformance",
+                "actor_id": "owner-1",
+            },
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "packet_id",
+            "candidate_id",
+            "promotion_outcome",
+            "supersedes_decision_id",
+            "scoping_relationship",
+            "approval_proof",
+        },
+        required={"packet_id", "candidate_id", "promotion_outcome", "approval_proof"},
+    ),
+    "bicameral.review.request_corpus_change": _CommandSpec(
+        command="recall.request_correction",
+        args={
+            "packet_id": "00000000-0000-0000-0000-000000000001",
+            "selected_item_ids": ["00000000-0000-0000-0000-000000000003"],
+            "correction_kind": "source_contradiction",
+            "rationale": "Source doc contradicts reviewed checkout policy.",
+            "approval_proof": {
+                "kind": "signoff_token",
+                "value": "tok-conformance",
+                "actor_id": "owner-1",
+            },
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "packet_id",
+            "selected_item_ids",
+            "correction_kind",
+            "rationale",
+            "approval_proof",
+        },
+        required={
+            "packet_id",
+            "selected_item_ids",
+            "correction_kind",
+            "rationale",
+            "approval_proof",
+        },
     ),
     "bicameral.review.approve_signoff": _CommandSpec(
         command="review.approve_signoff",
@@ -272,6 +454,27 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         },
         expected_params={"status_filter", "limit"},
         required=set(),
+    ),
+    "bicameral.review.contradictions": _CommandSpec(
+        command="governance.inbox.list",
+        args={
+            "status_filter": ["open"],
+            "limit": 10,
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"status_filter", "limit"},
+        required=set(),
+    ),
+    "bicameral.review.triage_contradiction": _CommandSpec(
+        command="governance.resolve_contradiction",
+        args={
+            "report_id": "CR-CONFORMANCE-002",
+            "action": "acknowledge",
+            "reason": "owner accepted triage",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"report_id", "action", "reason", "route_to"},
+        required={"report_id", "action"},
     ),
     "bicameral.governance.inspect": _CommandSpec(
         command="governance.inspect",
@@ -556,6 +759,7 @@ def test_read_model_tools_map_only_to_read_commands():
         "preflight.run",
         "binding.inspect",
         "brief.render",
+        "governance.inbox.list",
         "history.list",
         "search.query",
     }
@@ -584,6 +788,7 @@ async def test_read_model_tool_dispatches_exactly_one_read_command(tool_name, mo
         "preflight.run",
         "binding.inspect",
         "brief.render",
+        "governance.inbox.list",
         "history.list",
         "search.query",
     }
@@ -641,6 +846,7 @@ def test_contract_fixture_renders_through_renderer(command):
         format_correction_response,
         format_lookup_response,
         format_preflight_response,
+        format_source_link_response,
         format_tool_response,
     )
 
@@ -662,6 +868,24 @@ def test_contract_fixture_renders_through_renderer(command):
         renderer = format_lookup_response
     elif command == "correction.request":
         renderer = format_correction_response
+    elif command == "binding.inspect":
+        content = format_source_link_response(payload, surface="binding.inspect")
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "source_link_note" in rendered
+        return
+    elif command == "history.list":
+        content = format_source_link_response(payload, surface="history")
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "source_link_note" in rendered
+        return
+    elif command == "search.query":
+        content = format_source_link_response(payload, surface="search")
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "source_link_note" in rendered
+        return
     elif command == "governance.inbox.list":
         from governance_surface import format_governance_inbox
 

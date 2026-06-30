@@ -70,19 +70,30 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | MCP tool | ToolRequest command | Notes |
 |---|---|---|
 | `bicameral.ingest` | `ingest.submit_local` | Local actor submits source/session evidence or candidate drafts. |
+| `bicameral.capture_context` | `ingest.submit_local` | Submits MCP session/tool/command/code-hint context as bot-owned Source/SourceSnapshot/EvidenceReference-compatible local ingest input. |
 | `bicameral.preflight` | `preflight.run` | Reads relevant decisions and graph-scoped evidence via daemon. |
 | `bicameral.context` | `lookup.query` | Requests daemon-authored relevance-time ContextPacket/RecallPacket output for agent and developer workflows. |
+| `bicameral.correction_findings` | `lookup.query` | Requests daemon-authored correction-capture findings for PR/agent workflows without MCP-local drift or corpus mutation. |
 | `bicameral.lookup` | `lookup.query` | Queries daemon-authored RecallPacket output without MCP-local relevance or authority computation. |
 | `bicameral.bind` | `binding.create` | Proposes binding evidence; daemon owns validation and materialization. |
-| `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon. |
+| `bicameral.binding.inspect` | `binding.inspect` | Inspects bindings/evidence through daemon and renders source links/EvidenceReferences without compliance inference. |
 | `bicameral.evidence.refresh` | `evidence.refresh` | Requests daemon-owned evidence currentness refresh for a tracked Decision. |
+| `bicameral.review.candidates` | `search.query` | Lists daemon-owned decision candidates for review while preserving evidence/source/provenance/rationale fields. |
+| `bicameral.review.corpus_proposals` | `lookup.query` | Lists daemon-authored corpus-change proposals/correction findings without MCP-local corpus mutation. |
 | `bicameral.review.accept_candidate` | `review.accept_candidate` | Review command, not direct ledger mutation. |
 | `bicameral.review.reject_candidate` | `review.reject_candidate` | Review command, not direct ledger mutation. |
+| `bicameral.review.promote_candidate` | `recall.promote_decision_candidate` | Requests daemon-governed candidate promotion/routing from a RecallPacket reference. |
+| `bicameral.review.request_corpus_change` | `recall.request_correction` | Requests daemon-governed corpus correction/change review from selected RecallPacket items. |
 | `bicameral.review.approve_signoff` | `review.approve_signoff` | Review command gated by bot policy. |
 | `bicameral.review.reject_signoff` | `review.reject_signoff` | Review command gated by bot policy. |
 | `bicameral.review.resolve_compliance` | `review.resolve_compliance` | Review command gated by bot policy and evidence state. |
-| `bicameral.history` | `history.list` | Read replayed/materialized state. |
-| `bicameral.search` | `search.query` | Search daemon-owned state. |
+| `bicameral.review.contradictions` | `governance.inbox.list` | Lists contradiction findings for review via the daemon governance inbox. |
+| `bicameral.review.triage_contradiction` | `governance.resolve_contradiction` | Submits contradiction triage updates; daemon owns authorization and state transition. |
+| `bicameral.governance.inbox` | `governance.inbox.list` | Lists active governance inbox items. |
+| `bicameral.governance.inspect` | `governance.inspect` | Inspects a daemon-authored governance finding. |
+| `bicameral.governance.resolve` | `governance.resolve_contradiction` | Resolves, acknowledges, dismisses, or routes a contradiction through daemon governance. |
+| `bicameral.history` | `history.list` | Reads replayed/materialized state and renders daemon-provided source links/EvidenceReferences. |
+| `bicameral.search` | `search.query` | Searches daemon-owned state and renders daemon-provided source links/EvidenceReferences. |
 | `bicameral.request_correction` | `correction.request` | Submits an explicitly approved correction request to the daemon-owned correction path. |
 
 `bicameral.dashboard` is deferred unless bot exposes a local dashboard command or stable URL discovery endpoint. MCP may later add it as convenience only; it must not host the dashboard.
