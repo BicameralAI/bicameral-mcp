@@ -3,7 +3,7 @@ hatchling
 pytest>=9.1.1
 pytest-asyncio>=1.4.0
 tiktoken>=0.7.0,<1.0.0
-ruff>=0.15.17
+ruff>=0.15.20
 mypy>=2.1.0
 build>=1.5.0
 colorama
