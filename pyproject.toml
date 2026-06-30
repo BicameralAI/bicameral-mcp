@@ -27,7 +27,7 @@ dependencies = [
 [project.optional-dependencies]
 cocoindex = [
   "cocoindex>=1.0.7,<2.0.0",
-  "sentence-transformers>=2.6.0",
+  "sentence-transformers>=5.6.0",
   "cocoindex-code>=0.2.37",
 ]
 test = [
