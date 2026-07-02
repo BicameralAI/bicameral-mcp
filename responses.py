@@ -155,9 +155,11 @@ def format_preflight_response(response: dict[str, Any]) -> TextContent:
 
     Extracts the ``staged`` key added by bot#323 and surfaces each stage
     status at the top level of the MCP output.  Stages missing from the
-    daemon payload are rendered as ``unsupported``.  ``enforcement.status``
-    of ``not_configured`` is never promoted to warn/pause/block behavior.
-    ``session_directive`` is forwarded as-is from the daemon.
+    daemon payload are rendered as ``unsupported``.  The preflight surface is
+    constraint lookup/readiness, not an MCP-owned governed work gate:
+    ``enforcement.status`` of ``not_configured`` is never promoted to
+    warn/pause/block behavior.  ``session_directive`` is forwarded as-is from
+    the daemon.
     """
     staged: dict[str, Any] = response.get("staged", {})
     stages: dict[str, Any] = {}
