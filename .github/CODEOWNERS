@@ -1,3 +1,7 @@
 # CODEOWNERS for BicameralAI/bicameral-mcp.
+#
+# SOC2 control #675: all production changes require at least one approval
+# from a named human reviewer. AI agents and automation identities are not
+# standing approvers and must not be added as code owners.
 
 * @jinhongkuan

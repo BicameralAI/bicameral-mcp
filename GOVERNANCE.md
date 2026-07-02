@@ -34,11 +34,24 @@ compliance outcomes.
 
 ## Branch protection plan
 
-The default branch should be protected with:
+The default branch must be protected with the repository's SOC2 compensating
+control for limited team size:
 
-- Pull request review before merge
-- Status checks for tests, lint/typecheck, and secret scanning
-- Restrict force pushes on `main` and release branches
+- Changes to `main` land by pull request; direct pushes are blocked.
+- At least one approving review from a named human reviewer is required before merge.
+- `CODEOWNERS` designates the required human reviewer set. AI agents and automation
+  identities are untrusted contributors for approval purposes and have no standing
+  self-approval.
+- Required status checks must pass before merge, including deterministic tests,
+  lint/typecheck, secret scanning, security scanning, dependency review, governance
+  boundary, factory attestation, and CodeQL where enabled.
+- Branch protection applies to administrators; admin bypass of the human-review gate
+  requires an explicit documented exception.
+- Force pushes and branch deletion are restricted on `main` and release branches.
+
+As of the #675 control review, GitHub reports `main` as protected. Detailed branch
+protection settings are maintained in GitHub repository settings and require an
+administrator to verify or change.
 
 ## Contribution guidelines
 
