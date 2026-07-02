@@ -31,6 +31,8 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.review.approve_signoff": "review.approve_signoff",
     "bicameral.review.reject_signoff": "review.reject_signoff",
     "bicameral.review.resolve_compliance": "review.resolve_compliance",
+    "bicameral.recall.inspect_evidence": "recall.inspect_evidence",
+    "bicameral.recall.expand_scope": "recall.expand_scope",
     "bicameral.brief": "brief.render",
     "bicameral.history": "history.list",
     "bicameral.search": "search.query",
@@ -143,6 +145,10 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "scoping_relationship",
             "approval_proof",
         )
+    if command_name == "recall.inspect_evidence":
+        return _only(cleaned, "packet_id", "match_id", "evidence_id")
+    if command_name == "recall.expand_scope":
+        return _only(cleaned, "packet_id", "expand_to", "reason")
     if command_name == "recall.request_correction":
         return _only(
             cleaned,

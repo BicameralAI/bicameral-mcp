@@ -1,0 +1,20 @@
+{
+  "request_id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  "status": "ok",
+  "result": {
+    "packet_id": "pkt-conformance-002",
+    "searched_scope": ["local_ledger", "source_docs", "team_prs"],
+    "unknown_scope": ["external_docs"],
+    "matches": [
+      {
+        "kind": "decision",
+        "id": "DEC-EXPAND-1",
+        "title": "Retry timeout must be 30s",
+        "evidence_refs": ["ev-expand-1"],
+        "freshness": "current"
+      }
+    ],
+    "allowed_next_actions": ["inspect_evidence"]
+  },
+  "responded_at": "2026-07-02T00:00:00Z"
+}
