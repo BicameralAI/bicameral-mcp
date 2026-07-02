@@ -51,6 +51,8 @@ from responses import (
     format_lookup_response,
     format_preflight_no_fire,
     format_preflight_response,
+    format_recall_expand_scope,
+    format_recall_inspect_evidence,
     format_recall_packet,
     format_review_queue_response,
     format_source_link_response,
@@ -58,7 +60,7 @@ from responses import (
     recovery_error_text,
 )
 from sync_payload_filter import filter_pending_checks
-from tool_request import MCP_TOOL_COMMANDS, build_tool_request
+from tool_request import LOCAL_ONLY_TOOLS, MCP_TOOL_COMMANDS, build_tool_request
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
 
@@ -89,26 +91,53 @@ async def _ensure_protocol_compatible(client: DaemonClient) -> CapabilityReport:
             mcp_protocol_version=TOOLREQUEST_PROTOCOL_VERSION,
         )
     supported_commands = tuple(capabilities.get("supported_commands", []))
+    deferred_commands = tuple(capabilities.get("deferred_commands", []))
     endpoint = resolve_daemon_endpoint()
     return CapabilityReport(
         daemon_protocol_version=protocol_version,
         mcp_protocol_version=TOOLREQUEST_PROTOCOL_VERSION,
         supported_commands=supported_commands,
+        deferred_commands=deferred_commands,
         daemon_endpoint=endpoint.url,
     )
 
 
 def _ensure_command_advertised(command_name: str, capability_report: CapabilityReport) -> None:
+    if command_name in capability_report.deferred_commands:
+        raise DaemonCapabilityError(
+            f"daemon reports ToolRequest command as deferred: {command_name}",
+            deferred=True,
+        )
     if command_name not in capability_report.supported_commands:
         raise DaemonCapabilityError(
             f"daemon does not advertise ToolRequest command: {command_name}"
         )
 
 
+def _filter_tools_by_capability(capability_report: CapabilityReport) -> list[types.Tool]:
+    """Exclude tools whose daemon command is deferred or absent."""
+    deferred = frozenset(capability_report.deferred_commands)
+    supported = frozenset(capability_report.supported_commands)
+    result: list[types.Tool] = []
+    for tool in SUPPORTED_TOOLS:
+        if tool.name in LOCAL_ONLY_TOOLS:
+            result.append(tool)
+            continue
+        command = MCP_TOOL_COMMANDS.get(tool.name)
+        if command is None:
+            continue
+        if command in deferred:
+            continue
+        if command not in supported:
+            continue
+        result.append(tool)
+    return result
+
+
 @server.list_tools()
 async def list_tools() -> list[types.Tool]:
-    await _ensure_protocol_compatible(_client())
-    return list(SUPPORTED_TOOLS)
+    capability_report = await _ensure_protocol_compatible(_client())
+    return _filter_tools_by_capability(capability_report)
 
 
 @server.call_tool()
@@ -182,6 +211,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_correction_findings_response(response)]
         if name == "bicameral.review.corpus_proposals":
             return [format_correction_findings_response(response)]
+        if name == "bicameral.recall.inspect_evidence":
+            return [format_recall_inspect_evidence(response)]
+        if name == "bicameral.recall.expand_scope":
+            return [format_recall_expand_scope(response)]
         if name == "bicameral.review.candidates":
             return [format_review_queue_response(response, item_key="decision_candidates")]
         if name in {

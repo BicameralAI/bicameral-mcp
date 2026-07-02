@@ -83,6 +83,8 @@ MCP exposes only ToolRequest-backed tools:
 | `bicameral.governance.inbox` | `governance.inbox.list` |
 | `bicameral.governance.inspect` | `governance.inspect` |
 | `bicameral.governance.resolve` | `governance.resolve_contradiction` |
+| `bicameral.recall.inspect_evidence` | `recall.inspect_evidence` |
+| `bicameral.recall.expand_scope` | `recall.expand_scope` |
 | `bicameral.request_correction` | `correction.request` |
 
 ## Troubleshooting: Daemon Handshake Failures

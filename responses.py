@@ -525,6 +525,93 @@ def _render_source_link_item(
     return {key: value for key, value in rendered.items() if value not in (None, [], {})}
 
 
+def format_recall_inspect_evidence(response: dict[str, Any]) -> TextContent:
+    """Render daemon-authored evidence detail from a RecallPacket match.
+
+    This is a read-only evidence inspection. MCP preserves daemon-authored
+    evidence refs, source links, freshness, readiness, and searched/unknown
+    scope without adding compliance, signoff, or verification claims.
+    """
+    result = response.get("result", {})
+    evidence = result.get("evidence") or result.get("evidence_detail") or {}
+    searched_scope = result.get("searched_scope") or evidence.get("searched_scope", [])
+    unknown_scope = result.get("unknown_scope") or evidence.get("unknown_scope", [])
+
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "packet_id": result.get("packet_id"),
+        "match_id": result.get("match_id"),
+        "evidence": evidence,
+        "searched_scope": searched_scope,
+        "unknown_scope": unknown_scope,
+        "scope_note": (
+            "Evidence shown is limited to the searched scope. "
+            "Unknown scope is not searched and may contain additional evidence."
+        ),
+    }
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
+def format_recall_expand_scope(response: dict[str, Any]) -> TextContent:
+    """Render a daemon-authored expanded RecallPacket.
+
+    The daemon widens the searched scope and returns updated matches.
+    MCP preserves searched/unknown scope, matches, and allowed next
+    actions without adding compliance, signoff, or verification claims.
+    """
+    recall = response.get("recall_packet", response.get("result", {}))
+    searched_scope = recall.get("searched_scope", [])
+    unknown_scope = recall.get("unknown_scope", [])
+    matches = recall.get("matches", [])
+    allowed_next_actions = recall.get("allowed_next_actions", [])
+
+    rendered_matches: list[dict[str, Any]] = []
+    for match in matches:
+        rendered: dict[str, Any] = {
+            "kind": match.get("kind"),
+            "id": match.get("id"),
+            "title": match.get("title"),
+        }
+        if match.get("evidence_refs"):
+            rendered["evidence_refs"] = match["evidence_refs"]
+        if match.get("freshness"):
+            rendered["freshness"] = match["freshness"]
+        if match.get("readiness"):
+            rendered["readiness"] = match["readiness"]
+        if match.get("source_link"):
+            rendered["source_link"] = match["source_link"]
+        if match.get("excerpt"):
+            rendered["excerpt"] = match["excerpt"]
+        rendered_matches.append(rendered)
+
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "packet_id": recall.get("packet_id"),
+        "searched_scope": searched_scope,
+        "unknown_scope": unknown_scope,
+        "matches": rendered_matches,
+    }
+
+    if not matches:
+        scope_desc = ", ".join(searched_scope) if searched_scope else "expanded scope"
+        output["no_match_note"] = (
+            f"Expanded lookup found no relevant items within: {scope_desc}. "
+            "This does not imply absence outside searched scope."
+        )
+
+    if allowed_next_actions:
+        output["allowed_next_actions"] = allowed_next_actions
+
+    output["scope_note"] = (
+        "Scope was expanded by the daemon. Unknown scope after expansion "
+        "is surfaced explicitly and has not been searched."
+    )
+
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
 def format_correction_response(response: dict[str, Any]) -> TextContent:
     """Render a daemon correction response.
 
@@ -593,6 +680,13 @@ def build_recovery_payload(
             f"{operator_action} A custom daemon URL is set via "
             f"{endpoint.override_env_var} ({endpoint.override_value}); unset or "
             "correct it if the daemon is running elsewhere."
+        )
+
+    if details.get("deferred"):
+        recovery["deferred"] = True
+        operator_action = (
+            "This command is deferred in the current alpha daemon. "
+            "It may become available in a future daemon release."
         )
 
     recovery["operator_action"] = operator_action
