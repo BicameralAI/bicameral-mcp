@@ -1096,3 +1096,85 @@ def test_resolve_compliance_description_does_not_imply_alpha_support():
     desc = tool.description.lower()
     assert "deferred" in desc
     assert "alpha" in desc
+
+
+# ---------------------------------------------------------------------------
+# Extended capability filtering (#676)
+# ---------------------------------------------------------------------------
+
+
+class _DualListCapabilityClient(_FakeClient):
+    """Fake daemon that reports a command in both supported and deferred."""
+
+    async def capabilities(self) -> dict:
+        caps = await super().capabilities()
+        caps["deferred_commands"] = ["binding.inspect"]
+        return caps
+
+
+@pytest.mark.asyncio
+async def test_deferred_wins_over_supported_in_list_tools(monkeypatch):
+    """If a command appears in both supported and deferred, deferred wins."""
+    monkeypatch.setattr(server, "_client", lambda: _DualListCapabilityClient())
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+
+    assert "bicameral.binding.inspect" not in names
+    assert "bicameral.bind" in names
+    assert "bicameral.preflight" in names
+
+
+@pytest.mark.asyncio
+async def test_deferred_wins_over_supported_in_call_tool(monkeypatch):
+    """If a command appears in both supported and deferred, call_tool returns deferred error."""
+    fake = _DualListCapabilityClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.binding.inspect",
+        {"decision_or_candidate_id": "DEC-1"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_capability_error"
+    assert response["recovery"]["deferred"] is True
+    assert fake.requests == []
+
+
+@pytest.mark.asyncio
+async def test_minimal_supported_set_hides_all_others(monkeypatch):
+    """Protocol-compatible daemon with only two supported commands hides all others."""
+
+    class _MinimalClient(_FakeClient):
+        async def capabilities(self) -> dict:
+            return {
+                "toolrequest_protocol_version": TOOLREQUEST_PROTOCOL_VERSION,
+                "supported_commands": ["preflight.run", "lookup.query"],
+            }
+
+    monkeypatch.setattr(server, "_client", lambda: _MinimalClient())
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+
+    assert "bicameral.preflight" in names
+    assert "bicameral.lookup" in names
+    assert "bicameral.context" in names  # also maps to lookup.query
+    assert "bicameral.bind" not in names
+    assert "bicameral.history" not in names
+    assert "bicameral.search" not in names
+    assert "bicameral.ingest" not in names
+    assert LOCAL_ONLY_TOOLS <= names
+
+
+@pytest.mark.asyncio
+async def test_full_capabilities_exposes_complete_tool_surface(monkeypatch):
+    """When daemon supports all commands, list_tools returns the full tool set."""
+    monkeypatch.setattr(server, "_client", lambda: _FakeClient())
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+
+    assert names == set(MCP_TOOL_COMMANDS) | LOCAL_ONLY_TOOLS
