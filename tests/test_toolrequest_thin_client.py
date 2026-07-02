@@ -967,3 +967,132 @@ def test_recall_request_correction_not_in_new_recall_namespace():
         "bicameral.recall.inspect_evidence",
         "bicameral.recall.expand_scope",
     }
+
+
+# ---------------------------------------------------------------------------
+# Deferred capability handling (#677)
+# ---------------------------------------------------------------------------
+
+
+class _DeferredCapabilityClient(_FakeClient):
+    """Fake daemon that reports review.resolve_compliance as deferred."""
+
+    async def capabilities(self) -> dict:
+        caps = await super().capabilities()
+        caps["supported_commands"] = [
+            cmd for cmd in caps["supported_commands"] if cmd != "review.resolve_compliance"
+        ]
+        caps["deferred_commands"] = ["review.resolve_compliance"]
+        return caps
+
+
+class _AbsentCapabilityClient(_FakeClient):
+    """Fake daemon that does not advertise review.resolve_compliance at all."""
+
+    async def capabilities(self) -> dict:
+        caps = await super().capabilities()
+        caps["supported_commands"] = [
+            cmd for cmd in caps["supported_commands"] if cmd != "review.resolve_compliance"
+        ]
+        return caps
+
+
+@pytest.mark.asyncio
+async def test_deferred_command_hidden_from_list_tools(monkeypatch):
+    """When daemon reports a command as deferred, its MCP tool is hidden."""
+    monkeypatch.setattr(server, "_client", lambda: _DeferredCapabilityClient())
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+
+    assert "bicameral.review.resolve_compliance" not in names
+    assert "bicameral.preflight" in names
+    assert "bicameral.history" in names
+
+
+@pytest.mark.asyncio
+async def test_deferred_command_call_returns_typed_error(monkeypatch):
+    """Calling a deferred command returns a typed daemon_capability_error with deferred flag."""
+    monkeypatch.setattr(server, "_client", lambda: _DeferredCapabilityClient())
+
+    content = await server.call_tool(
+        "bicameral.review.resolve_compliance",
+        {"target_id": "DEC-1", "compliance_verdict": "reflected"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_capability_error"
+    assert response["recovery"]["deferred"] is True
+    assert response["recovery"]["requested_tool"] == "bicameral.review.resolve_compliance"
+    assert response["recovery"]["requested_command"] == "review.resolve_compliance"
+
+
+@pytest.mark.asyncio
+async def test_absent_command_hidden_from_list_tools(monkeypatch):
+    """When daemon does not advertise a command at all, its MCP tool is hidden."""
+    monkeypatch.setattr(server, "_client", lambda: _AbsentCapabilityClient())
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+
+    assert "bicameral.review.resolve_compliance" not in names
+    assert "bicameral.preflight" in names
+
+
+@pytest.mark.asyncio
+async def test_absent_command_call_returns_capability_error(monkeypatch):
+    """Calling an absent command returns daemon_capability_error without deferred flag."""
+    monkeypatch.setattr(server, "_client", lambda: _AbsentCapabilityClient())
+
+    content = await server.call_tool(
+        "bicameral.review.resolve_compliance",
+        {"target_id": "DEC-1", "compliance_verdict": "reflected"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_capability_error"
+    assert "deferred" not in response["recovery"]
+    assert response["recovery"]["requested_tool"] == "bicameral.review.resolve_compliance"
+
+
+@pytest.mark.asyncio
+async def test_supported_command_visible_and_callable(monkeypatch):
+    """When daemon reports a command as supported, its MCP tool works normally."""
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+    assert "bicameral.review.resolve_compliance" in names
+
+    content = await server.call_tool(
+        "bicameral.review.resolve_compliance",
+        {"target_id": "DEC-1", "compliance_verdict": "reflected"},
+    )
+    response = json.loads(content[0].text)
+    assert response["status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_local_only_tools_always_visible(monkeypatch):
+    """Local-only tools remain visible regardless of daemon capability report."""
+    monkeypatch.setattr(server, "_client", lambda: _DeferredCapabilityClient())
+
+    tools = await server.list_tools()
+    names = {tool.name for tool in tools}
+
+    for local_tool in LOCAL_ONLY_TOOLS:
+        assert local_tool in names
+
+
+def test_resolve_compliance_description_does_not_imply_alpha_support():
+    """Tool description for review.resolve_compliance must not imply alpha support."""
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.review.resolve_compliance")
+    assert tool is not None
+    desc = tool.description.lower()
+    assert "deferred" in desc
+    assert "alpha" in desc
