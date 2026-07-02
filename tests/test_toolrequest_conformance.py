@@ -493,6 +493,28 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"report_id", "action", "reason", "route_to"},
         required={"report_id", "action"},
     ),
+    "bicameral.recall.inspect_evidence": _CommandSpec(
+        command="recall.inspect_evidence",
+        args={
+            "packet_id": "pkt-conformance-001",
+            "match_id": "match-conformance-A",
+            "evidence_id": "ev-conformance-1",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"packet_id", "match_id", "evidence_id"},
+        required={"packet_id", "match_id"},
+    ),
+    "bicameral.recall.expand_scope": _CommandSpec(
+        command="recall.expand_scope",
+        args={
+            "packet_id": "pkt-conformance-002",
+            "expand_to": ["source-extra-A"],
+            "reason": "wider coverage needed",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={"packet_id", "expand_to", "reason"},
+        required={"packet_id"},
+    ),
 }
 
 _CONTROL_KEYS = {"actor_id", "session_id", "workspace", "policy_scope"}
@@ -898,6 +920,22 @@ def test_contract_fixture_renders_through_renderer(command):
         from governance_surface import format_governance_resolve
 
         renderer = format_governance_resolve
+    elif command == "recall.inspect_evidence":
+        from responses import format_recall_inspect_evidence
+
+        content = format_recall_inspect_evidence(payload)
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "scope_note" in rendered
+        return
+    elif command == "recall.expand_scope":
+        from responses import format_recall_expand_scope
+
+        content = format_recall_expand_scope(payload)
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert "scope_note" in rendered
+        return
     else:
         renderer = format_tool_response
     content = renderer(payload)

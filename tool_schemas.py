@@ -518,6 +518,70 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.recall.inspect_evidence",
+        description=(
+            "Inspect cited evidence from a daemon-authored RecallPacket. Returns "
+            "daemon-owned evidence detail for the specified match within the "
+            "packet's searched scope. Unknown scope is surfaced explicitly; "
+            "absence of evidence in the searched scope does not imply absence "
+            "in unknown or un-searched sources. This is a read-only lookup; "
+            "it does not create, mutate, or verify Decisions, candidates, "
+            "BindingEvidence, signoff, compliance, or trusted-corpus state."
+        ),
+        inputSchema=_schema(
+            {
+                "packet_id": {
+                    "type": "string",
+                    "description": "RecallPacket ID returned by a prior lookup or preflight.",
+                },
+                "match_id": {
+                    "type": "string",
+                    "description": "Match ID within the RecallPacket to inspect.",
+                },
+                "evidence_id": {
+                    "type": "string",
+                    "description": "Optional specific evidence reference ID to inspect.",
+                },
+            },
+            ["packet_id", "match_id"],
+        ),
+    ),
+    Tool(
+        name="bicameral.recall.expand_scope",
+        description=(
+            "Request the daemon to expand the search scope of a prior "
+            "RecallPacket lookup. The daemon decides which additional sources "
+            "to search and returns an updated RecallPacket with expanded "
+            "searched-scope and any newly discovered matches. Unknown scope "
+            "after expansion is surfaced explicitly. This is a read-only "
+            "scope-widening request; it does not create, mutate, or verify "
+            "Decisions, candidates, BindingEvidence, signoff, compliance, "
+            "or trusted-corpus state."
+        ),
+        inputSchema=_schema(
+            {
+                "packet_id": {
+                    "type": "string",
+                    "description": "RecallPacket ID whose scope should be expanded.",
+                },
+                "expand_to": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional list of additional source identifiers to include "
+                        "in the expanded search. When omitted the daemon uses its "
+                        "default expansion strategy."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional reason for requesting scope expansion.",
+                },
+            },
+            ["packet_id"],
+        ),
+    ),
+    Tool(
         name="bicameral.review.contradictions",
         description=(
             "List active contradiction findings for review. Alias for the daemon "

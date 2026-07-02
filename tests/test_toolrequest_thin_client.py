@@ -754,6 +754,222 @@ def test_ingest_schema_exposes_decision_level():
 
 
 # ---------------------------------------------------------------------------
+# recall.inspect_evidence & recall.expand_scope (#678)
+# ---------------------------------------------------------------------------
+
+
+def test_recall_inspect_evidence_schema_exists():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.recall.inspect_evidence")
+    assert tool is not None
+    props = tool.inputSchema["properties"]
+    assert "packet_id" in props
+    assert "match_id" in props
+    assert "evidence_id" in props
+    assert tool.inputSchema["required"] == ["packet_id", "match_id"]
+
+
+def test_recall_inspect_evidence_description_honesty_language():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.recall.inspect_evidence")
+    assert tool is not None
+    desc = tool.description
+    assert "searched scope" in desc.lower() or "unknown scope" in desc.lower()
+    for forbidden in ("compliance", "signoff", "enforcement"):
+        assert forbidden not in desc.lower() or "not create, mutate, or verify" in desc.lower()
+
+
+def test_recall_expand_scope_schema_exists():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.recall.expand_scope")
+    assert tool is not None
+    props = tool.inputSchema["properties"]
+    assert "packet_id" in props
+    assert "expand_to" in props
+    assert "reason" in props
+    assert tool.inputSchema["required"] == ["packet_id"]
+
+
+def test_recall_expand_scope_description_honesty_language():
+    from tool_schemas import tool_for_name
+
+    tool = tool_for_name("bicameral.recall.expand_scope")
+    assert tool is not None
+    desc = tool.description
+    assert "unknown scope" in desc.lower() or "searched" in desc.lower()
+    for forbidden in ("compliance", "signoff", "enforcement"):
+        assert forbidden not in desc.lower() or "not create, mutate, or verify" in desc.lower()
+
+
+def test_recall_inspect_evidence_toolrequest_shape():
+    request = build_tool_request(
+        command_name="recall.inspect_evidence",
+        params={
+            "packet_id": "pkt-001",
+            "match_id": "match-A",
+            "evidence_id": "ev-1",
+            "actor_id": "should-be-stripped",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    assert request["command"] == {
+        "name": "recall.inspect_evidence",
+        "params": {
+            "packet_id": "pkt-001",
+            "match_id": "match-A",
+            "evidence_id": "ev-1",
+        },
+    }
+    assert "actor_id" not in request["command"]["params"]
+    assert request["authority"]["auth_method"] == "mcp_session"
+
+
+def test_recall_expand_scope_toolrequest_shape():
+    request = build_tool_request(
+        command_name="recall.expand_scope",
+        params={
+            "packet_id": "pkt-002",
+            "expand_to": ["source-B", "source-C"],
+            "reason": "wider coverage needed",
+            "actor_id": "should-be-stripped",
+        },
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    assert request["command"] == {
+        "name": "recall.expand_scope",
+        "params": {
+            "packet_id": "pkt-002",
+            "expand_to": ["source-B", "source-C"],
+            "reason": "wider coverage needed",
+        },
+    }
+    assert "actor_id" not in request["command"]["params"]
+
+
+def test_recall_expand_scope_toolrequest_minimal():
+    request = build_tool_request(
+        command_name="recall.expand_scope",
+        params={"packet_id": "pkt-003"},
+        authority={"actor_id": "u", "auth_method": "mcp_session"},
+    )
+    assert request["command"]["params"] == {"packet_id": "pkt-003"}
+
+
+@pytest.mark.asyncio
+async def test_recall_inspect_evidence_maps_to_daemon(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.recall.inspect_evidence",
+        {"packet_id": "pkt-100", "match_id": "match-X"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "ok"
+    assert response["scope_note"]
+    req = fake.requests[-1]
+    assert req["command"]["name"] == "recall.inspect_evidence"
+    assert req["command"]["params"] == {"packet_id": "pkt-100", "match_id": "match-X"}
+
+
+@pytest.mark.asyncio
+async def test_recall_expand_scope_maps_to_daemon(monkeypatch):
+    fake = _FakeClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.recall.expand_scope",
+        {"packet_id": "pkt-200", "expand_to": ["extra-source"]},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "ok"
+    assert response["scope_note"]
+    req = fake.requests[-1]
+    assert req["command"]["name"] == "recall.expand_scope"
+    assert req["command"]["params"] == {
+        "packet_id": "pkt-200",
+        "expand_to": ["extra-source"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_recall_inspect_evidence_absent_capability_returns_error(monkeypatch):
+    """When daemon does not advertise recall.inspect_evidence, MCP returns a typed error."""
+
+    class _NoRecallInspectClient(_FakeClient):
+        async def capabilities(self) -> dict:
+            caps = await super().capabilities()
+            caps["supported_commands"] = [
+                c for c in caps["supported_commands"] if c != "recall.inspect_evidence"
+            ]
+            return caps
+
+    fake = _NoRecallInspectClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.recall.inspect_evidence",
+        {"packet_id": "pkt-absent", "match_id": "m1"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_capability_error"
+    assert response["recovery"]["requested_tool"] == "bicameral.recall.inspect_evidence"
+    assert response["recovery"]["requested_command"] == "recall.inspect_evidence"
+    assert fake.requests == []
+
+
+@pytest.mark.asyncio
+async def test_recall_expand_scope_absent_capability_returns_error(monkeypatch):
+    """When daemon does not advertise recall.expand_scope, MCP returns a typed error."""
+
+    class _NoRecallExpandClient(_FakeClient):
+        async def capabilities(self) -> dict:
+            caps = await super().capabilities()
+            caps["supported_commands"] = [
+                c for c in caps["supported_commands"] if c != "recall.expand_scope"
+            ]
+            return caps
+
+    fake = _NoRecallExpandClient()
+    monkeypatch.setattr(server, "_client", lambda: fake)
+
+    content = await server.call_tool(
+        "bicameral.recall.expand_scope",
+        {"packet_id": "pkt-absent"},
+    )
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_capability_error"
+    assert response["recovery"]["requested_tool"] == "bicameral.recall.expand_scope"
+    assert response["recovery"]["requested_command"] == "recall.expand_scope"
+    assert fake.requests == []
+
+
+def test_recall_command_mapping_completeness():
+    """Verify recall.inspect_evidence and recall.expand_scope are mapped."""
+    assert MCP_TOOL_COMMANDS["bicameral.recall.inspect_evidence"] == "recall.inspect_evidence"
+    assert MCP_TOOL_COMMANDS["bicameral.recall.expand_scope"] == "recall.expand_scope"
+
+
+def test_recall_request_correction_not_in_new_recall_namespace():
+    """recall.request_correction is NOT exposed in bicameral.recall.* namespace (bot#663 open)."""
+    recall_tools = [name for name in MCP_TOOL_COMMANDS if name.startswith("bicameral.recall.")]
+    assert "bicameral.recall.request_correction" not in recall_tools
+    assert set(recall_tools) == {
+        "bicameral.recall.inspect_evidence",
+        "bicameral.recall.expand_scope",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Deferred capability handling (#677)
 # ---------------------------------------------------------------------------
 
@@ -790,7 +1006,6 @@ async def test_deferred_command_hidden_from_list_tools(monkeypatch):
     names = {tool.name for tool in tools}
 
     assert "bicameral.review.resolve_compliance" not in names
-    # Other tools remain visible.
     assert "bicameral.preflight" in names
     assert "bicameral.history" in names
 

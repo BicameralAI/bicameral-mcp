@@ -1,0 +1,18 @@
+{
+  "request_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "status": "ok",
+  "result": {
+    "packet_id": "pkt-conformance-001",
+    "match_id": "match-conformance-A",
+    "evidence": {
+      "evidence_id": "ev-conformance-1",
+      "excerpt": "Decision requires retry timeout of 30s",
+      "source_link": "local://meeting.md",
+      "freshness": "current",
+      "readiness": "verified"
+    },
+    "searched_scope": ["local_ledger", "source_docs"],
+    "unknown_scope": ["team_prs", "external_docs"]
+  },
+  "responded_at": "2026-07-02T00:00:00Z"
+}

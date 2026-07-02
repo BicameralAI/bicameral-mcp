@@ -51,6 +51,8 @@ from responses import (
     format_lookup_response,
     format_preflight_no_fire,
     format_preflight_response,
+    format_recall_expand_scope,
+    format_recall_inspect_evidence,
     format_recall_packet,
     format_review_queue_response,
     format_source_link_response,
@@ -209,6 +211,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_correction_findings_response(response)]
         if name == "bicameral.review.corpus_proposals":
             return [format_correction_findings_response(response)]
+        if name == "bicameral.recall.inspect_evidence":
+            return [format_recall_inspect_evidence(response)]
+        if name == "bicameral.recall.expand_scope":
+            return [format_recall_expand_scope(response)]
         if name == "bicameral.review.candidates":
             return [format_review_queue_response(response, item_key="decision_candidates")]
         if name in {
