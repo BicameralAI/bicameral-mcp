@@ -14,6 +14,10 @@
 - [ ] `ruff check . && ruff format --check .` passes locally.
 - [ ] CI regression suite passes (ubuntu + windows).
 
+## Review Control
+
+- [ ] This PR has, or will receive before merge, approval from a named human reviewer. AI agents and automation identities do not satisfy the approval requirement.
+
 ## Notes
 
 <!-- Anything reviewers should know: tradeoffs, follow-ups, known limitations. -->
