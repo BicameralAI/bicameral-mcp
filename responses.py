@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from daemon_client import DaemonClientError, resolve_daemon_endpoint
+from daemon_client import DaemonClientError, resolve_daemon_endpoint_for_display
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
 PREFLIGHT_STAGES = ("capture", "projection", "lookup", "enforcement")
@@ -657,7 +657,7 @@ def build_recovery_payload(
     """
     details = details or {}
     guidance = RECOVERY_GUIDANCE.get(error_code, RECOVERY_GUIDANCE["daemon_error"])
-    endpoint = resolve_daemon_endpoint()
+    endpoint = resolve_daemon_endpoint_for_display()
 
     operator_action = guidance["operator_action"]
     recovery: dict[str, Any] = {

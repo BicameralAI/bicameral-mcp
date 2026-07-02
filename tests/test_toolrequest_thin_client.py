@@ -10,7 +10,9 @@ import server
 from daemon_client import (
     DEFAULT_DAEMON_URL,
     DaemonCapabilityError,
+    DaemonClient,
     DaemonConnectionError,
+    resolve_daemon_endpoint,
 )
 from responses import build_recovery_payload, format_preflight_response
 from tool_request import (
@@ -630,11 +632,11 @@ async def test_capability_error_recovery_includes_tool_and_command(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_wrong_daemon_url_calls_out_env_override(monkeypatch):
-    monkeypatch.setenv("BICAMERAL_BOT_DAEMON_URL", "http://wrong-host:1234")
+    monkeypatch.setenv("BICAMERAL_BOT_DAEMON_URL", "http://localhost:1234")
     fake = _RaisingClient(
         capabilities_error=DaemonConnectionError(
             "cannot reach bicameral-bot daemon",
-            daemon_endpoint="http://wrong-host:1234",
+            daemon_endpoint="http://localhost:1234",
         )
     )
     monkeypatch.setattr(server, "_client", lambda: fake)
@@ -644,13 +646,13 @@ async def test_wrong_daemon_url_calls_out_env_override(monkeypatch):
 
     recovery = response["recovery"]
     assert recovery["daemon_url_override"]["env_var"] == "BICAMERAL_BOT_DAEMON_URL"
-    assert recovery["daemon_url_override"]["value"] == "http://wrong-host:1234"
+    assert recovery["daemon_url_override"]["value"] == "http://localhost:1234"
     assert "BICAMERAL_BOT_DAEMON_URL" in recovery["operator_action"]
-    assert recovery["daemon_endpoint"] == "http://wrong-host:1234"
+    assert recovery["daemon_endpoint"] == "http://localhost:1234"
 
 
 def test_build_recovery_payload_env_override_hint(monkeypatch):
-    monkeypatch.setenv("BICAMERAL_DAEMON_URL", "http://example.invalid:9999")
+    monkeypatch.setenv("BICAMERAL_DAEMON_URL", "http://127.0.0.1:9999")
 
     recovery = build_recovery_payload(
         error_code="daemon_unavailable",
@@ -659,9 +661,40 @@ def test_build_recovery_payload_env_override_hint(monkeypatch):
     )
 
     assert recovery["daemon_url_override"]["env_var"] == "BICAMERAL_DAEMON_URL"
-    assert recovery["daemon_url_override"]["value"] == "http://example.invalid:9999"
+    assert recovery["daemon_url_override"]["value"] == "http://127.0.0.1:9999"
     assert "BICAMERAL_DAEMON_URL" in recovery["operator_action"]
-    assert recovery["daemon_endpoint"] == "http://example.invalid:9999"
+    assert recovery["daemon_endpoint"] == "http://127.0.0.1:9999"
+
+
+def test_daemon_endpoint_rejects_external_hosts(monkeypatch):
+    monkeypatch.setenv("BICAMERAL_DAEMON_URL", "http://example.invalid:9999")
+
+    with pytest.raises(DaemonConnectionError, match="loopback/localhost"):
+        resolve_daemon_endpoint()
+
+
+@pytest.mark.asyncio
+async def test_daemon_endpoint_credentials_are_rejected_and_redacted(monkeypatch):
+    monkeypatch.setenv("BICAMERAL_DAEMON_URL", "http://user:secret@localhost:37373")
+
+    content = await server.call_tool("bicameral.history", {})
+    response = json.loads(content[0].text)
+
+    assert response["status"] == "error"
+    assert response["error_code"] == "daemon_unavailable"
+    recovery = response["recovery"]
+    assert recovery["daemon_url_override"]["value"] == "http://localhost:37373"
+    assert recovery["daemon_endpoint"] == "http://localhost:37373"
+    assert "secret" not in content[0].text
+    assert "user:" not in content[0].text
+
+
+def test_daemon_timeout_override_is_bounded(monkeypatch):
+    _clear_daemon_url_env(monkeypatch)
+    monkeypatch.setenv("BICAMERAL_DAEMON_TIMEOUT", "9999")
+
+    with pytest.raises(DaemonConnectionError, match="between"):
+        DaemonClient.from_env()
 
 
 def test_build_recovery_payload_no_override_uses_default_endpoint(monkeypatch):
