@@ -45,6 +45,7 @@ class CapabilityReport:
         "daemon_protocol_version",
         "mcp_protocol_version",
         "supported_commands",
+        "deferred_commands",
         "daemon_endpoint",
     )
 
@@ -54,11 +55,13 @@ class CapabilityReport:
         daemon_protocol_version: str,
         mcp_protocol_version: str,
         supported_commands: tuple[str, ...],
+        deferred_commands: tuple[str, ...] = (),
         daemon_endpoint: str,
     ) -> None:
         self.daemon_protocol_version = daemon_protocol_version
         self.mcp_protocol_version = mcp_protocol_version
         self.supported_commands = supported_commands
+        self.deferred_commands = deferred_commands
         self.daemon_endpoint = daemon_endpoint
 
 

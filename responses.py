@@ -595,6 +595,13 @@ def build_recovery_payload(
             "correct it if the daemon is running elsewhere."
         )
 
+    if details.get("deferred"):
+        recovery["deferred"] = True
+        operator_action = (
+            "This command is deferred in the current alpha daemon. "
+            "It may become available in a future daemon release."
+        )
+
     recovery["operator_action"] = operator_action
     return recovery
 

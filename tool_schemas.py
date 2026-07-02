@@ -443,7 +443,12 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
     ),
     Tool(
         name="bicameral.review.resolve_compliance",
-        description="Resolve compliance state for a decision through bot governance.",
+        description=(
+            "Deferred in alpha. Resolve compliance state for a decision through "
+            "bot governance when the daemon advertises this command as supported. "
+            "Hidden from the tool list when deferred; returns a typed daemon "
+            "capability error if called directly."
+        ),
         inputSchema=_schema(
             {
                 "target_id": {"type": "string"},
