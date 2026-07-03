@@ -82,6 +82,21 @@ async def test_list_tools_exposes_only_toolrequest_backed_surface(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_preflight_description_labels_lookup_and_denies_gate_claims(monkeypatch):
+    monkeypatch.setattr(server, "_client", lambda: _FakeClient())
+
+    tools = await server.list_tools()
+    preflight = next(tool for tool in tools if tool.name == "bicameral.preflight")
+    description = preflight.description.lower()
+
+    assert "constraint lookup" in description
+    assert "readiness" in description
+    assert "not an mcp compliance decision" in description
+    assert "signoff" in description
+    assert "governed work gate" in description
+
+
+@pytest.mark.asyncio
 async def test_call_tool_maps_to_canonical_toolrequest(monkeypatch):
     fake = _FakeClient()
     monkeypatch.setattr(server, "_client", lambda: fake)
