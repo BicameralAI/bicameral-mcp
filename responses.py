@@ -8,7 +8,7 @@ from typing import Any
 
 from mcp.types import TextContent
 
-from daemon_client import DaemonClientError, resolve_daemon_endpoint
+from daemon_client import DaemonClientError, resolve_daemon_endpoint_for_display
 from version import TOOLREQUEST_PROTOCOL_VERSION
 
 PREFLIGHT_STAGES = ("capture", "projection", "lookup", "enforcement")
@@ -155,9 +155,11 @@ def format_preflight_response(response: dict[str, Any]) -> TextContent:
 
     Extracts the ``staged`` key added by bot#323 and surfaces each stage
     status at the top level of the MCP output.  Stages missing from the
-    daemon payload are rendered as ``unsupported``.  ``enforcement.status``
-    of ``not_configured`` is never promoted to warn/pause/block behavior.
-    ``session_directive`` is forwarded as-is from the daemon.
+    daemon payload are rendered as ``unsupported``.  The preflight surface is
+    constraint lookup/readiness, not an MCP-owned governed work gate:
+    ``enforcement.status`` of ``not_configured`` is never promoted to
+    warn/pause/block behavior.  ``session_directive`` is forwarded as-is from
+    the daemon.
     """
     staged: dict[str, Any] = response.get("staged", {})
     stages: dict[str, Any] = {}
@@ -657,7 +659,7 @@ def build_recovery_payload(
     """
     details = details or {}
     guidance = RECOVERY_GUIDANCE.get(error_code, RECOVERY_GUIDANCE["daemon_error"])
-    endpoint = resolve_daemon_endpoint()
+    endpoint = resolve_daemon_endpoint_for_display()
 
     operator_action = guidance["operator_action"]
     recovery: dict[str, Any] = {

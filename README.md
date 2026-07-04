@@ -87,6 +87,25 @@ MCP exposes only ToolRequest-backed tools:
 | `bicameral.recall.expand_scope` | `recall.expand_scope` |
 | `bicameral.request_correction` | `correction.request` |
 
+## Product Terminology
+
+`bicameral.preflight` is the MCP surface for constraint lookup and readiness
+context before or during implementation. It maps to the bot-owned
+`preflight.run` command for historical protocol compatibility, but MCP does not
+turn lookup output into a governed work gate, compliance decision, signoff, or
+merge-safety claim.
+
+Use these terms consistently:
+
+- Constraint Lookup: retrieve relevant daemon-authored Decisions, source links,
+  evidence references, and readiness labels.
+- Constraint Correction Capture: submit or review proposed corpus corrections.
+- Code Grounding: inspect daemon-owned binding and graph evidence.
+- Code Compliance: review daemon-owned compliance state when the daemon exposes
+  that capability.
+- Governed Work Gate: future policy-controlled blocking/routing behavior; not
+  implied by ordinary lookup or preflight output.
+
 ## Troubleshooting: Daemon Handshake Failures
 
 MCP stays fail-fast on daemon capability handshake failures. It never starts,
@@ -130,7 +149,7 @@ bot-owned or CLI-owned, not MCP-owned.
 ## Prompts And Skills
 
 MCP may expose MCP prompts for generic Bicameral workflows over supported tools,
-such as preflight, binding, ingest, history, search, and brief.
+such as constraint lookup, binding, ingest, history, search, and brief.
 
 Repo-local skills are outside MCP. Keep repo/team behavior in repo skills:
 when to run Bicameral, which ADRs to read, contribution policy, factory

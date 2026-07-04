@@ -166,8 +166,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return gate_result
 
     command_name = MCP_TOOL_COMMANDS[name]
-    client = _client()
     try:
+        client = _client()
         capability_report = await _ensure_protocol_compatible(client)
         _ensure_command_advertised(command_name, capability_report)
 

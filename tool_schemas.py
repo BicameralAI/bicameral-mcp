@@ -135,7 +135,11 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
     ),
     Tool(
         name="bicameral.preflight",
-        description="Surface relevant decisions before implementation.",
+        description=(
+            "Run daemon-owned constraint lookup/readiness context before or during "
+            "implementation. This is not an MCP compliance decision, signoff, or "
+            "governed work gate."
+        ),
         inputSchema=_schema(
             {
                 "files": {"type": "array", "items": {"type": "string"}},

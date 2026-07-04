@@ -71,7 +71,7 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 |---|---|---|
 | `bicameral.ingest` | `ingest.submit_local` | Local actor submits source/session evidence or candidate drafts. |
 | `bicameral.capture_context` | `ingest.submit_local` | Submits MCP session/tool/command/code-hint context as bot-owned Source/SourceSnapshot/EvidenceReference-compatible local ingest input. |
-| `bicameral.preflight` | `preflight.run` | Reads relevant decisions and graph-scoped evidence via daemon. |
+| `bicameral.preflight` | `preflight.run` | Constraint Lookup/readiness surface: reads relevant decisions and graph-scoped evidence via daemon without implying a governed work gate. |
 | `bicameral.context` | `lookup.query` | Requests daemon-authored relevance-time ContextPacket/RecallPacket output for agent and developer workflows. |
 | `bicameral.correction_findings` | `lookup.query` | Requests daemon-authored correction-capture findings for PR/agent workflows without MCP-local drift or corpus mutation. |
 | `bicameral.lookup` | `lookup.query` | Queries daemon-authored RecallPacket output without MCP-local relevance or authority computation. |
@@ -106,9 +106,30 @@ Removal and erasure behavior is not a thin-client concern. Old MCP `remove_decis
 
 History, search, candidate review, signoff review, and compliance review are not separate MCP subsystems. They are existing bot-owned read/write concepts reached through `ToolRequest` command routing.
 
+## Product Terminology Boundary
+
+MCP-facing language must distinguish lookup, correction capture, grounding,
+compliance review, and work gating:
+
+- **Constraint Lookup** retrieves relevant daemon-authored Decisions,
+  source links, evidence references, and readiness labels before or during work.
+  `bicameral.preflight` currently belongs here even though its bot command name
+  remains `preflight.run`.
+- **Constraint Correction Capture** collects proposed corpus changes or drift
+  findings for daemon-owned review. MCP may request and render these artifacts;
+  it does not promote them into canonical truth.
+- **Code Grounding** inspects daemon-owned binding and graph evidence. MCP may
+  forward hints and render typed evidence states only.
+- **Code Compliance** is daemon-owned review state. MCP must not infer
+  compliance from lookup, binding, source links, or no-match output.
+- **Governed Work Gate** means policy-controlled block/route/interrupt behavior.
+  Ordinary `bicameral.preflight`, `bicameral.lookup`, or context packet output
+  must not be described as a gate unless the daemon explicitly returns a gate
+  decision through a future command.
+
 ## Prompts And Skills Boundary
 
-MCP may expose MCP prompts for generic Bicameral workflows that mainly guide the caller to use MCP tools, such as preflight, binding, local ingest, history, and search. These prompts are versioned with the MCP package and must call only supported ToolRequest-backed tools.
+MCP may expose MCP prompts for generic Bicameral workflows that mainly guide the caller to use MCP tools, such as constraint lookup, binding, local ingest, history, and search. These prompts are versioned with the MCP package and must call only supported ToolRequest-backed tools.
 
 MCP does not own repo-local skills. Repo skills are reserved for repo/team behavior: when to run Bicameral in that repository, which ADRs or context files to read, contribution policy, factory attestation, and workflows that span beyond Bicameral MCP.
 

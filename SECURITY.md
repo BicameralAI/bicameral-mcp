@@ -19,6 +19,24 @@ bicameral-mcp is a local-install developer tool. **The trust boundary is the OS 
 See [`docs/specs/bicameral-mcp-idealized-spec.md`](docs/specs/bicameral-mcp-idealized-spec.md)
 for the canonical MCP cutover scope.
 
+## Application controls
+
+The MCP package is a thin client and treats all MCP tool arguments as untrusted
+transport input. Tool calls are converted through allowlisted ToolRequest
+commands/params, approval-gated operations fail closed, and daemon capability
+handshake failures do not fall back to MCP-owned legacy handlers.
+
+Daemon access is constrained to local endpoints. `BICAMERAL_DAEMON_URL` and
+`BICAMERAL_BOT_DAEMON_URL` may only target loopback/localhost HTTP(S) daemon
+roots, must not include embedded credentials, query strings, fragments, or path
+prefixes, and are redacted before appearing in recovery output. The optional
+`BICAMERAL_DAEMON_TIMEOUT` override is bounded between 0.1 and 60 seconds.
+
+The MCP package does not invoke external model or automation providers directly.
+Provider, storage, and data-use controls for captured evidence remain owned by
+the configured local `bicameral-bot` daemon. Until team-mode/auth-shim work
+lands, confidential-data access is limited to the local OS-user boundary.
+
 ## Software supply chain
 
 Each release ships signed artifacts on the [Releases page](https://github.com/BicameralAI/bicameral-mcp/releases):
