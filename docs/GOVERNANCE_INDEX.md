@@ -20,11 +20,13 @@ MUST be current at every cycle close. Drift signal: wrong version / wrong state 
 | Backlog | `docs/BACKLOG.md` | open items current |
 | Changelog | `CHANGELOG.md` | latest release stamped |
 | README | `README.md` | badges current |
+| Feature Index | `docs/FEATURE_INDEX.md` | every feature → a real test; no stale/renamed rows |
 
-> **Deferred**: `docs/FEATURE_INDEX.md` (Phase-73 artifact) is not yet adopted in
-> this repo. Tracked as governance-onboarding debt; see GitHub issue for the
-> FEATURE_INDEX adoption decision. Add its Tier 1 row in the same commit that
-> creates the file.
+> **Adopted 2026-06-06**: `docs/FEATURE_INDEX.md` (Phase-73 artifact) is now live
+> (30 entries, every row grounded to a confirmed test). This closes the
+> FEATURE_INDEX governance-onboarding debt (issue #538). A stale row — a renamed
+> handler, deleted test, or new tool with no row — is a Tier 1 drift bug; update
+> the index in the same commit as any tool/handler change.
 
 ## Tier 2 — Doctrine & Policy
 
