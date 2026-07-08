@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "2047f6291565a6969a2b2b1977670fa2a3f8dca2",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-contract.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none"
+  },
+  "end_of_session_capture": {
+    "run": true
+  },
+  "state_refinement": {
+    "lifecycle_behavior_changed": false,
+    "note": "MCP introduces only a transient confirmation prompt / WorkspaceBindingProposal flow. The daemon owns validation, materialization, and the durable LocalWorkspaceBinding lifecycle; MCP persists no state and adds no new durable lifecycle state.",
+    "smallest_honest_release_state": "n/a — no durable state added by this client change",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "MCP never binds silently: no workspace.bind request is dispatched without confirmed=true.",
+      "The cwd/workspace root is candidate path evidence only, never project identity.",
+      "MCP does not persist LocalWorkspaceBinding; it only proposes with source_surface=mcp."
+    ],
+    "minimization_review": "Canonical state, authority, and persistence semantics did not change; the client remains a transport surface that proposes and renders daemon verdicts verbatim."
+  },
+  "attested_by": "Devin",
+  "timestamp": "2026-07-08T15:20:00Z"
+}

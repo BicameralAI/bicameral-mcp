@@ -1,0 +1,15 @@
+{
+  "request_id": "req-workspace-bind-001",
+  "status": "ok",
+  "result": {
+    "project_id": "proj_ada",
+    "state": "local_workspace_bound",
+    "display": {
+      "display_name": "Ada Service",
+      "project_slug": "ada-service",
+      "candidate_label": "ada-service"
+    },
+    "message": "Workspace binding materialized."
+  },
+  "responded_at": "2026-07-08T00:00:00Z"
+}

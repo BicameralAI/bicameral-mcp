@@ -309,6 +309,79 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.workspace.bind",
+        description=(
+            "Propose binding the current local folder to an already-registered "
+            "project for local code grounding. MCP never binds silently: without "
+            "confirmed=true it returns a confirmation prompt; on confirmed=true it "
+            "dispatches the daemon-owned workspace.bind request. The current folder "
+            "is candidate path evidence only, never project identity, and the daemon "
+            "owns validation and materialization."
+        ),
+        inputSchema=_schema(
+            {
+                "project_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque id of the already-registered project to bind. "
+                        "Never a filesystem path."
+                    ),
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": (
+                        "Explicit operator confirmation. When absent/false, MCP "
+                        "returns a confirmation prompt and does not bind."
+                    ),
+                },
+                "display_name": {
+                    "type": "string",
+                    "description": "Human-readable project name for the prompt.",
+                },
+                "project_slug": {
+                    "type": "string",
+                    "description": "Optional short project slug/label.",
+                },
+                "candidate_path": {
+                    "type": "string",
+                    "description": (
+                        "Optional explicit candidate folder. Defaults to the "
+                        "detected workspace/repo root."
+                    ),
+                },
+                "candidate_label": {
+                    "type": "string",
+                    "description": "Optional non-path folder label (basename).",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why this folder is proposed as the candidate.",
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": "Surface confidence in [0.0, 1.0].",
+                },
+                "required_daemon_capability": {
+                    "type": "integer",
+                    "description": (
+                        "Minimum daemon workspace-binding capability version required; "
+                        "an older daemon fails closed with a capability mismatch."
+                    ),
+                },
+                "expected_current_state": {
+                    "type": "string",
+                    "enum": [
+                        "local_workspace_unbound",
+                        "local_workspace_bound",
+                        "local_workspace_repair_required",
+                    ],
+                    "description": "Optional advisory optimistic-concurrency hint.",
+                },
+            },
+            ["project_id"],
+        ),
+    ),
+    Tool(
         name="bicameral.binding.inspect",
         description="Inspect existing binding evidence through the bot daemon.",
         inputSchema=_schema(

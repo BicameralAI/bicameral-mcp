@@ -63,6 +63,12 @@ from sync_payload_filter import filter_pending_checks
 from tool_request import LOCAL_ONLY_TOOLS, MCP_TOOL_COMMANDS, build_tool_request
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
+from workspace_binding import (
+    build_binding_proposal,
+    build_workspace_bind_command_args,
+    format_confirmation_prompt,
+    format_workspace_bind_response,
+)
 
 server = Server(SERVER_NAME)
 
@@ -149,6 +155,10 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         return _handle_approve(arguments)
     if name == "bicameral.privacy.erase_subject.approve":
         return _handle_erasure_approve(arguments)
+
+    # --- Workspace bind: explicit confirmation first, never bind silently ---
+    if name == "bicameral.workspace.bind":
+        return await _handle_workspace_bind(arguments)
 
     if name not in MCP_TOOL_COMMANDS:
         return [error_text("unsupported_tool", f"Unsupported Bicameral MCP tool: {name}")]
@@ -371,6 +381,44 @@ def _capture_binding_hints(code_hints: list[dict[str, Any]]) -> list[dict[str, A
             {key: value for key, value in binding_hint.items() if value not in (None, [], {})}
         )
     return binding_hints
+
+
+async def _handle_workspace_bind(arguments: dict[str, Any]) -> list[types.TextContent]:
+    """MCP-assisted workspace bind flow (mcp#702).
+
+    Detects a candidate workspace root, requires explicit confirmation, and on
+    confirmation dispatches the daemon-owned ``workspace.bind`` ToolRequest. MCP
+    never persists a binding and never binds without confirmation.
+    """
+    try:
+        proposal = build_binding_proposal(arguments)
+    except ValueError as exc:
+        return [error_text("workspace_bind_invalid", str(exc))]
+
+    if not bool(arguments.get("confirmed", False)):
+        return [format_confirmation_prompt(proposal)]
+
+    command_name = MCP_TOOL_COMMANDS["bicameral.workspace.bind"]
+    try:
+        client = _client()
+        capability_report = await _ensure_protocol_compatible(client)
+        _ensure_command_advertised(command_name, capability_report)
+
+        tool_request = build_tool_request(
+            command_name=command_name,
+            params=build_workspace_bind_command_args(arguments),
+            authority=build_authority_context("bicameral.workspace.bind", arguments),
+        )
+        response = await client.send_tool_request(tool_request)
+        return [format_workspace_bind_response(response)]
+    except DaemonClientError as exc:
+        return [
+            recovery_error_text(
+                exc,
+                requested_tool="bicameral.workspace.bind",
+                requested_command=command_name,
+            )
+        ]
 
 
 def _handle_approve(arguments: dict[str, Any]) -> list[types.TextContent]:

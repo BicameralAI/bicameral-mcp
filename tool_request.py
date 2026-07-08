@@ -20,6 +20,7 @@ MCP_TOOL_COMMANDS: dict[str, str] = {
     "bicameral.lookup": "lookup.query",
     "bicameral.request_correction": "correction.request",
     "bicameral.bind": "binding.create",
+    "bicameral.workspace.bind": "workspace.bind",
     "bicameral.binding.inspect": "binding.inspect",
     "bicameral.evidence.refresh": "evidence.refresh",
     "bicameral.review.candidates": "search.query",
@@ -95,6 +96,14 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
         if branch:
             cleaned.setdefault("ref_name", branch)
         return _only(cleaned, "decision_or_candidate_id", "bindings", "commit_sha", "ref_name")
+    if command_name == "workspace.bind":
+        return _only(
+            cleaned,
+            "proposal",
+            "confirmed",
+            "required_daemon_capability",
+            "expected_current_state",
+        )
     if command_name == "binding.inspect":
         return _only(cleaned, "decision_or_candidate_id", "commit_sha")
     if command_name == "evidence.refresh":
