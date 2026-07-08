@@ -1,17 +1,17 @@
-mcp[cli]>=1.6.0
+mcp[cli]>=1.28.1
 hatchling
 pytest>=9.1.1
 pytest-asyncio>=1.4.0
-tiktoken>=0.7.0,<1.0.0
+tiktoken>=0.13.0,<1.0.0
 ruff>=0.15.20
 mypy>=2.1.0
 build>=1.5.0
 colorama
 pywin32>=310; sys_platform == "win32"
 pre-commit>=4.6.0
-coverage[toml]>=7.14.3
+coverage[toml]>=7.15.0
 cyclonedx-bom>=7.3.0
-pip-audit>=2.7.0
+pip-audit>=2.10.1
 
 # Security floors for transitive dependencies (pip-audit advisories)
 cryptography>=49.0.0  # GHSA-537c-gmf6-5ccf
