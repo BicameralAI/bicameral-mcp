@@ -62,7 +62,6 @@ only-include = [
   "tool_request.py",
   "tool_schemas.py",
   "version.py",
-  "workspace_binding.py",
 ]
 
 [tool.hatch.build.targets.sdist]
@@ -85,7 +84,6 @@ only-include = [
   "tool_request.py",
   "tool_schemas.py",
   "version.py",
-  "workspace_binding.py",
   "docs/specs/bicameral-mcp-idealized-spec.md",
   "docs/plans/toolrequest-refactor-plan.md",
   "tests/test_toolrequest_thin_client.py",

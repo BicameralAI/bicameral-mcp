@@ -57,6 +57,7 @@ from responses import (
     format_review_queue_response,
     format_source_link_response,
     format_tool_response,
+    format_workspace_bind_remote_conflict,
     format_workspace_bind_response,
     recovery_error_text,
 )
@@ -66,15 +67,10 @@ from tool_request import (
     MCP_TOOL_COMMANDS,
     WORKSPACE_BIND_COMMAND,
     build_tool_request,
+    evaluate_remote_evidence,
 )
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
-from workspace_binding import (
-    build_binding_proposal,
-    build_workspace_bind_command_args,
-    format_confirmation_prompt,
-    format_workspace_bind_response,
-)
 
 server = Server(SERVER_NAME)
 
@@ -179,10 +175,6 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
     if name == "bicameral.privacy.erase_subject.approve":
         return _handle_erasure_approve(arguments)
 
-    # --- Workspace bind: explicit confirmation first, never bind silently ---
-    if name == "bicameral.workspace.bind":
-        return await _handle_workspace_bind(arguments)
-
     if name not in MCP_TOOL_COMMANDS:
         return [error_text("unsupported_tool", f"Unsupported Bicameral MCP tool: {name}")]
 
@@ -197,6 +189,14 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         gate_result = _enforce_erasure_gate(arguments)
         if gate_result is not None:
             return gate_result
+
+    # --- Git-remote evidence guard (mcp#702): fail closed before dispatch when
+    # the candidate folder's git remote clearly contradicts the selected
+    # project. The remote is evidence only; project_id remains the authority key.
+    if name == "bicameral.workspace.bind":
+        conflict = _workspace_bind_remote_conflict(arguments)
+        if conflict is not None:
+            return [conflict]
 
     command_name = MCP_TOOL_COMMANDS[name]
     try:
@@ -282,6 +282,43 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
                 requested_command=command_name,
             )
         ]
+
+
+def _workspace_bind_remote_conflict(
+    arguments: dict[str, Any],
+) -> types.TextContent | None:
+    """Fail closed when the candidate git remote contradicts the project (mcp#702).
+
+    Returns a rendered fail-closed response (and dispatches nothing) when the
+    candidate folder's git remote clearly contradicts a supplied registered
+    project source ref; otherwise ``None`` so the normal proposal flow proceeds.
+    The remote is evidence only — ``project_id`` remains the authority key and
+    the daemon still owns validation and materialization.
+    """
+    source_refs: list[str] = []
+    raw_list = arguments.get("project_source_refs")
+    if isinstance(raw_list, str):
+        source_refs.append(raw_list)
+    elif isinstance(raw_list, (list, tuple)):
+        source_refs.extend(str(item) for item in raw_list if isinstance(item, str))
+    single = arguments.get("project_source_ref")
+    if isinstance(single, str):
+        source_refs.append(single)
+    if not source_refs:
+        return None
+
+    evidence = evaluate_remote_evidence(
+        candidate_path=arguments.get("candidate_path"),
+        project_source_refs=source_refs,
+    )
+    if evidence.verdict != "contradiction":
+        return None
+    return format_workspace_bind_remote_conflict(
+        project_id=arguments.get("project_id"),
+        candidate_repo_ref=evidence.candidate_repo_ref,
+        project_source_refs=evidence.project_source_refs,
+        reason=evidence.reason,
+    )
 
 
 def _command_arguments_for_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -406,44 +443,6 @@ def _capture_binding_hints(code_hints: list[dict[str, Any]]) -> list[dict[str, A
             {key: value for key, value in binding_hint.items() if value not in (None, [], {})}
         )
     return binding_hints
-
-
-async def _handle_workspace_bind(arguments: dict[str, Any]) -> list[types.TextContent]:
-    """MCP-assisted workspace bind flow (mcp#702).
-
-    Detects a candidate workspace root, requires explicit confirmation, and on
-    confirmation dispatches the daemon-owned ``workspace.bind`` ToolRequest. MCP
-    never persists a binding and never binds without confirmation.
-    """
-    try:
-        proposal = build_binding_proposal(arguments)
-    except ValueError as exc:
-        return [error_text("workspace_bind_invalid", str(exc))]
-
-    if not bool(arguments.get("confirmed", False)):
-        return [format_confirmation_prompt(proposal)]
-
-    command_name = MCP_TOOL_COMMANDS["bicameral.workspace.bind"]
-    try:
-        client = _client()
-        capability_report = await _ensure_protocol_compatible(client)
-        _ensure_command_advertised(command_name, capability_report)
-
-        tool_request = build_tool_request(
-            command_name=command_name,
-            params=build_workspace_bind_command_args(arguments),
-            authority=build_authority_context("bicameral.workspace.bind", arguments),
-        )
-        response = await client.send_tool_request(tool_request)
-        return [format_workspace_bind_response(response)]
-    except DaemonClientError as exc:
-        return [
-            recovery_error_text(
-                exc,
-                requested_tool="bicameral.workspace.bind",
-                requested_command=command_name,
-            )
-        ]
 
 
 def _handle_approve(arguments: dict[str, Any]) -> list[types.TextContent]:
