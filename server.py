@@ -57,10 +57,16 @@ from responses import (
     format_review_queue_response,
     format_source_link_response,
     format_tool_response,
+    format_workspace_bind_response,
     recovery_error_text,
 )
 from sync_payload_filter import filter_pending_checks
-from tool_request import LOCAL_ONLY_TOOLS, MCP_TOOL_COMMANDS, build_tool_request
+from tool_request import (
+    LOCAL_ONLY_TOOLS,
+    MCP_TOOL_COMMANDS,
+    WORKSPACE_BIND_COMMAND,
+    build_tool_request,
+)
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
 
@@ -99,6 +105,7 @@ async def _ensure_protocol_compatible(client: DaemonClient) -> CapabilityReport:
         supported_commands=supported_commands,
         deferred_commands=deferred_commands,
         daemon_endpoint=endpoint.url,
+        workspace_binding_available=bool(capabilities.get("workspace_binding_available", False)),
     )
 
 
@@ -112,10 +119,24 @@ def _ensure_command_advertised(command_name: str, capability_report: CapabilityR
         raise DaemonCapabilityError(
             f"daemon does not advertise ToolRequest command: {command_name}"
         )
+    # workspace.bind is always protocol-listed, but the daemon only routes it
+    # when it holds an operator-local workspace-binding store. Fail closed on
+    # capability discovery rather than dispatching a request the daemon would
+    # reject with unsupported_capability (bicameral-bot#747).
+    if command_name == WORKSPACE_BIND_COMMAND and not capability_report.workspace_binding_available:
+        raise DaemonCapabilityError(
+            "daemon does not advertise workspace-binding capability "
+            "(workspace_binding_available is false); workspace binding is unavailable"
+        )
 
 
 def _filter_tools_by_capability(capability_report: CapabilityReport) -> list[types.Tool]:
-    """Exclude tools whose daemon command is deferred or absent."""
+    """Exclude tools whose daemon command is deferred or absent.
+
+    ``workspace.bind`` is additionally gated on the daemon's truthful
+    ``workspace_binding_available`` capability discovery flag: the bind action
+    is only user-visible when the daemon can actually execute it.
+    """
     deferred = frozenset(capability_report.deferred_commands)
     supported = frozenset(capability_report.supported_commands)
     result: list[types.Tool] = []
@@ -129,6 +150,8 @@ def _filter_tools_by_capability(capability_report: CapabilityReport) -> list[typ
         if command in deferred:
             continue
         if command not in supported:
+            continue
+        if command == WORKSPACE_BIND_COMMAND and not capability_report.workspace_binding_available:
             continue
         result.append(tool)
     return result
@@ -195,6 +218,8 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         response = await client.send_tool_request(tool_request)
         caller_file_paths = arguments.get("files")
         filter_pending_checks(response, caller_file_paths)
+        if name == "bicameral.workspace.bind":
+            return [format_workspace_bind_response(response)]
         if name == "bicameral.brief":
             return [format_brief_narrative(response)]
         if name == "bicameral.preflight":

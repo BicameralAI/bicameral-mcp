@@ -1,0 +1,18 @@
+{
+  "request_id": "req-workspace-bind-conformance-0001",
+  "status": "ok",
+  "result": {
+    "status": "bound",
+    "outcome": {
+      "project_id": "proj-conformance",
+      "state": "local_workspace_bound",
+      "display": {
+        "display_name": "Conformance Project",
+        "project_slug": "conf-proj",
+        "candidate_label": "proj-conformance"
+      },
+      "message": "Workspace bound to project by the local daemon."
+    }
+  },
+  "responded_at": "2026-07-09T00:00:00Z"
+}

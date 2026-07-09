@@ -309,6 +309,96 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         ),
     ),
     Tool(
+        name="bicameral.workspace.bind",
+        description=(
+            "Propose binding a registered Bicameral project to a local code "
+            "folder. MCP only proposes: it forwards a workspace.bind request to "
+            "the local daemon, which is the sole authority that validates and "
+            "materializes the binding (ADR-0005). This action is only offered "
+            "when the daemon advertises workspace-binding capability; it fails "
+            "closed with actionable messaging when the daemon is unavailable, "
+            "does not support binding, rejects the candidate path, or reports "
+            "repair-required. The local candidate_path stays local — it is never "
+            "sent to Cloud or persisted by MCP."
+        ),
+        inputSchema=_schema(
+            {
+                "project_id": {
+                    "type": "string",
+                    "description": (
+                        "Opaque identifier of the already-registered project to "
+                        "bind. Never a filesystem path."
+                    ),
+                },
+                "candidate_path": {
+                    "type": "string",
+                    "description": (
+                        "Absolute local folder path to bind. LOCAL-ONLY: sent only "
+                        "to the local daemon, never to Cloud or a hosted-safe view."
+                    ),
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": (
+                        "Explicit operator confirmation that binding may proceed. "
+                        "The daemon returns confirmation_missing when this is false "
+                        "or omitted."
+                    ),
+                },
+                "display_name": {
+                    "type": "string",
+                    "description": (
+                        "Human-readable project display name. Safe for hosted-bridge "
+                        "exposure; defaults to project_id when omitted."
+                    ),
+                },
+                "project_slug": {
+                    "type": "string",
+                    "description": "Optional safe, opaque project slug/label.",
+                },
+                "candidate_label": {
+                    "type": "string",
+                    "description": (
+                        "Optional non-path folder label (e.g. a basename) to help a "
+                        "human recognize the candidate. Must not be an absolute path; "
+                        "defaults to the candidate_path basename."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Human-readable reason the operator is proposing this candidate.",
+                },
+                "confidence": {
+                    "type": "number",
+                    "description": (
+                        "Surface confidence the candidate is correct, in [0.0, 1.0]. "
+                        "Defaults to 1.0 for an explicit operator selection."
+                    ),
+                },
+                "required_daemon_capability": {
+                    "type": "integer",
+                    "description": (
+                        "Optional minimum daemon workspace-binding capability version. "
+                        "The daemon fails with daemon_capability_mismatch below this."
+                    ),
+                },
+                "expected_current_state": {
+                    "type": "string",
+                    "enum": [
+                        "local_workspace_unbound",
+                        "local_workspace_bound",
+                        "local_workspace_repair_required",
+                    ],
+                    "description": (
+                        "Optional advisory optimistic-concurrency hint for the durable "
+                        "state the caller believes holds. The daemon remains authoritative."
+                    ),
+                },
+            },
+            ["project_id", "candidate_path"],
+        ),
+    ),
+    Tool(
         name="bicameral.binding.inspect",
         description="Inspect existing binding evidence through the bot daemon.",
         inputSchema=_schema(

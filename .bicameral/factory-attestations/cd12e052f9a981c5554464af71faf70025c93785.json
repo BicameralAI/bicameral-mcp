@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "cd12e052f9a981c5554464af71faf70025c93785",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-attestation.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "agent-declared",
+      "reason": "Baseline factory guidance for the run.",
+      "sha256": "d921a24967af17ea7ff4c3c272919b755b066d733835ce374e09eee03c601be9"
+    },
+    "CONTRIBUTING.md": {
+      "source": "agent-declared",
+      "reason": "PAMA contribution and demotion-loop rules.",
+      "sha256": "74ba309e04827c494627514610a7f68842476e166134e310ff2249f3e63962e3"
+    },
+    "playbooks/devin-bicameral-factory-run.md": {
+      "source": "agent-declared",
+      "reason": "Mandatory factory-run process: startup checklist, verification, PR requirements.",
+      "sha256": "d64e1d312ae71d62e38b14ac10189c732e3d5c54209991089fa0f7fa043d23b0"
+    },
+    "blueprints/factory-attestation.md": {
+      "source": "agent-declared",
+      "reason": "Attestation gate setup and failure modes.",
+      "sha256": "85131d355a0f4d2648d73325c4d81013c9119f68fec1cbbb3c50cc23ef4e0c6f"
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "agent-declared",
+      "reason": "Product PR artifact-boundary evidence contract.",
+      "sha256": "d9ee7c1714bd20e576a2fa28e1bcba958e5dfa6a46dc82314504b18943d91f46"
+    },
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {
+      "source": "agent-declared",
+      "reason": "Domain entity candidate reporting contract.",
+      "sha256": "c88e89e66dbce89bf81af41fd976888664cbde26dbe39ace2d12605464c6755c"
+    },
+    "blueprints/factory-run-signals/factory-learning-signals.md": {
+      "source": "agent-declared",
+      "reason": "Factory learning signal reporting contract.",
+      "sha256": "63b7d5bd11f005a062d52163606c54562cbcc2e5619935fde8f1b9cc39457e21"
+    },
+    "blueprints/factory-run-signals/minimum-product-validation.md": {
+      "source": "agent-declared",
+      "reason": "Minimum product validation evidence contract.",
+      "sha256": "f0efac9c9a6007864b78393c4b8d21555d7aa5e008879e38137dc6569a99197f"
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "notes": "No local-only prompts, aliases, MCP servers, editor rules, scripts, or environment assumptions affected this PR. The Python 3.12 venv and updated Rust toolchain used for integration validation are session-local and not committed."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "MCP can propose binding a registered project to a local folder once the daemon advertises workspace-binding capability, and surfaces the daemon's bound / unbound / repair-required outcome. MCP owns no new durable state: it discovers capability, forwards a transient WorkspaceBindingProposal, and renders the daemon's authoritative result.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "The local daemon is the sole authority that validates and materializes a workspace binding (ADR-0005); MCP only proposes and renders.",
+      "The bind action is user-visible and routable only when daemon capability discovery reports workspace_binding_available = true; otherwise it fails closed.",
+      "A typed rejection or daemon error never materializes a binding and is never reinterpreted as success.",
+      "The local candidate_path crosses only to the local daemon inside the ToolRequest; it is never placed in the hosted-safe authority envelope, sent to Cloud, or persisted by MCP.",
+      "The durable LocalWorkspaceUnbound / LocalWorkspaceBound / LocalWorkspaceRepairRequired states are daemon-owned; MCP recognizes them only for rendering and an optional optimistic-concurrency hint."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "No MCP-side binding state machine was introduced; MCP holds no LocalWorkspaceBinding record and no persistence.",
+        "Typed daemon error kinds are surfaced as rendered data, not modeled as new MCP lifecycle states."
+      ],
+      "rationale": "This is the smallest honest surface: MCP adds a capability-gated proposal-and-render path with no new canonical state, authority, or persistence. All lifecycle authority remains with the daemon."
+    },
+    "notes": "Lifecycle behavior at the MCP surface changed only in that a new daemon-gated proposal action is exposed; canonical state, authority, and persistence semantics are unchanged and remain daemon-owned."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": null,
+    "notes": "No reusable factory artifact was discovered that warranted a bicameral-factory PR this session. Domain entity candidates and factory learning signals are reported in the product PR body as evidence."
+  },
+  "attested_by": "Devin",
+  "timestamp": "2026-07-09T12:00:00Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "dev",
+  "agent": "Devin"
+}

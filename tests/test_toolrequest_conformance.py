@@ -256,6 +256,29 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
         expected_params={"decision_or_candidate_id", "bindings", "commit_sha", "ref_name"},
         required={"decision_or_candidate_id", "bindings"},
     ),
+    "bicameral.workspace.bind": _CommandSpec(
+        command="workspace.bind",
+        args={
+            "project_id": "proj-conformance",
+            "candidate_path": "/home/operator/code/proj-conformance",
+            "confirmed": True,
+            "display_name": "Conformance Project",
+            "project_slug": "conf-proj",
+            "candidate_label": "proj-conformance",
+            "reason": "operator selected this folder",
+            "confidence": 0.9,
+            "required_daemon_capability": 1,
+            "expected_current_state": "local_workspace_unbound",
+            **_CONTROL_AND_NOISE,
+        },
+        expected_params={
+            "proposal",
+            "confirmed",
+            "required_daemon_capability",
+            "expected_current_state",
+        },
+        required={"proposal", "confirmed"},
+    ),
     "bicameral.binding.inspect": _CommandSpec(
         command="binding.inspect",
         args={"decision_or_candidate_id": "DEC-1", **_CONTROL_AND_NOISE},
@@ -537,6 +560,7 @@ class _RecordingDaemon:
         return {
             "toolrequest_protocol_version": self.protocol_version,
             "supported_commands": list(MCP_TOOL_COMMANDS.values()),
+            "workspace_binding_available": True,
         }
 
     async def send_tool_request(self, tool_request: dict) -> dict:
@@ -935,6 +959,15 @@ def test_contract_fixture_renders_through_renderer(command):
         rendered = json.loads(content.text)
         assert isinstance(rendered, dict)
         assert "scope_note" in rendered
+        return
+    elif command == "workspace.bind":
+        from responses import format_workspace_bind_response
+
+        content = format_workspace_bind_response(payload)
+        rendered = json.loads(content.text)
+        assert isinstance(rendered, dict)
+        assert rendered["bound"] is True
+        assert "authority_note" in rendered
         return
     else:
         renderer = format_tool_response
