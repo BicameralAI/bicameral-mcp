@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "2047f6291565a6969a2b2b1977670fa2a3f8dca2",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-contract.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none"
+  },
+  "end_of_session_capture": {
+    "run": true
+  },
+  "state_refinement": {
+    "lifecycle_behavior_changed": false,
+    "note": "On top of the merged workspace.bind user path (mcp#706/#707), this change adds git-remote-as-evidence: MCP normalizes the candidate folder's git remote to a stable org/repo ref and uses it only to shape proposal confidence/reason, plus a client-side fail-closed guard that refuses to dispatch when the remote clearly contradicts a supplied registered project source ref. The daemon still owns validation, materialization, and the durable LocalWorkspaceBinding lifecycle; MCP persists no state and adds no new durable lifecycle state.",
+    "smallest_honest_release_state": "n/a — no durable state added by this client change",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "The git remote is evidence only, never project identity; project_id remains the authority key.",
+      "A clear remote/project contradiction fails closed at the MCP surface: no workspace.bind request is dispatched and nothing is materialized.",
+      "MCP does not persist LocalWorkspaceBinding or BindingEvidence; it only proposes with source_surface=mcp and renders the daemon verdict verbatim."
+    ],
+    "minimization_review": "Canonical state, authority, and persistence semantics did not change; the client remains a transport surface that proposes and renders daemon verdicts verbatim. Git-remote evidence only modulates advisory confidence and adds a pre-dispatch fail-closed guard."
+  },
+  "attested_by": "Devin",
+  "timestamp": "2026-07-08T15:20:00Z"
+}
