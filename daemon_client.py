@@ -49,6 +49,7 @@ class CapabilityReport:
         "supported_commands",
         "deferred_commands",
         "daemon_endpoint",
+        "workspace_binding_available",
     )
 
     def __init__(
@@ -59,12 +60,20 @@ class CapabilityReport:
         supported_commands: tuple[str, ...],
         deferred_commands: tuple[str, ...] = (),
         daemon_endpoint: str,
+        workspace_binding_available: bool = False,
     ) -> None:
         self.daemon_protocol_version = daemon_protocol_version
         self.mcp_protocol_version = mcp_protocol_version
         self.supported_commands = supported_commands
         self.deferred_commands = deferred_commands
         self.daemon_endpoint = daemon_endpoint
+        # Truthful daemon-level workspace.bind capability discovery
+        # (bicameral-bot#747 `CapabilityReport.workspace_binding_available`).
+        # This is the daemon signal, never the always-false hosted-bridge
+        # projection field of the same name. `workspace.bind` is always listed
+        # in supported_commands as a protocol-recognized command, but the
+        # daemon can only route it when this flag is true.
+        self.workspace_binding_available = workspace_binding_available
 
 
 DAEMON_URL_ENV_VARS = ("BICAMERAL_DAEMON_URL", "BICAMERAL_BOT_DAEMON_URL")
