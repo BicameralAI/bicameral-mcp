@@ -1,15 +1,18 @@
 {
-  "request_id": "req-workspace-bind-001",
+  "request_id": "req-workspace-bind-conformance-0001",
   "status": "ok",
   "result": {
-    "project_id": "proj_ada",
-    "state": "local_workspace_bound",
-    "display": {
-      "display_name": "Ada Service",
-      "project_slug": "ada-service",
-      "candidate_label": "ada-service"
-    },
-    "message": "Workspace binding materialized."
+    "status": "bound",
+    "outcome": {
+      "project_id": "proj-conformance",
+      "state": "local_workspace_bound",
+      "display": {
+        "display_name": "Conformance Project",
+        "project_slug": "conf-proj",
+        "candidate_label": "proj-conformance"
+      },
+      "message": "Workspace bound to project by the local daemon."
+    }
   },
-  "responded_at": "2026-07-08T00:00:00Z"
+  "responded_at": "2026-07-09T00:00:00Z"
 }

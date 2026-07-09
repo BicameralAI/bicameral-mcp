@@ -632,6 +632,151 @@ def format_correction_response(response: dict[str, Any]) -> TextContent:
     return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
 
 
+# Actionable operator guidance per typed workspace.bind failure. MCP surfaces
+# the daemon's typed outcome without claiming binding authority: every failure
+# is fail-closed (no binding materialized) and never reinterpreted as success.
+WORKSPACE_BIND_ERROR_GUIDANCE: dict[str, str] = {
+    "unsafe_path": (
+        "The daemon rejected the candidate path as unsafe. Choose a folder that "
+        "passes the daemon's local safety policy, then retry."
+    ),
+    "unregistered_project": (
+        "The target project is not registered locally. Register the project with "
+        "the daemon before binding a workspace."
+    ),
+    "wrong_project": (
+        "The proposal targets a project other than the current session scope. "
+        "Re-issue the bind against the session's project."
+    ),
+    "already_bound": (
+        "The project already has a materialized workspace binding. No action is "
+        "needed unless you intend to rebind."
+    ),
+    "confirmation_missing": (
+        "Explicit operator confirmation is required. Re-issue the bind with "
+        "confirmed=true after verifying the folder."
+    ),
+    "daemon_capability_mismatch": (
+        "The daemon does not advertise the required workspace-binding capability. "
+        "Upgrade the bicameral-bot daemon, then retry."
+    ),
+    "repair_required": (
+        "The project binding is broken and must be repaired before binding. "
+        "Repair the local binding, then retry."
+    ),
+}
+
+
+def format_workspace_bind_response(response: dict[str, Any]) -> TextContent:
+    """Render a daemon `workspace.bind` outcome without adding MCP authority.
+
+    The local daemon is the sole binding authority (ADR-0005): MCP proposed the
+    binding and only reports what the daemon returned. Rendering rules:
+
+    - Success (``status: ok``, ``result.status: bound``) surfaces the
+      daemon-materialized project-safe fields and states plainly that the
+      daemon materialized it.
+    - A typed governance rejection (``status: rejected``) is rendered
+      fail-closed: no binding was materialized, the typed error kind and the
+      daemon-reported durable state are preserved, and actionable operator
+      guidance is attached. MCP never reinterprets a rejection as success.
+    - A daemon-level error (``status: error``) — e.g. ``daemon_unavailable`` or
+      ``unsupported_capability`` — is rendered fail-closed with the daemon
+      endpoint's typed error code.
+
+    The local ``candidate_path`` is never present in daemon responses and is
+    never echoed here; only project-safe display metadata is surfaced.
+    """
+    status = response.get("status", "ok")
+    request_id = response.get("request_id")
+    result = response.get("result")
+    result = result if isinstance(result, dict) else {}
+
+    authority_note = (
+        "The local daemon is the sole workspace-binding authority. MCP proposed "
+        "this binding and reports the daemon's outcome; it does not itself bind, "
+        "persist, or claim authority."
+    )
+
+    if status == "ok" and result.get("status") == "bound":
+        outcome = result.get("outcome")
+        outcome = outcome if isinstance(outcome, dict) else {}
+        output: dict[str, Any] = {
+            "status": "bound",
+            "request_id": request_id,
+            "bound": True,
+            "project_id": outcome.get("project_id"),
+            "workspace_binding_state": outcome.get("state"),
+            "display": outcome.get("display"),
+            "message": outcome.get("message"),
+            "authority_note": authority_note,
+        }
+        return TextContent(
+            type="text",
+            text=json.dumps(
+                {key: value for key, value in output.items() if value is not None},
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+
+    if status == "rejected":
+        error_kind = result.get("error") or "rejected"
+        output = {
+            "status": "rejected",
+            "request_id": request_id,
+            "bound": False,
+            "error_kind": error_kind,
+            "project_id": result.get("project_id"),
+            "message": result.get("message") or response.get("message"),
+            "workspace_binding_state": result.get("state"),
+            "retry_after_repair": result.get("retry_after_repair"),
+            "operator_action": WORKSPACE_BIND_ERROR_GUIDANCE.get(
+                error_kind,
+                "The daemon rejected the binding proposal. Review the message and retry if applicable.",
+            ),
+            "fail_closed_note": (
+                "Fail-closed: no workspace binding was materialized. The daemon "
+                "reported the durable state above; it was not mutated by this attempt."
+            ),
+            "authority_note": authority_note,
+        }
+        return TextContent(
+            type="text",
+            text=json.dumps(
+                {key: value for key, value in output.items() if value is not None},
+                indent=2,
+                sort_keys=True,
+            ),
+        )
+
+    # status == "error" (or any unexpected shape): fail closed.
+    message = response.get("message") or "daemon returned an error for workspace.bind"
+    error_code = (
+        str(message).split(":", 1)[0].strip() if isinstance(message, str) else "daemon_error"
+    )
+    output = {
+        "status": "error",
+        "request_id": request_id,
+        "bound": False,
+        "error_code": error_code,
+        "message": message,
+        "fail_closed_note": (
+            "Fail-closed: no workspace binding was materialized. Resolve the daemon "
+            "condition above, then retry."
+        ),
+        "authority_note": authority_note,
+    }
+    return TextContent(
+        type="text",
+        text=json.dumps(
+            {key: value for key, value in output.items() if value is not None},
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+
+
 def error_text(code: str, message: str) -> TextContent:
     payload = {
         "status": "error",

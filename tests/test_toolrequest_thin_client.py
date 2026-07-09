@@ -52,6 +52,7 @@ class _FakeClient:
         return {
             "toolrequest_protocol_version": self.protocol_version,
             "supported_commands": list(MCP_TOOL_COMMANDS.values()),
+            "workspace_binding_available": True,
         }
 
     async def send_tool_request(self, tool_request: dict) -> dict:
