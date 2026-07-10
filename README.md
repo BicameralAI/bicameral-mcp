@@ -1,12 +1,48 @@
+<!-- markdownlint-disable MD033 MD041 -->
+<div align="center">
+
 # Bicameral MCP
 
-`bicameral-mcp` is the MCP transport client for the local `bicameral-bot`
-daemon. It exposes agent-friendly tools, maps them into canonical
-`ToolRequest` envelopes, sends those requests to the daemon, and returns daemon
-`ToolResponse` payloads.
+### The agent-facing MCP tool surface for the local Bicameral daemon
 
-MCP is not the Bicameral daemon, Decision Ledger, code graph, dashboard,
-integration runtime, setup wizard, telemetry sink, or governance engine.
+<p align="center">
+  <strong>
+    ⚡ <a href="#configuration">Quick Start</a> ·
+    🧰 <a href="#supported-tools">Tools</a> ·
+    🔌 <a href="#current-contract">Contract</a> ·
+    🏛️ <a href="#governed-by-the-bicameral-factory">Governance</a> ·
+    🛡️ <a href="#trust--compliance">Trust</a>
+  </strong>
+</p>
+
+[![Governance: bicameral-factory](https://img.shields.io/badge/Governance-bicameral--factory-1f6feb)](https://github.com/BicameralAI/bicameral-factory)
+[![SOC 2 Type II: in progress](https://img.shields.io/badge/SOC_2_Type_II-in_progress-f5a623)](#trust--compliance)
+[![Visibility: public](https://img.shields.io/badge/Visibility-public-2ea44f)](#)
+[![Protocol: ToolRequest v2](https://img.shields.io/badge/Protocol-ToolRequest_v2-8957e5)](#current-contract)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)](#development)
+
+</div>
+
+`bicameral-mcp` is the MCP transport client for the local `bicameral-bot` daemon. It exposes agent-friendly tools, maps them into canonical `ToolRequest` envelopes, sends those requests to the daemon, and returns daemon `ToolResponse` payloads.
+
+MCP is not the Bicameral daemon, Decision Ledger, code graph, dashboard, integration runtime, setup wizard, telemetry sink, or governance engine. Edge surfaces propose; the daemon decides what becomes canonical.
+
+## Table of Contents
+
+- [Current Contract](#current-contract)
+- [Configuration](#configuration)
+- [Supported Tools](#supported-tools)
+- [Product Terminology](#product-terminology)
+- [Troubleshooting: Daemon Handshake Failures](#troubleshooting-daemon-handshake-failures)
+- [Prompts And Skills](#prompts-and-skills)
+- [Retired From MCP](#retired-from-mcp)
+- [Development](#development)
+- [Repository boundary](#repository-boundary)
+- [Governed by the Bicameral Factory](#governed-by-the-bicameral-factory)
+- [Trust & Compliance](#trust--compliance)
+- [Security](#security)
+
+---
 
 ## Current Contract
 
