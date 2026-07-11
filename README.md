@@ -242,7 +242,7 @@ BicameralAI is pursuing SOC 2 Type II and ISO 27001. Framework-level status and 
 
 ## Security
 
-Please report security issues to **security@bicameral.ai**. Do not open a public issue for a suspected vulnerability. See [`SECURITY.md`](SECURITY.md) for the full policy, coordinated-disclosure timeline, and safe-harbor terms.
+Please report security issues to **security@bicameral-ai.com**. Do not open a public issue for a suspected vulnerability. See [`SECURITY.md`](SECURITY.md) for the full policy, coordinated-disclosure timeline, and safe-harbor terms.
 
 ## License
 
