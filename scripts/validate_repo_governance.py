@@ -78,7 +78,9 @@ MAIN_KEYS = {
 
 
 def strings(value: Any) -> bool:
-    return isinstance(value, list) and all(isinstance(item, str) and item for item in value)
+    return isinstance(value, list) and all(
+        isinstance(item, str) and item for item in value
+    )
 
 
 def unique(value: list[str]) -> bool:
@@ -100,7 +102,11 @@ def validate(data: Any) -> list[str]:
     if data.get("schema_version") != 1:
         errors.append("schema_version must be 1")
     repo = data.get("repo")
-    if repo != "BicameralAI/bicameral-mcp" or not isinstance(repo, str) or not REPO_RE.fullmatch(repo):
+    if (
+        repo != "BicameralAI/bicameral-mcp"
+        or not isinstance(repo, str)
+        or not REPO_RE.fullmatch(repo)
+    ):
         errors.append("repo must be BicameralAI/bicameral-mcp")
     if data.get("classification") not in CLASSIFICATIONS:
         errors.append("classification is invalid")
@@ -129,14 +135,18 @@ def validate(data: Any) -> list[str]:
     else:
         main = protection.get("main")
         if not isinstance(main, dict) or set(main) != MAIN_KEYS:
-            errors.append("branch_protection.main fields do not match the Factory schema")
+            errors.append(
+                "branch_protection.main fields do not match the Factory schema"
+            )
         else:
             for key in ("require_pr", "require_status_checks", "restrict_force_push"):
                 if not isinstance(main.get(key), bool):
                     errors.append(f"branch_protection.main.{key} must be boolean")
             approvals = main.get("required_approvals")
             if not isinstance(approvals, int) or approvals < 0:
-                errors.append("branch_protection.main.required_approvals must be non-negative")
+                errors.append(
+                    "branch_protection.main.required_approvals must be non-negative"
+                )
 
     sources = data.get("shadow_genome_sources")
     if sources is not None:
@@ -157,7 +167,9 @@ def validate(data: Any) -> list[str]:
             for key in ("allowed", "prohibited"):
                 value = exposure.get(key, [])
                 if not strings(value):
-                    errors.append(f"public_exposure.{key} must be an array of non-empty strings")
+                    errors.append(
+                        f"public_exposure.{key} must be an array of non-empty strings"
+                    )
 
     # This initial descriptor must remain honest until Factory #171/#213 applies
     # and verifies the organization rulesets. A later evidence-backed PR may turn
@@ -180,14 +192,21 @@ def validate(data: Any) -> list[str]:
 
 
 def main() -> int:
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".bicameral/repo-governance.yaml")
+    path = (
+        Path(sys.argv[1])
+        if len(sys.argv) > 1
+        else Path(".bicameral/repo-governance.yaml")
+    )
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         print(f"ERROR: descriptor not found: {path}", file=sys.stderr)
         return 2
     except json.JSONDecodeError as exc:
-        print(f"ERROR: descriptor must remain JSON-compatible YAML: {exc}", file=sys.stderr)
+        print(
+            f"ERROR: descriptor must remain JSON-compatible YAML: {exc}",
+            file=sys.stderr,
+        )
         return 2
 
     errors = validate(data)
