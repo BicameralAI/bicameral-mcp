@@ -368,11 +368,32 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                     "type": "string",
                     "description": "Human-readable reason the operator is proposing this candidate.",
                 },
+                "project_source_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional registered-project source ref(s) (e.g. "
+                        "'BicameralAI/ada-service', or a full git remote URL) used as "
+                        "evidence only. When the candidate folder's normalized git "
+                        "remote matches one, MCP proposes at higher confidence; a clear "
+                        "mismatch fails closed before dispatch. Never project identity — "
+                        "project_id remains the authority key."
+                    ),
+                },
+                "project_source_ref": {
+                    "type": "string",
+                    "description": (
+                        "Convenience scalar form of project_source_refs (a single "
+                        "registered-project source ref or git remote URL). Evidence "
+                        "only; never project identity."
+                    ),
+                },
                 "confidence": {
                     "type": "number",
                     "description": (
                         "Surface confidence the candidate is correct, in [0.0, 1.0]. "
-                        "Defaults to 1.0 for an explicit operator selection."
+                        "When omitted, MCP derives it from git-remote evidence "
+                        "(match/unverified/ambiguous); an explicit value overrides that."
                     ),
                 },
                 "required_daemon_capability": {

@@ -777,6 +777,58 @@ def format_workspace_bind_response(response: dict[str, Any]) -> TextContent:
     )
 
 
+def format_workspace_bind_remote_conflict(
+    *,
+    project_id: str | None,
+    candidate_repo_ref: str | None,
+    project_source_refs: list[str] | tuple[str, ...],
+    reason: str | None = None,
+) -> TextContent:
+    """Render the MCP-side fail-closed guard for a contradicting git remote.
+
+    Owner decision (mcp#702): when the candidate folder's git remote clearly
+    contradicts the selected registered project, MCP fails closed *before*
+    dispatching — no ``workspace.bind`` request is sent and nothing is
+    materialized. The git remote is evidence only; ``project_id`` remains the
+    authority key and the daemon still owns validation and materialization.
+    """
+    output = {
+        "status": "rejected",
+        "bound": False,
+        "error_kind": "workspace_remote_mismatch",
+        "project_id": project_id,
+        "candidate_repo_ref": candidate_repo_ref,
+        "project_source_refs": list(project_source_refs) or None,
+        "message": reason
+        or (
+            f"Candidate git remote '{candidate_repo_ref}' contradicts the registered "
+            "project source ref(s); refusing to bind."
+        ),
+        "operator_action": (
+            "The candidate folder's git remote does not match the selected project. "
+            "Bind from the folder whose remote matches the project, or select the "
+            "project whose source ref matches this folder, then retry."
+        ),
+        "fail_closed_note": (
+            "Fail-closed at the MCP surface: no workspace.bind request was dispatched "
+            "and no binding was materialized. Git remote is evidence only; project_id "
+            "remains the authority key and the daemon owns validation/materialization."
+        ),
+        "authority_note": (
+            "The local daemon is the sole workspace-binding authority. MCP only "
+            "proposes; it does not bind, persist, or claim authority."
+        ),
+    }
+    return TextContent(
+        type="text",
+        text=json.dumps(
+            {key: value for key, value in output.items() if value is not None},
+            indent=2,
+            sort_keys=True,
+        ),
+    )
+
+
 def error_text(code: str, message: str) -> TextContent:
     payload = {
         "status": "error",
