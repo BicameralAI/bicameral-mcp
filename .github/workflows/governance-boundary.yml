@@ -6,13 +6,16 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   governance-boundary:
     name: governance-boundary
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
