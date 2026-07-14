@@ -12,7 +12,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 CLASSIFICATIONS = {
@@ -77,7 +77,7 @@ MAIN_KEYS = {
 }
 
 
-def strings(value: Any) -> bool:
+def strings(value: Any) -> TypeGuard[list[str]]:
     return isinstance(value, list) and all(isinstance(item, str) and item for item in value)
 
 
