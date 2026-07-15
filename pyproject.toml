@@ -65,11 +65,10 @@ only-include = [
 ]
 
 [tool.hatch.build.targets.sdist]
-# Customer source archives intentionally exclude contributor-only plans, tests,
-# Factory evidence, local agent configuration, and internal governance material.
+# Customer source archives intentionally exclude contributor-only history,
+# plans, tests, Factory evidence, agent configuration, and governance material.
 only-include = [
   "README.md",
-  "CHANGELOG.md",
   "SECURITY.md",
   "LICENSE",
   "pyproject.toml",
