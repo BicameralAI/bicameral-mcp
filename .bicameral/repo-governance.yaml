@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "repo": "BicameralAI/bicameral-mcp",
+  "classification": "product-supporting",
+  "visibility": "public",
+  "governance_owner": "BicameralAI/bicameral-factory",
+  "runtime_role": "agent-surface",
+  "release_trust_required": true,
+  "required_checks": [
+    "codeql",
+    "dependency-review",
+    "factory-attestation"
+  ],
+  "branch_protection": {
+    "main": {
+      "require_pr": false,
+      "required_approvals": 0,
+      "require_status_checks": false,
+      "restrict_force_push": false
+    }
+  },
+  "shadow_genome_sources": [
+    "failed_ci",
+    "reverted_prs",
+    "governance_gate_failures",
+    "correction_records",
+    "repeated_review_findings"
+  ],
+  "public_exposure": {
+    "allowed": [
+      "public governance declarations",
+      "public workflow and release evidence",
+      "redacted examples",
+      "protocol and capability documentation"
+    ],
+    "prohibited": [
+      "credentials and access tokens",
+      "private source content",
+      "raw tool request or response bodies",
+      "live dashboard data",
+      "shadow genome output",
+      "risk register",
+      "review queues",
+      "security posture deltas"
+    ]
+  }
+}

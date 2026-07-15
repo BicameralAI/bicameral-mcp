@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "98aefdee563d11e27b61455505c3aafc4e764cf6",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-contract.md",
+    "blueprints/factory-attestation.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "schemas/repo-governance.schema.json"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "agent-declared",
+      "reason": "Confirmed Factory owns governance aggregation while MCP remains an agent-facing transport surface."
+    },
+    "CONTRIBUTING.md": {
+      "source": "agent-declared",
+      "reason": "Required scoped evidence, honest current-state declarations, and no unsupported control claims."
+    },
+    "schemas/repo-governance.schema.json": {
+      "source": "agent-declared",
+      "reason": "Defined the allowed repository classification, runtime role, checks, exposure, and branch-protection fields."
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "agent-declared",
+      "reason": "Kept credentials, live dashboard output, private source content, and raw tool payloads outside the governance declaration."
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "GitHub connector execution only. The descriptor is JSON-compatible YAML so standard-library repository CI can validate it without a private Factory checkout or third-party parser dependency."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 210,
+    "issue_type": "validating",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [],
+    "post_work_comment_url": null,
+    "notes": "MCP issue #724 closes the repository declaration gap supporting Factory #213 organization ruleset reconciliation. Live protection fields remain false until Factory #171 post-apply evidence exists."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No product lifecycle behavior changed. This change declares MCP governance posture and validates the declaration in CI.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "MCP remains an agent-facing transport and does not become a product authority runtime.",
+      "Repository governance metadata must describe current live enforcement rather than desired future controls.",
+      "Public governance declarations must not expose credentials, private source content, raw tool payloads, live risk output, or security deltas."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "Rejected protected, enforced, and release-ready as product states.",
+        "Rejected setting branch-protection booleans true before live organization ruleset evidence exists."
+      ],
+      "rationale": "A repository descriptor and deterministic validator are sufficient. No runtime state or authority change is needed."
+    }
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/214",
+    "notes": "Provider-neutral Factory worker implementation; CI and exact-head verification follow after PR creation."
+  },
+  "attested_by": "GPT-5.6 Thinking manual collaborator session",
+  "timestamp": "2026-07-14T01:15:00Z"
+}

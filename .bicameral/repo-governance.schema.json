@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/BicameralAI/bicameral-factory/schemas/repo-governance.schema.json",
+  "title": "Bicameral repo-local governance metadata",
+  "description": "Pinned from BicameralAI/bicameral-factory commit 98aefdee563d11e27b61455505c3aafc4e764cf6 for local CI validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repo",
+    "classification",
+    "visibility",
+    "governance_owner",
+    "runtime_role",
+    "release_trust_required",
+    "required_checks",
+    "branch_protection"
+  ],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "classification": {
+      "type": "string",
+      "enum": ["product-critical", "product-supporting", "docs", "infrastructure", "watchlist", "ignored"]
+    },
+    "visibility": {"type": "string", "enum": ["public", "internal", "restricted"]},
+    "governance_owner": {"type": "string", "const": "BicameralAI/bicameral-factory"},
+    "runtime_role": {
+      "type": "string",
+      "enum": ["authority-runtime", "agent-surface", "evidence-adapter", "factory-control-plane", "other"]
+    },
+    "release_trust_required": {"type": "boolean"},
+    "required_checks": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["sbom", "codeql", "scorecard", "dependency-review", "governance-gate", "factory-attestation"]
+      }
+    },
+    "branch_protection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["main"],
+      "properties": {
+        "main": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["require_pr", "required_approvals", "require_status_checks", "restrict_force_push"],
+          "properties": {
+            "require_pr": {"type": "boolean"},
+            "required_approvals": {"type": "integer", "minimum": 0},
+            "require_status_checks": {"type": "boolean"},
+            "restrict_force_push": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "shadow_genome_sources": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["failed_ci", "reverted_prs", "governance_gate_failures", "correction_records", "repeated_review_findings"]
+      }
+    },
+    "public_exposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "prohibited": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}
