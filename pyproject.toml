@@ -49,6 +49,7 @@ bicameral-mcp = "server:cli_main"
 [tool.hatch.build.targets.wheel]
 only-include = [
   "server.py",
+  "preflight_adapters",
   "approval_gate.py",
   "authority.py",
   "brief_renderer.py",
@@ -71,6 +72,7 @@ only-include = [
   "SECURITY.md",
   "pyproject.toml",
   "server.py",
+  "preflight_adapters",
   "approval_gate.py",
   "authority.py",
   "brief_renderer.py",
@@ -85,8 +87,10 @@ only-include = [
   "tool_schemas.py",
   "version.py",
   "docs/specs/bicameral-mcp-idealized-spec.md",
+  "docs/specs/host-prework-adapters.md",
   "docs/plans/toolrequest-refactor-plan.md",
   "tests/test_toolrequest_thin_client.py",
+  "tests/test_prework_adapters.py",
   "tests/test_toolrequest_conformance.py",
   "tests/fixtures/toolresponses",
   "tests/test_codegenome_authority_retired.py",
