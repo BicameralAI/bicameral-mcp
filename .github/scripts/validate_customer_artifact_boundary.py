@@ -157,7 +157,9 @@ def text_content(data: bytes, max_bytes: int) -> str | None:
 def validate_entries(
     entries: Iterable[Entry], policy: dict
 ) -> tuple[list[Violation], list[dict]]:
-    path_rules = tuple(DEFAULT_FORBIDDEN_PATHS) + tuple(policy.get("forbidden_paths", []))
+    path_rules = tuple(DEFAULT_FORBIDDEN_PATHS) + tuple(
+        policy.get("forbidden_paths", [])
+    )
     text_rules = tuple(DEFAULT_FORBIDDEN_TEXT) + tuple(policy.get("forbidden_text", []))
     path_allow = policy.get("allow_path_rules", {})
     text_allow = policy.get("allow_text_rules", {})
@@ -175,7 +177,9 @@ def validate_entries(
             }
         )
         for rule in path_rules:
-            if matches(entry.member, rule) and not allowed(entry.member, rule, path_allow):
+            if matches(entry.member, rule) and not allowed(
+                entry.member, rule, path_allow
+            ):
                 violations.append(Violation(entry.artifact, entry.member, "path", rule))
         text = text_content(entry.data, max_text_bytes)
         if text is None:
@@ -192,8 +196,12 @@ def main() -> int:
     parser.add_argument(
         "--artifact", action="append", required=True, help="Artifact path; repeatable."
     )
-    parser.add_argument("--policy", type=Path, default=None, help="Optional JSON policy.")
-    parser.add_argument("--report", type=Path, default=None, help="Write a JSON receipt.")
+    parser.add_argument(
+        "--policy", type=Path, default=None, help="Optional JSON policy."
+    )
+    parser.add_argument(
+        "--report", type=Path, default=None, help="Write a JSON receipt."
+    )
     args = parser.parse_args()
 
     try:
