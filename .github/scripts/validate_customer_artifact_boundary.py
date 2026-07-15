@@ -15,9 +15,9 @@ import json
 import sys
 import tarfile
 import zipfile
+from collections.abc import Iterable, Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
-from typing import Iterable, Iterator
 
 DEFAULT_FORBIDDEN_PATHS = (
     ".bicameral/factory-context.local.json",
@@ -40,7 +40,6 @@ DEFAULT_FORBIDDEN_TEXT = (
     "/bic:setup-bicameral-factory",
 )
 
-ARCHIVE_SUFFIXES = (".zip", ".whl", ".tar", ".tar.gz", ".tgz")
 MAX_DEFAULT_TEXT_BYTES = 2 * 1024 * 1024
 
 
