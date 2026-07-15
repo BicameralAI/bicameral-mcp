@@ -37,8 +37,8 @@ jobs:
       - name: Verify vendored artifact validator provenance
         run: |
           python - <<'PY'
-          import hashlib
           import json
+          import subprocess
           from pathlib import Path
 
           record = json.loads(
@@ -46,15 +46,17 @@ jobs:
               .read_text(encoding='utf-8')
           )
           validator = Path(record['validator_path'])
-          actual = hashlib.sha256(validator.read_bytes()).hexdigest()
-          expected = record['sha256']
+          actual = subprocess.check_output(
+              ['git', 'hash-object', str(validator)], text=True
+          ).strip()
+          expected = record['source_blob_sha']
           if actual != expected:
               raise SystemExit(
-                  f'vendored validator drift: expected {expected}, got {actual}'
+                  f'vendored validator drift: expected Git blob {expected}, got {actual}'
               )
           if record.get('runtime_distribution') != 'prohibited':
               raise SystemExit('validator provenance must prohibit runtime distribution')
-          print(f'validator provenance verified: {actual}')
+          print(f'validator provenance verified: Git blob {actual}')
           PY
 
       - name: Build customer distributions
