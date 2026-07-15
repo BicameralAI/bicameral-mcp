@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "validator_path": ".github/scripts/validate_customer_artifact_boundary.py",
+  "source_repository": "BicameralAI/bicameral-factory",
+  "source_pull_request": "https://github.com/BicameralAI/bicameral-factory/pull/246",
+  "source_commit": "8d88ba17eba7899bdaad4fe0a9fe4330eb7ea5f4",
+  "source_path": "scripts/validate-customer-artifact-boundary.py",
+  "sha256": "ed6462d3307124c2ee2db4c96d470b4237754f7f36e8f3f1949f894ad555a5bc",
+  "status": "provisional-until-factory-pr-246-merges",
+  "runtime_distribution": "prohibited"
+}
