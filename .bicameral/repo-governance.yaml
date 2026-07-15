@@ -1,6 +1,5 @@
 {
-  "schema_version": 2,
-  "observed_at": "2026-07-15T16:15:00Z",
+  "schema_version": 1,
   "repo": "BicameralAI/bicameral-mcp",
   "classification": "product-supporting",
   "visibility": "public",
@@ -10,8 +9,7 @@
   "required_checks": [
     "codeql",
     "dependency-review",
-    "factory-attestation",
-    "customer-artifact-boundary"
+    "factory-attestation"
   ],
   "branch_protection": {
     "main": {
@@ -20,63 +18,6 @@
       "require_status_checks": false,
       "restrict_force_push": false
     }
-  },
-  "development_governance": {
-    "factory_managed": true,
-    "run_envelope_required": false,
-    "attestation_required": true,
-    "allowed_tracked_paths": [
-      ".bicameral/repo-governance.yaml",
-      ".bicameral/customer-artifact-boundary.json",
-      ".bicameral/validator-provenance/",
-      ".bicameral/factory-attestations/",
-      ".github/",
-      "AGENTS.md",
-      "CONTRIBUTING.md"
-    ],
-    "local_only_paths": [
-      ".bicameral/factory-context.local.json",
-      ".bicameral/factory-skills/",
-      ".agents/skills/",
-      "raw run logs"
-    ],
-    "validator_provenance": [
-      {
-        "path": ".github/scripts/validate_customer_artifact_boundary.py",
-        "source_commit": "8d88ba17eba7899bdaad4fe0a9fe4330eb7ea5f4",
-        "sha256": "ed6462d3307124c2ee2db4c96d470b4237754f7f36e8f3f1949f894ad555a5bc"
-      }
-    ]
-  },
-  "customer_distribution": {
-    "ships_customer_artifacts": true,
-    "artifact_roots": [
-      "dist/*.whl",
-      "dist/*.tar.gz"
-    ],
-    "factory_runtime_dependency": "prohibited",
-    "validation_check": "pytest (deterministic, no daemon, no LLM)",
-    "forbidden_paths": [
-      ".bicameral/",
-      ".github/",
-      "AGENTS.md",
-      "CONTRIBUTING.md",
-      "docs/governance/",
-      "tests/"
-    ],
-    "forbidden_references": [
-      "private Factory repository URLs",
-      "Factory attestations and run evidence",
-      "internal development hooks",
-      "internal sibling-tool inventories",
-      "SOC 2 source evidence"
-    ]
-  },
-  "control_evidence": {
-    "branch_ruleset": null,
-    "required_checks": ".github/workflows/mcp-deterministic-tests.yml",
-    "artifact_boundary": ".bicameral/customer-artifact-boundary.json",
-    "notes": "Artifact validation is embedded in the existing deterministic status context. Run-envelope enforcement remains pending the organization rollout. Validator provenance is provisional until Factory PR #246 merges."
   },
   "shadow_genome_sources": [
     "failed_ci",
