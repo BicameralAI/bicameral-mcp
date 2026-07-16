@@ -122,6 +122,68 @@ MCP may expose prompts and reviewed customer-product host adapters for workflows
 
 MCP customer installations do not require private development repositories, internal build controls, or contributor-only evidence.
 
+## Host Pre-work Adapters
+
+MCP ships optional, package-owned adapters that let a coding host run
+`bicameral.preflight` once at a genuine pre-work boundary (a new session), so
+constraint/readiness context is available before you start. These adapters are
+**product automation distributed and owned by `bicameral-mcp`** — they are not
+repo-local skills and they never install, import, fetch, or read the Bicameral
+Factory. The Factory is development/governance tooling and is not a runtime
+dependency of this package.
+
+Supported hosts, each using its own documented, host-native mechanism:
+
+| Host        | Mechanism                                                     | Config file                     |
+| ----------- | ------------------------------------------------------------- | ------------------------------- |
+| Claude Code | Claude Code hooks — `SessionStart` command hook               | `~/.claude/settings.json`       |
+| Codex CLI   | Codex lifecycle hooks — `SessionStart` command hook           | `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`) |
+
+If a host does not provide a production pre-work mechanism, that host criterion
+fails visibly rather than simulating support.
+
+Manage adapters through the `bicameral-mcp` CLI:
+
+```bash
+bicameral-mcp adapters status                        # inspect all hosts
+bicameral-mcp adapters install --host claude --consent
+bicameral-mcp adapters update  --host codex
+bicameral-mcp adapters disable --host claude
+bicameral-mcp adapters uninstall --host codex
+```
+
+Behavioral guarantees:
+
+- **Consent-gated.** Installing/enabling requires explicit `--consent`. Without
+  it, the CLI prints exactly which bounded context could be sent and makes no
+  changes.
+- **Pre-work only, exactly once.** The hook fires only at a new-session boundary
+  (`source == startup`), never mid-session or before a write, and invokes
+  `bicameral.preflight` exactly once per task boundary (idempotent by
+  correlation id).
+- **Bounded context / privacy.** Only task boundary, workspace, branch, and
+  optional file/symbol/diff hints are forwarded. Raw transcripts, secrets,
+  unrelated tool output, environment, and telemetry are never read or sent. The
+  adapter never reads the host's `transcript_path`.
+- **Capability-checked with visible manual fallback.** Before invoking, the
+  adapter performs a daemon protocol/capability handshake. If the host lacks the
+  mechanism, the daemon is unavailable, the protocol mismatches, or the command
+  is unadvertised, it emits a visible message pointing at explicit/manual
+  `bicameral.preflight` and never claims preflight ran.
+- **Independent host evidence.** Claude Code and Codex are configured and probed
+  separately; enabling or a positive probe for one host never implies the other.
+- **No candidate workflow, no compliance claims.** Adapters never render,
+  choose, promote, or confirm candidates, never write canonical Decision state,
+  and make no compliance, safety, no-conflict, or merge-readiness claims. That
+  authority belongs to the daemon.
+
+Hook receipts and dedup markers under the host's MCP state directory
+(`<host home>/bicameral-mcp/`) are operational witnesses only, not canonical
+product state.
+
+See [`docs/specs/host-prework-adapters.md`](docs/specs/host-prework-adapters.md)
+for the full contract.
+
 ## Development
 
 Contributor setup, internal review controls, and release procedures are documented in `CONTRIBUTING.md`, `AGENTS.md`, and `.github/`. Those development artifacts are excluded from customer packages.

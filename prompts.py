@@ -9,6 +9,9 @@ PROMPTS: dict[str, str] = {
         "Include checkpoint_hint (pre_work, mid_session, or pre_write) when "
         "session context is available; it is inert metadata forwarded to the "
         "daemon and does not change MCP authority or behavior. "
+        "MCP-distributed host adapters only invoke preflight automatically at the "
+        "pre_work boundary; mid_session and pre_write are available for explicit, "
+        "manual calls, never for an automatic hook. "
         "Use the daemon's graph evidence states as authoritative; do not infer "
         "global consistency from local no-conflict results."
     ),

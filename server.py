@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from typing import Any
 
 import mcp.server.stdio
@@ -570,6 +571,19 @@ async def run_stdio() -> None:
 
 
 def cli_main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Adapter management and the host-invoked pre-work runner have their own
+    # argument grammar; dispatch them before the top-level serve/tools parser.
+    if raw_argv and raw_argv[0] == "adapters":
+        from preflight_adapters.cli import run_adapters_cli
+
+        return run_adapters_cli(raw_argv[1:])
+    if raw_argv and raw_argv[0] == "prework-run":
+        from preflight_adapters.cli import run_prework_cli
+
+        return run_prework_cli(raw_argv[1:])
+
     parser = argparse.ArgumentParser(
         prog="bicameral-mcp",
         description="Run the Bicameral MCP thin client over stdio.",
@@ -578,11 +592,15 @@ def cli_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["serve", "tools"],
+        choices=["serve", "tools", "adapters", "prework-run"],
         default="serve",
-        help="'serve' starts the MCP stdio server; 'tools' prints supported tool names.",
+        help=(
+            "'serve' starts the MCP stdio server; 'tools' prints supported tool "
+            "names; 'adapters' manages host pre-work adapters; 'prework-run' is "
+            "invoked by a host hook."
+        ),
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
 
     if args.version:
         print(SERVER_VERSION)
