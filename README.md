@@ -90,6 +90,15 @@ MCP exposes only ToolRequest-backed product tools. Availability is filtered by t
 | `bicameral.recall.expand_scope` | `recall.expand_scope` |
 | `bicameral.request_correction` | `correction.request` |
 
+Candidate promotion is a daemon-owned two-phase flow. An initial
+`bicameral.review.promote_candidate` call may return `confirmation_required`
+with daemon-authored candidate, outcome, authority, and expiry metadata. MCP
+renders that state without claiming a canonical transition occurred. After an
+explicit human confirmation action in the host, MCP resubmits the daemon-issued
+confirmation object to `recall.promote_decision_candidate` and renders the
+daemon result. MCP never mints, validates, stores, consumes, or self-confirms a
+challenge.
+
 ## Product terminology
 
 `bicameral.preflight` retrieves daemon-authored constraint and readiness context. MCP does not turn lookup output into a compliance decision, signoff, merge-safety claim, or canonical product state.

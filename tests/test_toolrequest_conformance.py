@@ -367,8 +367,9 @@ COMMAND_SPECS: dict[str, _CommandSpec] = {
             "supersedes_decision_id",
             "scoping_relationship",
             "approval_proof",
+            "confirmation",
         },
-        required={"packet_id", "candidate_id", "promotion_outcome", "approval_proof"},
+        required={"packet_id", "candidate_id", "promotion_outcome"},
     ),
     "bicameral.review.request_corpus_change": _CommandSpec(
         command="recall.request_correction",

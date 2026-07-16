@@ -46,6 +46,7 @@ from governance_surface import (
 from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
     error_text,
+    format_candidate_promotion_response,
     format_context_packet_response,
     format_correction_findings_response,
     format_correction_response,
@@ -253,10 +254,9 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_recall_expand_scope(response)]
         if name == "bicameral.review.candidates":
             return [format_review_queue_response(response, item_key="decision_candidates")]
-        if name in {
-            "bicameral.review.promote_candidate",
-            "bicameral.review.request_corpus_change",
-        }:
+        if name == "bicameral.review.promote_candidate":
+            return [format_candidate_promotion_response(response)]
+        if name == "bicameral.review.request_corpus_change":
             return [format_review_queue_response(response, item_key="review_result")]
         if name == "bicameral.request_correction":
             return [format_correction_response(response)]
