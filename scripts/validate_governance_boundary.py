@@ -56,6 +56,7 @@ GOVERNANCE_ALLOWLIST = {
 }
 
 FACTORY_ATTESTATION_PATTERN = ".bicameral/factory-attestations/*.json"
+REPO_GOVERNANCE_DESCRIPTOR = ".bicameral/repo-governance.yaml"
 
 
 def git_lines(args: list[str]) -> list[str]:
@@ -124,7 +125,7 @@ def match_root(path: str, root: str) -> bool:
 
 
 def forbidding_root(path: str, roots: list[str]) -> str | None:
-    if path in GOVERNANCE_ALLOWLIST:
+    if path in GOVERNANCE_ALLOWLIST or path == REPO_GOVERNANCE_DESCRIPTOR:
         return None
     if fnmatch.fnmatch(path, FACTORY_ATTESTATION_PATTERN):
         return None
