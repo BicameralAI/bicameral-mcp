@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "artifact_id": "bicameral-mcp-python-distribution",
+  "customer_distribution": true,
+  "reason": "MCP customer packages contain product runtime and customer documentation only. Internal development governance and evidence remain repository-side.",
+  "forbidden_paths": [
+    "docs/governance/**",
+    ".github/**",
+    "tests/**",
+    "AGENTS.md",
+    "CONTRIBUTING.md"
+  ],
+  "forbidden_text": [
+    "qor-logic",
+    "Qor-logic",
+    "S.H.I.E.L.D.",
+    "FailSafe",
+    "Factory attestation",
+    "factory-attestation"
+  ],
+  "allow_path_rules": {},
+  "allow_text_rules": {},
+  "max_text_bytes": 2097152
+}

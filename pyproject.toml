@@ -66,10 +66,12 @@ only-include = [
 ]
 
 [tool.hatch.build.targets.sdist]
+# Customer source archives intentionally exclude contributor-only history,
+# plans, tests, Factory evidence, agent configuration, and governance material.
 only-include = [
   "README.md",
-  "CHANGELOG.md",
   "SECURITY.md",
+  "LICENSE",
   "pyproject.toml",
   "server.py",
   "preflight_adapters",
@@ -86,14 +88,7 @@ only-include = [
   "tool_request.py",
   "tool_schemas.py",
   "version.py",
-  "docs/specs/bicameral-mcp-idealized-spec.md",
   "docs/specs/host-prework-adapters.md",
-  "docs/plans/toolrequest-refactor-plan.md",
-  "tests/test_toolrequest_thin_client.py",
-  "tests/test_prework_adapters.py",
-  "tests/test_toolrequest_conformance.py",
-  "tests/fixtures/toolresponses",
-  "tests/test_codegenome_authority_retired.py",
 ]
 
 [tool.ruff]
@@ -105,8 +100,8 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]  # pyflakes + pycodestyle + isort + bugbear + pyupgrade
-ignore = ["E501"]  # line-length handled by formatter
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["F401", "F811", "F821", "F841", "E712", "B017", "B904", "E402", "E731"]

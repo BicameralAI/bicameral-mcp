@@ -1,17 +1,7 @@
 name: MCP Deterministic Tests
 
-# The deterministic PR gate for the thin client (mcp#555). Replaces the
-# shelved live-agent `v0-user-flow-e2e` suite as the per-PR signal: it runs
-# the full pytest suite with the bot daemon seamed off and NO LLM in the loop,
-# so every assertion is reproducible byte-for-byte.
-#
-# Contract (RFQ #555 determination): only deterministic facts gate a PR —
-# ToolRequest construction, typed-state passthrough, the read-model
-# non-mutation boundary, daemon handshake conformance, and contract-fixture
-# replay. Any probabilistic / live-agent check stays dispatch-only or
-# scheduled, never blocking. No ANTHROPIC_API_KEY and no daemon endpoint are
-# provided here by design: a test that needs either does not belong in this gate.
-
+# Deterministic product and customer-artifact gate. No LLM, daemon endpoint,
+# private Factory checkout, or production credential is available by design.
 on:
   pull_request:
     branches: [main, dev]
@@ -23,7 +13,7 @@ jobs:
   pytest:
     name: pytest (deterministic, no daemon, no LLM)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
@@ -39,12 +29,67 @@ jobs:
         run: python -m pip install --no-build-isolation --no-deps .
 
       - name: Replay deterministic v0 user flow
-        # mcp#628: scripted flow sequence only. This does not invoke Claude,
-        # provider APIs, a live daemon, transcript comparison, or recording.
         run: python scripts/sim_issue_108_flows.py --check
 
       - name: Run deterministic test suite
-        # Fail if any test reaches the network: the gate must stay hermetic.
-        # No daemon URL / API key in env → daemon-touching code raises the
-        # typed `daemon_unavailable` path the tests already assert against.
         run: python -m pytest tests/ -q
+
+      - name: Verify vendored artifact validator provenance
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          record = json.loads(
+              Path('.bicameral/validator-provenance/customer-artifact-boundary.json')
+              .read_text(encoding='utf-8')
+          )
+          validator = Path(record['validator_path'])
+          actual = subprocess.check_output(
+              ['git', 'hash-object', str(validator)], text=True
+          ).strip()
+          expected = record['source_blob_sha']
+          if actual != expected:
+              raise SystemExit(
+                  f'vendored validator drift: expected Git blob {expected}, got {actual}'
+              )
+          if record.get('runtime_distribution') != 'prohibited':
+              raise SystemExit('validator provenance must prohibit runtime distribution')
+          print(f'validator provenance verified: Git blob {actual}')
+          PY
+
+      - name: Build customer distributions
+        run: |
+          rm -rf build dist
+          python -m build
+
+      - name: Enforce customer artifact boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p test-artifacts/customer-artifact-boundary
+          mapfile -t artifacts < <(
+            find dist -maxdepth 1 -type f \( -name '*.whl' -o -name '*.tar.gz' \) | sort
+          )
+          if [[ ${#artifacts[@]} -eq 0 ]]; then
+            echo 'No wheel or source distribution was produced.' >&2
+            exit 1
+          fi
+          args=()
+          for artifact in "${artifacts[@]}"; do
+            args+=(--artifact "$artifact")
+          done
+          python .github/scripts/validate_customer_artifact_boundary.py \
+            "${args[@]}" \
+            --policy .bicameral/customer-artifact-boundary.json \
+            --report test-artifacts/customer-artifact-boundary/receipt.json
+
+      - name: Retain customer artifact boundary receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mcp-customer-artifact-boundary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-artifacts/customer-artifact-boundary/
+          if-no-files-found: warn
+          retention-days: 90
