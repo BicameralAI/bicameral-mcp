@@ -28,15 +28,16 @@
   ],
   "public_exposure": {
     "allowed": [
-      "public governance declarations",
-      "public workflow and release evidence",
-      "redacted examples",
-      "protocol and capability documentation"
+      "product protocol and capability documentation",
+      "approved security and trust statements",
+      "redacted examples"
     ],
     "prohibited": [
       "credentials and access tokens",
       "private source content",
       "raw tool request or response bodies",
+      "internal development procedures",
+      "Factory evidence and roadmap state",
       "live dashboard data",
       "shadow genome output",
       "risk register",

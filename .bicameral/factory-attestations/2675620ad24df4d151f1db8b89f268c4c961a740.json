@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "2675620ad24df4d151f1db8b89f268c4c961a740",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "INSTRUCTIONS.md",
+    "schemas/repo-governance.schema.json",
+    "docs/governance/high-authority-change-broadcast.md"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "wrapper-observed",
+      "reason": "Read from the current Factory main revision through the GitHub connector."
+    },
+    "CONTRIBUTING.md": {
+      "source": "wrapper-observed",
+      "reason": "Loaded as required contributor context."
+    },
+    "INSTRUCTIONS.md": {
+      "source": "wrapper-observed",
+      "reason": "Loaded to preserve product-repository setup and artifact boundaries."
+    },
+    "schemas/repo-governance.schema.json": {
+      "source": "wrapper-observed",
+      "reason": "Current canonical schema reviewed before recording the v2 migration as provisional divergence."
+    },
+    "docs/governance/high-authority-change-broadcast.md": {
+      "source": "wrapper-observed",
+      "reason": "Reviewed to preserve the owner and broadcast boundary for Factory PR #246."
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "promoted",
+    "notes": "The customer-artifact validator and repo-governance v2 contract are proposed in Factory PR #246 and are not yet canonical on Factory main.",
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/246",
+    "unresolved_items": []
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "notes": "MCP customer README, package allowlist, artifact policy, validator provenance, and deterministic CI gate are captured in the draft branch.",
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/246"
+  },
+  "attested_by": "ChatGPT GitHub connector for Knapp-Kevin",
+  "timestamp": "2026-07-15T16:30:00Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "fix/737-customer-artifact-boundary",
+  "agent": "ChatGPT GitHub connector",
+  "session": "mcp-737-customer-artifact-boundary"
+}
