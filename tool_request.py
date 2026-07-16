@@ -164,6 +164,7 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "supersedes_decision_id",
             "scoping_relationship",
             "approval_proof",
+            "confirmation",
         )
     if command_name == "recall.inspect_evidence":
         return _only(cleaned, "packet_id", "match_id", "evidence_id")

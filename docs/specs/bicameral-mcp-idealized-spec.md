@@ -82,7 +82,7 @@ MCP exposes tools that map to the bot `ToolCommand` registry from issue #103:
 | `bicameral.review.corpus_proposals` | `lookup.query` | Lists daemon-authored corpus-change proposals/correction findings without MCP-local corpus mutation. |
 | `bicameral.review.accept_candidate` | `review.accept_candidate` | Review command, not direct ledger mutation. |
 | `bicameral.review.reject_candidate` | `review.reject_candidate` | Review command, not direct ledger mutation. |
-| `bicameral.review.promote_candidate` | `recall.promote_decision_candidate` | Requests daemon-governed candidate promotion/routing from a RecallPacket reference. |
+| `bicameral.review.promote_candidate` | `recall.promote_decision_candidate` | Requests daemon-governed candidate promotion/routing from a RecallPacket reference. Canonical-writing outcomes use the daemon-owned ConfirmationChallenge flow. |
 | `bicameral.review.request_corpus_change` | `recall.request_correction` | Requests daemon-governed corpus correction/change review from selected RecallPacket items. |
 | `bicameral.review.approve_signoff` | `review.approve_signoff` | Review command gated by bot policy. |
 | `bicameral.review.reject_signoff` | `review.reject_signoff` | Review command gated by bot policy. |
@@ -105,6 +105,36 @@ Future versions may reintroduce some behavior only after bot defines a canonical
 Removal and erasure behavior is not a thin-client concern. Old MCP `remove_decision` and `remove_source` implementations are deleted. Bot/dashboard work must decide the user-facing removal policy and expose canonical commands before MCP can call it again.
 
 History, search, candidate review, signoff review, and compliance review are not separate MCP subsystems. They are existing bot-owned read/write concepts reached through `ToolRequest` command routing.
+
+### Candidate promotion confirmation
+
+MCP consumes daemon-authored `AlphaRecallEnvelope` / `RecallPacket` output and
+renders DecisionCandidates with informed-confirmation fields when present:
+candidate id/title, source excerpt, evidence refs, relevance reason,
+readiness/freshness, ambiguity, related Decisions, required authority,
+proposed outcome, lineage/scoping effect, and challenge expiry. The
+deterministic operator question appears only when the daemon returns a typed
+decision-attention signal.
+
+`bicameral.review.promote_candidate` is transport and rendering only:
+
+1. Initial request: MCP forwards packet id, candidate id, requested outcome,
+   and optional lineage/scoping parameters. MCP does not require or synthesize
+   local approval proof.
+2. Confirmation required: the daemon may return a versioned
+   `ConfirmationChallenge`. MCP renders the challenge metadata with secret
+   fields redacted and states that no canonical transition has been written.
+3. Explicit confirmation: after a human confirms in the host, MCP forwards the
+   daemon-issued `confirmation` object back to the daemon. MCP does not mint,
+   validate, persist, consume, or auto-confirm the challenge.
+4. Final result: MCP renders the daemon outcome, including promoted,
+   routed-to-signoff, dismissed, cancelled, expired, consumed, mismatched,
+   stale-packet, unauthorized, ineligible-target, or unavailable states without
+   strengthening them into compliance, merge safety, code correctness, or
+   signoff.
+
+Challenge values and raw transcripts must not be logged by MCP. Host adapters
+and agents must not self-confirm.
 
 ## Product Terminology Boundary
 

@@ -36,7 +36,21 @@ def _review_schema() -> dict:
 def _approval_proof_schema() -> dict:
     return {
         "type": "object",
-        "description": "Daemon-validated approval proof for governed recall review actions.",
+        "description": (
+            "Legacy daemon-validated approval proof for governed recall review actions. "
+            "Canonical candidate promotion uses daemon-issued confirmation instead."
+        ),
+    }
+
+
+def _confirmation_schema() -> dict:
+    return {
+        "type": "object",
+        "description": (
+            "Daemon-issued ConfirmationChallenge response captured after an explicit "
+            "human confirmation action in the host. MCP transports this object without "
+            "minting, validating, persisting, or logging challenge authority."
+        ),
     }
 
 
@@ -507,8 +521,9 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         name="bicameral.review.promote_candidate",
         description=(
             "Request daemon-governed promotion, supersession, or routing of a "
-            "DecisionCandidate from a RecallPacket. The daemon validates candidate "
-            "identity, approval proof, authority, and canonical transitions."
+            "DecisionCandidate from a RecallPacket. Canonical-writing outcomes are "
+            "two-phase: the daemon first returns confirmation_required, then MCP "
+            "resubmits a daemon-issued confirmation after explicit human action."
         ),
         inputSchema=_schema(
             {
@@ -521,8 +536,9 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "supersedes_decision_id": {"type": "string"},
                 "scoping_relationship": {"type": "string"},
                 "approval_proof": _approval_proof_schema(),
+                "confirmation": _confirmation_schema(),
             },
-            ["packet_id", "candidate_id", "promotion_outcome", "approval_proof"],
+            ["packet_id", "candidate_id", "promotion_outcome"],
         ),
     ),
     Tool(

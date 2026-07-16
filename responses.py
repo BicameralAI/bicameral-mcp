@@ -177,6 +177,9 @@ def format_preflight_response(response: dict[str, Any]) -> TextContent:
 
     session_directive = staged.get("session_directive", {"mode": "continue"})
 
+    alpha_recall = _extract_alpha_recall(response)
+    decision_candidates = _extract_preflight_decision_candidates(response, alpha_recall)
+
     mcp_output: dict[str, Any] = {
         "status": response.get("status", "ok"),
         "request_id": response.get("request_id"),
@@ -184,7 +187,81 @@ def format_preflight_response(response: dict[str, Any]) -> TextContent:
         "session_directive": session_directive,
         "result": {key: value for key, value in response.items() if key != "staged"},
     }
+    if alpha_recall:
+        mcp_output["alpha_recall"] = {
+            "version": alpha_recall.get("version")
+            or alpha_recall.get("schema_version")
+            or alpha_recall.get("kind"),
+            "packet_id": _extract_recall_packet(alpha_recall).get("packet_id"),
+            "decision_candidates": [
+                _render_review_item(candidate) for candidate in decision_candidates
+            ],
+        }
+        decision_attention = _extract_decision_attention(alpha_recall)
+        if decision_attention:
+            mcp_output["alpha_recall"]["decision_attention"] = decision_attention
+            mcp_output["alpha_recall"]["operator_question"] = (
+                "Is there anything here you ought to decide?"
+            )
     return TextContent(type="text", text=json.dumps(mcp_output, indent=2, sort_keys=True))
+
+
+def _extract_alpha_recall(response: dict[str, Any]) -> dict[str, Any]:
+    result = response.get("result")
+    if isinstance(result, dict) and isinstance(result.get("alpha_recall"), dict):
+        return result["alpha_recall"]
+    if isinstance(response.get("alpha_recall"), dict):
+        return response["alpha_recall"]
+    return {}
+
+
+def _extract_recall_packet(alpha_recall: dict[str, Any]) -> dict[str, Any]:
+    product = alpha_recall.get("product")
+    if isinstance(product, dict) and isinstance(product.get("packet"), dict):
+        return product["packet"]
+    if isinstance(alpha_recall.get("packet"), dict):
+        return alpha_recall["packet"]
+    return {}
+
+
+def _extract_preflight_decision_candidates(
+    response: dict[str, Any], alpha_recall: dict[str, Any]
+) -> list[dict[str, Any]]:
+    packet = _extract_recall_packet(alpha_recall)
+    candidates = packet.get("decision_candidates")
+    if isinstance(candidates, list) and candidates:
+        return [item for item in candidates if isinstance(item, dict)]
+    relevant = response.get("relevant_candidates")
+    if isinstance(relevant, list):
+        return [item for item in relevant if isinstance(item, dict)]
+    return []
+
+
+def _extract_decision_attention(alpha_recall: dict[str, Any]) -> dict[str, Any]:
+    product = alpha_recall.get("product")
+    candidates = [
+        alpha_recall.get("decision_attention"),
+        alpha_recall.get("decision_attention_signal"),
+    ]
+    if isinstance(product, dict):
+        candidates.extend(
+            [
+                product.get("decision_attention"),
+                product.get("decision_attention_signal"),
+            ]
+        )
+        packet = product.get("packet")
+        if isinstance(packet, dict):
+            candidates.extend(
+                [
+                    packet.get("decision_attention"),
+                    packet.get("decision_attention_signal"),
+                ]
+            )
+    for candidate in candidates:
+        if isinstance(candidate, dict) and candidate:
+            return candidate
+    return {}
 
 
 def format_lookup_response(response: dict[str, Any]) -> TextContent:
@@ -381,6 +458,83 @@ def format_review_queue_response(
     return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
 
 
+def format_candidate_promotion_response(response: dict[str, Any]) -> TextContent:
+    """Render daemon-owned candidate promotion state without adding authority."""
+    result = response.get("result", {})
+    rendered_result = _render_review_item(result) if isinstance(result, dict) else result
+    output: dict[str, Any] = {
+        "status": response.get("status", "ok"),
+        "request_id": response.get("request_id"),
+        "review_result": rendered_result,
+        "authority_boundary": (
+            "The daemon owns candidate authority and canonical materialization. "
+            "MCP only renders the daemon result and transports explicit confirmation."
+        ),
+    }
+
+    confirmation_required = {}
+    if isinstance(result, dict):
+        raw_confirmation = result.get("confirmation_required")
+        if isinstance(raw_confirmation, dict):
+            confirmation_required = raw_confirmation
+        elif result.get("outcome") == "confirmation_required":
+            confirmation_required = result
+
+    if confirmation_required:
+        output["status"] = "confirmation_required"
+        output["canonical_transition_materialized"] = False
+        output["human_confirmation_required"] = True
+        output["operator_question"] = "Do you explicitly confirm this exact candidate outcome?"
+        output["confirmation_required"] = _redact_challenge_values(confirmation_required)
+        output["confirmation_note"] = (
+            "No canonical Decision transition has been written. A human must confirm "
+            "the exact daemon-issued challenge in the host before MCP resubmits it."
+        )
+
+    confirmation_rejection = (
+        result.get("confirmation_rejection") if isinstance(result, dict) else None
+    )
+    if isinstance(confirmation_rejection, dict):
+        output["status"] = "confirmation_rejected"
+        output["confirmation_rejection"] = confirmation_rejection
+        output["canonical_transition_materialized"] = False
+
+    outcome = result.get("outcome") if isinstance(result, dict) else None
+    if outcome and outcome not in {"confirmation_required"} and not confirmation_rejection:
+        output["canonical_result_note"] = (
+            "This is the daemon-authored candidate-promotion result. It is not "
+            "compliance, merge safety, code correctness, or signoff unless the "
+            "daemon explicitly returned that state."
+        )
+
+    return TextContent(type="text", text=json.dumps(output, indent=2, sort_keys=True))
+
+
+_CHALLENGE_SECRET_KEYS = {
+    "secret",
+    "token",
+    "challenge_secret",
+    "challenge_token",
+    "confirmation_secret",
+    "confirmation_token",
+    "value",
+}
+
+
+def _redact_challenge_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, inner in value.items():
+            if key.lower() in _CHALLENGE_SECRET_KEYS:
+                redacted[key] = "[REDACTED]"
+            else:
+                redacted[key] = _redact_challenge_values(inner)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_challenge_values(item) for item in value]
+    return value
+
+
 def _render_review_item(item: dict[str, Any]) -> dict[str, Any]:
     rendered: dict[str, Any] = {
         "kind": item.get("kind"),
@@ -388,6 +542,7 @@ def _render_review_item(item: dict[str, Any]) -> dict[str, Any]:
         or item.get("candidate_id")
         or item.get("proposal_id")
         or item.get("target_id"),
+        "candidate_id": item.get("candidate_id"),
         "decision_id": item.get("decision_id"),
         "title": item.get("title"),
         "summary": item.get("summary"),
@@ -408,6 +563,17 @@ def _render_review_item(item: dict[str, Any]) -> dict[str, Any]:
         "rationale": item.get("rationale"),
         "excerpt": item.get("excerpt"),
         "reason": item.get("reason"),
+        "relevance_reason": item.get("relevance_reason"),
+        "relevance_reasons": item.get("relevance_reasons", []),
+        "readiness": item.get("readiness") or item.get("readiness_state"),
+        "freshness": item.get("freshness") or item.get("freshness_state"),
+        "ambiguity": item.get("ambiguity") or item.get("ambiguity_state"),
+        "related_decisions": item.get("related_decisions", []),
+        "authority_required": item.get("authority_required"),
+        "proposed_outcome": item.get("proposed_outcome") or item.get("promotion_outcome"),
+        "lineage": item.get("lineage"),
+        "scoping_effect": item.get("scoping_effect") or item.get("scoping_relationship"),
+        "challenge_expires_at": item.get("challenge_expires_at") or item.get("expires_at"),
         "allowed_actions": item.get("allowed_actions", []),
         "allowed_next_actions": item.get("allowed_next_actions", []),
         "suggested_actions": item.get("suggested_actions", []),
