@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "96a4d8be8517d97fb73a129117ea79277d3e6e44",
+  "loaded_context": [
+    "README.md", "CONTRIBUTING.md", "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-attestation.md", "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md", "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md", "skills/bic/to-runtime-spec/SKILL.md",
+    "blueprints/runtime-architecture-spec.md", "skills/bic/to-spec/SKILL.md", "blueprints/feature-proposal-spec.md",
+    "skills/bic/spec-governance-gate/SKILL.md", "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/governance/user-journeys.md", "knowledge/product-validation-roadmap.md"
+  ],
+  "context_evidence": {
+    "skills/bic/to-runtime-spec/SKILL.md": {"source": "agent-declared", "reason": "Runtime-spec conformance and diagram procedure.", "sha256": "af7d3e1cbfc965d76e2e2930e701b34ba3f37ac78476520fb041535d21af3b65"},
+    "blueprints/runtime-architecture-spec.md": {"source": "agent-declared", "reason": "Stable topology, state, gap, and conformance shape.", "sha256": "6a326269c7d642271fae99d4a4c7a7f9458a4d8ac9a7792b77c727a88ec8d018"},
+    "skills/bic/to-spec/SKILL.md": {"source": "agent-declared", "reason": "Shared spec discipline.", "sha256": "d0399a56aa8071f7241f319fb4fec00fa882ad1dc9ef6bbc0b6ea88abbe3a174"},
+    "blueprints/feature-proposal-spec.md": {"source": "agent-declared", "reason": "User-journey and runtime-conformance handoff structure.", "sha256": "d219ea057b388949041b4f44b140e1f473f13b60bb6261d4a15f0e3ea218c3b0"},
+    "skills/bic/spec-governance-gate/SKILL.md": {"source": "agent-declared", "reason": "Journey applicability and state-refinement checkpoint.", "sha256": "9e209ca422f0c3ec7705f7d926d0365048f50137d77d74066973ad7ffef0f091"},
+    "docs/governance/user-journeys.md": {"source": "agent-declared", "reason": "Concrete not-applicable boundary review rationale.", "sha256": "a6c9436c9c1da3032cc3fdff4e782bd3927497168832dff436c076a1c65e17f8"},
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {"source": "agent-declared", "reason": "Pre-PR provenance refresh.", "sha256": "e7d105f139e9e40fd1dd655891866a674fef839df604be748cc60b3e2b95f45d"}
+  },
+  "local_setup_divergence": {"checked": true, "resolution": "disabled", "notes": "The Product context JSON and copied skill snapshot were stale relative to proposed factory PR #277. Their use was disabled; this revision is grounded against exact PR head 96a4d8be8517d97fb73a129117ea79277d3e6e44 and remains draft/blocked on #277."},
+  "roadmap_reconciliation": {"checked": true, "issue_number": 65, "issue_type": "validated", "project_status": "In Progress", "pr_links_checked": true, "pr_body_links_issue": true, "pr_links": ["https://github.com/BicameralAI/bicameral-bot/pull/860", "https://github.com/BicameralAI/bicameral-cloud/pull/181", "https://github.com/BicameralAI/bicameral-mcp/pull/745", "https://github.com/BicameralAI/bicameral-integrations/pull/259"], "post_work_comment_url": "https://github.com/BicameralAI/bicameral-factory/issues/65#issuecomment-5002394417", "notes": "Last observed Project Status was In Progress. Issue #65 remains type validated but is currently closed as not planned and has no returned Project item. The user explicitly continued the existing seed; the draft PR body links #65 and #277."},
+  "state_refinement": {"checked": true, "release_state": "No lifecycle behavior changed.", "states_added": [], "states_deferred": [], "invariants": ["No canonical state, authority, or persistence semantics changed.", "MCP remains a transport/rendering client."], "minimization_review": {"reviewed": true, "rejected_or_collapsed_states": [], "rationale": "Docs-only conformance baseline; no durable MCP state added."}},
+  "end_of_session_capture": {"run": true, "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/277", "notes": "Conformance rows expose a partial cross-cwd multi-Product restart witness. Local context/copy drift named 0d972754 while #277 head is 96a4d8be; exact PR-head provenance was used and no factory artifact was promoted."},
+  "attested_by": "Codex (manual collaborator factory run)",
+  "timestamp": "2026-07-17T12:08:46Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "agent/seed-runtime-conformance"
+}

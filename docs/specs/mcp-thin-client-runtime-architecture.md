@@ -14,7 +14,7 @@ Governance gate: `bic:spec-governance-gate` advisory/no-op. This baseline docume
 
 ## Reading Guide
 
-Read `Runtime Invariant`, `Runtime State Classification`, and `Runtime Architecture Conformance` first.
+Read `Runtime Invariant`, `Conformance Gap Summary`, `Runtime State Classification`, and `Runtime Architecture Conformance` first.
 
 ## Runtime Invariant
 
@@ -23,6 +23,18 @@ Read `Runtime Invariant`, `Runtime State Classification`, and `Runtime Architect
 ## Runtime Problem
 
 The MCP package contains tool schemas, client-side safety prompts, response renderers, and daemon connection logic. Without a conformance map, that surface area can be mistaken for a second control plane: code may add local durable state, route by cwd, execute a mutation without the daemon, or treat a rendered response as canonical truth.
+
+## Conformance Gap Summary
+
+Status vocabulary: `proven` means the required implementation and executable evidence are cited; `partial` means the path exists but the required topology evidence is incomplete; `missing` means the required implementation or evidence does not yet exist; `unresolved` means the owning contract is not yet decided.
+
+| Conformance ids | Intended contract | Current implementation / evidence | Status | Missing evidence or work |
+| --- | --- | --- | --- | --- |
+| CONF-THIN-CLIENT-01 | Every canonical read/mutation crosses the daemon ToolRequest seam | Thin-client and ToolRequest conformance suites exist | proven | Preserve full tool inventory coverage as commands evolve |
+| CONF-HANDSHAKE-01 | Tagged identity, protocol version, and capabilities gate dispatch | Handshake validation and tagged-daemon regression tests exist | proven | Preserve fail-closed behavior across future transports |
+| CONF-EXPLICIT-ROUTING-01 | Product/workspace routing is explicit and independent of MCP cwd/restart | Request fields and workspace-bind user-path tests exist | partial | Real-process, multi-Product, cross-cwd restart topology test |
+| CONF-NO-LOCAL-FALLBACK-01 | Daemon incompatibility/unavailability returns a typed error | Thin-client validation and negative dispatch tests exist | proven | Keep every new mutation class inside the negative inventory |
+| CONF-RENDER-NONAUTHORITY-01 | Rendering preserves daemon status and authority meaning | Response fixtures and renderer tests exist | proven | Maintain fixture coverage for new response kinds |
 
 ## Goals And Non-Goals
 
@@ -60,6 +72,26 @@ Non-goals:
 | REL-SERVER-CLIENT | ELM-MCP-SERVER -> ELM-DAEMON-CLIENT | Python async call | Synchronous | STATE-REQUEST / STATE-RESPONSE | MCP process to transport seam |
 | REL-CLIENT-DAEMON | ELM-DAEMON-CLIENT -> ELM-BOT-DAEMON | Tagged local HTTP/JSON protocol | Synchronous with retry only where contract permits | Capability report, `ToolRequest`, `ToolResponse` | Client process to local authority boundary |
 | REL-SERVER-RENDERER | ELM-MCP-SERVER -> ELM-RESPONSE-RENDERERS | Python call | Synchronous | STATE-RESPONSE | Authoritative daemon result to presentation |
+
+## Derived Topology View
+
+This review aid is generated from the `ELM-*` and `REL-*` tables. It introduces no independent node, edge, or authority claim.
+
+```mermaid
+flowchart LR
+    ELM_MCP_HOST["ELM-MCP-HOST<br/>Tool caller"]
+    ELM_MCP_SERVER["ELM-MCP-SERVER<br/>Transport/rendering"]
+    ELM_TOOLREQUEST_BUILDER["ELM-TOOLREQUEST-BUILDER<br/>Versioned request"]
+    ELM_DAEMON_CLIENT["ELM-DAEMON-CLIENT<br/>Handshake/transport"]
+    ELM_BOT_DAEMON["ELM-BOT-DAEMON<br/>Authority and persistence"]
+    ELM_RESPONSE_RENDERERS["ELM-RESPONSE-RENDERERS<br/>Presentation only"]
+
+    ELM_MCP_HOST -->|REL-HOST-SERVER| ELM_MCP_SERVER
+    ELM_MCP_SERVER -->|REL-SERVER-BUILDER| ELM_TOOLREQUEST_BUILDER
+    ELM_MCP_SERVER -->|REL-SERVER-CLIENT| ELM_DAEMON_CLIENT
+    ELM_DAEMON_CLIENT -->|REL-CLIENT-DAEMON| ELM_BOT_DAEMON
+    ELM_MCP_SERVER -->|REL-SERVER-RENDERER| ELM_RESPONSE_RENDERERS
+```
 
 ## Runtime State Classification, Authority, Persistence, And Routing
 
@@ -124,7 +156,9 @@ After MCP restart, the capability cache and client gates are empty. The new proc
 
 The daemon is unavailable or lacks a capability, and MCP executes a legacy Python implementation, writes a repo-local ledger, or infers a workspace from cwd. This path is forbidden and must return a recovery error.
 
-UserJourney: not applicable to this documentation-only baseline. It does not change an end-to-end operator path; it maps the existing MCP/daemon boundary and its current conformance evidence.
+UserJourney: not applicable. This baseline owns the generic local MCP-to-daemon transport seam rather than a named end-to-end Product journey. MCP creates no durable fact, has one authoritative commit boundary (the bot daemon), and has no post-commit step that can independently persist, replay, or resume. Tool-specific work that participates in `hosted_project_creation` or another user-visible path must bind that journey explicitly.
+
+Journey Boundary Review: not applicable for this baseline because MCP request, capability-cache, and response state are process-local witnesses; only the daemon may commit Product state. The cross-cwd restart test remains required topology evidence, not a second lifecycle commit.
 
 ## Event, Command, And Protocol Contracts
 
@@ -144,13 +178,13 @@ The MCP server and bot daemon are separate local processes. MCP communicates ove
 
 ## Runtime Architecture Conformance
 
-| ID | Source ids | Owning Module / Seam | Required behavior | Prohibited fallback | Validation obligation | Implementation evidence |
-| --- | --- | --- | --- | --- | --- | --- |
-| CONF-THIN-CLIENT-01 | ELM-MCP-SERVER, REL-SERVER-BUILDER, REL-CLIENT-DAEMON, STATE-REQUEST, SCN-TOOL-DISPATCH | `server.py` / ToolRequest dispatch seam | Route every supported canonical read/mutation through the daemon | MCP-local ledger, graph, connector, or governance implementation | Contract test across all supported tools | `tests/test_toolrequest_thin_client.py`; `tests/test_toolrequest_conformance.py` |
-| CONF-HANDSHAKE-01 | ELM-DAEMON-CLIENT, STATE-CAPABILITY-CACHE, TRANS-HANDSHAKE, TRANS-REJECT-INCOMPATIBLE | `daemon_client.py` capability seam | Validate tagged identity, protocol version, and required capabilities before dispatch | Assumed capability, stale cache, untagged response, or silent downgrade | Handshake contract and regression test | `tests/test_capability_handshake_validation.py`; `tests/test_tagged_daemon_handshake_regression.py` |
-| CONF-EXPLICIT-ROUTING-01 | REL-CLIENT-DAEMON, STATE-REQUEST, SCN-RESTART | ToolRequest schema / daemon routing seam | Preserve explicit Product/workspace routing fields independent of MCP cwd and process restart | Cwd, nearest repo marker, or process-global selected Product | Cross-cwd, multi-Product restart/topology test | Workspace-bind user-path tests; planned multi-Product topology fixture |
-| CONF-NO-LOCAL-FALLBACK-01 | TRANS-REJECT-INCOMPATIBLE, SCN-FORBIDDEN-LOCAL-MUTATION | Error/recovery seam in `server.py` and `daemon_client.py` | Return typed errors when daemon dispatch is unavailable or unsupported | Legacy in-process mutation or direct store write | Negative dispatch test for every mutation class | `docs/validation-554-thin-client-conformance.md` and thin-client tests |
-| CONF-RENDER-NONAUTHORITY-01 | ELM-RESPONSE-RENDERERS, REL-SERVER-RENDERER, STATE-RESPONSE | Response formatting seam | Preserve daemon response status and authority semantics | Formatter promotes candidate, approval, or advisory result | Fixture contract test | `tests/fixtures/toolresponses/`; renderer tests |
+| ID | Status | Source ids | Owning Module / Seam | Required behavior | Prohibited fallback | Validation obligation | Implementation evidence |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CONF-THIN-CLIENT-01 | proven | ELM-MCP-SERVER, REL-SERVER-BUILDER, REL-CLIENT-DAEMON, STATE-REQUEST, SCN-TOOL-DISPATCH | `server.py` / ToolRequest dispatch seam | Route every supported canonical read/mutation through the daemon | MCP-local ledger, graph, connector, or governance implementation | Contract test across all supported tools | `tests/test_toolrequest_thin_client.py`; `tests/test_toolrequest_conformance.py` |
+| CONF-HANDSHAKE-01 | proven | ELM-DAEMON-CLIENT, STATE-CAPABILITY-CACHE, TRANS-HANDSHAKE, TRANS-REJECT-INCOMPATIBLE | `daemon_client.py` capability seam | Validate tagged identity, protocol version, and required capabilities before dispatch | Assumed capability, stale cache, untagged response, or silent downgrade | Handshake contract and regression test | `tests/test_capability_handshake_validation.py`; `tests/test_tagged_daemon_handshake_regression.py` |
+| CONF-EXPLICIT-ROUTING-01 | partial | REL-CLIENT-DAEMON, STATE-REQUEST, SCN-RESTART | ToolRequest schema / daemon routing seam | Preserve explicit Product/workspace routing fields independent of MCP cwd and process restart | Cwd, nearest repo marker, or process-global selected Product | Cross-cwd, multi-Product restart/topology test | Workspace-bind user-path tests; planned multi-Product topology fixture |
+| CONF-NO-LOCAL-FALLBACK-01 | proven | TRANS-REJECT-INCOMPATIBLE, SCN-FORBIDDEN-LOCAL-MUTATION | Error/recovery seam in `server.py` and `daemon_client.py` | Return typed errors when daemon dispatch is unavailable or unsupported | Legacy in-process mutation or direct store write | Negative dispatch test for every mutation class | `docs/validation-554-thin-client-conformance.md` and thin-client tests |
+| CONF-RENDER-NONAUTHORITY-01 | proven | ELM-RESPONSE-RENDERERS, REL-SERVER-RENDERER, STATE-RESPONSE | Response formatting seam | Preserve daemon response status and authority semantics | Formatter promotes candidate, approval, or advisory result | Fixture contract test | `tests/fixtures/toolresponses/`; renderer tests |
 
 ## Implementation And Issue Handoff
 
