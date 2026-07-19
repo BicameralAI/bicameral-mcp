@@ -47,11 +47,39 @@ HOST_REQUIRED_FIELDS = (
     "candidate_rendered",
     "confirmation_required_rendered",
     "explicit_human_confirmation",
+    "agent_or_hook_self_confirm_possible",
     "challenge_resubmitted",
     "daemon_materialized_decision",
     "ledger_visible_after_restart",
     "factory_runtime_dependency_absent",
 )
+
+REQUIRED_ADAPTER_LIFECYCLE_STEPS = (
+    "install",
+    "status",
+    "disable",
+    "update",
+    "uninstall",
+)
+
+REQUIRED_NEGATIVE_PATHS = (
+    "automatic_hook_unavailable_manual_fallback",
+    "daemon_unavailable",
+    "protocol_envelope_mismatch",
+    "expired_challenge",
+    "daemon_restart_invalidates_pending_challenge",
+    "stale_packet",
+    "actor_workspace_mismatch",
+    "challenge_replay",
+    "lost_response_after_commit_idempotent",
+    "cancellation_no_canonical_transition",
+    "no_result_bounded_to_scope",
+)
+
+PASS_VALUES = ("ok", "pass", "passed")
+
+COMMIT_RE = re.compile(r"[0-9a-f]{40}")
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 SECRET_KEY_RE = re.compile(
     r"(secret|token|password|credential|api[_-]?key|challenge[_-]?(value|secret|token))",
@@ -97,7 +125,11 @@ def sanitize(value: Any) -> Any:
         sanitized: dict[str, Any] = {}
         for key, inner in value.items():
             if SECRET_KEY_RE.search(str(key)):
-                sanitized[key] = "[REDACTED]"
+                sanitized[key] = (
+                    inner
+                    if inner is False or inner is None or inner == "[REDACTED]"
+                    else "[REDACTED]"
+                )
             else:
                 sanitized[key] = sanitize(inner)
         return sanitized
@@ -110,6 +142,19 @@ def sanitize(value: Any) -> Any:
 
 def contains_secret(value: Any) -> bool:
     return sanitize(value) != value
+
+
+def _is_passed(value: Any) -> bool:
+    return value is True or (isinstance(value, str) and value in PASS_VALUES)
+
+
+def _require_passed_status(
+    value: Any,
+    field: str,
+    failures: list[str],
+) -> None:
+    if not isinstance(value, dict) or not _is_passed(value.get("status")):
+        failures.append(f"{field}.status must be passed")
 
 
 def _artifact_members(path: Path) -> list[str]:
@@ -156,6 +201,25 @@ def validate_receipt(receipt: dict[str, Any]) -> tuple[str, list[str]]:
         if field not in receipt:
             failures.append(f"missing required receipt field: {field}")
 
+    component_commits = receipt.get("component_commits")
+    if not isinstance(component_commits, dict):
+        failures.append("component_commits must be an object")
+    else:
+        for component in ("mcp", "bot"):
+            commit = component_commits.get(component)
+            if not isinstance(commit, str) or COMMIT_RE.fullmatch(commit) is None:
+                failures.append(f"component_commits.{component} must be a full git commit")
+
+    digests = receipt.get("product_artifact_and_contract_digests")
+    if not isinstance(digests, dict) or not digests:
+        failures.append("product_artifact_and_contract_digests must be a non-empty object")
+    else:
+        for artifact, digest in digests.items():
+            if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+                failures.append(
+                    f"product_artifact_and_contract_digests.{artifact} must be a sha256 digest"
+                )
+
     host_runs = receipt.get("host_runs", {})
     if not isinstance(host_runs, dict):
         failures.append("host_runs must be an object keyed by host")
@@ -168,11 +232,12 @@ def validate_receipt(receipt: dict[str, Any]) -> tuple[str, list[str]]:
         for field in HOST_REQUIRED_FIELDS:
             if field not in run:
                 failures.append(f"{host}: missing field {field}")
+        for text_field in ("host_version", "documented_mechanism"):
+            if not isinstance(run.get(text_field), str) or not run[text_field].strip():
+                failures.append(f"{host}: {text_field} must be a non-empty string")
         if run.get("preflight_invocations") != 1:
             failures.append(f"{host}: preflight_invocations must equal 1")
         for bool_field in (
-            "clean_host_configuration",
-            "bounded_context_sanitization",
             "candidate_rendered",
             "confirmation_required_rendered",
             "explicit_human_confirmation",
@@ -183,16 +248,93 @@ def validate_receipt(receipt: dict[str, Any]) -> tuple[str, list[str]]:
         ):
             if run.get(bool_field) is not True:
                 failures.append(f"{host}: {bool_field} must be true")
+        if run.get("agent_or_hook_self_confirm_possible") is not False:
+            failures.append(f"{host}: agent_or_hook_self_confirm_possible must be false")
+
+        lifecycle = run.get("consented_adapter_lifecycle_receipts")
+        if not isinstance(lifecycle, dict):
+            failures.append(f"{host}: consented_adapter_lifecycle_receipts must be an object")
+        else:
+            for step in REQUIRED_ADAPTER_LIFECYCLE_STEPS:
+                if not _is_passed(lifecycle.get(step)):
+                    failures.append(
+                        f"{host}: consented_adapter_lifecycle_receipts.{step} must be passed"
+                    )
+
+        clean_config = run.get("clean_host_configuration")
+        if not isinstance(clean_config, dict):
+            failures.append(f"{host}: clean_host_configuration must be an object")
+        else:
+            if not _is_passed(clean_config.get("status")):
+                failures.append(f"{host}: clean_host_configuration.status must be passed")
+            for path_field in ("host_home", "config_root"):
+                path = clean_config.get(path_field)
+                if not isinstance(path, str) or not path.strip():
+                    failures.append(
+                        f"{host}: clean_host_configuration.{path_field} must be a non-empty path"
+                    )
+
+        bounded_context = run.get("bounded_context_sanitization")
+        if not isinstance(bounded_context, dict):
+            failures.append(f"{host}: bounded_context_sanitization must be an object")
+        else:
+            if not _is_passed(bounded_context.get("status")):
+                failures.append(f"{host}: bounded_context_sanitization.status must be passed")
+            for collection_field in ("raw_transcript_collected", "secrets_collected"):
+                if bounded_context.get(collection_field) is not False:
+                    failures.append(
+                        f"{host}: bounded_context_sanitization.{collection_field} must be false"
+                    )
+
+    process_health = receipt.get("production_process_health")
+    if not isinstance(process_health, dict):
+        failures.append("production_process_health must be an object")
+    else:
+        for process in ("mcp", "daemon"):
+            process_receipt = process_health.get(process)
+            if not isinstance(process_receipt, dict):
+                failures.append(f"production_process_health.{process} must be an object")
+                continue
+            if not _is_passed(process_receipt.get("status")):
+                failures.append(f"production_process_health.{process}.status must be passed")
+            identity = process_receipt.get("identity")
+            if not isinstance(identity, str) or not identity.strip():
+                failures.append(
+                    f"production_process_health.{process}.identity must be a non-empty string"
+                )
+
+    for status_field in (
+        "disposable_event_store_and_workspace_isolation",
+        "candidate_challenge_result_and_ledger_correlation",
+        "restart_replay",
+        "sanitization",
+    ):
+        _require_passed_status(receipt.get(status_field), status_field, failures)
+
+    negative_paths = receipt.get("negative_path_receipts")
+    if not isinstance(negative_paths, dict):
+        failures.append("negative_path_receipts must be an object keyed by host")
+    else:
+        for host in REQUIRED_HOSTS:
+            host_paths = negative_paths.get(host)
+            if not isinstance(host_paths, dict):
+                failures.append(f"negative_path_receipts.{host} must be an object")
+                continue
+            for path in REQUIRED_NEGATIVE_PATHS:
+                if not _is_passed(host_paths.get(path)):
+                    failures.append(f"negative_path_receipts.{host}.{path} must be passed")
 
     if contains_secret(receipt):
         failures.append("receipt contains unredacted secret-like keys or values")
 
     release_absence = receipt.get("release_package_factory_artifact_absence", {})
+    _require_passed_status(release_absence, "release_package_factory_artifact_absence", failures)
     if isinstance(release_absence, dict) and release_absence.get("findings"):
         failures.append("release package contains Factory runtime artifacts")
 
-    if receipt.get("deterministic_teardown", {}).get("status") != "passed":
-        failures.append("deterministic_teardown.status must be passed")
+    _require_passed_status(
+        receipt.get("deterministic_teardown"), "deterministic_teardown", failures
+    )
 
     if failures:
         return "product_failure", failures
@@ -211,8 +353,9 @@ def incomplete_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "required_hosts": list(REQUIRED_HOSTS),
         "runner": "scripts/run_mcp_alpha_host_promotion_topology.py",
         "next_safe_action": (
-            "Run this profile only after #735 is merged to dev, bot #828 is accepted "
-            "or explicitly waived, and a real Claude Code + Codex host receipt is available."
+            "Obtain a valid scoped DispatchGrant through a deployed Factory Admission "
+            "Controller, then run separate real Claude Code and Codex production-host "
+            "sessions and supply their sanitized terminal receipts."
         ),
     }
 
