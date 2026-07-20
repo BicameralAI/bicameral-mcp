@@ -11,7 +11,6 @@ import re
 import subprocess
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SHA = re.compile(r"^[a-f0-9]{40}$")
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
@@ -43,7 +42,12 @@ def tree_digest(path_name: str) -> str:
 
 
 def canonical_digest(value: object) -> str:
-    return "sha256:" + hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return (
+        "sha256:"
+        + hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
 
 
 def build_descriptor(commit: str) -> dict:
@@ -54,7 +58,9 @@ def build_descriptor(commit: str) -> dict:
         "component": "mcp",
         "commit": commit,
         "artifacts": {
-            "server": files_digest(["daemon_client.py", "server.py", "tool_request.py", "tool_schemas.py"]),
+            "server": files_digest(
+                ["daemon_client.py", "server.py", "tool_request.py", "tool_schemas.py"]
+            ),
             "package": files_digest(["pyproject.toml", "requirements-ci.lock"]),
         },
         "interfaces": {
@@ -90,7 +96,9 @@ def validate_descriptor(payload: object) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=ROOT / "release-artifacts" / "mcp-release-descriptor.json")
+    parser.add_argument(
+        "--output", type=Path, default=ROOT / "release-artifacts" / "mcp-release-descriptor.json"
+    )
     parser.add_argument("--verify", type=Path)
     args = parser.parse_args()
     if args.verify:
@@ -99,7 +107,11 @@ def main() -> int:
             print("\n".join(f"- {error}" for error in errors))
             return 1
         return 0
-    commit = os.environ.get("RELEASE_SOURCE_COMMIT") or os.environ.get("GITHUB_SHA") or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    commit = (
+        os.environ.get("RELEASE_SOURCE_COMMIT")
+        or os.environ.get("GITHUB_SHA")
+        or subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    )
     args.output.parent.mkdir(exist_ok=True)
     args.output.write_text(json.dumps(build_descriptor(commit), indent=2, sort_keys=True) + "\n")
     print(args.output)

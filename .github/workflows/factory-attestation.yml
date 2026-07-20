@@ -13,4 +13,6 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Validate factory attestation
-        run: python3 .github/scripts/validate_factory_attestation.py .bicameral/factory-attestations
+        run: |
+          python3 tests/test_factory_attestation_filename.py
+          python3 .github/scripts/validate_factory_attestation.py .bicameral/factory-attestations
