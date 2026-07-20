@@ -1,6 +1,6 @@
 # Release Manifest Adoption: Bicameral MCP
 
-Status: draft
+Status: descriptor CI implemented
 Related Factory blueprint: https://github.com/BicameralAI/bicameral-factory/pull/290
 
 ## Purpose
@@ -17,7 +17,7 @@ Integration adapter/config + Bot integration ingress + Bot MCP ToolRequest inter
 
 A receipt is reusable only when the complete declared closure and topology-profile version match. An MCP or Integrations change therefore does not force a Bot-to-Cloud browser rerun unless it changes a declared dependency in that distinct closure.
 
-## Required eventual gates
+## Delivery gates
 
 1. MCP CI emits artifact provenance and deterministic Bot-facing contract fingerprint.
 2. Release assembly validates MCP against exact pinned Bot interface.
@@ -32,4 +32,4 @@ A receipt is reusable only when the complete declared closure and topology-profi
 
 ## Non-goals
 
-No new MCP lifecycle/persistence state, hosted-dashboard implementation, or claim current MCP checks fulfill this contract.
+No new MCP lifecycle/persistence state or hosted-dashboard implementation. Descriptor CI is component provenance, not terminal journey evidence.

@@ -20,28 +20,26 @@
   ],
   "local_setup_divergence": {
     "checked": true,
-    "resolution": "not_applicable",
-    "notes": "Docs-only draft published through connected GitHub app after local gh credential sandbox failure. No local-only runtime/tooling behavior shaped this product contract.",
+    "resolution": "none",
+    "notes": "The descriptor and tests are dependency-free and were validated in an isolated clean checkout.",
     "unresolved_items": []
   },
   "roadmap_reconciliation": {
     "checked": true,
-    "issue_number": 65,
-    "issue_type": "validated",
-    "project_status": "In Progress",
+    "issue_number": 291,
+    "issue_type": "validating",
+    "project_status": "Todo",
     "pr_links_checked": true,
     "pr_body_links_issue": true,
-    "pr_links": [],
+    "pr_links": ["https://github.com/BicameralAI/bicameral-mcp/pull/748"],
     "post_work_comment_url": null,
-    "notes": "Tool-Agnostic cross-repository operational hygiene; Factory PR #290 is the shared draft."
+    "notes": "Factory #291 and MCP #749 track the integration_bot_mcp_v1 closure."
   },
   "state_refinement": {
     "checked": true,
-    "release_state": "Documentation-only release-control contract. No product lifecycle behavior, canonical state, authority, persistence, routing, ingestion, or review flow changed.",
+    "release_state": "No lifecycle behavior changed. CI now emits a content-addressed MCP descriptor for release-closure selection.",
     "states_added": [],
-    "states_deferred": [
-      "Manifest registry, provenance emitters, topology runners, promotion controller, and production identity verification."
-    ],
+    "states_deferred": [],
     "invariants": [
       "No canonical product state, authority, or persistence semantics changed.",
       "Release manifests and topology receipts remain operational evidence, not Decision Ledger, signoff, compliance, or product authority.",
@@ -52,7 +50,7 @@
       "rejected_or_collapsed_states": [
         "No new product lifecycle state; release-control terms remain docs and future operational records."
       ],
-      "rationale": "The PR records only repo-local adoption and defers executable release-control state until Factory review."
+      "rationale": "Artifact/interface provenance is operational metadata and adds no canonical state, authority, or persistence semantics."
     }
   },
   "end_of_session_capture": {
@@ -61,15 +59,15 @@
     "notes": "Receipt reuse must be keyed to complete interface/artifact/configuration closure, never paths or issue closure."
   },
   "factory_signals": {
-    "artifact_boundary": "Only a repo-local adoption document and this attestation are added; no prompts, scratch logs, credentials, fixtures, or runtime artifacts.",
+    "artifact_boundary": "The PR adds repo-local release descriptor code, CI, tests, docs, and attestation; generated descriptors, prompts, credentials, and logs remain uncommitted.",
     "domain_entity_candidates": "Release Manifest and journey closure are product-release delivery terms governed by Factory PR #290; no product glossary promotion claimed.",
     "factory_learning_signals": "Independent closures allow Integration-to-Bot-to-MCP validation without Bot-to-Cloud rerun when the hosted closure is unchanged; unknown edges invalidate reuse.",
-    "minimum_product_validation": "Documentation review only. No CI gate, runner, or production deployment behavior is claimed implemented."
+    "minimum_product_validation": "Descriptor unit test, generation, self-verification, YAML parse, and diff checks pass locally; GitHub CI retains the exact descriptor."
   },
   "attested_by": "OpenAI Codex",
-  "timestamp": "2026-07-21T00:00:00+08:00",
+  "timestamp": "2026-07-21T04:20:00+08:00",
   "target_repo": "BicameralAI/bicameral-mcp",
   "target_branch": "agent/release-manifest-adoption",
   "agent": "OpenAI Codex",
-  "session": "Release-manifest journey-closure adoption drafts"
+  "session": "Implement MCP release descriptor and CI provenance"
 }
