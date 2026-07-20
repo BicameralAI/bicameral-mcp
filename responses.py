@@ -476,9 +476,7 @@ def format_source_link_response(response: dict[str, Any], *, surface: str) -> Te
 def _render_source_link_item(
     item: dict[str, Any], *, graph_snapshot_id: str | None = None
 ) -> dict[str, Any]:
-    source_link = (
-        item.get("source_link") or item.get("inspection_uri") or item.get("source_uri")
-    )
+    source_link = item.get("source_link") or item.get("inspection_uri") or item.get("source_uri")
     evidence_state = item.get("evidence_state")
     graph_readiness = item.get("graph_readiness") or item.get("readiness")
     currentness = item.get("currentness") or item.get("freshness")
