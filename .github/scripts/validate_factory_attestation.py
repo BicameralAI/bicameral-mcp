@@ -18,6 +18,7 @@ from typing import Any
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+ATTESTATION_RUN_ID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
 FACTORY_PR_RE = re.compile(r"^https://github\.com/BicameralAI/bicameral-factory/pull/[0-9]+$")
 ALLOWED_DIVERGENCE_RESOLUTIONS = {"none", "promoted", "disabled", "not_applicable"}
 ALLOWED_CONTEXT_EVIDENCE_SOURCES = {"agent-declared", "wrapper-observed", "human-declared"}
@@ -59,6 +60,16 @@ def valid_datetime(value: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def valid_commit_grounded_filename(filename: str, factory_commit: str) -> bool:
+    legacy_name = f"{factory_commit}.json"
+    if filename == legacy_name:
+        return True
+
+    stem = filename.removesuffix(".json")
+    run_id = stem[len(factory_commit) + 1 :] if stem.startswith(f"{factory_commit}.") else ""
+    return filename.endswith(".json") and bool(run_id and ATTESTATION_RUN_ID_RE.fullmatch(run_id))
 
 
 def sha256_file(path: Path) -> str:
@@ -224,10 +235,12 @@ def validate_file(path: Path, require_context: set[str], context_root: Path | No
     errors = validate(data, require_context, context_root)
     factory_commit = data.get("factory_commit")
     if path.parent.name == "factory-attestations" and isinstance(factory_commit, str):
-        expected_name = f"{factory_commit}.json"
-        if path.name != expected_name:
+        legacy_name = f"{factory_commit}.json"
+        if not valid_commit_grounded_filename(path.name, factory_commit):
             errors.append(
-                f"commit-grounded attestation filename must be {expected_name} for factory_commit {factory_commit}"
+                "commit-grounded attestation filename must be "
+                f"{factory_commit}.<run-id>.json (preferred) or legacy {legacy_name} "
+                f"for factory_commit {factory_commit}"
             )
     return errors
 
