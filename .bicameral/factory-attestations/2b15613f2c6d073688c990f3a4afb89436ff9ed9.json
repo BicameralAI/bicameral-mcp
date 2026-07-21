@@ -91,9 +91,10 @@
     "pr_body_links_issue": true,
     "pr_links": [
       "https://github.com/BicameralAI/bicameral-mcp/pull/743",
-      "https://github.com/BicameralAI/bicameral-mcp/pull/746"
+      "https://github.com/BicameralAI/bicameral-mcp/pull/746",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/750"
     ],
-    "post_work_comment_url": null
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-mcp/issues/736#issuecomment-5029171986"
   },
   "state_refinement": {
     "checked": true,
