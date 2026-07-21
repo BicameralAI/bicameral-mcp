@@ -1,0 +1,119 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "2b15613f2c6d073688c990f3a4afb89436ff9ed9",
+  "loaded_context": [
+    "README.md",
+    "CONTEXT.md",
+    "CONTRIBUTING.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "blueprints/topology-execution.md",
+    "skills/bic/topology-execution/SKILL.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/governance/factory-dispatch-control.md"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "wrapper-observed",
+      "reason": "Established the Factory and product authority boundary.",
+      "sha256": "797d61410caeaaba3cffd19263f64cfb773e3483a775e3f7f22b729a19eece9b"
+    },
+    "CONTEXT.md": {
+      "source": "wrapper-observed",
+      "reason": "Kept product and Factory terminology within their owning boundaries.",
+      "sha256": "63b318647089cc3cb7e54bc102dba241f84866e6979409dcfa91c82aab435fb0"
+    },
+    "CONTRIBUTING.md": {
+      "source": "wrapper-observed",
+      "reason": "Required evidence-backed review and separation of Factory artifacts.",
+      "sha256": "ef0946fbd159494809d1ddc2a240d0ae063177fccf4b0f5c608d408845402c35"
+    },
+    "playbooks/devin-bicameral-factory-run.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined implementation, validation, attestation, and draft-PR requirements.",
+      "sha256": "c287257b40938d5c8e686450e9fe4afa9be384d646fe7c1a55b46cfefdba52f1"
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "wrapper-observed",
+      "reason": "Kept raw receipts and dogfood notes out of the product diff.",
+      "sha256": "d9ee7c1714bd20e576a2fa28e1bcba958e5dfa6a46dc82314504b18943d91f46"
+    },
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {
+      "source": "wrapper-observed",
+      "reason": "Confirmed the assembler introduces no reusable domain entity.",
+      "sha256": "c88e89e66dbce89bf81af41fd976888664cbde26dbe39ace2d12605464c6755c"
+    },
+    "blueprints/factory-run-signals/factory-learning-signals.md": {
+      "source": "wrapper-observed",
+      "reason": "Required reporting the attestation filename contract mismatch as evidence.",
+      "sha256": "63b7d5bd11f005a062d52163606c54562cbcc2e5619935fde8f1b9cc39457e21"
+    },
+    "blueprints/factory-run-signals/minimum-product-validation.md": {
+      "source": "wrapper-observed",
+      "reason": "Set the deterministic validation floor for contributor tooling.",
+      "sha256": "f0efac9c9a6007864b78393c4b8d21555d7aa5e008879e38137dc6569a99197f"
+    },
+    "blueprints/topology-execution.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined receipt semantics and prohibited an unadmitted host attempt.",
+      "sha256": "2373896d0570d727b6583520d9d41bdb74bfdbb8207611e9757969d2d0b928b8"
+    },
+    "skills/bic/topology-execution/SKILL.md": {
+      "source": "wrapper-observed",
+      "reason": "Required exact revisions, bounded execution, fail-closed evidence, and cleanup proof.",
+      "sha256": "fc2d10965d1a7f193b361255f272549807283d3f70274adfb5e084e7db72c15c"
+    },
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined this pre-PR provenance record and validation step.",
+      "sha256": "e7d105f139e9e40fd1dd655891866a674fef839df604be748cc60b3e2b95f45d"
+    },
+    "docs/governance/factory-dispatch-control.md": {
+      "source": "wrapper-observed",
+      "reason": "Confirmed that issue approval cannot replace the unavailable controller-backed DispatchGrant.",
+      "sha256": "cfb5b2518cd29f169147036b10a61b7fc2567eaeb2b03a6f7f1d4698d72e2244"
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none"
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 736,
+    "issue_type": "validating",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/743",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/746"
+    ],
+    "post_work_comment_url": null
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No lifecycle behavior changed.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "No canonical state, authority, or persistence semantics changed.",
+      "Supporting or synthetic evidence cannot become terminal host acceptance.",
+      "The assembler cannot grant admission or replace named human product review."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [],
+      "rationale": "The patch deterministically assembles and validates evidence; it adds no product lifecycle state or authority."
+    }
+  },
+  "end_of_session_capture": {
+    "run": true
+  },
+  "attested_by": "Codex GPT-5",
+  "timestamp": "2026-07-21T01:24:17Z"
+}
