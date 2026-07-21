@@ -8,6 +8,7 @@ import importlib
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,11 @@ topology = importlib.import_module(
     "scripts.run_mcp_alpha_host_promotion_topology"
     if __package__
     else "run_mcp_alpha_host_promotion_topology"
+)
+grant_contract = importlib.import_module(
+    "scripts.validate_mcp_alpha_host_promotion_grant"
+    if __package__
+    else "validate_mcp_alpha_host_promotion_grant"
 )
 
 REAL_HOST_CAPTURE = "production_host_session"
@@ -131,8 +137,10 @@ def assemble_receipt(
     bot_root: Path,
     artifacts: dict[str, Path],
     contracts: dict[str, Path],
+    authorization_grant_path: Path,
     host_evidence_paths: dict[str, Path],
     shared_evidence_path: Path | None,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
     duplicate_labels = artifacts.keys() & contracts.keys()
     if duplicate_labels:
@@ -141,6 +149,12 @@ def assemble_receipt(
     for label, path in digested_inputs.items():
         if not path.is_file():
             raise AssemblyError(f"digest input is not a file: {label}={path}")
+    try:
+        _, authorization = grant_contract.load_and_validate_grant(
+            authorization_grant_path.resolve(), now=now
+        )
+    except grant_contract.GrantError as exc:
+        raise AssemblyError(f"authorization denied: {exc}") from exc
     receipt: dict[str, Any] = {
         "profile": topology.PROFILE,
         "evidence_level": "supporting_evidence_only",
@@ -153,9 +167,11 @@ def assemble_receipt(
         },
         "host_runs": {},
         "negative_path_receipts": {},
+        "topology_authorization": authorization,
         "evidence_sources": {
             "digested_inputs": {label: _source(path) for label, path in digested_inputs.items()},
             "hosts": {},
+            "authorization_grant": _source(authorization_grant_path.resolve()),
         },
     }
 
@@ -249,6 +265,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Host capture summary as claude=/path or codex=/path.",
     )
     parser.add_argument("--shared-evidence", type=Path)
+    parser.add_argument(
+        "--authorization-grant",
+        type=Path,
+        required=True,
+        help="Active bounded manual grant for the exact MCP #736 topology.",
+    )
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
 
@@ -261,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
             bot_root=args.bot_root,
             artifacts=_bindings(args.artifact, "artifact"),
             contracts=_bindings(args.contract, "contract"),
+            authorization_grant_path=args.authorization_grant,
             host_evidence_paths=_bindings(args.host_evidence, "host evidence"),
             shared_evidence_path=args.shared_evidence.resolve() if args.shared_evidence else None,
         )

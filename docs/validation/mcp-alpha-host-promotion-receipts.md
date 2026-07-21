@@ -4,9 +4,27 @@ This workflow assembles and validates the terminal evidence required by MCP
 issue `#736`. It does not run the topology, grant admission, or turn supporting
 component evidence into terminal User Journey evidence.
 
-Do not start a Claude Code or Codex host attempt until the
-`mcp-alpha-host-promotion-v1` admission requirement is satisfied. Each host must
-be captured independently from a clean home by the genuine production host.
+Do not start a Claude Code or Codex host attempt until a schema-valid, active
+Bounded Manual Topology Grant authorizes the exact
+`mcp-alpha-host-promotion-v1` profile. Each host must be captured independently
+from a clean home by the genuine production host.
+
+The grant applies only inside an already human-created execution surface. It
+does not authorize Devin/provider session creation, retry, continuation, or
+termination. A human operator retains authentication, installation consent,
+explicit product confirmation, and final acceptance authority. The alpha grant
+is defined by Factory #298 / PR #299 and expires at the July 29 alpha cut.
+
+Validate the grant before any host process starts:
+
+```bash
+python3 scripts/validate_mcp_alpha_host_promotion_grant.py \
+  /path/to/bounded-manual-grant.json
+```
+
+Expiry, revocation, profile/runner/executor mismatch, non-zero external spend,
+parallel executors, a widened attempt/timeout budget, or removal of a prohibited
+action fails closed.
 
 ## Evidence inputs
 
@@ -74,6 +92,7 @@ python3 scripts/assemble_mcp_alpha_host_promotion_receipt.py \
   --artifact mcp_wheel=/path/to/bicameral_mcp.whl \
   --artifact bot_binary=/path/to/bicameral \
   --contract topology_contract=scripts/run_mcp_alpha_host_promotion_topology.py \
+  --authorization-grant /path/to/bounded-manual-grant.json \
   --host-evidence claude=/path/to/claude-evidence.json \
   --host-evidence codex=/path/to/codex-evidence.json \
   --shared-evidence /path/to/shared-evidence.json \
@@ -89,9 +108,12 @@ python3 scripts/run_mcp_alpha_host_promotion_topology.py \
 ```
 
 The assembler exits `0` only when the existing merged validator accepts the
-combined receipt. Missing host evidence, direct `prework-run` evidence,
+combined receipt and the same grant remains active and exact. Missing or expired
+authorization, missing host evidence, direct `prework-run` evidence,
 synthetic capture kinds, missing lifecycle receipts, incomplete negative paths,
 and missing release artifacts remain product failures.
 
 The combined JSON is a sanitized review artifact. Named human product review is
 still required before `#736` can satisfy the alpha release gate.
+The authorization summary in that receipt proves only that execution was
+bounded; it is not terminal evidence, product acceptance, or release authority.

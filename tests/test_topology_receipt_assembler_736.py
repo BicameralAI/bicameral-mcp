@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,7 @@ import pytest
 
 from scripts import assemble_mcp_alpha_host_promotion_receipt as assembler
 from scripts import run_mcp_alpha_host_promotion_topology as topology
+from scripts import validate_mcp_alpha_host_promotion_grant as grant_contract
 
 
 def _write_json(path: Path, value) -> Path:
@@ -107,6 +109,41 @@ def _shared_evidence(tmp_path: Path) -> Path:
     )
 
 
+def _authorization_grant(tmp_path: Path) -> Path:
+    return _write_json(
+        tmp_path / "bounded-manual-grant.json",
+        {
+            "version": 1,
+            "grant_id": "bmtg_mcp736_test_0001",
+            "status": "active",
+            "issued_by": "@owner",
+            "issued_at": "2026-07-21T00:00:00Z",
+            "expires_at": "2099-07-29T00:00:00Z",
+            "approval_record_url": "https://github.com/BicameralAI/bicameral-factory/issues/298",
+            "execution_surface": "existing-human-created",
+            "executor": "devin",
+            "human_operator": "@operator",
+            "human_presence_required": True,
+            "source_issue": grant_contract.SOURCE_ISSUE,
+            "profile": grant_contract.PROFILE,
+            "runner": grant_contract.RUNNER,
+            "privilege_class": "privileged-external",
+            "allowed_actions": ["execute_declared_runner"],
+            "credential_classes": ["existing_operator_authenticated_host_session"],
+            "resource_scope": ["clean_temporary_host_homes"],
+            "run_budget": {
+                "successful_runs_required": 2,
+                "maximum_attempts": 4,
+                "timeout_minutes_per_attempt": 45,
+                "maximum_concurrent_executors": 1,
+                "maximum_external_spend_usd": 0,
+            },
+            "required_receipt": ["deterministic_teardown"],
+            "prohibited_actions": sorted(grant_contract.REQUIRED_PROHIBITIONS),
+        },
+    )
+
+
 def _assemble(tmp_path: Path, monkeypatch, **overrides) -> dict:
     monkeypatch.setattr(topology, "git_commit", lambda _path: "a" * 40)
     artifact = tmp_path / "bicameral_mcp.whl"
@@ -119,6 +156,8 @@ def _assemble(tmp_path: Path, monkeypatch, **overrides) -> dict:
         "artifacts": {"mcp_wheel": artifact},
         "contracts": {"topology_contract": contract},
     }
+    if "authorization_grant_path" not in overrides:
+        values["authorization_grant_path"] = _authorization_grant(tmp_path)
     if "host_evidence_paths" not in overrides:
         values["host_evidence_paths"] = {
             host: _host_evidence(tmp_path, host) for host in topology.REQUIRED_HOSTS
@@ -135,6 +174,8 @@ def test_assembler_derives_objective_metadata_and_passes_complete_sources(
     receipt = _assemble(tmp_path, monkeypatch)
 
     assert receipt["outcome"] == "passed"
+    assert receipt["topology_authorization"]["grant_id"] == "bmtg_mcp736_test_0001"
+    assert receipt["topology_authorization"]["provider_session_authority"] is False
     assert receipt["evidence_level"] == topology.TERMINAL_EVIDENCE_LEVEL
     assert len(receipt["product_artifact_and_contract_digests"]["mcp_wheel"]) == 64
     assert receipt["host_runs"]["claude"]["consented_adapter_lifecycle_receipts"] == {
@@ -215,3 +256,31 @@ def test_artifact_and_contract_labels_cannot_collide(tmp_path: Path, monkeypatch
             artifacts={"release": artifact},
             contracts={"release": artifact},
         )
+
+
+def test_expired_authorization_grant_fails_before_receipt_assembly(tmp_path: Path, monkeypatch):
+    grant = _authorization_grant(tmp_path)
+    value = json.loads(grant.read_text())
+    value["expires_at"] = "2026-07-21T00:00:01Z"
+    grant.write_text(json.dumps(value))
+
+    with pytest.raises(
+        assembler.AssemblyError,
+        match="authorization denied: authorization grant is expired",
+    ):
+        _assemble(
+            tmp_path,
+            monkeypatch,
+            authorization_grant_path=grant,
+            now=datetime(2026, 7, 21, 0, 0, 2, tzinfo=UTC),
+        )
+
+
+def test_grant_cannot_authorize_provider_session_actions(tmp_path: Path, monkeypatch):
+    grant = _authorization_grant(tmp_path)
+    value = json.loads(grant.read_text())
+    value["prohibited_actions"].remove("create_retry_or_terminate_implementation_session")
+    grant.write_text(json.dumps(value))
+
+    with pytest.raises(assembler.AssemblyError, match="prohibited_actions missing"):
+        _assemble(tmp_path, monkeypatch, authorization_grant_path=grant)
