@@ -224,10 +224,17 @@ def validate_file(path: Path, require_context: set[str], context_root: Path | No
     errors = validate(data, require_context, context_root)
     factory_commit = data.get("factory_commit")
     if path.parent.name == "factory-attestations" and isinstance(factory_commit, str):
-        expected_name = f"{factory_commit}.json"
-        if path.name != expected_name:
+        legacy_name = f"{factory_commit}.json"
+        per_run_prefix = f"{factory_commit}."
+        per_run = (
+            path.name.startswith(per_run_prefix)
+            and path.name.endswith(".json")
+            and len(path.name) > len(per_run_prefix) + len(".json")
+        )
+        if path.name != legacy_name and not per_run:
             errors.append(
-                f"commit-grounded attestation filename must be {expected_name} for factory_commit {factory_commit}"
+                "commit-grounded attestation filename must be "
+                f"{legacy_name} or {factory_commit}.<run-id>.json for factory_commit {factory_commit}"
             )
     return errors
 
