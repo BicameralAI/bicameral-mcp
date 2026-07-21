@@ -2,7 +2,7 @@ mcp[cli]>=1.28.1
 hatchling
 pytest>=9.1.1
 pytest-asyncio>=1.4.0
-ruff>=0.15.20
+ruff>=0.15.22
 mypy>=2.3.0
 build>=1.5.0
 colorama
