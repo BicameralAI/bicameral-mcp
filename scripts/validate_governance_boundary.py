@@ -56,7 +56,12 @@ GOVERNANCE_ALLOWLIST = {
 }
 
 FACTORY_ATTESTATION_PATTERN = ".bicameral/factory-attestations/*.json"
-REPO_GOVERNANCE_DESCRIPTOR = ".bicameral/repo-governance.yaml"
+TRACKED_BICAMERAL_ALLOWLIST = {
+    ".bicameral/customer-artifact-boundary.json",
+    ".bicameral/repo-governance.schema.json",
+    ".bicameral/repo-governance.yaml",
+    ".bicameral/validator-provenance/customer-artifact-boundary.json",
+}
 
 
 def git_lines(args: list[str]) -> list[str]:
@@ -125,7 +130,7 @@ def match_root(path: str, root: str) -> bool:
 
 
 def forbidding_root(path: str, roots: list[str]) -> str | None:
-    if path in GOVERNANCE_ALLOWLIST or path == REPO_GOVERNANCE_DESCRIPTOR:
+    if path in GOVERNANCE_ALLOWLIST or path in TRACKED_BICAMERAL_ALLOWLIST:
         return None
     if fnmatch.fnmatch(path, FACTORY_ATTESTATION_PATTERN):
         return None

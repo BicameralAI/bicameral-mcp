@@ -158,6 +158,133 @@ async def test_recall_review_actions_map_to_current_bot_commands(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_candidate_promotion_initial_request_does_not_require_approval_proof(monkeypatch):
+    daemon = _ReviewDaemon(
+        response={
+            "status": "ok",
+            "result": {
+                "outcome": "confirmation_required",
+                "confirmation_required": {
+                    "challenge_id": "chal-735",
+                    "expires_at": "2026-07-16T03:45:00Z",
+                    "binding": {
+                        "packet_id": "pkt-735",
+                        "candidate_id": "cand-735",
+                        "outcome": "new_constraint",
+                    },
+                    "token": "secret-token-must-not-render",
+                },
+            },
+        }
+    )
+    monkeypatch.setattr(server, "_client", lambda: daemon)
+
+    content = await server.call_tool(
+        "bicameral.review.promote_candidate",
+        {
+            "packet_id": "pkt-735",
+            "candidate_id": "cand-735",
+            "promotion_outcome": "new_constraint",
+        },
+    )
+    rendered = json.loads(content[0].text)
+
+    request = daemon.requests[0]
+    assert request["command"]["name"] == "recall.promote_decision_candidate"
+    assert "approval_proof" not in request["command"]["params"]
+    assert "confirmation" not in request["command"]["params"]
+    assert rendered["status"] == "confirmation_required"
+    assert rendered["canonical_transition_materialized"] is False
+    assert rendered["human_confirmation_required"] is True
+    assert rendered["confirmation_required"]["token"] == "[REDACTED]"
+    assert "secret-token-must-not-render" not in content[0].text
+
+
+@pytest.mark.asyncio
+async def test_candidate_promotion_confirmation_is_passed_through(monkeypatch):
+    daemon = _ReviewDaemon(
+        response={
+            "status": "ok",
+            "result": {
+                "outcome": "promoted",
+                "candidate_id": "cand-735",
+                "decision_id": "DEC-735",
+                "lineage": {"supersedes_decision_id": "DEC-1"},
+            },
+        }
+    )
+    monkeypatch.setattr(server, "_client", lambda: daemon)
+
+    confirmation = {
+        "challenge_id": "chal-735",
+        "secret": "human-confirmed-secret",
+        "confirmed": True,
+    }
+    content = await server.call_tool(
+        "bicameral.review.promote_candidate",
+        {
+            "packet_id": "pkt-735",
+            "candidate_id": "cand-735",
+            "promotion_outcome": "supersedes",
+            "supersedes_decision_id": "DEC-1",
+            "confirmation": confirmation,
+        },
+    )
+    rendered = json.loads(content[0].text)
+
+    request = daemon.requests[0]
+    assert request["command"]["params"]["confirmation"] == confirmation
+    assert rendered["review_result"]["candidate_id"] == "cand-735"
+    assert rendered["review_result"]["decision_id"] == "DEC-735"
+    assert "canonical_result_note" in rendered
+
+
+def test_candidate_promotion_renderer_preserves_informed_confirmation_fields():
+    rendered = json.loads(
+        format_review_queue_response(
+            {
+                "request_id": "req-735",
+                "status": "ok",
+                "result": {
+                    "matches": [
+                        {
+                            "kind": "candidate",
+                            "candidate_id": "cand-735",
+                            "title": "Checkout retry policy",
+                            "excerpt": "Retries must be capped.",
+                            "evidence_refs": ["ev-735"],
+                            "source_refs": ["src-735"],
+                            "relevance_reason": "Touches retry behavior.",
+                            "readiness": "reviewable",
+                            "freshness": "current",
+                            "ambiguity": "low",
+                            "related_decisions": ["DEC-1"],
+                            "authority_required": "product_owner",
+                            "proposed_outcome": "keeps_both_with_scope",
+                            "scoping_effect": "applies only to checkout retries",
+                            "challenge_expires_at": "2026-07-16T03:45:00Z",
+                        }
+                    ]
+                },
+            },
+            item_key="decision_candidates",
+        ).text
+    )
+
+    item = rendered["decision_candidates"][0]
+    assert item["candidate_id"] == "cand-735"
+    assert item["excerpt"] == "Retries must be capped."
+    assert item["relevance_reason"] == "Touches retry behavior."
+    assert item["readiness"] == "reviewable"
+    assert item["freshness"] == "current"
+    assert item["ambiguity"] == "low"
+    assert item["related_decisions"] == ["DEC-1"]
+    assert item["authority_required"] == "product_owner"
+    assert item["proposed_outcome"] == "keeps_both_with_scope"
+    assert item["scoping_effect"] == "applies only to checkout retries"
+
+
+@pytest.mark.asyncio
 async def test_recall_review_actions_are_capability_gated(monkeypatch):
     daemon = _ReviewDaemon(
         commands=[

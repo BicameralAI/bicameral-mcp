@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "188b6314b7d2945cb958a26553bfe3a4081a0eb6",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-attestation.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none"
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 734,
+    "issue_type": "validating",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/739"
+    ],
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-mcp/issues/734#issuecomment-4985902956"
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "This PR adds MCP-local, host-specific adapter install state only: not_installed -> enabled (install with consent) <-> disabled (disable/enable) and uninstall -> not_installed. Pre-work invocation is exactly-once per task-boundary correlation id, enforced by local dedup markers. No canonical daemon lifecycle, Decision, candidate, signoff, evidence, or compliance state is added or changed; MCP remains a transport surface that forwards bounded context and renders daemon verdicts.",
+    "states_added": [
+      "adapter.not_installed",
+      "adapter.enabled",
+      "adapter.disabled"
+    ],
+    "states_deferred": [
+      "daemon-side dedup/idempotent consumption of correlation_id/idempotency_key (out of scope; enforced locally by MCP dedup markers for now)"
+    ],
+    "invariants": [
+      "Canonical Decision/candidate/signoff/evidence/compliance state, authority, and persistence semantics are unchanged; the daemon remains the sole owner.",
+      "Automatic preflight fires only at a genuine pre-work boundary (source == startup) and exactly once per correlation id (host:session_id); it never runs mid-session or pre-write.",
+      "Only bounded, allowlisted context is forwarded; raw transcripts, secrets, unrelated tool output, environment, and telemetry are never read or sent.",
+      "A missing host mechanism, unavailable daemon, protocol mismatch, or dispatch error yields a visible typed fallback that never claims preflight ran and never consumes the once-per-boundary marker.",
+      "Enabling or a positive capability probe for one host never implies support or evidence for another host.",
+      "Adapters never render, choose, promote, or confirm candidates and make no compliance, safety, no-conflict, or merge-readiness claims.",
+      "The Bicameral Factory is never installed, imported, fetched, or read at product runtime."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "explicit 'installed_active' vs 'installed_enabled' split (collapsed into a single enabled state)",
+        "separate 'consent_pending' state (collapsed into a consent gate on install; consent is a recorded attribute, not a lifecycle state)",
+        "per-invocation 'fired'/'pending'/'failed' state machine (collapsed into local dedup markers plus a typed fallback outcome; fallbacks intentionally do not persist a fired marker)"
+      ],
+      "rationale": "The smallest honest state machine is the three local install states plus a correlation-keyed exactly-once guard. Invocation results are transient outcomes, not durable states; consent is an attribute of an enabled adapter. This avoids inventing canonical lifecycle state that the daemon, not MCP, must own."
+    }
+  },
+  "end_of_session_capture": {
+    "run": true
+  },
+  "attested_by": "Devin",
+  "timestamp": "2026-07-15T22:35:00Z"
+}

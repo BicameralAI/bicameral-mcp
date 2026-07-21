@@ -36,7 +36,21 @@ def _review_schema() -> dict:
 def _approval_proof_schema() -> dict:
     return {
         "type": "object",
-        "description": "Daemon-validated approval proof for governed recall review actions.",
+        "description": (
+            "Legacy daemon-validated approval proof for governed recall review actions. "
+            "Canonical candidate promotion uses daemon-issued confirmation instead."
+        ),
+    }
+
+
+def _confirmation_schema() -> dict:
+    return {
+        "type": "object",
+        "description": (
+            "Daemon-issued ConfirmationChallenge response captured after an explicit "
+            "human confirmation action in the host. MCP transports this object without "
+            "minting, validating, persisting, or logging challenge authority."
+        ),
     }
 
 
@@ -368,11 +382,32 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                     "type": "string",
                     "description": "Human-readable reason the operator is proposing this candidate.",
                 },
+                "project_source_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Optional registered-project source ref(s) (e.g. "
+                        "'BicameralAI/ada-service', or a full git remote URL) used as "
+                        "evidence only. When the candidate folder's normalized git "
+                        "remote matches one, MCP proposes at higher confidence; a clear "
+                        "mismatch fails closed before dispatch. Never project identity — "
+                        "project_id remains the authority key."
+                    ),
+                },
+                "project_source_ref": {
+                    "type": "string",
+                    "description": (
+                        "Convenience scalar form of project_source_refs (a single "
+                        "registered-project source ref or git remote URL). Evidence "
+                        "only; never project identity."
+                    ),
+                },
                 "confidence": {
                     "type": "number",
                     "description": (
                         "Surface confidence the candidate is correct, in [0.0, 1.0]. "
-                        "Defaults to 1.0 for an explicit operator selection."
+                        "When omitted, MCP derives it from git-remote evidence "
+                        "(match/unverified/ambiguous); an explicit value overrides that."
                     ),
                 },
                 "required_daemon_capability": {
@@ -486,8 +521,9 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
         name="bicameral.review.promote_candidate",
         description=(
             "Request daemon-governed promotion, supersession, or routing of a "
-            "DecisionCandidate from a RecallPacket. The daemon validates candidate "
-            "identity, approval proof, authority, and canonical transitions."
+            "DecisionCandidate from a RecallPacket. Canonical-writing outcomes are "
+            "two-phase: the daemon first returns confirmation_required, then MCP "
+            "resubmits a daemon-issued confirmation after explicit human action."
         ),
         inputSchema=_schema(
             {
@@ -500,8 +536,9 @@ SUPPORTED_TOOLS: tuple[Tool, ...] = (
                 "supersedes_decision_id": {"type": "string"},
                 "scoping_relationship": {"type": "string"},
                 "approval_proof": _approval_proof_schema(),
+                "confirmation": _confirmation_schema(),
             },
-            ["packet_id", "candidate_id", "promotion_outcome", "approval_proof"],
+            ["packet_id", "candidate_id", "promotion_outcome"],
         ),
     ),
     Tool(

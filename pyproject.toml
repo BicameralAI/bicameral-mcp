@@ -34,10 +34,10 @@ test = [
   "pytest>=9.1.1",
   "pytest-asyncio>=1.4.0",
   "ruff>=0.15.20",
-  "mypy>=2.1.0",
+  "mypy>=2.3.0",
   "build>=1.5.0",
   "pre-commit>=4.6.0",
-  "coverage[toml]>=7.15.0",
+  "coverage[toml]>=7.15.1",
 ]
 release = [
   "cyclonedx-bom>=7.3.0",
@@ -49,6 +49,7 @@ bicameral-mcp = "server:cli_main"
 [tool.hatch.build.targets.wheel]
 only-include = [
   "server.py",
+  "preflight_adapters",
   "approval_gate.py",
   "authority.py",
   "brief_renderer.py",
@@ -65,12 +66,15 @@ only-include = [
 ]
 
 [tool.hatch.build.targets.sdist]
+# Customer source archives intentionally exclude contributor-only history,
+# plans, tests, Factory evidence, agent configuration, and governance material.
 only-include = [
   "README.md",
-  "CHANGELOG.md",
   "SECURITY.md",
+  "LICENSE",
   "pyproject.toml",
   "server.py",
+  "preflight_adapters",
   "approval_gate.py",
   "authority.py",
   "brief_renderer.py",
@@ -84,12 +88,7 @@ only-include = [
   "tool_request.py",
   "tool_schemas.py",
   "version.py",
-  "docs/specs/bicameral-mcp-idealized-spec.md",
-  "docs/plans/toolrequest-refactor-plan.md",
-  "tests/test_toolrequest_thin_client.py",
-  "tests/test_toolrequest_conformance.py",
-  "tests/fixtures/toolresponses",
-  "tests/test_codegenome_authority_retired.py",
+  "docs/specs/host-prework-adapters.md",
 ]
 
 [tool.ruff]
@@ -101,8 +100,8 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP"]  # pyflakes + pycodestyle + isort + bugbear + pyupgrade
-ignore = ["E501"]  # line-length handled by formatter
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["F401", "F811", "F821", "F841", "E712", "B017", "B904", "E402", "E731"]

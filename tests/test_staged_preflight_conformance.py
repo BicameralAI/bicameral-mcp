@@ -150,6 +150,46 @@ class TestStagedFixtureCoverage:
         assert "session_directive" in output
         assert output["session_directive"] == {"mode": "continue"}
 
+    def test_render_preserves_alpha_recall_candidates_and_attention_signal(self):
+        daemon_resp = _daemon_response(CONFORMANCE_STAGED_FIXTURE)
+        daemon_resp["alpha_recall"] = {
+            "kind": "alpha_recall.product.packet",
+            "product": {
+                "decision_attention": {
+                    "kind": "decision_attention",
+                    "pressure": "candidate_review",
+                },
+                "packet": {
+                    "packet_id": "pkt-735",
+                    "decision_candidates": [
+                        {
+                            "kind": "candidate",
+                            "candidate_id": "cand-735",
+                            "title": "Checkout retry policy",
+                            "excerpt": "Retries must be capped.",
+                            "evidence_refs": ["ev-735"],
+                            "relevance_reason": "Touches retry behavior.",
+                            "readiness": "reviewable",
+                            "freshness": "current",
+                            "ambiguity": "low",
+                            "authority_required": "product_owner",
+                            "proposed_outcome": "new_constraint",
+                        }
+                    ],
+                },
+            },
+        }
+        content = format_preflight_response(daemon_resp)
+        output = json.loads(content.text)
+
+        alpha = output["alpha_recall"]
+        assert alpha["packet_id"] == "pkt-735"
+        assert alpha["operator_question"] == "Is there anything here you ought to decide?"
+        candidate = alpha["decision_candidates"][0]
+        assert candidate["candidate_id"] == "cand-735"
+        assert candidate["evidence_refs"] == ["ev-735"]
+        assert candidate["authority_required"] == "product_owner"
+
 
 # ---------------------------------------------------------------------------
 # AC-2: Renders not_configured and unsupported stages explicitly

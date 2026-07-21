@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from typing import Any
 
 import mcp.server.stdio
@@ -45,6 +46,7 @@ from governance_surface import (
 from prompts import get_prompt_result, list_prompt_definitions
 from responses import (
     error_text,
+    format_candidate_promotion_response,
     format_context_packet_response,
     format_correction_findings_response,
     format_correction_response,
@@ -57,6 +59,7 @@ from responses import (
     format_review_queue_response,
     format_source_link_response,
     format_tool_response,
+    format_workspace_bind_remote_conflict,
     format_workspace_bind_response,
     recovery_error_text,
 )
@@ -66,6 +69,7 @@ from tool_request import (
     MCP_TOOL_COMMANDS,
     WORKSPACE_BIND_COMMAND,
     build_tool_request,
+    evaluate_remote_evidence,
 )
 from tool_schemas import SUPPORTED_TOOLS
 from version import SERVER_NAME, SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
@@ -188,6 +192,14 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
         if gate_result is not None:
             return gate_result
 
+    # --- Git-remote evidence guard (mcp#702): fail closed before dispatch when
+    # the candidate folder's git remote clearly contradicts the selected
+    # project. The remote is evidence only; project_id remains the authority key.
+    if name == "bicameral.workspace.bind":
+        conflict = _workspace_bind_remote_conflict(arguments)
+        if conflict is not None:
+            return [conflict]
+
     command_name = MCP_TOOL_COMMANDS[name]
     try:
         client = _client()
@@ -242,10 +254,9 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
             return [format_recall_expand_scope(response)]
         if name == "bicameral.review.candidates":
             return [format_review_queue_response(response, item_key="decision_candidates")]
-        if name in {
-            "bicameral.review.promote_candidate",
-            "bicameral.review.request_corpus_change",
-        }:
+        if name == "bicameral.review.promote_candidate":
+            return [format_candidate_promotion_response(response)]
+        if name == "bicameral.review.request_corpus_change":
             return [format_review_queue_response(response, item_key="review_result")]
         if name == "bicameral.request_correction":
             return [format_correction_response(response)]
@@ -272,6 +283,43 @@ async def call_tool(name: str, arguments: dict[str, Any] | None) -> list[types.T
                 requested_command=command_name,
             )
         ]
+
+
+def _workspace_bind_remote_conflict(
+    arguments: dict[str, Any],
+) -> types.TextContent | None:
+    """Fail closed when the candidate git remote contradicts the project (mcp#702).
+
+    Returns a rendered fail-closed response (and dispatches nothing) when the
+    candidate folder's git remote clearly contradicts a supplied registered
+    project source ref; otherwise ``None`` so the normal proposal flow proceeds.
+    The remote is evidence only — ``project_id`` remains the authority key and
+    the daemon still owns validation and materialization.
+    """
+    source_refs: list[str] = []
+    raw_list = arguments.get("project_source_refs")
+    if isinstance(raw_list, str):
+        source_refs.append(raw_list)
+    elif isinstance(raw_list, (list, tuple)):
+        source_refs.extend(str(item) for item in raw_list if isinstance(item, str))
+    single = arguments.get("project_source_ref")
+    if isinstance(single, str):
+        source_refs.append(single)
+    if not source_refs:
+        return None
+
+    evidence = evaluate_remote_evidence(
+        candidate_path=arguments.get("candidate_path"),
+        project_source_refs=source_refs,
+    )
+    if evidence.verdict != "contradiction":
+        return None
+    return format_workspace_bind_remote_conflict(
+        project_id=arguments.get("project_id"),
+        candidate_repo_ref=evidence.candidate_repo_ref,
+        project_source_refs=evidence.project_source_refs,
+        reason=evidence.reason,
+    )
 
 
 def _command_arguments_for_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -523,6 +571,19 @@ async def run_stdio() -> None:
 
 
 def cli_main(argv: list[str] | None = None) -> int:
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Adapter management and the host-invoked pre-work runner have their own
+    # argument grammar; dispatch them before the top-level serve/tools parser.
+    if raw_argv and raw_argv[0] == "adapters":
+        from preflight_adapters.cli import run_adapters_cli
+
+        return run_adapters_cli(raw_argv[1:])
+    if raw_argv and raw_argv[0] == "prework-run":
+        from preflight_adapters.cli import run_prework_cli
+
+        return run_prework_cli(raw_argv[1:])
+
     parser = argparse.ArgumentParser(
         prog="bicameral-mcp",
         description="Run the Bicameral MCP thin client over stdio.",
@@ -531,11 +592,15 @@ def cli_main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=["serve", "tools"],
+        choices=["serve", "tools", "adapters", "prework-run"],
         default="serve",
-        help="'serve' starts the MCP stdio server; 'tools' prints supported tool names.",
+        help=(
+            "'serve' starts the MCP stdio server; 'tools' prints supported tool "
+            "names; 'adapters' manages host pre-work adapters; 'prework-run' is "
+            "invoked by a host hook."
+        ),
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw_argv)
 
     if args.version:
         print(SERVER_VERSION)

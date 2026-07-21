@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "a3dbb4beec050714e6a340269058b77c5d17fa03",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/governance/org-repo-governance.md",
+    "schemas/repo-governance.schema.json"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "agent-declared",
+      "reason": "Established the Factory-to-product governance authority boundary.",
+      "sha256": "797d61410caeaaba3cffd19263f64cfb773e3483a775e3f7f22b729a19eece9b"
+    },
+    "CONTRIBUTING.md": {
+      "source": "agent-declared",
+      "reason": "Required evidence-backed owner review for governance-adjacent changes.",
+      "sha256": "ef0946fbd159494809d1ddc2a240d0ae063177fccf4b0f5c608d408845402c35"
+    },
+    "playbooks/devin-bicameral-factory-run.md": {
+      "source": "agent-declared",
+      "reason": "Defined the product-repository resync, validation, and draft-PR workflow.",
+      "sha256": "c287257b40938d5c8e686450e9fe4afa9be384d646fe7c1a55b46cfefdba52f1"
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "agent-declared",
+      "reason": "Limited the diff to reviewed governance files, tests, and attestation evidence.",
+      "sha256": "d9ee7c1714bd20e576a2fa28e1bcba958e5dfa6a46dc82314504b18943d91f46"
+    },
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {
+      "source": "agent-declared",
+      "reason": "Confirmed that the resync introduces no domain vocabulary.",
+      "sha256": "c88e89e66dbce89bf81af41fd976888664cbde26dbe39ace2d12605464c6755c"
+    },
+    "blueprints/factory-run-signals/factory-learning-signals.md": {
+      "source": "agent-declared",
+      "reason": "Captured branch-resync and governance-allowlist drift for review.",
+      "sha256": "63b7d5bd11f005a062d52163606c54562cbcc2e5619935fde8f1b9cc39457e21"
+    },
+    "blueprints/factory-run-signals/minimum-product-validation.md": {
+      "source": "agent-declared",
+      "reason": "Set the deterministic validation floor for the merged branch state.",
+      "sha256": "f0efac9c9a6007864b78393c4b8d21555d7aa5e008879e38137dc6569a99197f"
+    },
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {
+      "source": "agent-declared",
+      "reason": "Defined this refreshed pre-PR provenance record.",
+      "sha256": "e7d105f139e9e40fd1dd655891866a674fef839df604be748cc60b3e2b95f45d"
+    },
+    "docs/governance/org-repo-governance.md": {
+      "source": "agent-declared",
+      "reason": "Established the canonical descriptor ownership, fields, and required-check meaning.",
+      "sha256": "ccf3c4f24776cb5e9c271ed7ffb3b5176cf7abd1c7ee8609e2aafadbca3ca86e"
+    },
+    "schemas/repo-governance.schema.json": {
+      "source": "agent-declared",
+      "reason": "Confirmed that the retained dev descriptor targets the current schema version.",
+      "sha256": "94a5b04d4279a84494fd441233e68637afa39d8d522728f10d92b7b355c92498"
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none"
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 724,
+    "issue_type": "validated",
+    "project_status": "Done",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/725",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/732",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/744"
+    ],
+    "post_work_comment_url": null
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No lifecycle behavior changed.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "No canonical state, authority, or persistence semantics changed.",
+      "Only reviewed repository governance artifacts may bypass the local-state boundary."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [],
+      "rationale": "The resync preserves existing governance facts and adds no product lifecycle state."
+    }
+  },
+  "end_of_session_capture": {
+    "run": true
+  },
+  "attested_by": "Codex GPT-5",
+  "timestamp": "2026-07-19T02:08:05Z"
+}

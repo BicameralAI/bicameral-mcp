@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import subprocess
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
@@ -162,6 +164,7 @@ def _command_params(command_name: str, params: dict[str, Any]) -> dict[str, Any]
             "supersedes_decision_id",
             "scoping_relationship",
             "approval_proof",
+            "confirmation",
         )
     if command_name == "recall.inspect_evidence":
         return _only(cleaned, "packet_id", "match_id", "evidence_id")
@@ -248,14 +251,30 @@ def _workspace_bind_params(cleaned: dict[str, Any]) -> dict[str, Any]:
     if candidate_label:
         display["candidate_label"] = candidate_label
 
+    # Git-remote evidence (mcp#702 owner decision): the candidate folder's git
+    # remote is *evidence only* and never project identity. It may raise or lower
+    # the proposal confidence and reason, but ``project_id`` remains the authority
+    # key and the daemon still owns validation and materialization.
+    evidence = evaluate_remote_evidence(
+        candidate_path=candidate_path,
+        project_source_refs=_coerce_source_refs(cleaned),
+    )
+
+    caller_confidence = cleaned.get("confidence")
+    confidence = (
+        _coerce_confidence(caller_confidence)
+        if caller_confidence is not None
+        else evidence.confidence
+    )
+    reason = cleaned.get("reason") or evidence.reason
+
     proposal: dict[str, Any] = {
         "project_id": project_id,
         "display": display,
         "candidate_path": candidate_path,
         "source_surface": "mcp",
-        "reason": cleaned.get("reason")
-        or "MCP operator proposed binding this local folder to the registered project.",
-        "confidence": _coerce_confidence(cleaned.get("confidence")),
+        "reason": reason,
+        "confidence": confidence,
     }
 
     params: dict[str, Any] = {
@@ -282,6 +301,178 @@ def _coerce_confidence(value: Any) -> float:
     except (TypeError, ValueError):
         return 1.0
     return max(0.0, min(1.0, confidence))
+
+
+# ── Git-remote evidence (mcp#702) ──────────────────────────────────────────
+#
+# Owner decision: the candidate local workspace's git remote may be used as
+# *evidence* for a workspace-bind proposal — never as project identity.
+# ``project_id`` remains the authority key; the daemon still owns validation
+# and materialization. MCP only shapes proposal confidence/reason and fails
+# closed (no dispatch) when the remote clearly contradicts the selected project.
+
+#: Confidence when the candidate remote matches a registered project source ref.
+REMOTE_MATCH_CONFIDENCE = 0.95
+#: Confidence when a remote is detected but no source ref is available to verify.
+REMOTE_UNVERIFIED_CONFIDENCE = 0.6
+#: Confidence when no unambiguous remote could be detected.
+REMOTE_AMBIGUOUS_CONFIDENCE = 0.4
+
+
+@dataclass(frozen=True)
+class RemoteEvidence:
+    """Outcome of comparing the candidate git remote to the selected project.
+
+    ``verdict`` is one of ``match``, ``contradiction``, ``unverified``, or
+    ``ambiguous``. ``candidate_repo_ref`` is the normalized ``org/repo`` ref
+    (or ``None`` when no unambiguous remote was found). It is evidence only and
+    is never used as project identity.
+    """
+
+    verdict: str
+    confidence: float
+    reason: str
+    candidate_repo_ref: str | None = None
+    project_source_refs: tuple[str, ...] = ()
+
+
+def normalize_repo_ref(raw: Any) -> str | None:
+    """Normalize a git remote URL (or repo ref) to a stable ``org/repo`` ref.
+
+    Handles SSH (``git@github.com:Org/Repo.git``), scp-like, and HTTPS
+    (``https://github.com/Org/Repo(.git)``) forms, stripping scheme, userinfo,
+    host, a trailing ``.git`` and trailing slashes. Returns ``None`` when the
+    input does not resolve to at least ``org/repo``.
+    """
+    if not isinstance(raw, str):
+        return None
+    s = raw.strip()
+    if not s:
+        return None
+    # Strip URL scheme (https://, ssh://, git://, git+ssh://, ...).
+    s = re.sub(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", "", s)
+    # Strip leading userinfo (user@ or user:pass@) up to the first '/'.
+    s = re.sub(r"^[^/@]+@", "", s)
+    # scp-like "host:org/repo" -> "host/org/repo" (only when the colon precedes
+    # a path and the segment before it is a bare host, not already a path).
+    if ":" in s:
+        before, _, after = s.partition(":")
+        if "/" not in before:
+            s = f"{before}/{after}"
+    s = s.rstrip("/")
+    if s.endswith(".git"):
+        s = s[:-4]
+    parts = [p for p in s.split("/") if p]
+    if len(parts) < 2:
+        return None
+    return f"{parts[-2]}/{parts[-1]}"
+
+
+def _coerce_source_refs(cleaned: dict[str, Any]) -> list[str]:
+    """Collect caller-supplied registered-project source refs (list or scalar)."""
+    refs: list[str] = []
+    raw_list = cleaned.get("project_source_refs")
+    if isinstance(raw_list, str):
+        refs.append(raw_list)
+    elif isinstance(raw_list, (list, tuple)):
+        refs.extend(str(item) for item in raw_list if isinstance(item, str))
+    single = cleaned.get("project_source_ref")
+    if isinstance(single, str):
+        refs.append(single)
+    return refs
+
+
+def detect_candidate_repo_ref(candidate_path: Any) -> str | None:
+    """Return the normalized ``origin`` repo ref for *candidate_path*, or ``None``.
+
+    Uses ``remote.origin.url`` as the unambiguous signal; a folder with no
+    ``origin`` remote (or no git repo) yields ``None`` (treated as ambiguous).
+    """
+    workspace = (
+        str(candidate_path)
+        if candidate_path
+        else (os.environ.get("BICAMERAL_WORKSPACE") or os.environ.get("REPO_PATH") or os.getcwd())
+    )
+    try:
+        url = (
+            subprocess.check_output(
+                ["git", "config", "--get", "remote.origin.url"],
+                cwd=workspace,
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
+    except Exception:
+        log.debug("candidate git remote resolution skipped for %s", workspace)
+        return None
+    return normalize_repo_ref(url)
+
+
+def evaluate_remote_evidence(
+    *,
+    candidate_path: Any,
+    project_source_refs: list[str],
+) -> RemoteEvidence:
+    """Compare the candidate folder's git remote to the selected project.
+
+    Returns a :class:`RemoteEvidence`. This never mutates state and never treats
+    the remote as identity — it only classifies the strength of the proposal.
+    """
+    candidate_ref = detect_candidate_repo_ref(candidate_path)
+    normalized_sources = tuple(
+        dict.fromkeys(ref for ref in (normalize_repo_ref(r) for r in project_source_refs) if ref)
+    )
+
+    if candidate_ref is None:
+        return RemoteEvidence(
+            verdict="ambiguous",
+            confidence=REMOTE_AMBIGUOUS_CONFIDENCE,
+            reason=(
+                "No unambiguous git remote was detected for the candidate folder; "
+                "proposing at reduced confidence — explicit operator confirmation required."
+            ),
+            candidate_repo_ref=None,
+            project_source_refs=normalized_sources,
+        )
+
+    if normalized_sources:
+        lowered = {ref.lower() for ref in normalized_sources}
+        if candidate_ref.lower() in lowered:
+            return RemoteEvidence(
+                verdict="match",
+                confidence=REMOTE_MATCH_CONFIDENCE,
+                reason=(
+                    f"Candidate git remote '{candidate_ref}' matches the registered "
+                    "project source ref; high-confidence bind proposal (remote is "
+                    "evidence only, not project identity)."
+                ),
+                candidate_repo_ref=candidate_ref,
+                project_source_refs=normalized_sources,
+            )
+        return RemoteEvidence(
+            verdict="contradiction",
+            confidence=0.0,
+            reason=(
+                f"Candidate git remote '{candidate_ref}' contradicts the registered "
+                f"project source ref(s) {list(normalized_sources)}; failing closed "
+                "without binding (remote is evidence only, not project identity)."
+            ),
+            candidate_repo_ref=candidate_ref,
+            project_source_refs=normalized_sources,
+        )
+
+    return RemoteEvidence(
+        verdict="unverified",
+        confidence=REMOTE_UNVERIFIED_CONFIDENCE,
+        reason=(
+            f"Candidate git remote '{candidate_ref}' detected, but no registered "
+            "project source ref was supplied to verify it; explicit operator "
+            "confirmation required."
+        ),
+        candidate_repo_ref=candidate_ref,
+        project_source_refs=normalized_sources,
+    )
 
 
 def _resolve_workspace_ref(workspace: str) -> tuple[str, str]:
