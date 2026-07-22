@@ -90,7 +90,9 @@
     "project_status": "Todo",
     "pr_links_checked": true,
     "pr_body_links_issue": true,
-    "pr_links": [],
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/763"
+    ],
     "post_work_comment_url": null,
     "notes": "Factory #227 is the open organization-governance activation tracker. Its completion criteria remain unchecked; project item metadata was unavailable to the current token, so Todo is recorded conservatively."
   },
