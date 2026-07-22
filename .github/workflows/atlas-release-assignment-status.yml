@@ -14,15 +14,15 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FACTORY_COMMIT: 61d951f09134d78baf11c295a610963312cb6af1
+  FACTORY_COMMIT: a45ea7c0ab912e71acca61500533a6528e309972
   ASSIGNMENT_BUCKET: bicameral-atlas-release-control
 
 jobs:
   verify-assignment-receipts:
-    name: release-assignment / receipt-verified
+    name: release-unit / assigned
     if: >-
-      github.event.context == 'release-assignment / owner-approved' &&
-      github.event.state == 'success'
+      github.event.context == 'release-unit / assigned' &&
+      github.event.state == 'pending'
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted default-branch resolver
@@ -45,24 +45,12 @@ jobs:
             --api-url "${GITHUB_API_URL}" \
             --github-output "${GITHUB_OUTPUT}"
 
-      - name: Mark exact candidate verification pending
-        env:
-          GH_TOKEN: ${{ github.token }}
-          STATUS_SHA: ${{ steps.tuple.outputs.head_sha }}
-        run: |
-          set -euo pipefail
-          gh api --method POST \
-            "repos/${GITHUB_REPOSITORY}/statuses/${STATUS_SHA}" \
-            --raw-field state=pending \
-            --raw-field context='release-assignment / receipt-verified' \
-            --raw-field description='MCP CI is verifying signed Atlas assignment receipts' \
-            --raw-field target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
       - name: Check out exact candidate commit as data
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event.sha }}
           path: candidate
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Check out immutable Factory verifier
@@ -135,7 +123,7 @@ jobs:
           gh api --method POST \
             "repos/${GITHUB_REPOSITORY}/statuses/${STATUS_SHA}" \
             --raw-field state=success \
-            --raw-field context='release-assignment / receipt-verified' \
+            --raw-field context='release-unit / assigned' \
             --raw-field description='Complete signed exact Atlas assignment set verified' \
             --raw-field target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 
@@ -148,7 +136,6 @@ jobs:
           gh api --method POST \
             "repos/${GITHUB_REPOSITORY}/statuses/${STATUS_SHA}" \
             --raw-field state=failure \
-            --raw-field context='release-assignment / receipt-verified' \
+            --raw-field context='release-unit / assigned' \
             --raw-field description='Signed Atlas assignment receipt verification failed' \
             --raw-field target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-

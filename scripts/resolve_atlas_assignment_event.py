@@ -32,7 +32,7 @@ def select_pull_request(pulls: list[dict[str, Any]], status_sha: str) -> dict[st
     ]
     if len(matches) != 1:
         raise ValueError(
-            "owner-approved status must resolve to exactly one open PR into dev; "
+            "pending assignment status must resolve to exactly one open PR into dev; "
             f"found {len(matches)}"
         )
     pull = matches[0]
