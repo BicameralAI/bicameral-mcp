@@ -242,8 +242,7 @@ def _validate_teg_v2(
         raise GrantError("topology.required_hosts must be claude and codex")
     revisions = _object(topology, "revisions")
     if set(revisions) != {"mcp", "bot"} or not all(
-        isinstance(value, str) and REVISION.fullmatch(value)
-        for value in revisions.values()
+        isinstance(value, str) and REVISION.fullmatch(value) for value in revisions.values()
     ):
         raise GrantError("topology.revisions must bind exact mcp and bot revisions")
 
@@ -263,9 +262,7 @@ def _validate_teg_v2(
     if not required_tags.issubset(tags):
         raise GrantError("provider_policy.tags do not bind work key and grant id")
     if set(_strings(provider, "allowed_actions")) != {"create", "observe", "terminate"}:
-        raise GrantError(
-            "provider_policy.allowed_actions must be create, observe, terminate"
-        )
+        raise GrantError("provider_policy.allowed_actions must be create, observe, terminate")
     if _positive_integer(provider, "maximum_launches") != 1:
         raise GrantError("provider_policy.maximum_launches must be 1")
     if _positive_integer(provider, "maximum_concurrent_sessions") != 1:
@@ -297,9 +294,7 @@ def _validate_teg_v2(
         alias = _string(binding, "class")
         reference = _string(binding, "organization_secret_reference")
         if ORGANIZATION_SECRET_REFERENCE.fullmatch(reference) is None:
-            raise GrantError(
-                "credential bindings require organization secret references"
-            )
+            raise GrantError("credential bindings require organization secret references")
         aliases.append(alias)
     if len(aliases) != len(set(aliases)):
         raise GrantError("credential binding classes must be unique")
@@ -322,20 +317,12 @@ def _validate_teg_v2(
         raise GrantError("confirmation actor does not match actor binding")
     if _string(confirmation, "maximum_evidence_claim") != actor_mode:
         raise GrantError("confirmation evidence claim contradicts actor mode")
-    missing_receipts = TEG_REQUIRED_RECEIPTS - set(
-        _strings(document, "required_receipt")
-    )
+    missing_receipts = TEG_REQUIRED_RECEIPTS - set(_strings(document, "required_receipt"))
     if missing_receipts:
-        raise GrantError(
-            "required_receipt missing: " + ", ".join(sorted(missing_receipts))
-        )
-    missing_prohibitions = TEG_REQUIRED_PROHIBITIONS - set(
-        _strings(document, "prohibited_actions")
-    )
+        raise GrantError("required_receipt missing: " + ", ".join(sorted(missing_receipts)))
+    missing_prohibitions = TEG_REQUIRED_PROHIBITIONS - set(_strings(document, "prohibited_actions"))
     if missing_prohibitions:
-        raise GrantError(
-            "prohibited_actions missing: " + ", ".join(sorted(missing_prohibitions))
-        )
+        raise GrantError("prohibited_actions missing: " + ", ".join(sorted(missing_prohibitions)))
 
     sunset = _object(document, "sunset")
     invalid_after = _timestamp(
@@ -345,9 +332,7 @@ def _validate_teg_v2(
     if invalid_after < expires_at:
         raise GrantError("sunset must not precede grant expiry")
     if sunset.get("controller_activation_invalidates") is not True:
-        raise GrantError(
-            "controller activation must invalidate provider-created authority"
-        )
+        raise GrantError("controller activation must invalidate provider-created authority")
     if now >= invalid_after:
         raise GrantError("provider-created grant is past its sunset")
 
@@ -437,22 +422,16 @@ def load_and_validate_launch_receipt(
         _string(receipt, name)
     if set(_strings(receipt, "provider_tags")) != set(provider["tags"]):
         raise GrantError("provider launch receipt tags do not match the grant")
-    aliases = sorted(
-        binding["class"] for binding in grant["credential_policy"]["bindings"]
-    )
+    aliases = sorted(binding["class"] for binding in grant["credential_policy"]["bindings"])
     if sorted(_strings(receipt, "credential_aliases")) != aliases:
-        raise GrantError(
-            "provider launch receipt credential aliases do not match the grant"
-        )
+        raise GrantError("provider launch receipt credential aliases do not match the grant")
     if receipt.get("component_revisions") != topology["revisions"]:
         raise GrantError("provider launch receipt revisions do not match the grant")
     if receipt.get("spend_disposition") != {
         "mode": "organization-limits",
         "owner_acknowledged": True,
     }:
-        raise GrantError(
-            "provider launch receipt spend disposition does not match the grant"
-        )
+        raise GrantError("provider launch receipt spend disposition does not match the grant")
     retry = _string(receipt, "retry_or_replacement")
     if not retry.startswith("none"):
         raise GrantError("provider launch receipt must record no retry or replacement")
@@ -478,9 +457,7 @@ def load_and_validate_launch_receipt(
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("grant", type=Path)
-    parser.add_argument(
-        "--now", help="Override current time for deterministic validation."
-    )
+    parser.add_argument("--now", help="Override current time for deterministic validation.")
     return parser.parse_args(argv)
 
 

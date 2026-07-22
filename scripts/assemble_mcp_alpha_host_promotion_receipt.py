@@ -122,9 +122,7 @@ def derive_lifecycle_receipts(
         except (OSError, json.JSONDecodeError):
             statuses[step] = "invalid"
             continue
-        statuses[step] = (
-            "passed" if _passed_lifecycle_receipt(host, step, value) else "failed"
-        )
+        statuses[step] = "passed" if _passed_lifecycle_receipt(host, step, value) else "failed"
         sources[step] = {"filename": path.name, "sha256": topology.sha256_file(path)}
     return statuses, sources
 
@@ -147,9 +145,7 @@ def assemble_receipt(
 ) -> dict[str, Any]:
     duplicate_labels = artifacts.keys() & contracts.keys()
     if duplicate_labels:
-        raise AssemblyError(
-            f"duplicate artifact/contract label: {sorted(duplicate_labels)[0]}"
-        )
+        raise AssemblyError(f"duplicate artifact/contract label: {sorted(duplicate_labels)[0]}")
     digested_inputs = {**artifacts, **contracts}
     for label, path in digested_inputs.items():
         if not path.is_file():
@@ -163,11 +159,9 @@ def assemble_receipt(
                 raise grant_contract.GrantError(
                     "provider-created execution requires a Topology Launch Receipt"
                 )
-            provider_launch_authorization = (
-                grant_contract.load_and_validate_launch_receipt(
-                    provider_launch_receipt_path.resolve(),
-                    grant=authorization_document,
-                )
+            provider_launch_authorization = grant_contract.load_and_validate_launch_receipt(
+                provider_launch_receipt_path.resolve(),
+                grant=authorization_document,
             )
         elif provider_launch_receipt_path is not None:
             raise grant_contract.GrantError(
@@ -204,9 +198,7 @@ def assemble_receipt(
         "provider_launch_authorization": provider_launch_authorization,
         "topology_action_authorization": authorization,
         "evidence_sources": {
-            "digested_inputs": {
-                label: _source(path) for label, path in digested_inputs.items()
-            },
+            "digested_inputs": {label: _source(path) for label, path in digested_inputs.items()},
             "hosts": {},
             "authorization_grant": _source(authorization_grant_path.resolve()),
         },
@@ -244,9 +236,7 @@ def assemble_receipt(
         if not isinstance(host_run, dict):
             raise AssemblyError(f"{host} evidence host_run must be an object")
         if not isinstance(negative_paths, dict):
-            raise AssemblyError(
-                f"{host} evidence negative_path_receipts must be an object"
-            )
+            raise AssemblyError(f"{host} evidence negative_path_receipts must be an object")
 
         lifecycle, lifecycle_sources = derive_lifecycle_receipts(host, path, evidence)
         host_run = dict(host_run)
@@ -342,14 +332,10 @@ def main(argv: list[str] | None = None) -> int:
             contracts=_bindings(args.contract, "contract"),
             authorization_grant_path=args.authorization_grant,
             provider_launch_receipt_path=(
-                args.provider_launch_receipt.resolve()
-                if args.provider_launch_receipt
-                else None
+                args.provider_launch_receipt.resolve() if args.provider_launch_receipt else None
             ),
             host_evidence_paths=_bindings(args.host_evidence, "host evidence"),
-            shared_evidence_path=args.shared_evidence.resolve()
-            if args.shared_evidence
-            else None,
+            shared_evidence_path=args.shared_evidence.resolve() if args.shared_evidence else None,
         )
     except AssemblyError as exc:
         print(f"assembly error: {exc}", file=sys.stderr)

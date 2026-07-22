@@ -22,11 +22,8 @@ jobs:
           python -m pip install --no-build-isolation --no-deps .
       - name: Ruff check
         run: ruff check .
-      - name: Ruff format diagnostic
-        shell: bash
-        run: |
-          ruff format --diff .
-          exit 1
+      - name: Ruff format check
+        run: ruff format --check .
       - name: Mypy
         run: mypy .
       - name: Dependency audit
