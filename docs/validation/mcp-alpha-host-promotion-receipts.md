@@ -4,27 +4,32 @@ This workflow assembles and validates the terminal evidence required by MCP
 issue `#736`. It does not run the topology, grant admission, or turn supporting
 component evidence into terminal User Journey evidence.
 
-Do not start a Claude Code or Codex host attempt until a schema-valid, active
-Bounded Manual Topology Grant authorizes the exact
-`mcp-alpha-host-promotion-v1` profile. Each host must be captured independently
-from a clean home by the genuine production host.
+Do not start a Claude Code or Codex host attempt until one schema-valid, active
+authorization mode covers the exact `mcp-alpha-host-promotion-v1` profile:
 
-The grant applies only inside an already human-created execution surface. It
-does not authorize Devin/provider session creation, retry, continuation, or
-termination. A human operator retains authentication, installation consent,
-explicit product confirmation, and final acceptance authority. The alpha grant
-is defined by Factory #298 / PR #299 and expires at the July 29 alpha cut.
+- Bounded Manual Topology Grant v1 applies only inside an already human-created
+  execution surface. It never authorizes provider-session actions.
+- Topology Execution Grant v2 is the temporary provider-created alpha path. It
+  authorizes the reviewed tool-native Devin launch and the ticket-scoped
+  topology actions, and must be accompanied by the matching sanitized Topology
+  Launch Receipt.
+
+Each host must be captured independently from a clean home by the genuine
+production host. Neither authorization mode grants product acceptance, merge,
+release, or deployment authority.
 
 Validate the grant before any host process starts:
 
 ```bash
 python3 scripts/validate_mcp_alpha_host_promotion_grant.py \
-  /path/to/bounded-manual-grant.json
+  /path/to/bounded-manual-grant-v1-or-topology-execution-grant-v2.json
 ```
 
 Expiry, revocation, profile/runner/executor mismatch, non-zero external spend,
 parallel executors, a widened attempt/timeout budget, or removal of a prohibited
-action fails closed.
+action fails closed. V2 additionally fails closed on a missing or mismatched
+launch receipt, provider identity, canonical work key, credential aliases,
+component revisions, actor mode, spend disposition, or teardown binding.
 
 ## Evidence inputs
 
@@ -92,7 +97,8 @@ python3 scripts/assemble_mcp_alpha_host_promotion_receipt.py \
   --artifact mcp_wheel=/path/to/bicameral_mcp.whl \
   --artifact bot_binary=/path/to/bicameral \
   --contract topology_contract=scripts/run_mcp_alpha_host_promotion_topology.py \
-  --authorization-grant /path/to/bounded-manual-grant.json \
+  --authorization-grant /path/to/topology-execution-grant-v2.json \
+  --provider-launch-receipt /path/to/topology-launch-receipt.json \
   --host-evidence claude=/path/to/claude-evidence.json \
   --host-evidence codex=/path/to/codex-evidence.json \
   --shared-evidence /path/to/shared-evidence.json \
@@ -107,13 +113,22 @@ python3 scripts/run_mcp_alpha_host_promotion_topology.py \
   --json
 ```
 
+For an existing human-created execution surface, pass the Bounded Manual
+Topology Grant to `--authorization-grant` and omit
+`--provider-launch-receipt`.
+
 The assembler exits `0` only when the existing merged validator accepts the
 combined receipt and the same grant remains active and exact. Missing or expired
-authorization, missing host evidence, direct `prework-run` evidence,
-synthetic capture kinds, missing lifecycle receipts, incomplete negative paths,
-and missing release artifacts remain product failures.
+authorization, missing provider-launch evidence for v2, revision mismatch,
+missing host evidence, direct `prework-run` evidence, synthetic capture kinds,
+missing lifecycle receipts, incomplete negative paths, and missing release
+artifacts remain product failures. A v2 grant whose maximum evidence claim is
+`synthetic-proxy` may assemble infrastructure evidence but cannot produce a
+passing real-human terminal receipt.
 
 The combined JSON is a sanitized review artifact. Named human product review is
 still required before `#736` can satisfy the alpha release gate.
-The authorization summary in that receipt proves only that execution was
-bounded; it is not terminal evidence, product acceptance, or release authority.
+The receipt records `provider_launch_authorization` separately from
+`topology_action_authorization`. These summaries prove only that each execution
+scope was bounded; neither is terminal evidence, a DispatchReceipt, product
+acceptance, or release authority.

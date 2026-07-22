@@ -140,6 +140,7 @@ def assemble_receipt(
     authorization_grant_path: Path,
     host_evidence_paths: dict[str, Path],
     shared_evidence_path: Path | None,
+    provider_launch_receipt_path: Path | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     duplicate_labels = artifacts.keys() & contracts.keys()
@@ -150,30 +151,62 @@ def assemble_receipt(
         if not path.is_file():
             raise AssemblyError(f"digest input is not a file: {label}={path}")
     try:
-        _, authorization = grant_contract.load_and_validate_grant(
+        authorization_document, authorization = grant_contract.load_and_validate_grant(
             authorization_grant_path.resolve(), now=now
         )
+        if authorization["mode"] == "topology-execution-grant-v2":
+            if provider_launch_receipt_path is None:
+                raise grant_contract.GrantError(
+                    "provider-created execution requires a Topology Launch Receipt"
+                )
+            provider_launch_authorization = grant_contract.load_and_validate_launch_receipt(
+                provider_launch_receipt_path.resolve(),
+                grant=authorization_document,
+            )
+        elif provider_launch_receipt_path is not None:
+            raise grant_contract.GrantError(
+                "a Bounded Manual Topology Grant cannot carry provider launch authority"
+            )
+        else:
+            provider_launch_authorization = {
+                "mode": "not-applicable",
+                "execution_surface": "existing-human-created",
+                "reason": "provider session was not created under this grant",
+            }
     except grant_contract.GrantError as exc:
         raise AssemblyError(f"authorization denied: {exc}") from exc
+    component_commits = {
+        "mcp": topology.git_commit(mcp_root.resolve()),
+        "bot": topology.git_commit(bot_root.resolve()),
+    }
+    if (
+        authorization["mode"] == "topology-execution-grant-v2"
+        and authorization["component_revisions"] != component_commits
+    ):
+        raise AssemblyError(
+            "authorization denied: checked-out component revisions do not match the v2 grant"
+        )
     receipt: dict[str, Any] = {
         "profile": topology.PROFILE,
         "evidence_level": "supporting_evidence_only",
-        "component_commits": {
-            "mcp": topology.git_commit(mcp_root.resolve()),
-            "bot": topology.git_commit(bot_root.resolve()),
-        },
+        "component_commits": component_commits,
         "product_artifact_and_contract_digests": {
             label: topology.sha256_file(path) for label, path in digested_inputs.items()
         },
         "host_runs": {},
         "negative_path_receipts": {},
-        "topology_authorization": authorization,
+        "provider_launch_authorization": provider_launch_authorization,
+        "topology_action_authorization": authorization,
         "evidence_sources": {
             "digested_inputs": {label: _source(path) for label, path in digested_inputs.items()},
             "hosts": {},
             "authorization_grant": _source(authorization_grant_path.resolve()),
         },
     }
+    if provider_launch_receipt_path is not None:
+        receipt["evidence_sources"]["provider_launch_receipt"] = _source(
+            provider_launch_receipt_path.resolve()
+        )
 
     shared_is_terminal = False
     if shared_evidence_path is not None:
@@ -233,6 +266,15 @@ def assemble_receipt(
 
     receipt = topology.sanitize(receipt)
     outcome, failures = topology.validate_receipt(receipt)
+    if (
+        authorization["mode"] == "topology-execution-grant-v2"
+        and authorization["actor_mode"] != "real-human"
+    ):
+        failures.append(
+            "topology authorization maximum evidence claim is "
+            f"{authorization['actor_mode']}, not real-human"
+        )
+        outcome = "product_failure"
     receipt["outcome"] = outcome
     if failures:
         receipt["failures"] = sorted(failures)
@@ -269,7 +311,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--authorization-grant",
         type=Path,
         required=True,
-        help="Active bounded manual grant for the exact MCP #736 topology.",
+        help="Active BMTG v1 or Topology Execution Grant v2 for MCP #736.",
+    )
+    parser.add_argument(
+        "--provider-launch-receipt",
+        type=Path,
+        help="Required Topology Launch Receipt when authorization is provider-created v2.",
     )
     parser.add_argument("--output", type=Path)
     return parser.parse_args(argv)
@@ -284,6 +331,9 @@ def main(argv: list[str] | None = None) -> int:
             artifacts=_bindings(args.artifact, "artifact"),
             contracts=_bindings(args.contract, "contract"),
             authorization_grant_path=args.authorization_grant,
+            provider_launch_receipt_path=(
+                args.provider_launch_receipt.resolve() if args.provider_launch_receipt else None
+            ),
             host_evidence_paths=_bindings(args.host_evidence, "host evidence"),
             shared_evidence_path=args.shared_evidence.resolve() if args.shared_evidence else None,
         )
