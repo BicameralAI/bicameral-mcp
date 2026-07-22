@@ -23,6 +23,7 @@ class AtlasReleaseAssignmentStatusWorkflowTests(unittest.TestCase):
         self.assertIn("ref: ${{ github.event.sha }}\n          path: candidate", self.workflow)
         match = re.search(r"FACTORY_COMMIT: ([0-9a-f]{40})", self.workflow)
         self.assertIsNotNone(match)
+        assert match is not None
         self.assertEqual(match.group(1), "61d951f09134d78baf11c295a610963312cb6af1")
         self.assertIn("_release-policy/scripts/atlas_assignment_gate.py", self.workflow)
 
