@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "acaf095d0b3c50d385ed4f29bfac0dbd63eaaeb6",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "skills/bic/spec-governance-gate/SKILL.md",
+    "blueprints/factory-attestation.md",
+    ".github/workflows/factory-attestation.yml",
+    "docs/architecture/bicameral-product/journey-environments.json"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the Factory/product authority boundary and enforced product setup.",
+      "sha256": "797d61410caeaaba3cffd19263f64cfb773e3483a775e3f7f22b729a19eece9b"
+    },
+    "CONTRIBUTING.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined contribution and governance-impact expectations.",
+      "sha256": "ef0946fbd159494809d1ddc2a240d0ae063177fccf4b0f5c608d408845402c35"
+    },
+    "playbooks/devin-bicameral-factory-run.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the product implementation, validation, and PR procedure.",
+      "sha256": "c287257b40938d5c8e686450e9fe4afa9be384d646fe7c1a55b46cfefdba52f1"
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "wrapper-observed",
+      "reason": "Constrained the product diff to workflow and required attestation artifacts.",
+      "sha256": "d9ee7c1714bd20e576a2fa28e1bcba958e5dfa6a46dc82314504b18943d91f46"
+    },
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the required domain-entity candidate reporting.",
+      "sha256": "c88e89e66dbce89bf81af41fd976888664cbde26dbe39ace2d12605464c6755c"
+    },
+    "blueprints/factory-run-signals/factory-learning-signals.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the required Factory learning-signal reporting.",
+      "sha256": "63b7d5bd11f005a062d52163606c54562cbcc2e5619935fde8f1b9cc39457e21"
+    },
+    "blueprints/factory-run-signals/minimum-product-validation.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined proportionate deterministic validation for this workflow-only change.",
+      "sha256": "f0efac9c9a6007864b78393c4b8d21555d7aa5e008879e38137dc6569a99197f"
+    },
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {
+      "source": "wrapper-observed",
+      "reason": "Required and shaped this collision-safe, hash-pinned product attestation.",
+      "sha256": "e7d105f139e9e40fd1dd655891866a674fef839df604be748cc60b3e2b95f45d"
+    },
+    "skills/bic/spec-governance-gate/SKILL.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the authoring-first governance checkpoint enforced by the reusable workflow.",
+      "sha256": "c4ae4ea78e0050a83347b7f6306b7a40eb78420af70d7dcf22fdcbf3b91f1bf6"
+    },
+    "blueprints/factory-attestation.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the product caller workflow and required merge check contexts.",
+      "sha256": "d3805991d0759824fd9af6a6b5aa0b72fa855363571496f7aab02586467853d7"
+    },
+    ".github/workflows/factory-attestation.yml": {
+      "source": "wrapper-observed",
+      "reason": "Supplied the exact reusable workflow pinned by this product repository.",
+      "sha256": "cab46c995eef5359e5624a841084ccb996255605b75b09ef4ab22a96858bb435"
+    },
+    "docs/architecture/bicameral-product/journey-environments.json": {
+      "source": "wrapper-observed",
+      "reason": "Pinned the latest canonical Journey Environment catalog validated by product PR CI.",
+      "sha256": "64464d29a85cb1f0f08f28aa7cea8aa2193740cac647b655ec1fb6d0046e5d17"
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "notes": "The rollout used the exact merged Factory revision and introduced no local-only setup."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 227,
+    "issue_type": "validating",
+    "project_status": "Todo",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [],
+    "post_work_comment_url": null,
+    "notes": "Factory #227 is the open organization-governance activation tracker. Its completion criteria remain unchecked; project item metadata was unavailable to the current token, so Todo is recorded conservatively."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No lifecycle behavior changed.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "No canonical state, authority, or persistence semantics changed."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [],
+      "rationale": "This PR only delegates existing PR governance validation to an exact-revision reusable workflow; it does not introduce product lifecycle state."
+    },
+    "notes": "The workflow adds merge evidence and owner-decision enforcement without changing product behavior."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "notes": "No new reusable Factory artifact was required. Cross-repository access will be verified by the rollout PR before branch protections are armed.",
+    "factory_pr": null
+  },
+  "attested_by": "Codex",
+  "timestamp": "2026-07-22T17:08:33Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "codex/factory-attestation-hard-gate",
+  "agent": "Codex",
+  "session": "product-spec-governance-hard-gate-rollout"
+}

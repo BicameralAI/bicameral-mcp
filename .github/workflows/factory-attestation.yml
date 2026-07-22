@@ -3,16 +3,13 @@ name: Bicameral factory attestation
 on:
   pull_request:
     branches: [dev, main]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
 
 jobs:
   factory-attestation:
-    name: bicameral-factory-attestation
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out repo
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Validate factory attestation
-        run: |
-          python3 tests/test_factory_attestation_filename.py
-          python3 .github/scripts/validate_factory_attestation.py .bicameral/factory-attestations
+    uses: BicameralAI/bicameral-factory/.github/workflows/factory-attestation.yml@acaf095d0b3c50d385ed4f29bfac0dbd63eaaeb6
+    with:
+      attestation_path: .bicameral/factory-attestations
+      factory_ref: acaf095d0b3c50d385ed4f29bfac0dbd63eaaeb6
+    secrets: inherit
