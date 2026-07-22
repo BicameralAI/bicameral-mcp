@@ -1,0 +1,141 @@
+name: Atlas release assignment receipt
+
+on:
+  status:
+
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+  statuses: write
+
+concurrency:
+  group: atlas-release-assignment-${{ github.event.sha }}
+  cancel-in-progress: false
+
+env:
+  FACTORY_COMMIT: a45ea7c0ab912e71acca61500533a6528e309972
+  ASSIGNMENT_BUCKET: bicameral-atlas-release-control
+
+jobs:
+  verify-assignment-receipts:
+    name: release-unit / assigned
+    if: >-
+      github.event.context == 'release-unit / assigned' &&
+      github.event.state == 'pending'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted default-branch resolver
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          path: policy-host
+          persist-credentials: false
+
+      - name: Resolve exact open PR and Release Unit set
+        id: tuple
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          STATUS_SHA: ${{ github.event.sha }}
+        run: |
+          set -euo pipefail
+          python3 policy-host/scripts/resolve_atlas_assignment_event.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --status-sha "${STATUS_SHA}" \
+            --api-url "${GITHUB_API_URL}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Check out exact candidate commit as data
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.sha }}
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out immutable Factory verifier
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: BicameralAI/bicameral-factory
+          ref: ${{ env.FACTORY_COMMIT }}
+          token: ${{ secrets.BICAMERAL_CROSS_REPO_TOKEN }}
+          path: _release-policy
+          persist-credentials: false
+
+      - name: Verify immutable Factory checkout
+        run: test "$(git -C _release-policy rev-parse HEAD)" = "${FACTORY_COMMIT}"
+
+      - name: Authenticate read-only Atlas receipt identity
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v3.0.0
+        with:
+          workload_identity_provider: projects/694608247534/locations/global/workloadIdentityPools/github-actions/providers/bicameral-mcp-atlas-receipts
+          service_account: atlas-receipts-mcp@bicameral-cloud-500911.iam.gserviceaccount.com
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v3.0.1
+
+      - name: Fetch exact append-only assignment receipts
+        env:
+          PR_NUMBER: ${{ steps.tuple.outputs.pull_request }}
+          STATUS_SHA: ${{ steps.tuple.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/atlas-assignments"
+          gcloud storage cp \
+            "gs://${ASSIGNMENT_BUCKET}/assignments/BicameralAI--bicameral-mcp/${PR_NUMBER}/${STATUS_SHA}/*.json" \
+            "${RUNNER_TEMP}/atlas-assignments/"
+
+      - name: Verify complete signed exact assignment set
+        env:
+          PR_NUMBER: ${{ steps.tuple.outputs.pull_request }}
+          STATUS_SHA: ${{ steps.tuple.outputs.head_sha }}
+          BASE_SHA: ${{ steps.tuple.outputs.base_sha }}
+          PROPOSAL_PATHS_JSON: ${{ steps.tuple.outputs.proposal_paths_json }}
+        run: |
+          set -euo pipefail
+          python3 _release-policy/scripts/atlas_assignment_gate.py \
+            --candidate-root candidate \
+            --assignment-root "${RUNNER_TEMP}/atlas-assignments" \
+            --proposal-paths-json "${PROPOSAL_PATHS_JSON}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --pull-request "${PR_NUMBER}" \
+            --head-sha "${STATUS_SHA}" \
+            --base-sha "${BASE_SHA}" \
+            > "${RUNNER_TEMP}/receipt-verification.json"
+          test "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["state"])' "${RUNNER_TEMP}/receipt-verification.json")" = receipt_verified
+
+      - name: Retain verified assignment evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: atlas-release-assignment-${{ github.event.sha }}
+          path: |
+            ${{ runner.temp }}/atlas-assignments/*.json
+            ${{ runner.temp }}/receipt-verification.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish exact verified assignment status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS_SHA: ${{ steps.tuple.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${STATUS_SHA}" \
+            --raw-field state=success \
+            --raw-field context='release-unit / assigned' \
+            --raw-field description='Complete signed exact Atlas assignment set verified' \
+            --raw-field target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      - name: Publish failed exact assignment status
+        if: ${{ failure() && steps.tuple.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS_SHA: ${{ steps.tuple.outputs.head_sha }}
+        run: |
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${STATUS_SHA}" \
+            --raw-field state=failure \
+            --raw-field context='release-unit / assigned' \
+            --raw-field description='Signed Atlas assignment receipt verification failed' \
+            --raw-field target_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

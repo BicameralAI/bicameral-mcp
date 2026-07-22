@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "a45ea7c0ab912e71acca61500533a6528e309972",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "INSTRUCTIONS.md",
+    "CONTEXT.md",
+    "blueprints/release-manifest-journey-delivery.md",
+    "skills/bic/release-unit/SKILL.md",
+    "skills/bic/stage-version/SKILL.md",
+    "skills/bic/deliver-release/SKILL.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/specs/release-assignment-hard-gate-and-active-release-train.md",
+    "scripts/atlas_assignment_gate.py",
+    "scripts/release_merge_batch.py"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "Used an isolated default-branch worktree and the exact Factory #326 contract commit merged into Factory main."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 749,
+    "issue_type": "validated",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-factory/pull/326"
+    ],
+    "post_work_comment_url": null,
+    "notes": "Release-delivery governance bootstrap for BicameralAI/bicameral-mcp; it does not publish, deploy, or claim a released version."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "Atlas writes one pending release-unit / assigned status; the trusted default-branch workflow changes that same status to success or failure only after verifying the complete signed assignment receipt set and candidate ancestry.",
+    "states_added": [],
+    "states_deferred": [
+      "Dev branch-protection enforcement remains deferred until the live status-to-receipt flow passes."
+    ],
+    "invariants": [
+      "No canonical product lifecycle, authority, or persistence state changed.",
+      "Atlas cannot mark the assignment gate successful or authorize merge.",
+      "Candidate code cannot replace the default-branch resolver, pinned Factory verifier, public key, WIF identity, or verified-status publisher.",
+      "Assignment verification does not satisfy topology, main promotion, publication, deployment, served identity, or product acceptance."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "Collapsed owner-approved and receipt-verified display contexts into one release-unit / assigned check without collapsing their authority boundary.",
+        "Rejected ordinary dev advancement as assignment invalidation; the assigned base SHA is an ancestry floor and non-descendant rewrites fail closed."
+      ],
+      "rationale": "One visible check with two distinct writers is the smallest honest PR surface: Atlas may only create pending state and trusted repository verification alone may resolve it."
+    }
+  },
+  "domain_entity_candidates": [
+    "None. Release Unit, Release Assignment, Version Staging Batch, and release-unit / assigned are Factory-owned release-control terms."
+  ],
+  "factory_learning_signals": [
+    "A single visible PR gate can preserve split authority when each writer is restricted to a disjoint state transition."
+  ],
+  "validation_evidence": {
+    "focused_tests": "Nine resolver and workflow contract tests pass.",
+    "syntax": "Ruff, formatting, mypy, Python compilation, YAML parsing, and git diff whitespace validation pass."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/326",
+    "notes": "Factory #326 supplies the one-context assignment gate, ancestry-floor verification, and cross-repository staging contract."
+  },
+  "attested_by": "OpenAI Codex",
+  "timestamp": "2026-07-22T21:00:00Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "agent/atlas-assignment-status-main",
+  "agent": "OpenAI Codex",
+  "session": "MCP single-context Atlas Release Assignment verifier bootstrap"
+}
