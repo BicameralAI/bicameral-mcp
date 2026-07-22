@@ -83,7 +83,9 @@ def _host_evidence(tmp_path: Path, host: str) -> Path:
             "capture_kind": assembler.REAL_HOST_CAPTURE,
             "host": host,
             "host_run": _host_run(),
-            "negative_path_receipts": {path: "passed" for path in topology.REQUIRED_NEGATIVE_PATHS},
+            "negative_path_receipts": {
+                path: "passed" for path in topology.REQUIRED_NEGATIVE_PATHS
+            },
             "lifecycle_receipt_files": _lifecycle_files(tmp_path, host),
         },
     )
@@ -400,7 +402,9 @@ def test_provider_created_v2_grant_binds_checked_out_component_revisions(
         )
 
 
-def test_july_17_style_lifecycle_without_update_cannot_pass(tmp_path: Path, monkeypatch):
+def test_july_17_style_lifecycle_without_update_cannot_pass(
+    tmp_path: Path, monkeypatch
+):
     claude = _host_evidence(tmp_path, "claude")
     evidence = json.loads(claude.read_text())
     del evidence["lifecycle_receipt_files"]["update"]
@@ -409,7 +413,10 @@ def test_july_17_style_lifecycle_without_update_cannot_pass(tmp_path: Path, monk
     receipt = _assemble(
         tmp_path,
         monkeypatch,
-        host_evidence_paths={"claude": claude, "codex": _host_evidence(tmp_path, "codex")},
+        host_evidence_paths={
+            "claude": claude,
+            "codex": _host_evidence(tmp_path, "codex"),
+        },
     )
 
     assert receipt["outcome"] == "product_failure"
@@ -418,11 +425,14 @@ def test_july_17_style_lifecycle_without_update_cannot_pass(tmp_path: Path, monk
         == "missing"
     )
     assert (
-        "claude: consented_adapter_lifecycle_receipts.update must be passed" in receipt["failures"]
+        "claude: consented_adapter_lifecycle_receipts.update must be passed"
+        in receipt["failures"]
     )
 
 
-def test_supporting_or_synthetic_host_capture_cannot_be_terminal(tmp_path: Path, monkeypatch):
+def test_supporting_or_synthetic_host_capture_cannot_be_terminal(
+    tmp_path: Path, monkeypatch
+):
     claude = _host_evidence(tmp_path, "claude")
     evidence = json.loads(claude.read_text())
     evidence["capture_kind"] = "direct_prework_invocation"
@@ -431,18 +441,26 @@ def test_supporting_or_synthetic_host_capture_cannot_be_terminal(tmp_path: Path,
     receipt = _assemble(
         tmp_path,
         monkeypatch,
-        host_evidence_paths={"claude": claude, "codex": _host_evidence(tmp_path, "codex")},
+        host_evidence_paths={
+            "claude": claude,
+            "codex": _host_evidence(tmp_path, "codex"),
+        },
     )
 
     assert receipt["evidence_level"] == "supporting_evidence_only"
     assert receipt["outcome"] == "product_failure"
-    assert f"evidence_level must be {topology.TERMINAL_EVIDENCE_LEVEL}" in receipt["failures"]
+    assert (
+        f"evidence_level must be {topology.TERMINAL_EVIDENCE_LEVEL}"
+        in receipt["failures"]
+    )
 
 
 def test_host_label_must_match_captured_host(tmp_path: Path, monkeypatch):
     claude = _host_evidence(tmp_path, "claude")
 
-    with pytest.raises(assembler.AssemblyError, match="codex evidence must declare host=codex"):
+    with pytest.raises(
+        assembler.AssemblyError, match="codex evidence must declare host=codex"
+    ):
         _assemble(tmp_path, monkeypatch, host_evidence_paths={"codex": claude})
 
 
@@ -458,14 +476,18 @@ def test_missing_release_artifact_fails_package_boundary(tmp_path: Path, monkeyp
 
 def test_missing_contract_file_is_an_assembly_error(tmp_path: Path, monkeypatch):
     with pytest.raises(assembler.AssemblyError, match="digest input is not a file"):
-        _assemble(tmp_path, monkeypatch, contracts={"topology_contract": tmp_path / "missing"})
+        _assemble(
+            tmp_path, monkeypatch, contracts={"topology_contract": tmp_path / "missing"}
+        )
 
 
 def test_artifact_and_contract_labels_cannot_collide(tmp_path: Path, monkeypatch):
     artifact = tmp_path / "artifact.whl"
     artifact.write_bytes(b"package")
 
-    with pytest.raises(assembler.AssemblyError, match="duplicate artifact/contract label"):
+    with pytest.raises(
+        assembler.AssemblyError, match="duplicate artifact/contract label"
+    ):
         _assemble(
             tmp_path,
             monkeypatch,
@@ -474,7 +496,9 @@ def test_artifact_and_contract_labels_cannot_collide(tmp_path: Path, monkeypatch
         )
 
 
-def test_expired_authorization_grant_fails_before_receipt_assembly(tmp_path: Path, monkeypatch):
+def test_expired_authorization_grant_fails_before_receipt_assembly(
+    tmp_path: Path, monkeypatch
+):
     grant = _authorization_grant(tmp_path)
     value = json.loads(grant.read_text())
     value["expires_at"] = "2026-07-21T00:00:01Z"
@@ -495,9 +519,10 @@ def test_expired_authorization_grant_fails_before_receipt_assembly(tmp_path: Pat
 def test_grant_cannot_authorize_provider_session_actions(tmp_path: Path, monkeypatch):
     grant = _authorization_grant(tmp_path)
     value = json.loads(grant.read_text())
-    value["prohibited_actions"].remove("create_retry_or_terminate_implementation_session")
+    value["prohibited_actions"].remove(
+        "create_retry_or_terminate_implementation_session"
+    )
     grant.write_text(json.dumps(value))
 
     with pytest.raises(assembler.AssemblyError, match="prohibited_actions missing"):
         _assemble(tmp_path, monkeypatch, authorization_grant_path=grant)
-
