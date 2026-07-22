@@ -3,7 +3,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 SCRIPT = Path(__file__).resolve().parents[1] / "resolve_atlas_assignment_event.py"
 SPEC = importlib.util.spec_from_file_location("resolve_atlas_assignment_event", SCRIPT)
 assert SPEC and SPEC.loader
@@ -65,7 +64,10 @@ class ResolveAtlasAssignmentEventTests(unittest.TestCase):
                 'pull_request=918\nproposal_paths_json=["release-units/a.json"]\n',
             )
 
+    def test_github_reader_rejects_noncanonical_api_origin(self) -> None:
+        with self.assertRaisesRegex(ValueError, "https://api.github.com"):
+            MODULE.GitHubReader("file:///tmp/github", "token")
+
 
 if __name__ == "__main__":
     unittest.main()
-

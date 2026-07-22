@@ -2,7 +2,6 @@ import re
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/atlas-release-assignment-status.yml"
 
@@ -13,7 +12,9 @@ class AtlasReleaseAssignmentStatusWorkflowTests(unittest.TestCase):
 
     def test_only_exact_successful_owner_status_enters_gate(self) -> None:
         self.assertIn("status:", self.workflow)
-        self.assertIn("github.event.context == 'release-assignment / owner-approved'", self.workflow)
+        self.assertIn(
+            "github.event.context == 'release-assignment / owner-approved'", self.workflow
+        )
         self.assertIn("github.event.state == 'success'", self.workflow)
         self.assertIn("name: release-assignment / receipt-verified", self.workflow)
 
@@ -52,4 +53,3 @@ class AtlasReleaseAssignmentStatusWorkflowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

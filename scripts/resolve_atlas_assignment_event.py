@@ -13,7 +13,6 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 PROPOSAL_PATH = re.compile(r"^release-units/[A-Za-z0-9][A-Za-z0-9._-]*\.json$")
@@ -67,6 +66,14 @@ def release_unit_paths(files: list[dict[str, Any]]) -> list[str]:
 
 class GitHubReader:
     def __init__(self, api_url: str, token: str) -> None:
+        parsed = urllib.parse.urlsplit(api_url)
+        if (
+            parsed.scheme != "https"
+            or parsed.netloc != "api.github.com"
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("GitHub API URL must be https://api.github.com")
         self.api_url = api_url.rstrip("/")
         self.token = token
 
@@ -81,7 +88,7 @@ class GitHubReader:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310 -- HTTPS GitHub host validated above
                 return json.load(response)
         except urllib.error.HTTPError as error:
             raise ValueError(f"GitHub API request failed with HTTP {error.code}") from error
@@ -95,9 +102,7 @@ class GitHubReader:
     def pull_request_files(self, repository: str, number: int) -> list[dict[str, Any]]:
         files: list[dict[str, Any]] = []
         for page in range(1, 31):
-            payload = self.get(
-                f"/repos/{repository}/pulls/{number}/files?per_page=100&page={page}"
-            )
+            payload = self.get(f"/repos/{repository}/pulls/{number}/files?per_page=100&page={page}")
             if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
                 raise ValueError("GitHub pull-request file response is invalid")
             files.extend(payload)
@@ -109,7 +114,9 @@ class GitHubReader:
 def append_github_outputs(path: Path, values: dict[str, object]) -> None:
     with path.open("a", encoding="utf-8") as output:
         for key, value in values.items():
-            rendered = json.dumps(value, separators=(",", ":")) if isinstance(value, list) else str(value)
+            rendered = (
+                json.dumps(value, separators=(",", ":")) if isinstance(value, list) else str(value)
+            )
             if "\n" in rendered or "\r" in rendered:
                 raise ValueError(f"unsafe multiline GitHub output: {key}")
             output.write(f"{key}={rendered}\n")
@@ -144,4 +151,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
