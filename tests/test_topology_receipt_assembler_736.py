@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +144,144 @@ def _authorization_grant(tmp_path: Path) -> Path:
     )
 
 
+def _topology_execution_grant(tmp_path: Path) -> Path:
+    return _write_json(
+        tmp_path / "topology-execution-grant-v2.json",
+        {
+            "version": 2,
+            "grant_id": "teg_mcp736_test_0001",
+            "status": "active",
+            "issued_by": "@owner",
+            "issued_at": "2026-07-22T00:00:00Z",
+            "expires_at": "2099-07-23T00:00:00Z",
+            "approval_record_url": "https://github.com/BicameralAI/bicameral-mcp/issues/736",
+            "revocation_record_url": None,
+            "execution_surface": "provider-created",
+            "actors": {
+                "topology_owner": "@owner",
+                "provider_session_executor": "factory-pm",
+                "credential_custodian": "@owner",
+                "confirmation_actor": "devin-synthetic-proxy",
+                "evidence_acceptor": "@operator",
+            },
+            "topology": {
+                "source_issue": grant_contract.SOURCE_ISSUE,
+                "profile": grant_contract.PROFILE,
+                "runner": grant_contract.RUNNER,
+                "privilege_class": "privileged-external",
+                "revisions": {"mcp": "a" * 40, "bot": "a" * 40},
+                "required_hosts": ["claude", "codex"],
+            },
+            "provider_policy": {
+                "provider": "devin",
+                "adapter": "devin-tool-native",
+                "organization_id": "org-test",
+                "canonical_work_key": "topology-v2-mcp736-test",
+                "tags": [
+                    "topology_work_key:topology-v2-mcp736-test",
+                    "topology_grant_id:teg_mcp736_test_0001",
+                ],
+                "allowed_actions": ["create", "observe", "terminate"],
+                "maximum_launches": 1,
+                "maximum_concurrent_sessions": 1,
+                "replacement_policy": "none",
+            },
+            "session_spec": {
+                "title": "MCP #736 topology",
+                "prompt": "Run the bounded topology.",
+                "repositories": [
+                    "BicameralAI/bicameral-mcp",
+                    "BicameralAI/bicameral-bot",
+                ],
+                "playbook_id": "playbook-test",
+                "mode": "normal",
+                "platform": "inherit",
+            },
+            "credential_policy": {
+                "availability_boundary": "devin-organization",
+                "bindings": [
+                    {
+                        "class": "anthropic-api",
+                        "organization_secret_reference": "secret:org:ANTHROPIC_API_KEY",
+                    },
+                    {
+                        "class": "openai-api",
+                        "organization_secret_reference": "secret:org:OPENAI_API_KEY",
+                    },
+                ],
+            },
+            "spend_policy": {
+                "mode": "organization-limits",
+                "policy_reference": "Owner acknowledged organization limits.",
+                "owner_acknowledged": True,
+            },
+            "run_budget": {
+                "successful_runs_required": 2,
+                "maximum_attempts": 4,
+                "timeout_minutes_per_attempt": 45,
+            },
+            "confirmation_policy": {
+                "mode": "synthetic-proxy",
+                "actor": "devin-synthetic-proxy",
+                "maximum_evidence_claim": "synthetic-proxy",
+            },
+            "required_receipt": [
+                "provider_session_identity",
+                "credential_aliases",
+                "actor_mode",
+                "spend_disposition",
+                "deterministic_teardown",
+                "topology_journey_receipt",
+            ],
+            "prohibited_actions": [
+                "blind_retry_or_replacement",
+                "export_or_reveal_credentials",
+                "mutate_customer_or_team_data",
+                "approve_product_acceptance",
+                "merge_release_or_deploy",
+                "widen_scope_budget_or_expiry",
+            ],
+            "sunset": {
+                "provider_created_invalid_after": "2099-07-24T00:00:00Z",
+                "controller_activation_invalidates": True,
+            },
+        },
+    )
+
+
+def _provider_launch_receipt(tmp_path: Path) -> Path:
+    return _write_json(
+        tmp_path / "topology-launch-receipt.json",
+        {
+            "version": 1,
+            "grant_id": "teg_mcp736_test_0001",
+            "canonical_work_key": "topology-v2-mcp736-test",
+            "launch_ordinal": 1,
+            "launch_ordinal_consumed": True,
+            "provider": "devin",
+            "execution_path": "devin-tool-native",
+            "provider_tags": [
+                "topology_work_key:topology-v2-mcp736-test",
+                "topology_grant_id:teg_mcp736_test_0001",
+            ],
+            "outcome": "created",
+            "provider_session_id": "devin-test",
+            "provider_session_url": "https://app.devin.ai/sessions/test",
+            "credential_aliases": ["anthropic-api", "openai-api"],
+            "component_revisions": {"mcp": "a" * 40, "bot": "a" * 40},
+            "actor_mode": "synthetic-proxy",
+            "maximum_evidence_claim": "synthetic-proxy",
+            "spend_disposition": {
+                "mode": "organization-limits",
+                "owner_acknowledged": True,
+            },
+            "deterministic_teardown": "identity-bound-termination",
+            "retry_or_replacement": "none",
+            "sanitized": True,
+        },
+    )
+
+
 def _assemble(tmp_path: Path, monkeypatch, **overrides) -> dict:
     monkeypatch.setattr(topology, "git_commit", lambda _path: "a" * 40)
     artifact = tmp_path / "bicameral_mcp.whl"
@@ -174,14 +312,92 @@ def test_assembler_derives_objective_metadata_and_passes_complete_sources(
     receipt = _assemble(tmp_path, monkeypatch)
 
     assert receipt["outcome"] == "passed"
-    assert receipt["topology_authorization"]["grant_id"] == "bmtg_mcp736_test_0001"
-    assert receipt["topology_authorization"]["provider_session_authority"] is False
+    assert receipt["provider_launch_authorization"] == {
+        "mode": "not-applicable",
+        "execution_surface": "existing-human-created",
+        "reason": "provider session was not created under this grant",
+    }
+    assert (
+        receipt["topology_action_authorization"]["grant_id"] == "bmtg_mcp736_test_0001"
+    )
+    assert (
+        receipt["topology_action_authorization"]["provider_session_authority"] is False
+    )
     assert receipt["evidence_level"] == topology.TERMINAL_EVIDENCE_LEVEL
     assert len(receipt["product_artifact_and_contract_digests"]["mcp_wheel"]) == 64
     assert receipt["host_runs"]["claude"]["consented_adapter_lifecycle_receipts"] == {
         step: "passed" for step in topology.REQUIRED_ADAPTER_LIFECYCLE_STEPS
     }
     assert receipt["evidence_sources"]["hosts"]["claude"]["lifecycle"]["update"]
+
+
+def test_provider_created_v2_grant_records_authority_without_exceeding_actor_evidence(
+    tmp_path: Path, monkeypatch
+):
+    receipt = _assemble(
+        tmp_path,
+        monkeypatch,
+        authorization_grant_path=_topology_execution_grant(tmp_path),
+        provider_launch_receipt_path=_provider_launch_receipt(tmp_path),
+    )
+
+    assert receipt["outcome"] == "product_failure"
+    assert (
+        receipt["provider_launch_authorization"]["mode"]
+        == "topology-execution-grant-v2"
+    )
+    assert (
+        receipt["provider_launch_authorization"]["provider_session_id"] == "devin-test"
+    )
+    assert (
+        receipt["topology_action_authorization"]["mode"]
+        == "topology-execution-grant-v2"
+    )
+    assert (
+        receipt["topology_action_authorization"]["grant_id"] == "teg_mcp736_test_0001"
+    )
+    assert (
+        "topology authorization maximum evidence claim is synthetic-proxy, not real-human"
+        in receipt["failures"]
+    )
+
+
+def test_provider_created_v2_grant_requires_its_launch_receipt(
+    tmp_path: Path, monkeypatch
+):
+    with pytest.raises(
+        assembler.AssemblyError,
+        match="provider-created execution requires a Topology Launch Receipt",
+    ):
+        _assemble(
+            tmp_path,
+            monkeypatch,
+            authorization_grant_path=_topology_execution_grant(tmp_path),
+        )
+
+
+def test_provider_created_v2_grant_binds_checked_out_component_revisions(
+    tmp_path: Path, monkeypatch
+):
+    grant = _topology_execution_grant(tmp_path)
+    value = json.loads(grant.read_text())
+    value["topology"]["revisions"]["mcp"] = "b" * 40
+    grant.write_text(json.dumps(value))
+    launch = _provider_launch_receipt(tmp_path)
+    value = json.loads(launch.read_text())
+    value["component_revisions"]["mcp"] = "b" * 40
+    launch.write_text(json.dumps(value))
+
+    with pytest.raises(
+        assembler.AssemblyError,
+        match="checked-out component revisions do not match the v2 grant",
+    ):
+        _assemble(
+            tmp_path,
+            monkeypatch,
+            authorization_grant_path=grant,
+            provider_launch_receipt_path=launch,
+        )
 
 
 def test_july_17_style_lifecycle_without_update_cannot_pass(tmp_path: Path, monkeypatch):
@@ -284,3 +500,4 @@ def test_grant_cannot_authorize_provider_session_actions(tmp_path: Path, monkeyp
 
     with pytest.raises(assembler.AssemblyError, match="prohibited_actions missing"):
         _assemble(tmp_path, monkeypatch, authorization_grant_path=grant)
+

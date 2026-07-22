@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "c2621000e7d43457dc6237c8cb6c88a3084e55fd",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "PAMA.md",
+    "knowledge/product-validation-roadmap.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "blueprints/topology-execution.md",
+    "schemas/topology-execution-grant.schema.json",
+    "scripts/validate_topology_execution_grant.py",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "skills/bic/mattpocock/engineering/tdd/SKILL.md"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "wrapper-observed",
+      "reason": "Established the Factory/product artifact and authority boundary.",
+      "sha256": "cb88404b50ee354ee1f2eac5736f408806d00ca59f1fce92af682e8b31f3d41f"
+    },
+    "CONTRIBUTING.md": {
+      "source": "wrapper-observed",
+      "reason": "Required evidence-backed product PR validation and explicit factory signals.",
+      "sha256": "eeb6fbb484f310af7ac6d85b8c5b8904d5cd2bde78ee887f6e8f8ec6b7ce3fed"
+    },
+    "CONTEXT.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined BMTG and Topology Execution Grant v2 as distinct Factory-owned authority artifacts.",
+      "sha256": "48e0188fb14bb0b1b93e80c1015d7bf7b5754f41e8c985223866b19f86801a18"
+    },
+    "PAMA.md": {
+      "source": "wrapper-observed",
+      "reason": "Kept the authorization contract change proportional, explicit, and reversible.",
+      "sha256": "a91317d48c7a9d73a01384eb08e4a8374068842d4c7b2bcd5d9ede7b4b019fe7"
+    },
+    "knowledge/product-validation-roadmap.md": {
+      "source": "wrapper-observed",
+      "reason": "Classified the cross-repository authorization alignment under the Tool-Agnostic utility lane.",
+      "sha256": "53247b2501ebc17aaa58b349270f43c2ba369df13305c9b6ef5018f2875e1767"
+    },
+    "playbooks/devin-bicameral-factory-run.md": {
+      "source": "wrapper-observed",
+      "reason": "Set minimum validation, PR evidence, domain-candidate, and learning-signal requirements.",
+      "sha256": "388b5ab6b7a23e2f6476afffde866453e196efdbaa2465aba7b186a6c9317228"
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "wrapper-observed",
+      "reason": "Kept grants, launch receipts, and Factory tooling outside customer product packages.",
+      "sha256": "3df96ca9489c230b618ca4626975141dcc1f8f1a3ce6ebd542ba3bf61a40df4e"
+    },
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {
+      "source": "wrapper-observed",
+      "reason": "Confirmed the authorization vocabulary is already Factory-owned.",
+      "sha256": "2347367cc44a8fb2396f59e18d45132041da7040ca8c8cf163d59081a1382f45"
+    },
+    "blueprints/factory-run-signals/factory-learning-signals.md": {
+      "source": "wrapper-observed",
+      "reason": "Required reporting the downstream consumer-migration gap.",
+      "sha256": "d95aa2f87f92c5e871b16a6445007b6762b6be7b9508c1a2b0fb5ca0d506a6be"
+    },
+    "blueprints/factory-run-signals/minimum-product-validation.md": {
+      "source": "wrapper-observed",
+      "reason": "Required focused deterministic tests plus static validation.",
+      "sha256": "03ac2034af2ef9fa6db81cd2b943912c8faf100b9e1b5771e5b5c3030f906042"
+    },
+    "blueprints/topology-execution.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined the mutually exclusive BMTG existing-surface and TEG v2 provider-created authorization modes.",
+      "sha256": "5f2c9a93d45e7217344bdb7d998ad1dcfa7bce38063dd8f799971a0b59e0d9fb"
+    },
+    "schemas/topology-execution-grant.schema.json": {
+      "source": "wrapper-observed",
+      "reason": "Supplied the canonical v2 grant fields and fail-closed constraints consumed by the MCP validator.",
+      "sha256": "9296c01181ee6953f3132c26fdac9dfbdb68a45efc2b7df022bb8a0f632c686e"
+    },
+    "scripts/validate_topology_execution_grant.py": {
+      "source": "wrapper-observed",
+      "reason": "Supplied the reviewed v2 validation semantics mirrored by the profile-specific consumer.",
+      "sha256": "e442a50b96a1bd1926a4c7612063fd24e96f965d1fc3ea32bdb99690da32a7a7"
+    },
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {
+      "source": "wrapper-observed",
+      "reason": "Defined this per-run attestation and validation workflow.",
+      "sha256": "9fda2bf42037ba1fe70bf9db5b6295e0e76e44362b5fdc9e37aa966ee450a380"
+    },
+    "skills/bic/mattpocock/engineering/tdd/SKILL.md": {
+      "source": "wrapper-observed",
+      "reason": "Shaped the red-green tracer-bullet implementation and public-interface tests.",
+      "sha256": "41a0de6d40710c0ec205d5351aad3f76a51cb59ed255e9f36fa36c464fdddc81"
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "promoted",
+    "notes": "The local product context was pinned to Factory release 0ec4bd6, which predates TEG v2. The run detected that divergence, loaded and hashed exact Factory commit c2621000 through the connected GitHub source, and used the merged v2 contract from Factory #311/#313. The copied TDD skill differed only by a trailing newline; the copied attestation skill lacked the already-promoted per-run filename/contract-conformance updates.",
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/311",
+    "unresolved_items": []
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 736,
+    "issue_type": "validating",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/743",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/746",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/750",
+      "https://github.com/BicameralAI/bicameral-mcp/pull/759"
+    ],
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-mcp/issues/736#issuecomment-5045629081"
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No product lifecycle behavior changed. Contributor receipt tooling now distinguishes provider-launch authorization from in-session topology-action authorization.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "No canonical Bicameral state, authority, or persistence semantics changed.",
+      "A Bounded Manual Topology Grant never authorizes provider-session creation, retry, continuation, or termination.",
+      "A Topology Execution Grant v2 and Topology Launch Receipt are not a DispatchReceipt or product-acceptance authority.",
+      "A synthetic-proxy evidence ceiling cannot produce passing real-human terminal acceptance.",
+      "Missing, expired, mismatched, widened, or secret-bearing authorization evidence fails closed.",
+      "The grant validator and receipt tooling remain contributor-only and absent from customer product runtime."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "MCP-owned grant lifecycle state",
+        "one ambiguous topology_authorization receipt field",
+        "requiring both v1 and v2 grants for one provider-created run",
+        "authorization-as-product-acceptance"
+      ],
+      "rationale": "The MCP stores no grant state. A version-discriminated input preserves the existing CLI while the receipt exposes the two authority scopes explicitly; v2 may supply both scopes only with its bound launch receipt."
+    }
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "notes": "Factory v2 was merged, but the profile-specific MCP consumer did not migrate automatically. This downstream-consumer alignment gap is recorded in the PR learning signal; no new Factory term or artifact is required."
+  },
+  "attested_by": "Codex GPT-5",
+  "timestamp": "2026-07-22T12:13:39Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "agent/736-topology-grant-v2-receipts",
+  "agent": "Codex GPT-5",
+  "session": "mcp-736-topology-grant-v2-receipts"
+}
+
