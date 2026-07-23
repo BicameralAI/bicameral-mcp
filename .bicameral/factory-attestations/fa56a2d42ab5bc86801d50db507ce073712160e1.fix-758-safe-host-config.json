@@ -130,7 +130,7 @@
     "checked": true,
     "resolution": "none",
     "unresolved_items": [],
-    "notes": "The direct Codex session used exact Factory skill copies and an ignored local Factory context file. No local-only setup artifact or assumption is required by the product change."
+    "notes": "The direct Codex session used exact Factory skill copies and an ignored local Factory context file. A stale local post-commit hook invoked the removed bicameral-mcp link_commit CLI; commit sync was completed with the current MCP tool instead. No local-only setup artifact or assumption is required by the product change."
   },
   "roadmap_reconciliation": {
     "checked": true,
@@ -139,8 +139,10 @@
     "project_status": "In Progress",
     "pr_links_checked": true,
     "pr_body_links_issue": true,
-    "pr_links": [],
-    "post_work_comment_url": null,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/767"
+    ],
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-factory/issues/66#issuecomment-5053490225",
     "notes": "Host configuration preservation is reliability and operational hygiene within the validated Miscellaneous roadmap."
   },
   "state_refinement": {
