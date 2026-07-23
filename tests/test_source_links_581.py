@@ -69,6 +69,43 @@ def test_source_link_renderer_labels_source_only_search_results_as_advisory():
     assert "not compliance" in rendered["source_link_note"]
 
 
+def test_search_renderer_accepts_the_bot_runtime_search_response_shape():
+    """Bot's production SearchResponse uses results/evidence_reference_ids."""
+    rendered = json.loads(
+        format_source_link_response(
+            {
+                "request_id": "req-real-search",
+                "status": "ok",
+                "result": {
+                    "results": [
+                        {
+                            "type": "candidate",
+                            "id": "cand-real-1",
+                            "title": "integration-bot-mcp-marker",
+                            "snippet": "revision-pinned journey evidence",
+                            "source_id": "https://topology.invalid/events/1",
+                            "source_snapshot_id": "snap-real-1",
+                            "evidence_reference_ids": ["ev-real-1"],
+                            "inspection_uri": "bicameral://evidence/candidate/cand-real-1/source",
+                        }
+                    ]
+                },
+            },
+            surface="search",
+        ).text
+    )
+
+    match = rendered["matches"][0]
+    assert match["kind"] == "candidate"
+    assert match["id"] == "cand-real-1"
+    assert match["source_uri"] == "https://topology.invalid/events/1"
+    assert match["source_link"] == "bicameral://evidence/candidate/cand-real-1/source"
+    assert match["snapshot_id"] == "snap-real-1"
+    assert match["evidence_ref_id"] == "ev-real-1"
+    assert match["evidence_refs"] == ["ev-real-1"]
+    assert match["excerpt"] == "revision-pinned journey evidence"
+
+
 def test_source_link_renderer_labels_verified_binding_without_compliance_claim():
     rendered = json.loads(
         format_source_link_response(
