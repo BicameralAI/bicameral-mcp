@@ -609,7 +609,14 @@ def format_source_link_response(response: dict[str, Any], *, surface: str) -> Te
         output[pending_checks_key] = response[pending_checks_key]
 
     if surface == "search":
-        output["matches"] = [_render_source_link_item(item) for item in result.get("matches", [])]
+        # The Bot runtime's canonical SearchResponse serializes the collection
+        # as `results`; older fixture/read-model responses used `matches`.
+        # Preserve both at the MCP rendering boundary without changing the
+        # daemon-owned result embedded above.
+        search_items = result.get("results")
+        if search_items is None:
+            search_items = result.get("matches", [])
+        output["matches"] = [_render_source_link_item(item) for item in search_items]
         if result.get("binding_scope"):
             output["binding_scope"] = result["binding_scope"]
     elif surface == "history":
@@ -635,12 +642,14 @@ def format_source_link_response(response: dict[str, Any], *, surface: str) -> Te
 def _render_source_link_item(
     item: dict[str, Any], *, graph_snapshot_id: str | None = None
 ) -> dict[str, Any]:
-    source_link = item.get("source_link") or item.get("source_uri")
+    source_link = item.get("source_link") or item.get("inspection_uri") or item.get("source_uri")
     evidence_state = item.get("evidence_state")
     graph_readiness = item.get("graph_readiness") or item.get("readiness")
     currentness = item.get("currentness") or item.get("freshness")
-    evidence_refs = item.get("evidence_refs", [])
+    evidence_refs = item.get("evidence_refs") or item.get("evidence_reference_ids") or []
     evidence_ref_id = item.get("evidence_ref_id") or item.get("evidence_reference_id")
+    if evidence_ref_id is None and evidence_refs:
+        evidence_ref_id = evidence_refs[0]
     snapshot_id = item.get("snapshot_id") or item.get("source_snapshot_id")
     authority = item.get("authority")
 
@@ -651,7 +660,7 @@ def _render_source_link_item(
         evidence_authority = authority
 
     rendered: dict[str, Any] = {
-        "kind": item.get("kind"),
+        "kind": item.get("kind") or item.get("type"),
         "id": item.get("id")
         or item.get("decision_id")
         or item.get("candidate_id")
@@ -662,7 +671,7 @@ def _render_source_link_item(
         "status": item.get("status"),
         "event_kind": item.get("kind") if item.get("decision_id") and "title" not in item else None,
         "symbol": item.get("symbol"),
-        "source_uri": item.get("source_uri") or source_link,
+        "source_uri": item.get("source_uri") or item.get("source_id") or source_link,
         "source_kind": item.get("source_kind") or item.get("source_type"),
         "source_link": source_link,
         "snapshot_id": snapshot_id,
@@ -670,7 +679,7 @@ def _render_source_link_item(
         "evidence_refs": evidence_refs,
         "pointer": item.get("pointer"),
         "locator": item.get("locator"),
-        "excerpt": item.get("excerpt"),
+        "excerpt": item.get("excerpt") or item.get("snippet"),
         "citation": item.get("citation"),
         "graph_readiness": graph_readiness,
         "currentness": currentness,

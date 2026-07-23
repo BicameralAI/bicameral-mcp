@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "6ec555cf02078e5d937d086055d435573655573a",
+  "loaded_context": [
+    "README.md",
+    "INSTRUCTIONS.md",
+    "CONTEXT.md",
+    "CONTRIBUTING.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "knowledge/product-validation-roadmap.md",
+    "blueprints/release-manifest-journey-delivery.md",
+    "skills/bic/release-unit/SKILL.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/specs/release-assignment-hard-gate-and-active-release-train.md",
+    ".github/workflows/atlas-release-unit-status.yml",
+    "scripts/atlas_assignment_gate.py",
+    "scripts/atlas_merge_gate.py",
+    "scripts/release_unit.py",
+    "registries/release-unit-assignment-signing-keys.v1.json"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "Used an isolated default-branch worktree and the exact Factory PR #329 verifier commit."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 749,
+    "issue_type": "validated",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-factory/pull/329"
+    ],
+    "post_work_comment_url": null,
+    "notes": "MCP #749 is the validated release-delivery lane. This PR changes only trusted default-branch release merge control."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No canonical product lifecycle behavior changed. Repository-local release control now derives merge eligibility from a complete exact assignment set plus every declared required topology receipt.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "Canonical product state, authority, and persistence semantics did not change.",
+      "Atlas may append evidence and set pending, but only trusted default-branch CI may set release-unit / merge-eligible success.",
+      "Topology-optional Release Units become eligible after exact assignment; topology-required units remain pending until observed exact receipts verify.",
+      "Merge eligibility does not prove publication, deployment, served identity, or product acceptance."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "Collapsed assignment and topology completeness into one authoritative merge-eligibility result while retaining per-unit topology evidence.",
+        "Kept release publication and deployment outside the PR merge gate."
+      ],
+      "rationale": "One consolidated merge status is the smallest honest protected-branch surface; assignment and topology remain distinct evidence inputs."
+    }
+  },
+  "domain_entity_candidates": [
+    "None. Release Unit, Release Assignment, topology receipt, and merge eligibility are Factory-owned terms."
+  ],
+  "factory_learning_signals": [
+    "An assignment-only protected status cannot enforce a Release Unit whose proposal declares required topology."
+  ],
+  "validation_evidence": {
+    "focused_tests": "Three thin-caller contract tests pass.",
+    "syntax": "Workflow YAML parses and git diff whitespace validation passes.",
+    "trust": "Caller pins one exact Factory commit and a repository-scoped main-only read identity."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/329",
+    "notes": "Factory #329 supplies the consolidated assignment-plus-topology resolver."
+  },
+  "attested_by": "OpenAI Codex",
+  "timestamp": "2026-07-22T23:00:00Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "codex/release-unit-merge-status",
+  "agent": "OpenAI Codex",
+  "session": "Install consolidated Release Unit merge eligibility resolver"
+}

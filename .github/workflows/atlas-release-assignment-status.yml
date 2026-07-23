@@ -1,0 +1,39 @@
+name: Atlas Release Unit gate
+
+on:
+  status:
+  pull_request:
+    paths:
+      - ".github/workflows/atlas-release-assignment-status.yml"
+
+permissions:
+  contents: read
+  pull-requests: read
+  id-token: write
+  statuses: write
+
+concurrency:
+  group: atlas-release-unit-${{ github.event.sha }}-${{ github.event.context }}
+  cancel-in-progress: false
+
+jobs:
+  validate-factory-pin:
+    if: github.event_name == 'pull_request'
+    name: factory-pin-resolves
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Pinned Factory reusable workflow resolved successfully.'
+
+  resolve-release-unit:
+    if: >-
+      github.event_name == 'status' &&
+      github.event.state == 'pending' &&
+      (github.event.context == 'release-unit / assigned' ||
+       github.event.context == 'release-unit / merge-eligible')
+    uses: BicameralAI/bicameral-factory/.github/workflows/atlas-release-unit-status.yml@6ec555c24d7738424753fc06033d844bffb0f3ad
+    with:
+      factory_ref: 6ec555c24d7738424753fc06033d844bffb0f3ad
+      workload_identity_provider: projects/694608247534/locations/global/workloadIdentityPools/github-actions/providers/bicameral-mcp-atlas-receipts
+      service_account: atlas-receipts-mcp@bicameral-cloud-500911.iam.gserviceaccount.com
+    secrets:
+      cross_repo_token: ${{ secrets.BICAMERAL_CROSS_REPO_TOKEN }}

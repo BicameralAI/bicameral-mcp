@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "6ec555c24d7738424753fc06033d844bffb0f3ad",
+  "loaded_context": [
+    "README.md",
+    "INSTRUCTIONS.md",
+    "CONTEXT.md",
+    "CONTRIBUTING.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "knowledge/product-validation-roadmap.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/specs/release-assignment-hard-gate-and-active-release-train.md",
+    ".github/workflows/atlas-release-unit-status.yml",
+    "scripts/atlas_assignment_gate.py",
+    "scripts/atlas_merge_gate.py"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "The correction uses the exact reviewed Factory #329 head commit."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 749,
+    "issue_type": "validated",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": ["https://github.com/BicameralAI/bicameral-factory/pull/329"],
+    "post_work_comment_url": null,
+    "notes": "MCP #749 is the validated release-delivery lane; this hotfix corrects the immutable Factory verifier identity."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "No lifecycle behavior changed. The release-unit resolver now references the existing reviewed Factory commit correctly.",
+    "states_added": [],
+    "states_deferred": [],
+    "invariants": [
+      "No canonical state, authority, or persistence semantics changed.",
+      "Only trusted default-branch CI may set release-unit / merge-eligible success."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [],
+      "rationale": "This is a reference-identity correction plus PR-time resolution check, not a new lifecycle state."
+    }
+  },
+  "domain_entity_candidates": ["None."],
+  "factory_learning_signals": ["Status-only reusable workflow references must be resolved during pull-request validation."],
+  "validation_evidence": {
+    "syntax": "Workflow YAML is parsed by GitHub on pull requests that change the caller.",
+    "trust": "Caller pins the exact reviewed Factory #329 head commit."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/329",
+    "notes": "Corrected one mistyped immutable Factory SHA; no Factory contract change."
+  },
+  "attested_by": "OpenAI Codex",
+  "timestamp": "2026-07-22T23:54:00Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "codex/fix-release-unit-factory-pin",
+  "agent": "OpenAI Codex",
+  "session": "Correct Release Unit verifier Factory pin"
+}

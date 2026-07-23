@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "61d951f09134d78baf11c295a610963312cb6af1",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "INSTRUCTIONS.md",
+    "CONTEXT.md",
+    "blueprints/release-manifest-journey-delivery.md",
+    "skills/bic/release-unit/SKILL.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/specs/release-assignment-hard-gate-and-active-release-train.md",
+    "scripts/atlas_assignment_gate.py"
+  ],
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "Used an isolated default-branch worktree and the exact merged Factory controller/verifier commit."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 749,
+    "issue_type": "validated",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [],
+    "post_work_comment_url": null,
+    "notes": "Release-delivery governance bootstrap for BicameralAI/bicameral-mcp; it does not publish, deploy, or claim a released version."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "An exact successful Atlas owner-approved status causes the trusted default-branch workflow to resolve one open dev PR and derive receipt_verified only after complete signed receipt-set verification.",
+    "states_added": [
+      "receipt_verified (derived CI evidence only)"
+    ],
+    "states_deferred": [
+      "Dev branch-protection enforcement remains deferred until the live status-to-receipt flow passes."
+    ],
+    "invariants": [
+      "No canonical product lifecycle or persistence state changed.",
+      "The raw owner-approved status never authorizes merge.",
+      "Candidate code cannot replace the default-branch resolver, pinned Factory verifier, public key, WIF identity, or verified-status publisher.",
+      "Assignment verification does not satisfy topology, main promotion, publication, deployment, served identity, or product acceptance."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "Rejected owner-approved as a merge state; it remains a wake-up signal.",
+        "Collapsed receipt download, tuple match, and signature verification into one derived receipt_verified check."
+      ],
+      "rationale": "One derived repo-local check is the smallest honest handoff between Atlas assignment authority and dev merge policy."
+    }
+  },
+  "domain_entity_candidates": [
+    "None. Release Unit, Release Assignment, Atlas, and receipt_verified are already Factory-owned terms."
+  ],
+  "factory_learning_signals": [
+    "Each governed repository needs a default-branch status workflow and a repository-scoped read-only WIF identity before its dev gate can be armed."
+  ],
+  "validation_evidence": {
+    "focused_tests": "Eight resolver and workflow contract tests pass.",
+    "syntax": "Python compilation, YAML parsing, and git diff whitespace validation pass."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": "https://github.com/BicameralAI/bicameral-factory/pull/325",
+    "notes": "Factory #325 supplies the reusable signed-receipt verifier; this product PR consumes it without adding product semantics."
+  },
+  "attested_by": "OpenAI Codex",
+  "timestamp": "2026-07-22T19:11:39Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "agent/atlas-assignment-status-main",
+  "agent": "OpenAI Codex",
+  "session": "MCP Atlas Release Assignment receipt verifier bootstrap"
+}
+

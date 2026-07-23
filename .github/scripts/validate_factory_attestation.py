@@ -18,6 +18,7 @@ from typing import Any
 
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+RUN_ID_RE = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*$")
 FACTORY_PR_RE = re.compile(r"^https://github\.com/BicameralAI/bicameral-factory/pull/[0-9]+$")
 ALLOWED_DIVERGENCE_RESOLUTIONS = {"none", "promoted", "disabled", "not_applicable"}
 ALLOWED_CONTEXT_EVIDENCE_SOURCES = {"agent-declared", "wrapper-observed", "human-declared"}
@@ -215,6 +216,17 @@ def collect_attestation_paths(path: Path) -> tuple[list[Path], list[str]]:
     return [path], []
 
 
+def valid_attestation_filename(filename: str, factory_commit: str) -> bool:
+    """Accept legacy commit names and collision-safe per-PR run names."""
+    if filename == f"{factory_commit}.json":
+        return True
+    prefix = f"{factory_commit}."
+    if not filename.startswith(prefix) or not filename.endswith(".json"):
+        return False
+    run_id = filename[len(prefix) : -len(".json")]
+    return bool(RUN_ID_RE.fullmatch(run_id))
+
+
 def validate_file(path: Path, require_context: set[str], context_root: Path | None) -> list[str]:
     data, errors = load_json(path)
     if errors:
@@ -224,17 +236,10 @@ def validate_file(path: Path, require_context: set[str], context_root: Path | No
     errors = validate(data, require_context, context_root)
     factory_commit = data.get("factory_commit")
     if path.parent.name == "factory-attestations" and isinstance(factory_commit, str):
-        legacy_name = f"{factory_commit}.json"
-        per_run_prefix = f"{factory_commit}."
-        per_run = (
-            path.name.startswith(per_run_prefix)
-            and path.name.endswith(".json")
-            and len(path.name) > len(per_run_prefix) + len(".json")
-        )
-        if path.name != legacy_name and not per_run:
+        if not valid_attestation_filename(path.name, factory_commit):
             errors.append(
                 "commit-grounded attestation filename must be "
-                f"{legacy_name} or {factory_commit}.<run-id>.json for factory_commit {factory_commit}"
+                f"{factory_commit}.json or {factory_commit}.<run-id>.json"
             )
     return errors
 
