@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "release_unit_id": "v0112-mcp-host-config-preservation",
+  "label": "Preserve external host configuration during adapter lifecycle",
+  "repository": "BicameralAI/bicameral-mcp",
+  "scope_ref": "BicameralAI/bicameral-mcp#758",
+  "release_unit_type": "mcp_surface",
+  "target_version": "0.1.12",
+  "topology": {
+    "required": false
+  },
+  "proposed_by": "@silongtan",
+  "proposed_at": "2026-07-23T01:48:45Z",
+  "proposal_digest": "sha256:17f44543cd74fe182555a31e389bd2e9579c96cfc2ba82c359e320d7b46a9abc"
+}

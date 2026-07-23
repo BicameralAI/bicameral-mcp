@@ -61,6 +61,14 @@ CLI: `bicameral-mcp adapters <status|install|update|disable|uninstall> [--host H
 Managed hook entries are identified by a stable token plus the host id, so the
 adapter only ever edits or removes its own entries.
 
+Host configuration is treated as external user data. A missing config may be
+created, but an existing config must be a readable JSON object. Unreadable,
+malformed, or non-object input fails closed with the original bytes unchanged.
+Valid mutations first retain the exact prior bytes at
+`<config>.bicameral-backup`, write the complete replacement to a temporary file
+beside the config, and atomically replace the config. New configs have no
+backup because no prior user data exists.
+
 ## Pre-work invocation contract
 
 At a pre-work boundary the runner (`bicameral-mcp prework-run --host HOST`, which

@@ -14,7 +14,9 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import sys
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +40,10 @@ MANAGED_COMMAND_TOKEN = "prework-run"
 #: boundaries. ``resume``/``compact``/``clear`` continue an existing session and
 #: must not fire an automatic pre-work invocation.
 PREWORK_SOURCES: frozenset[str] = frozenset({"startup"})
+
+
+class HostConfigError(RuntimeError):
+    """The host configuration cannot be read or changed without data loss."""
 
 
 def resolve_runner_invocation() -> str:
@@ -258,7 +264,6 @@ class HostAdapter(ABC):
                 ),
             )
         runner = resolve_runner_invocation()
-        self._remove_hook()
         if metadata.enabled:
             self._write_hook(runner)
         metadata.runner_invocation = runner
@@ -368,18 +373,39 @@ class HostAdapter(ABC):
 
     def _read_config(self) -> dict[str, Any]:
         path = self.config_path()
-        if not path.is_file():
+        if not path.exists():
             return {}
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {}
-        return data if isinstance(data, dict) else {}
+        except OSError as exc:
+            raise HostConfigError(
+                f"Cannot read host config {path}; refusing to modify it."
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise HostConfigError(
+                f"Host config {path} contains malformed JSON; refusing to modify it."
+            ) from exc
+        if not isinstance(data, dict):
+            raise HostConfigError(
+                f"Host config {path} must contain a JSON object; refusing to modify it."
+            )
+        return data
 
     def _write_config(self, data: dict[str, Any]) -> None:
         path = self.config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = path.read_bytes() if path.exists() else None
+            mode = stat.S_IMODE(path.stat().st_mode) if existing is not None else None
+            if existing is not None:
+                backup = path.with_name(f"{path.name}.bicameral-backup")
+                _atomic_replace_bytes(backup, existing, mode=mode)
+            _atomic_replace_bytes(path, payload, mode=mode)
+        except OSError as exc:
+            raise HostConfigError(
+                f"Cannot atomically update host config {path}; the current config was not replaced."
+            ) from exc
 
     def _session_start_groups(self, data: dict[str, Any]) -> list[Any]:
         hooks = data.get("hooks")
@@ -490,3 +516,24 @@ def _resolve_branch(workspace: str | None) -> str | None:
     except Exception:
         return None
     return branch or None
+
+
+def _atomic_replace_bytes(path: Path, payload: bytes, *, mode: int | None) -> None:
+    """Write bytes beside ``path`` and atomically replace the destination."""
+    fd, raw_temp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp_path = Path(raw_temp)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(temp_path, mode)
+        os.replace(temp_path, path)
+    except BaseException:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        temp_path.unlink(missing_ok=True)
+        raise
