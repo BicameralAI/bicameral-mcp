@@ -1,0 +1,200 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "fa56a2d42ab5bc86801d50db507ce073712160e1",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "INSTRUCTIONS.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "charters/feature-agent.md",
+    "blueprints/factory-run-contract.md",
+    "blueprints/factory-attestation.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "knowledge/product-validation-roadmap.md",
+    "skills/bic/mattpocock/engineering/tdd/SKILL.md",
+    "skills/bic/release-unit/SKILL.md",
+    "skills/bic/release-unit/references/contract.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "docs/specs/release-assignment-hard-gate-and-active-release-train.md",
+    "schemas/release-unit-proposal.schema.json",
+    "scripts/release_unit.py"
+  ],
+  "context_evidence": {
+    "README.md": {
+      "source": "agent-declared",
+      "reason": "Baseline Factory guidance for this run.",
+      "sha256": "797d61410caeaaba3cffd19263f64cfb773e3483a775e3f7f22b729a19eece9b"
+    },
+    "CONTRIBUTING.md": {
+      "source": "agent-declared",
+      "reason": "Factory contribution and governance rules.",
+      "sha256": "ef0946fbd159494809d1ddc2a240d0ae063177fccf4b0f5c608d408845402c35"
+    },
+    "CONTEXT.md": {
+      "source": "agent-declared",
+      "reason": "Factory domain model and terminology.",
+      "sha256": "86702c56858dc3d7042a8e79d1f70c09b7ad247dfb7329e47b38b8f32f3d3b01"
+    },
+    "INSTRUCTIONS.md": {
+      "source": "agent-declared",
+      "reason": "Factory operating instructions.",
+      "sha256": "5643e30fea7c9d141929102cd9950e536bf084de0631964063370abfe83cbafa"
+    },
+    "playbooks/devin-bicameral-factory-run.md": {
+      "source": "agent-declared",
+      "reason": "Factory-run checklist, including direct collaborator sessions.",
+      "sha256": "c287257b40938d5c8e686450e9fe4afa9be384d646fe7c1a55b46cfefdba52f1"
+    },
+    "charters/feature-agent.md": {
+      "source": "agent-declared",
+      "reason": "Feature-agent ownership and evidence contract.",
+      "sha256": "5700d2c889c0758ff2b2d59a7bac290cf6a729d2fb7de075c9522453e08b8ad7"
+    },
+    "blueprints/factory-run-contract.md": {
+      "source": "agent-declared",
+      "reason": "Factory run boundaries and required outputs.",
+      "sha256": "937087abbc76da84a97f3b533d639a297f27223f782e528c6ee731f54462de63"
+    },
+    "blueprints/factory-attestation.md": {
+      "source": "agent-declared",
+      "reason": "Commit-grounded attestation requirements.",
+      "sha256": "d3805991d0759824fd9af6a6b5aa0b72fa855363571496f7aab02586467853d7"
+    },
+    "blueprints/factory-run-signals/artifact-boundary.md": {
+      "source": "agent-declared",
+      "reason": "Product artifact-boundary evidence contract.",
+      "sha256": "d9ee7c1714bd20e576a2fa28e1bcba958e5dfa6a46dc82314504b18943d91f46"
+    },
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {
+      "source": "agent-declared",
+      "reason": "Domain entity candidate reporting contract.",
+      "sha256": "c88e89e66dbce89bf81af41fd976888664cbde26dbe39ace2d12605464c6755c"
+    },
+    "blueprints/factory-run-signals/factory-learning-signals.md": {
+      "source": "agent-declared",
+      "reason": "Factory learning signal reporting contract.",
+      "sha256": "63b7d5bd11f005a062d52163606c54562cbcc2e5619935fde8f1b9cc39457e21"
+    },
+    "blueprints/factory-run-signals/minimum-product-validation.md": {
+      "source": "agent-declared",
+      "reason": "Minimum product validation evidence contract.",
+      "sha256": "f0efac9c9a6007864b78393c4b8d21555d7aa5e008879e38137dc6569a99197f"
+    },
+    "knowledge/product-validation-roadmap.md": {
+      "source": "agent-declared",
+      "reason": "Roadmap reconciliation procedure.",
+      "sha256": "0299812341febf23b6dc3223a115461134113f988f7278992d9eb62061439697"
+    },
+    "skills/bic/mattpocock/engineering/tdd/SKILL.md": {
+      "source": "agent-declared",
+      "reason": "Required red-green-refactor workflow.",
+      "sha256": "6c34430dd4d79af8d0dcda3cc3fe32f850a255f545786e4c9c3f6be86127f694"
+    },
+    "skills/bic/release-unit/SKILL.md": {
+      "source": "agent-declared",
+      "reason": "Release Unit proposal and assignment workflow.",
+      "sha256": "9ad00e0744cccd46d6362d316d9624d73cf8180a0a8e2587c545671b633425f0"
+    },
+    "skills/bic/release-unit/references/contract.md": {
+      "source": "agent-declared",
+      "reason": "Release Unit proposal schema semantics.",
+      "sha256": "eb9ec3b7640cbe6a1504e848c1d5ece6a4b0a817ac1dcc5bc35c2a75469ea5dd"
+    },
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {
+      "source": "agent-declared",
+      "reason": "Pre-PR attestation procedure.",
+      "sha256": "e7d105f139e9e40fd1dd655891866a674fef839df604be748cc60b3e2b95f45d"
+    },
+    "docs/specs/release-assignment-hard-gate-and-active-release-train.md": {
+      "source": "agent-declared",
+      "reason": "Exact-head release assignment gate.",
+      "sha256": "2c68057065125bb5a54cf3867d14cc9968c506422857059ecb2b9fcce14823d4"
+    },
+    "schemas/release-unit-proposal.schema.json": {
+      "source": "agent-declared",
+      "reason": "Release Unit proposal validation schema.",
+      "sha256": "8555b243d8455d93955a10cbc50d2200be0c6414d1b7c5732870aec17ed152c1"
+    },
+    "scripts/release_unit.py": {
+      "source": "agent-declared",
+      "reason": "Factory-owned Release Unit validator.",
+      "sha256": "9302d4129ed0a53bc6b38f1eb4ac499efe6707a222db26a0ea5815c90d4537f3"
+    }
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "The direct Codex session used exact Factory skill copies and an ignored local Factory context file. A stale local post-commit hook invoked the removed bicameral-mcp link_commit CLI; commit sync was completed with the current MCP tool instead. No local-only setup artifact or assumption is required by the product change."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 349,
+    "issue_type": "validating",
+    "project_status": "In Progress",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/767"
+    ],
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-factory/issues/349#issuecomment-5070164148",
+    "notes": "Host configuration preservation is direct Tool Surface Contract evidence for safe managed adapters. It does not add Code Grounding state or move lifecycle authority into MCP."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "Existing adapter lifecycle operations now fail closed when external host configuration cannot be safely parsed or replaced. No new canonical Bicameral state, authority, or persistence is introduced.",
+    "states_added": [],
+    "states_deferred": [
+      "The product-facing config_invalid_fail_closed status remains owned by BicameralAI/bicameral-mcp#762."
+    ],
+    "invariants": [
+      "A missing host config may be created, but an existing config must be a readable JSON object before any mutation.",
+      "Malformed, non-object, or unreadable host config fails closed with its original bytes unchanged.",
+      "A valid existing config is backed up byte-for-byte before same-directory atomic replacement.",
+      "Lifecycle mutations edit only Bicameral-managed hooks and preserve unrelated host configuration.",
+      "No Factory runtime artifact, canonical Bicameral state, or daemon authority moves into MCP."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "No persisted adapter state was added for invalid host configuration; this remains a fail-closed product-local error until #762 adds the planned user-facing status refinement."
+      ],
+      "rationale": "The narrowest safe change strengthens filesystem mutation semantics without widening the adapter state model or crossing product authority boundaries."
+    },
+    "notes": "Lifecycle failure behavior changed; canonical state and authority did not."
+  },
+  "domain_entity_candidates": [
+    "None. HostConfigError is a product-local implementation detail rather than reusable Factory vocabulary."
+  ],
+  "factory_learning_signals": [
+    "DispatchGrant wording should distinguish provider-dispatched work from direct supervised collaborator development; the updated product plan now makes that distinction explicit.",
+    "Release Unit proposal guidance should expose an authoritative active Release Plan lookup path so target-version selection does not rely on repository version files and non-authoritative examples."
+  ],
+  "validation_evidence": {
+    "preflight": "Scoped Bicameral preflight returned fired=false and no_matches before and after implementation.",
+    "focused_tests": "61 passed",
+    "full_tests": "667 passed",
+    "ruff_check": "passed",
+    "ruff_format_check": "passed",
+    "mypy": "passed",
+    "build": "wheel and sdist built successfully",
+    "artifact_boundary": "Built wheel contains no Factory context, skills, attestations, receipts, or roadmaps.",
+    "release_unit_proposal": "Factory validator returned valid=true with no errors; proposal retargeted to Atlas Release Plan 0.1.13."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": null,
+    "notes": "No reusable Factory artifact was changed in this product PR. Two Factory learning signals are recorded for human review in the product PR and roadmap comment."
+  },
+  "attested_by": "OpenAI Codex",
+  "timestamp": "2026-07-24T13:07:16Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "fix/758-safe-host-config",
+  "agent": "OpenAI Codex",
+  "session": "direct supervised local development for BicameralAI/bicameral-mcp#758"
+}

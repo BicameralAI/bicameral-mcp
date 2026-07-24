@@ -10,13 +10,15 @@ each behavior is asserted for both hosts independently.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from preflight_adapters import get_adapter, supported_hosts
-from preflight_adapters.base import MANAGED_COMMAND_TOKEN
+from preflight_adapters.base import MANAGED_COMMAND_TOKEN, HostConfigError
 from preflight_adapters.context import (
     FORBIDDEN_EVENT_FIELDS,
     PreworkContext,
@@ -102,6 +104,7 @@ def test_install_writes_host_native_session_start_hook(host: str, tmp_path: Path
     assert result.state == AdapterState.ENABLED
     config_path = adapter.config_path()
     assert config_path.name == HOST_CONFIG_FILE[host]
+    assert not config_path.with_name(f"{config_path.name}.bicameral-backup").exists()
 
     data = json.loads(config_path.read_text())
     handlers = data["hooks"]["SessionStart"][0]["hooks"]
@@ -141,6 +144,123 @@ def test_install_preserves_existing_user_hooks(host: str, tmp_path: Path):
 
 
 @pytest.mark.parametrize("host", HOSTS)
+def test_install_rejects_malformed_config_without_changing_it(host: str, tmp_path: Path):
+    home = _home_for(host, tmp_path)
+    home.mkdir(parents=True)
+    config_path = home / HOST_CONFIG_FILE[host]
+    original = b'{"hooks": '
+    config_path.write_bytes(original)
+
+    adapter = get_adapter(host, home=home)
+    with pytest.raises(HostConfigError, match="malformed JSON"):
+        adapter.install(consent=True)
+
+    assert config_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize("original", [b"[]", b"null", b'"scalar"', b"1"])
+def test_install_rejects_non_object_config_without_changing_it(
+    host: str, original: bytes, tmp_path: Path
+):
+    home = _home_for(host, tmp_path)
+    home.mkdir(parents=True)
+    config_path = home / HOST_CONFIG_FILE[host]
+    config_path.write_bytes(original)
+
+    adapter = get_adapter(host, home=home)
+    with pytest.raises(HostConfigError, match="must contain a JSON object"):
+        adapter.install(consent=True)
+
+    assert config_path.read_bytes() == original
+
+
+@pytest.mark.parametrize("host", HOSTS)
+@pytest.mark.parametrize("action", ["status", "update", "disable", "uninstall"])
+def test_installed_lifecycle_rejects_malformed_config_without_losing_state(
+    host: str, action: str, tmp_path: Path
+):
+    adapter, _ = _install(host, tmp_path)
+    config_path = adapter.config_path()
+    installed_config = config_path.read_bytes()
+    malformed = b'{"hooks": '
+    config_path.write_bytes(malformed)
+
+    with pytest.raises(HostConfigError, match="malformed JSON"):
+        getattr(adapter, action)()
+
+    assert config_path.read_bytes() == malformed
+    config_path.write_bytes(installed_config)
+    status = adapter.status()
+    assert status.state == AdapterState.ENABLED
+    assert status.consent_granted is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission boundary")
+@pytest.mark.parametrize("host", HOSTS)
+def test_install_rejects_unreadable_config_without_changing_it(host: str, tmp_path: Path):
+    home = _home_for(host, tmp_path)
+    home.mkdir(parents=True)
+    config_path = home / HOST_CONFIG_FILE[host]
+    original = b'{"unrelated_setting": true}\n'
+    config_path.write_bytes(original)
+    config_path.chmod(0)
+    if os.access(config_path, os.R_OK):
+        config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        pytest.skip("filesystem does not enforce owner read permissions")
+
+    adapter = get_adapter(host, home=home)
+    try:
+        with pytest.raises(HostConfigError, match="Cannot read host config"):
+            adapter.install(consent=True)
+    finally:
+        config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+    assert config_path.read_bytes() == original
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission boundary")
+@pytest.mark.parametrize("host", HOSTS)
+def test_install_write_failure_leaves_existing_config_unchanged(host: str, tmp_path: Path):
+    home = _home_for(host, tmp_path)
+    home.mkdir(parents=True)
+    config_path = home / HOST_CONFIG_FILE[host]
+    original = b'{"unrelated_setting": true}\n'
+    config_path.write_bytes(original)
+    home.chmod(stat.S_IRUSR | stat.S_IXUSR)
+    if os.access(home, os.W_OK):
+        home.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+        pytest.skip("filesystem does not enforce owner directory write permissions")
+
+    adapter = get_adapter(host, home=home)
+    try:
+        with pytest.raises(HostConfigError, match="Cannot atomically update host config"):
+            adapter.install(consent=True)
+    finally:
+        home.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+
+    assert config_path.read_bytes() == original
+    assert not config_path.with_name(f"{config_path.name}.bicameral-backup").exists()
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_install_backs_up_existing_config_before_replacing_it(host: str, tmp_path: Path):
+    home = _home_for(host, tmp_path)
+    home.mkdir(parents=True)
+    config_path = home / HOST_CONFIG_FILE[host]
+    original = b'{\n  "unrelated_setting": {"keep": true}\n}\n'
+    config_path.write_bytes(original)
+
+    adapter = get_adapter(host, home=home)
+    result = adapter.install(consent=True)
+
+    assert result.ok is True
+    backup_path = config_path.with_name(f"{config_path.name}.bicameral-backup")
+    assert backup_path.read_bytes() == original
+    assert json.loads(config_path.read_text())["unrelated_setting"] == {"keep": True}
+
+
+@pytest.mark.parametrize("host", HOSTS)
 def test_disable_removes_only_managed_hook_and_keeps_consent(host: str, tmp_path: Path):
     home = _home_for(host, tmp_path)
     home.mkdir(parents=True)
@@ -168,6 +288,7 @@ def test_disable_removes_only_managed_hook_and_keeps_consent(host: str, tmp_path
 @pytest.mark.parametrize("host", HOSTS)
 def test_update_rewrites_managed_hook_without_duplicates(host: str, tmp_path: Path):
     adapter, _ = _install(host, tmp_path)
+    before_update = adapter.config_path().read_bytes()
     result = adapter.update()
     assert result.ok is True
     data = json.loads(adapter.config_path().read_text())
@@ -178,6 +299,8 @@ def test_update_rewrites_managed_hook_without_duplicates(host: str, tmp_path: Pa
         if MANAGED_COMMAND_TOKEN in h["command"]
     ]
     assert len(managed) == 1
+    backup_path = adapter.config_path().with_name(f"{adapter.config_path().name}.bicameral-backup")
+    assert backup_path.read_bytes() == before_update
 
 
 @pytest.mark.parametrize("host", HOSTS)
