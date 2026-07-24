@@ -34,6 +34,7 @@ from version import TOOLREQUEST_PROTOCOL_VERSION
 from .base import HostAdapter
 from .context import PreworkContext
 from .registry import get_adapter
+from .state import AdapterState
 
 PREFLIGHT_COMMAND = "preflight.run"
 
@@ -114,7 +115,7 @@ async def run_prework(
     event = adapter.parse_event(payload)
 
     status = adapter.status()
-    if status.state.value != "enabled":
+    if status.state is not AdapterState.INSTALLED_ENABLED:
         return PreworkResult(
             outcome=PreworkOutcome.SKIPPED_DISABLED,
             host=host_id,

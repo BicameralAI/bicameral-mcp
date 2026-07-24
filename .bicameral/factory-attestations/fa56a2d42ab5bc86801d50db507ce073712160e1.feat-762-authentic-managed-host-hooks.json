@@ -1,0 +1,136 @@
+{
+  "version": 1,
+  "factory_repo": "BicameralAI/bicameral-factory",
+  "factory_commit": "fa56a2d42ab5bc86801d50db507ce073712160e1",
+  "loaded_context": [
+    "README.md",
+    "CONTRIBUTING.md",
+    "CONTEXT.md",
+    "INSTRUCTIONS.md",
+    "playbooks/devin-bicameral-factory-run.md",
+    "charters/feature-agent.md",
+    "blueprints/factory-run-contract.md",
+    "blueprints/factory-attestation.md",
+    "blueprints/factory-run-signals/artifact-boundary.md",
+    "blueprints/factory-run-signals/domain-entity-candidates.md",
+    "blueprints/factory-run-signals/factory-learning-signals.md",
+    "blueprints/factory-run-signals/minimum-product-validation.md",
+    "blueprints/topology-execution.md",
+    "knowledge/product-validation-roadmap.md",
+    "skills/bic/mattpocock/engineering/tdd/SKILL.md",
+    "skills/bic/release-unit/SKILL.md",
+    "skills/bic/release-unit/references/contract.md",
+    "skills/bic/pre-pr-factory-attestation/SKILL.md",
+    "schemas/release-unit-proposal.schema.json",
+    "schemas/topology-host-receipt.schema.json",
+    "scripts/release_unit.py",
+    "scripts/topology_host_harness.py"
+  ],
+  "context_evidence": {
+    "README.md": {"source": "agent-declared", "reason": "Baseline Factory guidance for this run.", "sha256": "797d61410caeaaba3cffd19263f64cfb773e3483a775e3f7f22b729a19eece9b"},
+    "CONTRIBUTING.md": {"source": "agent-declared", "reason": "Factory contribution and governance rules.", "sha256": "ef0946fbd159494809d1ddc2a240d0ae063177fccf4b0f5c608d408845402c35"},
+    "CONTEXT.md": {"source": "agent-declared", "reason": "Factory domain model and terminology.", "sha256": "86702c56858dc3d7042a8e79d1f70c09b7ad247dfb7329e47b38b8f32f3d3b01"},
+    "INSTRUCTIONS.md": {"source": "agent-declared", "reason": "Factory operating instructions.", "sha256": "5643e30fea7c9d141929102cd9950e536bf084de0631964063370abfe83cbafa"},
+    "playbooks/devin-bicameral-factory-run.md": {"source": "agent-declared", "reason": "Direct supervised collaborator run procedure and output contract.", "sha256": "c287257b40938d5c8e686450e9fe4afa9be384d646fe7c1a55b46cfefdba52f1"},
+    "charters/feature-agent.md": {"source": "agent-declared", "reason": "Feature implementation ownership and evidence boundaries.", "sha256": "5700d2c889c0758ff2b2d59a7bac290cf6a729d2fb7de075c9522453e08b8ad7"},
+    "blueprints/factory-run-contract.md": {"source": "agent-declared", "reason": "Factory run boundaries and required outputs.", "sha256": "937087abbc76da84a97f3b533d639a297f27223f782e528c6ee731f54462de63"},
+    "blueprints/factory-attestation.md": {"source": "agent-declared", "reason": "Commit-grounded attestation requirements.", "sha256": "d3805991d0759824fd9af6a6b5aa0b72fa855363571496f7aab02586467853d7"},
+    "blueprints/factory-run-signals/artifact-boundary.md": {"source": "agent-declared", "reason": "Customer package artifact-boundary evidence contract.", "sha256": "d9ee7c1714bd20e576a2fa28e1bcba958e5dfa6a46dc82314504b18943d91f46"},
+    "blueprints/factory-run-signals/domain-entity-candidates.md": {"source": "agent-declared", "reason": "Domain entity candidate reporting contract.", "sha256": "c88e89e66dbce89bf81af41fd976888664cbde26dbe39ace2d12605464c6755c"},
+    "blueprints/factory-run-signals/factory-learning-signals.md": {"source": "agent-declared", "reason": "Factory learning signal reporting contract.", "sha256": "63b7d5bd11f005a062d52163606c54562cbcc2e5619935fde8f1b9cc39457e21"},
+    "blueprints/factory-run-signals/minimum-product-validation.md": {"source": "agent-declared", "reason": "Minimum product validation evidence contract.", "sha256": "f0efac9c9a6007864b78393c4b8d21555d7aa5e008879e38137dc6569a99197f"},
+    "blueprints/topology-execution.md": {"source": "wrapper-observed", "reason": "Defined the authentic-host topology and evidence ceiling exercised by the external harness.", "sha256": "c83bfca2159ee054d3951c0bfc13ef4473b79333f944bef7d05feffef823163c"},
+    "knowledge/product-validation-roadmap.md": {"source": "agent-declared", "reason": "Roadmap reconciliation procedure.", "sha256": "0299812341febf23b6dc3223a115461134113f988f7278992d9eb62061439697"},
+    "skills/bic/mattpocock/engineering/tdd/SKILL.md": {"source": "agent-declared", "reason": "Red-green-refactor workflow used for implementation.", "sha256": "6c34430dd4d79af8d0dcda3cc3fe32f850a255f545786e4c9c3f6be86127f694"},
+    "skills/bic/release-unit/SKILL.md": {"source": "agent-declared", "reason": "Release Unit proposal and topology requirement workflow.", "sha256": "9ad00e0744cccd46d6362d316d9624d73cf8180a0a8e2587c545671b633425f0"},
+    "skills/bic/release-unit/references/contract.md": {"source": "agent-declared", "reason": "Release Unit state and assignment invariants.", "sha256": "eb9ec3b7640cbe6a1504e848c1d5ece6a4b0a817ac1dcc5bc35c2a75469ea5dd"},
+    "skills/bic/pre-pr-factory-attestation/SKILL.md": {"source": "agent-declared", "reason": "Pre-PR provenance procedure.", "sha256": "e7d105f139e9e40fd1dd655891866a674fef839df604be748cc60b3e2b95f45d"},
+    "schemas/release-unit-proposal.schema.json": {"source": "wrapper-observed", "reason": "Factory validator checked the committed proposal against this contract.", "sha256": "8555b243d8455d93955a10cbc50d2200be0c6414d1b7c5732870aec17ed152c1"},
+    "schemas/topology-host-receipt.schema.json": {"source": "wrapper-observed", "reason": "Defined the external sanitized topology-host receipt consumed by product validation.", "sha256": "c394052c243fef2ef3173e457d8a5087504c2392858ca3bb5261bebe8b1d21d6"},
+    "scripts/release_unit.py": {"source": "wrapper-observed", "reason": "Validated the Release Unit proposal deterministically.", "sha256": "9302d4129ed0a53bc6b38f1eb4ac499efe6707a222db26a0ea5815c90d4537f3"},
+    "scripts/topology_host_harness.py": {"source": "wrapper-observed", "reason": "Launched released Claude Code and Codex under real disposable PTYs and emitted bounded receipts.", "sha256": "2651b1934caf3163b3de072846ab025cc2c9d084b775c9134fc6f5e74e07aa8c"}
+  },
+  "local_setup_divergence": {
+    "checked": true,
+    "resolution": "none",
+    "unresolved_items": [],
+    "notes": "The direct Codex session used exact Factory skill copies and an ignored local Factory context file. A stale local post-commit hook invoked the removed bicameral-mcp link_commit CLI; the exact commit was synced through the current MCP tool. Factory was used only as external development evidence and is absent from product runtime artifacts."
+  },
+  "roadmap_reconciliation": {
+    "checked": true,
+    "issue_number": 66,
+    "issue_type": "validated",
+    "project_status": "Done",
+    "pr_links_checked": true,
+    "pr_body_links_issue": true,
+    "pr_links": [
+      "https://github.com/BicameralAI/bicameral-mcp/pull/769"
+    ],
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-factory/issues/66#issuecomment-5064965121",
+    "notes": "Managed host provisioning is reliability and operational hygiene under the validated Miscellaneous roadmap. The issue is closed and no longer attached to a project item."
+  },
+  "state_refinement": {
+    "checked": true,
+    "release_state": "The product-local adapter lifecycle and external host-activation evidence now expose distinct deterministic states without changing canonical Decision state or daemon authority.",
+    "states_added": [
+      "installed_enabled",
+      "installed_disabled",
+      "manual_fallback_required",
+      "host_mechanism_unavailable",
+      "config_invalid_fail_closed",
+      "package_missing_or_mismatched",
+      "installed_but_host_did_not_fire",
+      "authentic_host_fired"
+    ],
+    "states_deferred": [
+      "Daemon availability, candidate rendering, human confirmation, Decision materialization, replay, and terminal acceptance remain separate #736 evidence and are not adapter states."
+    ],
+    "invariants": [
+      "Installation success never implies authentic host firing or terminal acceptance.",
+      "Direct adapter invocation never satisfies authentic-host evidence.",
+      "Each host must independently prove exactly one packaged hook process inside its released host subtree.",
+      "Codex hook discovery never bypasses or manufactures host-owned hook trust.",
+      "Invalid external configuration and mismatched package provenance fail closed with visible manual fallback.",
+      "No Factory runtime artifact, canonical Decision state, or daemon authority moves into MCP."
+    ],
+    "minimization_review": {
+      "reviewed": true,
+      "rejected_or_collapsed_states": [
+        "A generic verified state was rejected because it would collapse installation, host activation, daemon, candidate, confirmation, and terminal acceptance boundaries.",
+        "Enabled and disabled source aliases remain only for code compatibility; serialized receipts use the explicit installed states."
+      ],
+      "rationale": "Each added state changes the operator's next action or the maximum evidence claim. More detailed daemon and terminal outcomes remain outside this lifecycle."
+    }
+  },
+  "domain_entity_candidates": [
+    "None. PackageProvenance and HostActivationResult are product-local evidence structures, not reusable Factory domain entities."
+  ],
+  "factory_learning_signals": [
+    "The current generic Posix Topology Host driver cannot independently prove host process ancestry on macOS because /proc is absent and its kernel tracer is intentionally unavailable; authentic-host acceptance therefore requires Linux or a separately reviewed macOS provenance adapter.",
+    "A packaged console script must preserve the active virtual-environment path rather than resolving the interpreter symlink, or provenance can silently point at a different global installation."
+  ],
+  "validation_evidence": {
+    "preflight": "Scoped Bicameral preflight returned fired=false and no_matches before and after implementation.",
+    "focused_tests": "112 passed",
+    "full_tests": "709 passed",
+    "ruff_check": "passed",
+    "ruff_format_check": "passed",
+    "mypy": "passed",
+    "build": "wheel and sdist built successfully",
+    "artifact_boundary": "Built wheel and sdist passed the customer artifact-boundary validator.",
+    "packaged_lifecycle": "Both hosts passed install/status/update/disable/re-enable/uninstall with exact wheel-environment runner provenance.",
+    "authentic_host": "Released Codex 0.144.4 and Claude Code 2.1.38 ran in clean PTYs; both receipts honestly stopped at installed_but_host_did_not_fire because independent process provenance was unavailable.",
+    "release_unit_proposal": "Factory validator returned valid=true with no errors. Topology is required and remains unsatisfied."
+  },
+  "end_of_session_capture": {
+    "run": true,
+    "factory_pr": null,
+    "notes": "No Factory artifact changed. The macOS provenance limitation and active-environment console-path trap are recorded as learning signals for human review."
+  },
+  "attested_by": "OpenAI Codex",
+  "timestamp": "2026-07-23T05:25:45Z",
+  "target_repo": "BicameralAI/bicameral-mcp",
+  "target_branch": "feat/762-authentic-managed-host-hooks",
+  "agent": "OpenAI Codex",
+  "session": "direct supervised local development for BicameralAI/bicameral-mcp#762"
+}
