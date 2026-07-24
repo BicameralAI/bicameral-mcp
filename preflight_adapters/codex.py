@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .base import HostAdapter, HostSessionEvent
+from .base import HostAdapter, HostConfigError, HostSessionEvent
 
 
 class CodexAdapter(HostAdapter):
@@ -31,6 +31,28 @@ class CodexAdapter(HostAdapter):
 
     def config_path(self) -> Path:
         return self.home() / "hooks.json"
+
+    def _write_hook(self, runner_invocation: str) -> None:
+        # Validate the operator-owned hooks file before creating the supporting
+        # user config layer, preserving fail-closed behavior on malformed JSON.
+        self._read_config()
+        self._ensure_user_config_layer()
+        super()._write_hook(runner_invocation)
+
+    def _ensure_user_config_layer(self) -> None:
+        """Make user hooks discoverable without bypassing Codex hook trust."""
+        config = self.home() / "config.toml"
+        if config.exists():
+            return
+        try:
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.open("xb").close()
+        except FileExistsError:
+            return
+        except OSError as exc:
+            raise HostConfigError(
+                f"Cannot create Codex user config layer {config}; refusing to install the hook."
+            ) from exc
 
     def parse_event(self, payload: dict[str, Any]) -> HostSessionEvent:
         session_id = str(payload.get("session_id") or "")

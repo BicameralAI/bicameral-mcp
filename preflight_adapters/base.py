@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import stat
 import sys
 import tempfile
@@ -21,6 +20,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from version import SERVER_VERSION
 
 from .context import BoundedContextDescriptor, PreworkContext
 from .state import (
@@ -46,17 +47,55 @@ class HostConfigError(RuntimeError):
     """The host configuration cannot be read or changed without data loss."""
 
 
-def resolve_runner_invocation() -> str:
+@dataclass(frozen=True)
+class PackageProvenance:
+    """Exact customer package command installed into a host configuration."""
+
+    package_name: str
+    package_version: str
+    runner_invocation: str
+    executable_path: str
+    source: str
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "package_name": self.package_name,
+            "package_version": self.package_version,
+            "runner_invocation": self.runner_invocation,
+            "executable_path": self.executable_path,
+            "source": self.source,
+        }
+
+
+def resolve_package_provenance() -> PackageProvenance:
     """Return the command prefix that invokes the MCP pre-work runner.
 
     Prefers the installed ``bicameral-mcp`` console script (absolute path) so the
     hook keeps working regardless of the host's PATH at fire time. Falls back to
     ``<python> -m server`` which runs the same entrypoint.
     """
-    console = shutil.which("bicameral-mcp")
-    if console:
-        return _quote(console)
-    return f"{_quote(sys.executable)} -m server"
+    active_environment_console = Path(sys.executable).absolute().parent / "bicameral-mcp"
+    if active_environment_console.is_file():
+        executable = str(active_environment_console)
+        return PackageProvenance(
+            package_name="bicameral-mcp",
+            package_version=SERVER_VERSION,
+            runner_invocation=_quote(executable),
+            executable_path=executable,
+            source="console_script",
+        )
+    executable = str(Path(sys.executable).absolute())
+    return PackageProvenance(
+        package_name="bicameral-mcp",
+        package_version=SERVER_VERSION,
+        runner_invocation=f"{_quote(executable)} -m server",
+        executable_path=executable,
+        source="python_module",
+    )
+
+
+def resolve_runner_invocation() -> str:
+    return resolve_package_provenance().runner_invocation
 
 
 def _quote(value: str) -> str:
@@ -92,6 +131,7 @@ class AdapterActionResult:
     ok: bool
     state: AdapterState
     message: str
+    package_provenance: PackageProvenance | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +140,9 @@ class AdapterActionResult:
             "ok": self.ok,
             "state": self.state.value,
             "message": self.message,
+            "package_provenance": (
+                self.package_provenance.to_dict() if self.package_provenance else None
+            ),
         }
 
 
@@ -116,6 +159,10 @@ class AdapterStatus:
     contract_version: str | None
     consent_granted: bool
     detail: str
+    package_provenance: PackageProvenance | None = None
+    package_matches: bool = False
+    fallback_state: AdapterState | None = None
+    manual_preflight: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -128,6 +175,12 @@ class AdapterStatus:
             "contract_version": self.contract_version,
             "consent_granted": self.consent_granted,
             "detail": self.detail,
+            "package_provenance": (
+                self.package_provenance.to_dict() if self.package_provenance else None
+            ),
+            "package_matches": self.package_matches,
+            "fallback_state": self.fallback_state.value if self.fallback_state else None,
+            "manual_preflight": self.manual_preflight,
         }
 
 
@@ -219,23 +272,26 @@ class HostAdapter(ABC):
                 host=self.host_id,
                 action="install",
                 ok=False,
-                state=AdapterState.NOT_INSTALLED,
+                state=AdapterState.HOST_MECHANISM_UNAVAILABLE,
                 message=(
                     f"Cannot install: {capability.detail} This host criterion "
                     "fails visibly rather than simulating support."
                 ),
             )
-        runner = resolve_runner_invocation()
-        self._write_hook(runner)
+        provenance = resolve_package_provenance()
+        self._write_hook(provenance.runner_invocation)
         consent_summary = self.bounded_context_descriptor().render().splitlines()[0]
         metadata = AdapterMetadata(
             host=self.host_id,
             installed=True,
             enabled=True,
             contract_version=ADAPTER_CONTRACT_VERSION,
-            runner_invocation=runner,
+            runner_invocation=provenance.runner_invocation,
             consent=ConsentRecord.now(consent_summary),
             updated_at="",
+            package_version=provenance.package_version,
+            runner_executable=provenance.executable_path,
+            runner_source=provenance.source,
         )
         self._store().save(metadata)
         return AdapterActionResult(
@@ -248,6 +304,7 @@ class HostAdapter(ABC):
                 f"via {self.official_mechanism}. It invokes bicameral.preflight "
                 "once per new session with bounded context only."
             ),
+            package_provenance=provenance,
         )
 
     def update(self) -> AdapterActionResult:
@@ -263,11 +320,15 @@ class HostAdapter(ABC):
                     "to update. Install it first with explicit consent."
                 ),
             )
-        runner = resolve_runner_invocation()
+        provenance = resolve_package_provenance()
+        runner = provenance.runner_invocation
         if metadata.enabled:
             self._write_hook(runner)
         metadata.runner_invocation = runner
         metadata.contract_version = ADAPTER_CONTRACT_VERSION
+        metadata.package_version = provenance.package_version
+        metadata.runner_executable = provenance.executable_path
+        metadata.runner_source = provenance.source
         self._store().save(metadata)
         return AdapterActionResult(
             host=self.host_id,
@@ -278,6 +339,7 @@ class HostAdapter(ABC):
                 f"Updated the {self.display_name} adapter to contract version "
                 f"{ADAPTER_CONTRACT_VERSION}."
             ),
+            package_provenance=provenance,
         )
 
     def disable(self) -> AdapterActionResult:
@@ -290,6 +352,7 @@ class HostAdapter(ABC):
                 state=AdapterState.NOT_INSTALLED,
                 message=f"The {self.display_name} adapter is not installed.",
             )
+        provenance = _package_provenance_from_metadata(metadata)
         self._remove_hook()
         metadata.enabled = False
         self._store().save(metadata)
@@ -303,9 +366,12 @@ class HostAdapter(ABC):
                 "entry was removed; consent metadata is retained. Automatic "
                 "pre-work will not fire until re-enabled."
             ),
+            package_provenance=provenance,
         )
 
     def uninstall(self) -> AdapterActionResult:
+        metadata = self._store().load()
+        provenance = _package_provenance_from_metadata(metadata)
         self._remove_hook()
         self._store().clear()
         return AdapterActionResult(
@@ -317,24 +383,73 @@ class HostAdapter(ABC):
                 f"Uninstalled the {self.display_name} pre-work adapter. The hook "
                 "entry, consent record, and dedup markers were removed."
             ),
+            package_provenance=provenance,
         )
 
     def status(self) -> AdapterStatus:
         metadata = self._store().load()
-        hook_present = self._hook_present()
+        config_error: HostConfigError | None = None
+        config_data: dict[str, Any] = {}
+        try:
+            config_data = self._read_config()
+            hook_present = self._hook_present_in(config_data)
+        except HostConfigError as exc:
+            hook_present = False
+            config_error = exc
         capability = self.capability()
-        if metadata is None or not metadata.installed:
+        if config_error is not None:
+            state = AdapterState.CONFIG_INVALID_FAIL_CLOSED
+        elif not capability.supported:
+            state = AdapterState.HOST_MECHANISM_UNAVAILABLE
+        elif metadata is None or not metadata.installed:
             state = AdapterState.NOT_INSTALLED
-        elif metadata.enabled and hook_present:
-            state = AdapterState.ENABLED
+        elif metadata.enabled:
+            state = AdapterState.ENABLED if hook_present else AdapterState.MANUAL_FALLBACK_REQUIRED
         else:
             state = AdapterState.DISABLED
         detail = capability.detail
-        if metadata is not None and metadata.enabled and not hook_present:
+        if config_error is not None:
+            detail = str(config_error)
+        elif metadata is not None and metadata.enabled and not hook_present:
             detail = (
                 "Adapter metadata reports enabled but no managed hook entry is "
                 "present in the host config; re-run update or install."
             )
+        provenance = None
+        package_matches = False
+        if metadata is not None and metadata.installed:
+            provenance = _package_provenance_from_metadata(metadata)
+            exact_hook_matches = not metadata.enabled
+            if metadata.enabled and config_error is None and hook_present:
+                exact_hook_matches = self._hook_present_in(
+                    config_data, expected_command=self._managed_command(metadata.runner_invocation)
+                )
+            package_matches = bool(
+                metadata.contract_version == ADAPTER_CONTRACT_VERSION
+                and metadata.package_version == SERVER_VERSION
+                and metadata.runner_executable
+                and Path(metadata.runner_executable).is_file()
+                and exact_hook_matches
+            )
+            if not package_matches and config_error is None and hook_present:
+                state = AdapterState.PACKAGE_MISSING_OR_MISMATCHED
+                detail = (
+                    "The installed Bicameral MCP command is missing or does not match the "
+                    "recorded package version; re-run adapter update from the intended package."
+                )
+        fallback_states = {
+            AdapterState.HOST_MECHANISM_UNAVAILABLE,
+            AdapterState.CONFIG_INVALID_FAIL_CLOSED,
+            AdapterState.PACKAGE_MISSING_OR_MISMATCHED,
+            AdapterState.MANUAL_FALLBACK_REQUIRED,
+        }
+        fallback_state = AdapterState.MANUAL_FALLBACK_REQUIRED if state in fallback_states else None
+        manual_preflight = (
+            "Invoke bicameral.preflight explicitly from the host until automatic pre-work "
+            "is available again."
+            if fallback_state is not None
+            else ""
+        )
         return AdapterStatus(
             host=self.host_id,
             state=state,
@@ -345,6 +460,10 @@ class HostAdapter(ABC):
             contract_version=metadata.contract_version if metadata else None,
             consent_granted=bool(metadata and metadata.consent and metadata.consent.granted),
             detail=detail,
+            package_provenance=provenance,
+            package_matches=package_matches,
+            fallback_state=fallback_state,
+            manual_preflight=manual_preflight,
         )
 
     def is_prework_boundary(self, event: HostSessionEvent) -> bool:
@@ -414,8 +533,16 @@ class HostAdapter(ABC):
         groups = hooks.get("SessionStart")
         return groups if isinstance(groups, list) else []
 
-    def _hook_present(self) -> bool:
-        for group in self._session_start_groups(self._read_config()):
+    def _hook_present(self, *, expected_command: str | None = None) -> bool:
+        return self._hook_present_in(self._read_config(), expected_command=expected_command)
+
+    def _hook_present_in(
+        self,
+        data: dict[str, Any],
+        *,
+        expected_command: str | None = None,
+    ) -> bool:
+        for group in self._session_start_groups(data):
             if not isinstance(group, dict):
                 continue
             for handler in group.get("hooks", []):
@@ -424,6 +551,7 @@ class HostAdapter(ABC):
                     and handler.get("type") == "command"
                     and isinstance(handler.get("command"), str)
                     and self._is_managed_command(handler["command"])
+                    and (expected_command is None or handler["command"] == expected_command)
                 ):
                     return True
         return False
@@ -516,6 +644,20 @@ def _resolve_branch(workspace: str | None) -> str | None:
     except Exception:
         return None
     return branch or None
+
+
+def _package_provenance_from_metadata(
+    metadata: AdapterMetadata | None,
+) -> PackageProvenance | None:
+    if metadata is None or not metadata.installed:
+        return None
+    return PackageProvenance(
+        package_name="bicameral-mcp",
+        package_version=metadata.package_version,
+        runner_invocation=metadata.runner_invocation,
+        executable_path=metadata.runner_executable,
+        source=metadata.runner_source,
+    )
 
 
 def _atomic_replace_bytes(path: Path, payload: bytes, *, mode: int | None) -> None:

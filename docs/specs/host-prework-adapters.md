@@ -1,6 +1,6 @@
 # Host Pre-work Adapters (MCP-distributed)
 
-Status: implemented (mcp#734, parent RFQ mcp#733).
+Status: implemented (mcp#734 and mcp#762, parent RFQ mcp#733).
 
 This spec defines the package-owned host adapters that let a coding host run
 `bicameral.preflight` once, automatically, at a genuine pre-work boundary. The
@@ -33,6 +33,12 @@ host-specific; support for one host never implies support for another.
 | Claude Code | Claude Code hooks — `SessionStart` command hook   | `~/.claude/settings.json`                               |
 | Codex CLI   | Codex lifecycle hooks — `SessionStart` command hook | `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`) |
 
+Codex discovers user-level `hooks.json` through its user configuration layer.
+On a clean Codex home, install creates an empty `config.toml` only when that
+file is absent. An existing `config.toml` is never modified. This enables hook
+discovery but does not approve the hook, bypass Codex hook trust, or manufacture
+operator consent; Codex retains authority over its own hook-trust prompt.
+
 Both mechanisms deliver a JSON event on stdin at hook execution time. The
 adapters read only an allowlisted view of that event (`session_id`, `source`,
 `cwd`) and treat `source == startup` as the sole pre-work boundary; `resume`,
@@ -49,9 +55,9 @@ CLI: `bicameral-mcp adapters <status|install|update|disable|uninstall> [--host H
   `SessionStart` command hook into the host's native config, preserving any
   existing user hooks. Records consent and adapter metadata under
   `<host home>/bicameral-mcp/`.
-- **status / inspect** — reports state (`not_installed` / `enabled` /
-  `disabled`), mechanism, config path, whether the managed hook is present,
-  capability support, consent, and contract version.
+- **status / inspect** — reports mechanism, config path, managed-hook presence,
+  capability support, consent, contract version, exact installed package/runner
+  provenance, and whether the configured command still matches that provenance.
 - **update** — rewrites the managed hook to the current runner invocation and
   contract version without duplicating entries.
 - **disable** — removes the managed hook entry but retains consent metadata.
@@ -61,6 +67,19 @@ CLI: `bicameral-mcp adapters <status|install|update|disable|uninstall> [--host H
 Managed hook entries are identified by a stable token plus the host id, so the
 adapter only ever edits or removes its own entries.
 
+Status and receipts use these deterministic states without collapsing separate
+boundaries into a generic verified result:
+
+- `not_installed`, `installed_enabled`, `installed_disabled`;
+- `manual_fallback_required`, `host_mechanism_unavailable`;
+- `config_invalid_fail_closed`, `package_missing_or_mismatched`;
+- `installed_but_host_did_not_fire`, `authentic_host_fired`.
+
+The installed command records package name/version, absolute executable path,
+exact runner invocation, and resolution source. A stale adapter contract,
+missing executable, version mismatch, or changed managed command fails closed
+as `package_missing_or_mismatched` and directs the operator to `update`.
+
 Host configuration is treated as external user data. A missing config may be
 created, but an existing config must be a readable JSON object. Unreadable,
 malformed, or non-object input fails closed with the original bytes unchanged.
@@ -68,6 +87,32 @@ Valid mutations first retain the exact prior bytes at
 `<config>.bicameral-backup`, write the complete replacement to a temporary file
 beside the config, and atomically replace the config. New configs have no
 backup because no prior user data exists.
+
+All lifecycle actions emit the same package provenance in `--json` receipts.
+Malformed host configuration also returns a machine-readable nonzero receipt;
+the CLI does not expose a traceback or alter the invalid file.
+
+## Authentic-host evidence
+
+Factory's `topology-host/mcp-terminal-host-v1` harness may launch released hosts
+under a PTY and produce external process-subtree evidence. It remains
+development tooling and is not imported, installed, or read by the customer
+runtime. Validate one sanitized host receipt through the packaged product path:
+
+```bash
+bicameral-mcp adapters verify-host \
+  --host codex \
+  --receipt /path/to/topology-host-receipt.json \
+  --json
+```
+
+`authentic_host_fired` requires exactly one managed hook process in the host
+subtree, independent kernel/proc provenance, a clean home, consented install,
+released artifact, real PTY, exact host version, and a sanitized receipt. A
+direct adapter invocation never qualifies. A valid receipt where the installed
+host did not fire returns `installed_but_host_did_not_fire` and exits nonzero.
+Receipt validation rejects raw prompt/transcript/output fields, challenge
+values, credential values, and credential-shaped strings.
 
 ## Pre-work invocation contract
 

@@ -17,7 +17,7 @@ from typing import Any
 
 #: Contract version for the installed adapter configuration. ``update`` rewrites
 #: an installed adapter when this differs from the recorded value.
-ADAPTER_CONTRACT_VERSION = "1"
+ADAPTER_CONTRACT_VERSION = "2"
 
 #: Directory (relative to a host config home) that holds MCP-owned adapter
 #: metadata, consent records, and dedup markers. Kept separate from the host's
@@ -29,8 +29,18 @@ class AdapterState(StrEnum):
     """Local install state of a host pre-work adapter."""
 
     NOT_INSTALLED = "not_installed"
-    ENABLED = "enabled"
-    DISABLED = "disabled"
+    INSTALLED_ENABLED = "installed_enabled"
+    INSTALLED_DISABLED = "installed_disabled"
+    MANUAL_FALLBACK_REQUIRED = "manual_fallback_required"
+    HOST_MECHANISM_UNAVAILABLE = "host_mechanism_unavailable"
+    CONFIG_INVALID_FAIL_CLOSED = "config_invalid_fail_closed"
+    PACKAGE_MISSING_OR_MISMATCHED = "package_missing_or_mismatched"
+    INSTALLED_BUT_HOST_DID_NOT_FIRE = "installed_but_host_did_not_fire"
+    AUTHENTIC_HOST_FIRED = "authentic_host_fired"
+
+    # Source compatibility for callers that imported the original enum names.
+    ENABLED = INSTALLED_ENABLED
+    DISABLED = INSTALLED_DISABLED
 
 
 @dataclass(frozen=True)
@@ -76,6 +86,9 @@ class AdapterMetadata:
     runner_invocation: str
     consent: ConsentRecord | None
     updated_at: str
+    package_version: str = ""
+    runner_executable: str = ""
+    runner_source: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -86,6 +99,9 @@ class AdapterMetadata:
             "runner_invocation": self.runner_invocation,
             "consent": self.consent.to_dict() if self.consent else None,
             "updated_at": self.updated_at,
+            "package_version": self.package_version,
+            "runner_executable": self.runner_executable,
+            "runner_source": self.runner_source,
         }
 
     @classmethod
@@ -100,6 +116,9 @@ class AdapterMetadata:
             runner_invocation=str(data.get("runner_invocation", "")),
             consent=consent,
             updated_at=str(data.get("updated_at", "")),
+            package_version=str(data.get("package_version", "")),
+            runner_executable=str(data.get("runner_executable", "")),
+            runner_source=str(data.get("runner_source", "")),
         )
 
 

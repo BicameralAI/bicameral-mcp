@@ -46,16 +46,29 @@ def _host_run() -> dict:
 
 
 def _lifecycle_files(tmp_path: Path, host: str) -> dict[str, str]:
+    package_provenance = {
+        "package_name": "bicameral-mcp",
+        "package_version": "0.17.0",
+        "runner_invocation": "/tmp/venv/bin/bicameral-mcp",
+        "executable_path": "/tmp/venv/bin/bicameral-mcp",
+        "source": "console_script",
+    }
     files: dict[str, str] = {}
     for step, state in {
-        "install": "enabled",
-        "update": "enabled",
-        "disable": "disabled",
+        "install": "installed_enabled",
+        "update": "installed_enabled",
+        "disable": "installed_disabled",
         "uninstall": "not_installed",
     }.items():
         path = _write_json(
             tmp_path / f"{host}-{step}.json",
-            {"host": host, "action": step, "ok": True, "state": state},
+            {
+                "host": host,
+                "action": step,
+                "ok": True,
+                "state": state,
+                "package_provenance": package_provenance,
+            },
         )
         files[step] = path.name
     status = _write_json(
@@ -63,10 +76,12 @@ def _lifecycle_files(tmp_path: Path, host: str) -> dict[str, str]:
         [
             {
                 "host": host,
-                "state": "enabled",
+                "state": "installed_enabled",
                 "capability_supported": True,
                 "consent_granted": True,
                 "hook_present": True,
+                "package_matches": True,
+                "package_provenance": package_provenance,
             }
         ],
     )
@@ -203,6 +218,27 @@ def test_july_17_style_lifecycle_without_update_cannot_pass(tmp_path: Path, monk
     )
     assert (
         "claude: consented_adapter_lifecycle_receipts.update must be passed" in receipt["failures"]
+    )
+
+
+def test_lifecycle_without_exact_package_provenance_cannot_pass(tmp_path: Path, monkeypatch):
+    claude = _host_evidence(tmp_path, "claude")
+    evidence = json.loads(claude.read_text())
+    install_path = tmp_path / evidence["lifecycle_receipt_files"]["install"]
+    install = json.loads(install_path.read_text())
+    del install["package_provenance"]
+    install_path.write_text(json.dumps(install))
+
+    receipt = _assemble(
+        tmp_path,
+        monkeypatch,
+        host_evidence_paths={"claude": claude, "codex": _host_evidence(tmp_path, "codex")},
+    )
+
+    assert receipt["outcome"] == "product_failure"
+    assert (
+        receipt["host_runs"]["claude"]["consented_adapter_lifecycle_receipts"]["install"]
+        == "failed"
     )
 
 

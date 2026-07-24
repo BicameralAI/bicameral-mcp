@@ -77,6 +77,25 @@ The actual `negative_path_receipts` object must contain every path declared in
 `REQUIRED_NEGATIVE_PATHS` in the merged validator. Lifecycle paths are resolved
 relative to the host summary. The assembler reads and hashes those files and
 derives lifecycle pass/fail status from their machine-readable content.
+Install and update receipts must report `installed_enabled`; disable must report
+`installed_disabled`; uninstall must report `not_installed`. Status must report
+`installed_enabled`, `package_matches: true`, and the same exact package
+name/version/runner invocation/executable provenance recorded by install.
+
+For the earlier authentic-host activation boundary, independently validate each
+Factory topology-host receipt through the packaged MCP artifact:
+
+```bash
+bicameral-mcp adapters verify-host \
+  --host claude \
+  --receipt /path/to/claude-topology-host-receipt.json \
+  --json
+```
+
+Repeat for Codex. `authentic_host_fired` is supporting implementation evidence
+for #762 only; it does not satisfy candidate rendering, named-human
+confirmation, Decision materialization, replay, or terminal acceptance in
+#736.
 
 Prepare one sanitized shared topology summary with
 `capture_kind: real_process_topology`. It owns only the shared process-health,

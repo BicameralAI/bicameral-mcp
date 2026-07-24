@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "release_unit_id": "v0112-mcp-authentic-managed-host-hooks",
+  "label": "Provision and verify authentic managed pre-work hooks",
+  "repository": "BicameralAI/bicameral-mcp",
+  "scope_ref": "BicameralAI/bicameral-mcp#762",
+  "release_unit_type": "mcp_surface",
+  "target_version": "0.1.12",
+  "topology": {
+    "required": true,
+    "topology_type": "mcp_terminal_host",
+    "validation_checklist": [
+      {
+        "check_id": "claude-lifecycle",
+        "label": "Claude lifecycle preserves config and exact package provenance"
+      },
+      {
+        "check_id": "codex-lifecycle",
+        "label": "Codex lifecycle preserves config and host-owned hook trust"
+      },
+      {
+        "check_id": "claude-authentic-once",
+        "label": "Released Claude host fires the packaged hook exactly once"
+      },
+      {
+        "check_id": "codex-authentic-once",
+        "label": "Released Codex host fires the packaged hook exactly once"
+      },
+      {
+        "check_id": "receipt-sanitization",
+        "label": "Host receipts reject raw content credentials and challenge values"
+      },
+      {
+        "check_id": "factory-runtime-absent",
+        "label": "Customer wheel and source archive contain no Factory runtime artifacts"
+      }
+    ]
+  },
+  "proposed_by": "@silongtan",
+  "proposed_at": "2026-07-23T05:25:45Z",
+  "proposal_digest": "sha256:16c1c3574061d751da940ff6d9c8b7d26f0cd377c47d28bf65337f21d7fe8329"
+}

@@ -12,10 +12,22 @@ not owned by MCP.
 
 from __future__ import annotations
 
-from .base import AdapterActionResult, AdapterStatus, HostAdapter, HostCapability
+from .base import (
+    AdapterActionResult,
+    AdapterStatus,
+    HostAdapter,
+    HostCapability,
+    HostConfigError,
+    PackageProvenance,
+)
 from .claude import ClaudeCodeAdapter
 from .codex import CodexAdapter
 from .context import BoundedContextDescriptor, PreworkContext
+from .evidence import (
+    HostActivationResult,
+    HostEvidenceError,
+    evaluate_host_activation,
+)
 from .registry import get_adapter, supported_hosts
 from .runner import PreworkOutcome, PreworkResult, run_prework
 from .state import AdapterState
@@ -28,11 +40,16 @@ __all__ = [
     "ClaudeCodeAdapter",
     "CodexAdapter",
     "HostAdapter",
+    "HostActivationResult",
     "HostCapability",
+    "HostConfigError",
+    "HostEvidenceError",
+    "PackageProvenance",
     "PreworkContext",
     "PreworkOutcome",
     "PreworkResult",
     "get_adapter",
+    "evaluate_host_activation",
     "run_prework",
     "supported_hosts",
 ]

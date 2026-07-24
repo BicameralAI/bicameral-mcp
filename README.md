@@ -148,6 +148,10 @@ Supported hosts, each using its own documented, host-native mechanism:
 | Claude Code | Claude Code hooks — `SessionStart` command hook               | `~/.claude/settings.json`       |
 | Codex CLI   | Codex lifecycle hooks — `SessionStart` command hook           | `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`) |
 
+For a clean Codex home, install creates an empty `config.toml` when absent so
+Codex discovers its user hook layer. It never changes an existing `config.toml`
+and never bypasses Codex's host-owned hook trust.
+
 If a host does not provide a production pre-work mechanism, that host criterion
 fails visibly rather than simulating support.
 
@@ -159,6 +163,7 @@ bicameral-mcp adapters install --host claude --consent
 bicameral-mcp adapters update  --host codex
 bicameral-mcp adapters disable --host claude
 bicameral-mcp adapters uninstall --host codex
+bicameral-mcp adapters verify-host --host codex --receipt host-receipt.json --json
 ```
 
 Behavioral guarantees:
@@ -181,6 +186,14 @@ Behavioral guarantees:
   `bicameral.preflight` and never claims preflight ran.
 - **Independent host evidence.** Claude Code and Codex are configured and probed
   separately; enabling or a positive probe for one host never implies the other.
+  External real-PTY evidence is accepted only with independent host-subtree
+  provenance and exactly one packaged-hook process; direct invocation does not
+  qualify. Factory may produce that external evidence but is never a runtime
+  dependency.
+- **Exact package provenance.** Lifecycle receipts record the package version,
+  absolute runner executable, exact invocation, and resolution source. Status
+  fails closed when the contract, package, executable, or managed command no
+  longer matches.
 - **No candidate workflow, no compliance claims.** Adapters never render,
   choose, promote, or confirm candidates, never write canonical Decision state,
   and make no compliance, safety, no-conflict, or merge-readiness claims. That

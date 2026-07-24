@@ -17,16 +17,22 @@ from typing import Any
 
 import pytest
 
+import preflight_adapters.base as adapters_base
 from preflight_adapters import get_adapter, supported_hosts
-from preflight_adapters.base import MANAGED_COMMAND_TOKEN, HostConfigError
+from preflight_adapters.base import (
+    MANAGED_COMMAND_TOKEN,
+    HostConfigError,
+    resolve_package_provenance,
+)
+from preflight_adapters.cli import run_adapters_cli
 from preflight_adapters.context import (
     FORBIDDEN_EVENT_FIELDS,
     PreworkContext,
     assert_no_forbidden_fields,
 )
 from preflight_adapters.runner import PreworkOutcome, run_prework
-from preflight_adapters.state import AdapterState
-from version import TOOLREQUEST_PROTOCOL_VERSION
+from preflight_adapters.state import ADAPTER_CONTRACT_VERSION, AdapterState
+from version import SERVER_VERSION, TOOLREQUEST_PROTOCOL_VERSION
 
 HOSTS = list(supported_hosts())
 
@@ -87,6 +93,42 @@ def _startup_event(cwd: Path) -> dict[str, Any]:
 # --- lifecycle: install / status / update / disable / uninstall ---
 
 
+def test_package_provenance_prefers_active_environment_console_script(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    bin_dir = tmp_path / "venv" / "bin"
+    bin_dir.mkdir(parents=True)
+    base_bin = tmp_path / "runtime" / "bin"
+    base_bin.mkdir(parents=True)
+    base_python = base_bin / "python"
+    base_python.write_text("")
+    python = bin_dir / "python"
+    python.symlink_to(base_python)
+    console = bin_dir / "bicameral-mcp"
+    console.write_text("")
+    monkeypatch.setattr(adapters_base.sys, "executable", str(python))
+
+    provenance = resolve_package_provenance()
+
+    assert provenance.executable_path == str(console)
+    assert provenance.runner_invocation == str(console)
+
+
+def test_package_provenance_falls_back_to_active_interpreter_not_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    python = tmp_path / "venv" / "bin" / "python"
+    python.parent.mkdir(parents=True)
+    python.write_text("")
+    monkeypatch.setattr(adapters_base.sys, "executable", str(python))
+
+    provenance = resolve_package_provenance()
+
+    assert provenance.source == "python_module"
+    assert provenance.executable_path == str(python)
+    assert provenance.runner_invocation == f"{python} -m server"
+
+
 @pytest.mark.parametrize("host", HOSTS)
 def test_install_requires_explicit_consent(host: str, tmp_path: Path):
     adapter = get_adapter(host, home=_home_for(host, tmp_path))
@@ -117,6 +159,123 @@ def test_install_writes_host_native_session_start_hook(host: str, tmp_path: Path
     assert status.state == AdapterState.ENABLED
     assert status.hook_present is True
     assert status.consent_granted is True
+
+
+def test_codex_clean_install_creates_discoverable_user_config_layer(tmp_path: Path):
+    home = _home_for("codex", tmp_path)
+    adapter = get_adapter("codex", home=home)
+
+    result = adapter.install(consent=True)
+
+    assert result.ok is True
+    assert (home / "config.toml").read_bytes() == b""
+    assert adapter.config_path().is_file()
+
+
+def test_codex_lifecycle_preserves_existing_user_config_layer(tmp_path: Path):
+    home = _home_for("codex", tmp_path)
+    home.mkdir(parents=True)
+    config = home / "config.toml"
+    original = b'model = "gpt-5.3-codex"\n[projects."/workspace"]\ntrust_level = "trusted"\n'
+    config.write_bytes(original)
+
+    adapter, _ = _install("codex", tmp_path)
+    adapter.update()
+    adapter.disable()
+    adapter.uninstall()
+
+    assert config.read_bytes() == original
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_install_and_status_report_exact_package_provenance(host: str, tmp_path: Path):
+    adapter, result = _install(host, tmp_path)
+
+    installed = result.to_dict()["package_provenance"]
+    assert installed["package_name"] == "bicameral-mcp"
+    assert installed["package_version"] == SERVER_VERSION
+    assert Path(installed["executable_path"]).is_absolute()
+    assert installed["runner_invocation"] in adapter.config_path().read_text()
+
+    status = adapter.status().to_dict()
+    assert status["package_provenance"] == installed
+    assert status["package_matches"] is True
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_status_fails_closed_when_installed_package_is_missing(host: str, tmp_path: Path):
+    adapter, _ = _install(host, tmp_path)
+    metadata_path = adapter.home() / "bicameral-mcp" / "adapter.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["runner_executable"] = str(tmp_path / "missing-bicameral-mcp")
+    metadata_path.write_text(json.dumps(metadata))
+
+    status = adapter.status()
+
+    assert status.state == AdapterState.PACKAGE_MISSING_OR_MISMATCHED
+    assert status.package_matches is False
+    assert "update" in status.detail.lower()
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_status_fails_closed_when_hook_command_differs_from_recorded_package(
+    host: str, tmp_path: Path
+):
+    adapter, _ = _install(host, tmp_path)
+    config = json.loads(adapter.config_path().read_text())
+    config["hooks"]["SessionStart"][0]["hooks"][0]["command"] = (
+        f"/bin/sh {MANAGED_COMMAND_TOKEN} --host {host}"
+    )
+    adapter.config_path().write_text(json.dumps(config))
+
+    status = adapter.status()
+
+    assert status.hook_present is True
+    assert status.state == AdapterState.PACKAGE_MISSING_OR_MISMATCHED
+    assert status.package_matches is False
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_update_migrates_an_older_adapter_contract(host: str, tmp_path: Path):
+    adapter, _ = _install(host, tmp_path)
+    metadata_path = adapter.home() / "bicameral-mcp" / "adapter.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["contract_version"] = "1"
+    metadata_path.write_text(json.dumps(metadata))
+
+    before = adapter.status()
+    updated = adapter.update()
+    after = adapter.status()
+
+    assert before.state == AdapterState.PACKAGE_MISSING_OR_MISMATCHED
+    assert updated.ok is True
+    assert after.state == AdapterState.INSTALLED_ENABLED
+    assert after.contract_version == ADAPTER_CONTRACT_VERSION
+    assert after.package_matches is True
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_enabled_metadata_without_hook_requires_manual_fallback(host: str, tmp_path: Path):
+    adapter, _ = _install(host, tmp_path)
+    adapter.config_path().write_text("{}\n")
+
+    status = adapter.status()
+
+    assert status.state == AdapterState.MANUAL_FALLBACK_REQUIRED
+    assert status.fallback_state == AdapterState.MANUAL_FALLBACK_REQUIRED
+    assert "update" in status.detail.lower()
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_lifecycle_receipts_retain_installed_package_provenance(host: str, tmp_path: Path):
+    adapter, installed = _install(host, tmp_path)
+    results = [installed, adapter.update(), adapter.disable(), adapter.uninstall()]
+
+    for result in results:
+        provenance = result.to_dict()["package_provenance"]
+        assert provenance["package_name"] == "bicameral-mcp"
+        assert provenance["package_version"] == SERVER_VERSION
+        assert Path(provenance["executable_path"]).is_file()
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -156,6 +315,8 @@ def test_install_rejects_malformed_config_without_changing_it(host: str, tmp_pat
         adapter.install(consent=True)
 
     assert config_path.read_bytes() == original
+    if host == "codex":
+        assert not (home / "config.toml").exists()
 
 
 @pytest.mark.parametrize("host", HOSTS)
@@ -176,7 +337,7 @@ def test_install_rejects_non_object_config_without_changing_it(
 
 
 @pytest.mark.parametrize("host", HOSTS)
-@pytest.mark.parametrize("action", ["status", "update", "disable", "uninstall"])
+@pytest.mark.parametrize("action", ["update", "disable", "uninstall"])
 def test_installed_lifecycle_rejects_malformed_config_without_losing_state(
     host: str, action: str, tmp_path: Path
 ):
@@ -194,6 +355,43 @@ def test_installed_lifecycle_rejects_malformed_config_without_losing_state(
     status = adapter.status()
     assert status.state == AdapterState.ENABLED
     assert status.consent_granted is True
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_status_reports_invalid_config_without_mutating_it(host: str, tmp_path: Path):
+    adapter, _ = _install(host, tmp_path)
+    config_path = adapter.config_path()
+    malformed = b'{"hooks": '
+    config_path.write_bytes(malformed)
+
+    status = adapter.status()
+
+    assert status.state == AdapterState.CONFIG_INVALID_FAIL_CLOSED
+    assert status.hook_present is False
+    assert "refusing to modify" in status.detail
+    assert config_path.read_bytes() == malformed
+
+
+@pytest.mark.parametrize("host", HOSTS)
+def test_cli_emits_machine_readable_fail_closed_config_receipt(
+    host: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    home = _home_for(host, tmp_path)
+    home.mkdir(parents=True)
+    config_path = home / HOST_CONFIG_FILE[host]
+    malformed = b'{"hooks": '
+    config_path.write_bytes(malformed)
+
+    exit_code = run_adapters_cli(
+        ["install", "--host", host, "--home", str(home), "--consent", "--json"]
+    )
+
+    receipt = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert receipt["ok"] is False
+    assert receipt["state"] == "config_invalid_fail_closed"
+    assert "refusing to modify" in receipt["message"]
+    assert config_path.read_bytes() == malformed
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX permission boundary")
@@ -227,6 +425,8 @@ def test_install_write_failure_leaves_existing_config_unchanged(host: str, tmp_p
     config_path = home / HOST_CONFIG_FILE[host]
     original = b'{"unrelated_setting": true}\n'
     config_path.write_bytes(original)
+    if host == "codex":
+        (home / "config.toml").write_bytes(b"")
     home.chmod(stat.S_IRUSR | stat.S_IXUSR)
     if os.access(home, os.W_OK):
         home.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
@@ -341,8 +541,13 @@ def test_capability_fails_visibly_when_host_home_absent(host: str, tmp_path: Pat
     adapter = get_adapter(host, home=missing)
     capability = adapter.capability()
     assert capability.supported is False
+    status = adapter.status()
+    assert status.state == AdapterState.HOST_MECHANISM_UNAVAILABLE
+    assert status.fallback_state == AdapterState.MANUAL_FALLBACK_REQUIRED
+    assert "bicameral.preflight" in status.manual_preflight
     result = adapter.install(consent=True)
     assert result.ok is False
+    assert result.state == AdapterState.HOST_MECHANISM_UNAVAILABLE
     assert "fails visibly" in result.message
 
 

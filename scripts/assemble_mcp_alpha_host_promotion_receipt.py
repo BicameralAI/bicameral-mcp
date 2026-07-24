@@ -42,6 +42,21 @@ class AssemblyError(ValueError):
     """The supplied evidence cannot be assembled deterministically."""
 
 
+def _has_exact_package_provenance(value: Any) -> bool:
+    if not isinstance(value, dict) or value.get("package_name") != "bicameral-mcp":
+        return False
+    for field in (
+        "package_version",
+        "runner_invocation",
+        "executable_path",
+        "source",
+    ):
+        if not isinstance(value.get(field), str) or not value[field].strip():
+            return False
+    executable = value["executable_path"]
+    return Path(executable).is_absolute() and executable in value["runner_invocation"]
+
+
 def load_json_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text())
@@ -75,17 +90,19 @@ def _passed_lifecycle_receipt(host: str, step: str, value: Any) -> bool:
         return any(
             isinstance(item, dict)
             and item.get("host") == host
-            and item.get("state") == "enabled"
+            and item.get("state") == "installed_enabled"
             and item.get("capability_supported") is True
             and item.get("consent_granted") is True
             and item.get("hook_present") is True
+            and item.get("package_matches") is True
+            and _has_exact_package_provenance(item.get("package_provenance"))
             for item in value
         )
 
     expected_state = {
-        "install": "enabled",
-        "update": "enabled",
-        "disable": "disabled",
+        "install": "installed_enabled",
+        "update": "installed_enabled",
+        "disable": "installed_disabled",
         "uninstall": "not_installed",
     }[step]
     return (
@@ -94,6 +111,7 @@ def _passed_lifecycle_receipt(host: str, step: str, value: Any) -> bool:
         and value.get("action") == step
         and value.get("ok") is True
         and value.get("state") == expected_state
+        and _has_exact_package_provenance(value.get("package_provenance"))
     )
 
 
