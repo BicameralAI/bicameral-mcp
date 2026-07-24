@@ -134,16 +134,16 @@
   },
   "roadmap_reconciliation": {
     "checked": true,
-    "roadmap_issue": "https://github.com/BicameralAI/bicameral-factory/issues/66",
-    "roadmap_type": "validated",
+    "issue_number": 349,
+    "issue_type": "validating",
     "project_status": "In Progress",
     "pr_links_checked": true,
     "pr_body_links_issue": true,
     "pr_links": [
       "https://github.com/BicameralAI/bicameral-mcp/pull/767"
     ],
-    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-factory/issues/66#issuecomment-5053490225",
-    "notes": "Host configuration preservation is reliability and operational hygiene within the validated Miscellaneous roadmap."
+    "post_work_comment_url": "https://github.com/BicameralAI/bicameral-factory/issues/349#issuecomment-5070164148",
+    "notes": "Host configuration preservation is direct Tool Surface Contract evidence for safe managed adapters. It does not add Code Grounding state or move lifecycle authority into MCP."
   },
   "state_refinement": {
     "checked": true,
@@ -184,7 +184,7 @@
     "mypy": "passed",
     "build": "wheel and sdist built successfully",
     "artifact_boundary": "Built wheel contains no Factory context, skills, attestations, receipts, or roadmaps.",
-    "release_unit_proposal": "Factory validator returned valid=true with no errors."
+    "release_unit_proposal": "Factory validator returned valid=true with no errors; proposal retargeted to Atlas Release Plan 0.1.13."
   },
   "end_of_session_capture": {
     "run": true,
@@ -192,7 +192,7 @@
     "notes": "No reusable Factory artifact was changed in this product PR. Two Factory learning signals are recorded for human review in the product PR and roadmap comment."
   },
   "attested_by": "OpenAI Codex",
-  "timestamp": "2026-07-23T01:52:03Z",
+  "timestamp": "2026-07-24T13:07:16Z",
   "target_repo": "BicameralAI/bicameral-mcp",
   "target_branch": "fix/758-safe-host-config",
   "agent": "OpenAI Codex",
